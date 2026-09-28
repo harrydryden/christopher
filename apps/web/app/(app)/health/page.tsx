@@ -1,10 +1,9 @@
 import Link from "next/link";
-import { Badge, scanStatusTone } from "@/components/Badge";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
 import { HealthItems } from "@/components/HealthItems";
 import { PageHeader } from "@/components/PageHeader";
-import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
+import { ProblemScansCard, ScanRunsCard } from "@/components/ScanHealthCards";
 import { relativeTime } from "@/lib/format";
 import { workerStatusSentence } from "@/lib/worker-status";
 import { countHealthItems, getWorkerStatus, healthItems, listRecentProblemScans, listRecentScanRuns } from "@/lib/queries/health";
@@ -78,66 +77,9 @@ export default async function HealthPage() {
         </p>
       </Card>
 
-      <Card title={`Recent problem scans (last 7 days, ${problemScans.length})`}>
-        {problemScans.length === 0 ? (
-          <EmptyState title="No problem scans" description="Every scan in the last 7 days completed OK." />
-        ) : (
-          <Table>
-            <THead>
-              <tr>
-                <TH>Company</TH>
-                <TH>Source</TH>
-                <TH>Status</TH>
-                <TH>When</TH>
-                <TH>Error</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {problemScans.map((p) => (
-                <TR key={p.scan.id}>
-                  <TD><Link prefetch={false} href={`/companies/${p.companyId}`} className="hover:underline">{p.companyName}</Link></TD>
-                  <TD>{p.sourceType}</TD>
-                  <TD><Badge tone={scanStatusTone(p.scan.status)}>{p.scan.status}</Badge></TD>
-                  <TD className="whitespace-nowrap" title={p.scan.startedAt.toISOString()}>{relativeTime(p.scan.startedAt, now)}</TD>
-                  <TD className="max-w-[20rem] truncate text-danger" title={p.scan.error ?? undefined}>{p.scan.error ?? ""}</TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        )}
-      </Card>
+      <ProblemScansCard title={`Recent problem scans (last 7 days, ${problemScans.length})`} rows={problemScans} now={now} companyHref={(p) => `/companies/${p.companyId}`} />
 
-      <Card title="Recent scan runs">
-        {scanRuns.length === 0 ? (
-          <EmptyState title="No scan runs yet" description="Daily runs appear here once the schedule starts." />
-        ) : (
-          <Table>
-            <THead>
-              <tr>
-                <TH>Started</TH>
-                <TH>Trigger</TH>
-                <TH>Your companies</TH>
-                <TH>New postings / Closed</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {scanRuns.map((r) => (
-                <TR key={r.id}>
-                  <TD className="whitespace-nowrap" title={r.startedAt.toISOString()}>{relativeTime(r.startedAt, now)}</TD>
-                  <TD><Badge tone="neutral">{r.trigger}</Badge></TD>
-                  <TD>
-                    {r.companiesOk} successful
-                    {r.companiesFailed > 0 && <span className="text-danger"> · {r.companiesFailed} incomplete or failed</span>} of {r.companiesTotal}
-                    {!r.finishedAt && <span className="block text-12 text-muted">In progress</span>}
-                    {r.historicalOnly && <span className="block text-12 text-muted">Stored summary; source detail unavailable</span>}
-                  </TD>
-                  <TD>{r.newRoles} / {r.closedRoles}</TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        )}
-      </Card>
+      <ScanRunsCard runs={scanRuns} now={now} companiesLabel="Your companies" emptyDescription="Daily runs appear here once the schedule starts." />
     </div>
   );
 }

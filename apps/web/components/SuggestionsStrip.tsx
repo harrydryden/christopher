@@ -1,8 +1,9 @@
 "use client";
 
-import { startTransition, useState } from "react";
+import { useState } from "react";
 import { acceptFilterSuggestionWithReport, rejectFilterSuggestion } from "@/app/actions/learning";
 import { Monogram } from "@/components/brand/Monogram";
+import { useActionCall } from "./useActionCall";
 
 /** One pending filter suggestion, reduced to what a single line can carry. */
 export interface SuggestionChip {
@@ -20,11 +21,12 @@ export interface SuggestionChip {
  * page, which is not in the sidebar; this is the same accept and reject, one line above the table
  * they change, and it says what accepting admitted.
  */
+const SAVE_FAILED = "Could not save. Reload and retry.";
+
 export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
   const [settled, setSettled] = useState<Set<string>>(new Set());
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const { pending: pendingId, error, setError, run } = useActionCall<string>();
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const pending = items.filter(item => !settled.has(item.id));
 
   function settle(id: string) {
@@ -32,32 +34,22 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
   }
 
   function accept(item: SuggestionChip) {
-    if (pendingId) return;
-    setPendingId(item.id); setError(null); setMessage(null);
-    startTransition(async () => {
-      try {
-        const result = await acceptFilterSuggestionWithReport(item.id);
-        if (!result.ok) { setError(result.error); return; }
-        settle(item.id);
-        setMessage(result.message ?? `Added “${item.term}”.`);
-      } catch {
-        setError("Could not save. Reload and retry.");
-      } finally { setPendingId(null); }
-    });
+    run(item.id, async () => {
+      setMessage(null);
+      const result = await acceptFilterSuggestionWithReport(item.id);
+      if (!result.ok) { setError(result.error); return; }
+      settle(item.id);
+      setMessage(result.message ?? `Added “${item.term}”.`);
+    }, { failed: SAVE_FAILED });
   }
 
   function dismiss(item: SuggestionChip) {
-    if (pendingId) return;
-    setPendingId(item.id); setError(null); setMessage(null);
-    startTransition(async () => {
-      try {
-        await rejectFilterSuggestion(item.id);
-        settle(item.id);
-        setMessage(`Dismissed “${item.term}”.`);
-      } catch {
-        setError("Could not save. Reload and retry.");
-      } finally { setPendingId(null); }
-    });
+    run(item.id, async () => {
+      setMessage(null);
+      await rejectFilterSuggestion(item.id);
+      settle(item.id);
+      setMessage(`Dismissed “${item.term}”.`);
+    }, { failed: SAVE_FAILED });
   }
 
   if (pending.length === 0 && !message && !error) return null;

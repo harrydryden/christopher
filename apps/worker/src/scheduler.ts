@@ -1,13 +1,12 @@
-import { schema, abandonCvDraft, enqueueTask, pruneWorkerEvents, recordWorkerEvent, releaseAiHolds, releaseOrphanedCvHolds } from "@ava/db";
-import { enqueueTasks, type EnqueueRow } from "@ava/db/tasks";
-import { dedupeKeyFor, localDateParts, priorityFor, resolveUserSettings, type TaskType } from "@ava/core";
+import { schema, taskRow, enqueueStandard, pruneWorkerEvents, recordWorkerEvent, releaseOrphanedCvHolds } from "@ava/db";
+import { enqueueTasks } from "@ava/db/tasks";
+import { localDateParts, resolveUserSettings } from "@ava/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";
 import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
-import { CV_ABANDONED_MESSAGE, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
-import { failOpenCvBuildStepsQuietly } from "./handlers/cv-journal";
+import { closeAbandonedCvDraft, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
 import { runMonitorSample } from "./handlers/monitor-sample";
 import { agePriorities, failSpentTasks, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
@@ -47,7 +46,7 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
       .limit(1);
     if (existing.length === 0) {
       const payload = { trigger: "schedule" as const, runDate: ymd };
-      const id = await enqueueTask(deps.db, "run_daily", payload, { dedupeKey: dedupeKeyFor("run_daily", payload), priority: priorityFor("run_daily") });
+      const id = await enqueueStandard(deps.db, "run_daily", payload);
       if (id) log.info("scheduled daily run", { ymd, scanTime: settings.scanTime, tz: settings.timezone });
     }
   }
@@ -66,12 +65,10 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
       const accounts = await writer.execute<{ id: string; suggestions: unknown }>(sql`select u.id, us.value as suggestions
         from users u left join user_settings us on us.user_id = u.id and us.key = 'suggestionsEnabled'
         where u.claimed_at is not null`);
-      const job = (type: TaskType, payload: Record<string, unknown>): EnqueueRow =>
-        ({ type, payload, dedupeKey: dedupeKeyFor(type, payload as never), priority: priorityFor(type) });
       const rows = accounts.rows.flatMap(({ id: userId, suggestions }) => [
-        job("suggest_filters", { userId }),
-        job("synthesize_profile", { userId, force: false }),
-        ...(suggestionsEnabled(suggestions) ? [job("suggest_companies", { userId })] : []),
+        taskRow("suggest_filters", { userId }),
+        taskRow("synthesize_profile", { userId, force: false }),
+        ...(suggestionsEnabled(suggestions) ? [taskRow("suggest_companies", { userId })] : []),
       ]);
       const queued = await enqueueTasks(writer, rows);
       log.info("scheduled weekly jobs", { ymd, accounts: accounts.rows.length, queued });
@@ -99,10 +96,8 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
     ) due
     where ds.id = due.id
     returning ds.id, due.suggestions`);
-  await enqueueTasks(deps.db, due.rows.filter(source => suggestionsEnabled(source.suggestions)).map(source => ({
-    type: "monitor_source" as const, payload: { sourceId: source.id },
-    dedupeKey: dedupeKeyFor("monitor_source", { sourceId: source.id }), priority: 7,
-  })));
+  await enqueueTasks(deps.db, due.rows.filter(source => suggestionsEnabled(source.suggestions))
+    .map(source => taskRow("monitor_source", { sourceId: source.id }, { priority: 7 })));
 
   // Batch scoring: every `scoringBatchMinutes`, one collection of the roles waiting to be scored,
   // claimed across the deployment so two workers and the cron fallback make one batch, not three.
@@ -110,8 +105,7 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
   if (settings.scoringMode === "batch") {
     // A few seconds short of the interval, so a tick that lands just early does not skip a turn.
     await claimPeriodic(deps, "lastScoreBatchCollect", Math.max(30, settings.scoringBatchMinutes * 60 - 5), async () => {
-      const payload = { reason: "schedule" as const };
-      await enqueueTask(deps.db, "collect_score_batch", payload, { dedupeKey: dedupeKeyFor("collect_score_batch", payload), priority: priorityFor("collect_score_batch") });
+      await enqueueStandard(deps.db, "collect_score_batch", { reason: "schedule" });
     });
   }
 
@@ -233,14 +227,10 @@ export async function reconcileCvDrafts(deps: WorkerDeps, graceMinutes = 5): Pro
     // No task is left to read an attempt count from, so the record names what happened and who
     // moves next without one; the page never shows a bare "interrupted" without its taxonomy.
     const failure = cvInterruptedFailure();
-    const abandoned = await abandonCvDraft(deps.db, orphan.id, CV_ABANDONED_MESSAGE, failure);
+    const abandoned = await closeAbandonedCvDraft(deps.db, orphan.id, failure);
     if (!abandoned) continue;
-    await failOpenCvBuildStepsQuietly(deps.db, orphan.id, CV_ABANDONED_MESSAGE, failure);
     failed++;
-    // This build's hold alone: the account may have another build running, whose hold is its own
-    // and whose renewal would otherwise silently stop matching a row.
-    const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV", refId: orphan.id });
-    log.warn("failed a CV draft no task was building", { draftId: orphan.id, userId: abandoned.userId, holdsReleased: released.count });
+    log.warn("failed a CV draft no task was building", { draftId: orphan.id, userId: abandoned.userId, holdsReleased: abandoned.released.count });
   }
   // Holds outlive their builds when the pod that took them dies under another name or the draft
   // is discarded mid-build; a boot releases only its own pod's holds, so the sweep takes the rest.

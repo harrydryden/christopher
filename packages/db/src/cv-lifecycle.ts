@@ -59,14 +59,7 @@ const metadata = {
 const newest = [desc(cvDrafts.createdAt), desc(cvDrafts.id)];
 
 /** Unrelated roles can progress independently; the lock lasts only for the transaction. */
-async function lockLegacyLifecycle(tx: Transaction) {
-  // Compatible with an older worker's exclusive lock during a rolling deployment.
-  await tx.execute(
-    sql`select pg_advisory_xact_lock_shared(hashtext('cv:lifecycle'))`,
-  );
-}
 export async function lockCvLifecycle(tx: Transaction, role: CvRole) {
-  await lockLegacyLifecycle(tx);
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtextextended(${roleKey(role)}, 0))`,
   );
@@ -239,7 +232,6 @@ export async function actionCvs(
   if (!ids.length) return;
   const selectedIds = new Set(ids);
   await database.transaction(async (tx) => {
-    await lockLegacyLifecycle(tx);
     // Lock all affected roles in a stable order, preventing crossed bulk requests deadlocking.
     const roles = await tx
       .selectDistinct({ key: roleKey(cvDrafts) })

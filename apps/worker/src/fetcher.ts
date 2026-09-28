@@ -703,9 +703,7 @@ export class PoliteFetcher {
       // platform `fetch` leaves nothing better than the decoded count.
       const declared = Number(res.headers.get("content-length") ?? NaN);
       if (init.method !== "HEAD" && Number.isFinite(declared) && declared >= 0) counted.bytes = declared;
-      const outHeaders: Record<string, string> = {};
-      res.headers.forEach((v, k) => (outHeaders[k] = v));
-      return { value: hooks.body({ res, chunks, size, headers: outHeaders, finalUrl: logical, started, originalHost, counted }) };
+      return { value: hooks.body({ res, chunks, size, headers: headerRecord(res.headers), finalUrl: logical, started, originalHost, counted }) };
     } catch (err) {
       if (err instanceof SourceFetchError) throw err;
       // The caller gave up, not the host: its reason, and nothing the ledger blames on the host.
@@ -752,9 +750,7 @@ export class PoliteFetcher {
           // Nothing was kept of this body but its hash, so there is nothing to return: the caller
           // asked for `revalidateLargeBody` precisely because it can produce the listing itself.
           this.rememberValidator(cacheKey, { ...validator, at: Date.now() });
-          const notModifiedHeaders: Record<string, string> = {};
-          res.headers.forEach((v, k) => (notModifiedHeaders[k] = v));
-          return { status: 304, url, headers: notModifiedHeaders, body: "", revalidated: true, unchanged: true, contentHash: validator.hash };
+          return { status: 304, url, headers: headerRecord(res.headers), body: "", revalidated: true, unchanged: true, contentHash: validator.hash };
         }
         return undefined;
       },
@@ -763,12 +759,9 @@ export class PoliteFetcher {
         const response: FetchResponse = { status: res.status, url: finalUrl, headers: outHeaders, body };
         // What the cache holds, which is the decoded string; the ledger has the wire bytes already.
         const bytes = Buffer.byteLength(body);
-        if (res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && this.responses.has(cacheKey)) {
-          // The body outgrew the cache. Leaving the old one there would keep sending its validator
-          // for ever, and a 304 against it would hand a caller a listing that is months out of date.
-          this.responseBytes -= Buffer.byteLength(this.responses.get(cacheKey)!.response.body);
-          this.responses.delete(cacheKey);
-        }
+        // The body outgrew the cache. Leaving the old one there would keep sending its validator
+        // for ever, and a 304 against it would hand a caller a listing that is months out of date.
+        if (res.status === 200 && bytes > MAX_CACHED_BODY_BYTES) this.dropCached(cacheKey);
         // Whether a vendor sends validators at all is not something this codebase can assume, so the
         // hash stands on its own: an identical body still spares the parse and everything after it.
         if (wantsLargeRevalidation && res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "")) {
@@ -778,14 +771,10 @@ export class PoliteFetcher {
           this.rememberValidator(cacheKey, { etag: outHeaders.etag, lastModified: outHeaders["last-modified"], hash, bytes, at: Date.now() });
         }
         if ((init.method ?? "GET") === "GET" && !init.body && res.status === 200 && bytes <= MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "") && !outHeaders["set-cookie"] && !reqHeaders.authorization && !reqHeaders.cookie && (outHeaders.etag || outHeaders["last-modified"])) {
-          const old = this.responses.get(cacheKey);
-          if (old) { this.responseBytes -= Buffer.byteLength(old.response.body); this.responses.delete(cacheKey); }
+          this.dropCached(cacheKey);
           this.responses.set(cacheKey, { response, at: Date.now() }); this.responseBytes += bytes;
           // Map iteration is insertion order, so this evicts the oldest entry first.
-          while (this.responseBytes > MAX_CACHE_BYTES || this.responses.size > MAX_CACHE_ENTRIES) {
-            const key = this.responses.keys().next().value!;
-            this.responseBytes -= Buffer.byteLength(this.responses.get(key)!.response.body); this.responses.delete(key);
-          }
+          while (this.responseBytes > MAX_CACHE_BYTES || this.responses.size > MAX_CACHE_ENTRIES) this.dropCached(this.responses.keys().next().value!);
         }
         log.debug("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes });
         return response;
@@ -812,6 +801,39 @@ export class PoliteFetcher {
     });
   }
 
+  /** Drop one cached body, and its bytes from the running total. */
+  private dropCached(cacheKey: string): void {
+    const old = this.responses.get(cacheKey);
+    if (!old) return;
+    this.responseBytes -= Buffer.byteLength(old.response.body);
+    this.responses.delete(cacheKey);
+  }
+
+  /** Count a block against `host` and name it, for the caller to throw. */
+  private blocked(host: string, message: string, status: number): SourceFetchError {
+    this.opts.traffic?.reason(host, "http", "blocked");
+    return new SourceFetchError(message, "blocked", status);
+  }
+
+  /**
+   * The politeness rule for a refusing status, the same for text and bytes. 429 and 503 are the
+   * host pacing us: it is deferred and this fetch fails as rate limited, a back-off that retries on
+   * the normal schedule, never a source disabled until someone intervenes — unless `challenged`
+   * finds a bot challenge under it, which is the host protecting itself from us, and no amount of
+   * waiting fixes that. 403 is blocked. Anything else passes.
+   */
+  private async refuseStatus(res: { status: number; url: string; headers: Record<string, string> }, url: string, challenged?: () => boolean): Promise<void> {
+    // The host that answered, which after a redirect is not always the one asked.
+    const host = new URL(res.url || url).hostname;
+    if (res.status === 429 || res.status === 503) {
+      await this.opts.deferHost?.(host, retryAfterMs(res.headers));
+      if (challenged?.()) throw this.blocked(host, `blocked (${res.status}) fetching ${url}`, res.status);
+      this.opts.traffic?.reason(host, "http", "rateLimited");
+      throw new SourceFetchError(`rate limited (${res.status}) fetching ${url}`, "rate_limited", res.status);
+    }
+    if (res.status === 403) throw this.blocked(host, `blocked (${res.status}) fetching ${url}`, res.status);
+  }
+
   /** Keep the validators for one large URL, newest last, and drop the oldest past the bound. */
   private rememberValidator(cacheKey: string, entry: { etag?: string; lastModified?: string; hash: string; bytes: number; at: number }): void {
     this.validators.delete(cacheKey);
@@ -823,28 +845,9 @@ export class PoliteFetcher {
     await this.assertDestination(url);
     await this.assertRobotsAllowedFor(url, "http");
     const res = await this.rawFetch(url, init, next => this.assertRobotsAllowedFor(next, "http"));
-    // The host that answered, which after a redirect is not always the one asked.
-    const u = new URL(res.url || url);
-    const challenge = () => CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000)));
-    if (res.status === 429 || res.status === 503) {
-      await this.opts.deferHost?.(u.hostname, retryAfterMs(res.headers));
-      // A host serving a challenge under a 503 is protecting itself from us, not pacing us, and
-      // no amount of waiting fixes that. Everything else is a back-off: a failed scan that
-      // retries on the normal schedule, never a source disabled until someone intervenes.
-      if (challenge()) {
-        this.opts.traffic?.reason(u.hostname, "http", "blocked");
-        throw new SourceFetchError(`blocked (${res.status}) fetching ${url}`, "blocked", res.status);
-      }
-      this.opts.traffic?.reason(u.hostname, "http", "rateLimited");
-      throw new SourceFetchError(`rate limited (${res.status}) fetching ${url}`, "rate_limited", res.status);
-    }
-    if (res.status === 403) {
-      this.opts.traffic?.reason(u.hostname, "http", "blocked");
-      throw new SourceFetchError(`blocked (${res.status}) fetching ${url}`, "blocked", res.status);
-    }
+    await this.refuseStatus(res, url, () => CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000))));
     if (res.status === 200 && CHALLENGE_MARKERS.slice(0, 3).some((re) => re.test(res.body.slice(0, 5000))) && res.body.length < 20_000) {
-      this.opts.traffic?.reason(u.hostname, "http", "blocked");
-      throw new SourceFetchError(`bot challenge page at ${url}`, "blocked", 403);
+      throw this.blocked(new URL(res.url || url).hostname, `bot challenge page at ${url}`, 403);
     }
     log.debug("fetch", { url, status: res.status, bytes: res.body.length });
     return res;
@@ -861,16 +864,7 @@ export class PoliteFetcher {
     await this.assertDestination(url);
     await this.assertRobotsAllowedFor(url, "http");
     const res = await this.rawFetchBytes(url, init, next => this.assertRobotsAllowedFor(next, "http"));
-    const u = new URL(res.url || url);
-    if (res.status === 429 || res.status === 503) {
-      await this.opts.deferHost?.(u.hostname, retryAfterMs(res.headers));
-      this.opts.traffic?.reason(u.hostname, "http", "rateLimited");
-      throw new SourceFetchError(`rate limited (${res.status}) fetching ${url}`, "rate_limited", res.status);
-    }
-    if (res.status === 403) {
-      this.opts.traffic?.reason(u.hostname, "http", "blocked");
-      throw new SourceFetchError(`blocked (${res.status}) fetching ${url}`, "blocked", res.status);
-    }
+    await this.refuseStatus(res, url);
     log.debug("fetch bytes", { url, status: res.status, bytes: res.bytes.length });
     return res;
   }
@@ -894,6 +888,18 @@ export class PoliteFetcher {
   async flush(): Promise<void> {
     await this.opts.traffic?.flush();
   }
+}
+
+/** A response's headers as a plain record, as every fetch result carries them. */
+function headerRecord(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => (out[key] = value));
+  return out;
+}
+
+/** `refuseStatus`'s reading of a status seen outside this fetcher (the browser's own navigation). */
+export function statusKind(status: number): "blocked" | "rate_limited" | "http" {
+  return status === 403 ? "blocked" : status === 429 || status === 503 ? "rate_limited" : "http";
 }
 
 export function userAgentFor(contactEmail: string): string {

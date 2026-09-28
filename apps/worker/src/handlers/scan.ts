@@ -8,13 +8,11 @@
  * follower and posting, created only once the posting passes that follower's gate.
  */
 import { withSpan } from "../otel";
-import { schema, enqueueTask, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
+import { schema, taskRow, enqueueTasks, queueScoring, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, type Task, type ViewUpdate } from "@ava/db";
 import {
   ats,
   aiBudgetWindowStart,
   classifyScan,
-  compileGate,
-  dedupeKeyFor,
   keyPostings,
   listingShrank,
   looksRemote,
@@ -40,12 +38,13 @@ import {
 } from "@ava/core";
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@ava/db";
-import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
+import { makeFetchContext, type WorkerDeps } from "../context";
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
-import { HostBusyError } from "../fetcher";
+import { accountsWithBudget } from "../budget";
+import { HostBusyError, statusKind } from "../fetcher";
 import { withResourceLease } from "../lease";
 import { log } from "../log";
 import { loadUserSettingsMany } from "../settings";
@@ -215,31 +214,21 @@ async function loadFollowers(db: WorkerDeps["db"], companyId: string, opts: { lo
   const rows = await db.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
     .where(and(eq(schema.companySubscriptions.companyId, companyId), inArray(schema.companySubscriptions.status, ["active", "paused"])));
   const settings = await loadUserSettingsMany(db, rows.map(row => row.userId), opts);
-  const compiled = new Map<string, CompiledGate>();
+  const gateFor = gateCompiler();
   return rows.map(row => {
     const own = settings.get(row.userId)!;
-    const key = JSON.stringify(own.gate);
-    let gate = compiled.get(key);
-    if (!gate) compiled.set(key, gate = compileGate(own.gate));
-    return { userId: row.userId, settings: own, gate };
+    return { userId: row.userId, settings: own, gate: gateFor(own.gate) };
   });
 }
 
 /**
- * The accounts among `wanted` with budget left this month, asked in one grouped read of `ai_calls`
- * rather than a sum per follower. Same rule as `aiBudgetStop`: an account whose spend since its
- * window opened has reached its budget has its roles left unscored.
+ * The followers among `wanted` with budget left this month, in one read for them all. Same rule as
+ * `aiBudgetStop`: an account whose spend plus what its calls in flight hold has reached its budget
+ * has its roles left unscored, so a month a running CV build is holding queues no scores to fail.
  */
-async function accountsWithBudget(db: WorkerDeps["db"], followers: Follower[], wanted: Set<string>, now: Date): Promise<Set<string>> {
-  const windows = followers.filter(f => wanted.has(f.userId))
-    .map(f => ({ userId: f.userId, since: aiBudgetWindowStart(now, f.settings.aiBudgetResetAt).toISOString(), budget: f.settings.aiBudgetUsd }));
-  if (!windows.length) return new Set();
-  const rows = await db.execute<{ user_id: string; spent: number }>(sql`select v."userId" as user_id, coalesce(sum(a.cost_usd::float8), 0) as spent
-    from jsonb_to_recordset(${JSON.stringify(windows)}::jsonb) as v("userId" uuid, since timestamptz)
-    left join ai_calls a on a.user_id = v."userId" and a.at >= v.since
-    group by v."userId"`);
-  const spent = new Map(rows.rows.map(row => [row.user_id, Number(row.spent)]));
-  return new Set(windows.filter(w => (spent.get(w.userId) ?? 0) < w.budget).map(w => w.userId));
+function followersWithBudget(db: WorkerDeps["db"], followers: Follower[], wanted: Set<string>, now: Date): Promise<Set<string>> {
+  return accountsWithBudget(db, followers.filter(f => wanted.has(f.userId))
+    .map(f => ({ userId: f.userId, since: aiBudgetWindowStart(now, f.settings.aiBudgetResetAt), budgetUsd: f.settings.aiBudgetUsd })));
 }
 
 async function scanSource(
@@ -643,7 +632,33 @@ async function scanSource(
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
       });
   }
-  const adopted: Array<{ id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; remote: boolean | null; descriptionText: string | null }> = [];
+  type Admissible = { id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; remote: boolean | null; descriptionText: string | null };
+  /**
+   * Offer a posting new to these followers to each one's gate: a view for every follower it
+   * admits, and then either its description or their scores queued.
+   */
+  const admit = (row: Admissible, seeded: boolean, skip?: (userId: string) => boolean) => {
+    const admitted: string[] = [];
+    for (const follower of followers) {
+      if (skip?.(follower.userId)) continue;
+      if (undecided(row.url) && needsDescription(follower.settings.gate)) continue;
+      const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
+      if (!verdict.inTable) continue;
+      admitted.push(follower.userId);
+      viewInserts.push(newView(follower.userId, row.id, viewVerdict(verdict, true), seeded, deps.now()));
+    }
+    // A posting a follower admitted needs its description stored; a deferred posting needs it
+    // before any description gate can decide. The first scan of a 2,331-role Greenhouse board
+    // with a description-matching follower therefore queues 2,331 tasks, once: dedupe keys stop
+    // duplicates and later scans queue only postings that are new or still have no text. That
+    // cost is accepted rather than capped, because a silent cap would hide roles from the gate.
+    if (!row.descriptionText && (admitted.length || deferred.has(row.url))) descriptionQueue.add(row.id);
+    // A role whose description is on its way is scored once, when the text lands: the
+    // description task re-runs every follower's gate and queues the score then, text or no text.
+    // Scoring it now on the title alone would pay for the same role twice.
+    else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
+  };
+  const adopted: Admissible[] = [];
   for (const { job, insert } of adoptions) {
     const fields = {
       title: insert.title,
@@ -681,46 +696,14 @@ async function scanSource(
       .returning({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title, department: schema.jobs.department, location: schema.jobs.location, locations: schema.jobs.locations, remote: schema.jobs.remote, descriptionText: schema.jobs.descriptionText });
     newCount += created.length;
     if (created.length) await deps.db.insert(schema.jobEvents).values(created.map(row => ({ jobId: row.id, type: "discovered" as const, payload: { method: fetchMethod, seeded: isFirstScan } })));
-    for (const row of created) {
-      const admitted: string[] = [];
-      for (const follower of followers) {
-        const gate = follower.settings.gate;
-        if (undecided(row.url) && needsDescription(gate)) continue;
-        const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
-        if (!verdict.inTable) continue;
-        admitted.push(follower.userId);
-        viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: isFirstScan, createdAt: deps.now(), updatedAt: deps.now() });
-      }
-      // A posting a follower admitted needs its description stored; a deferred posting needs it
-      // before any description gate can decide. The first scan of a 2,331-role Greenhouse board
-      // with a description-matching follower therefore queues 2,331 tasks, once: dedupe keys stop
-      // duplicates and later scans queue only postings that are new or still have no text. That
-      // cost is accepted rather than capped, because a silent cap would hide roles from the gate.
-      if (!row.descriptionText && (admitted.length || deferred.has(row.url))) descriptionQueue.add(row.id);
-      // A role whose description is on its way is scored once, when the text lands: the
-      // description task re-runs every follower's gate and queues the score then, text or no text.
-      // Scoring it now on the title alone would pay for the same role twice.
-      else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
-    }
+    for (const row of created) admit(row, isFirstScan);
   }
   // An adopted role is new to every follower but whoever pasted it, so each follower without a
   // view of it meets it now, exactly as they would a new posting, rather than a day later.
   if (adopted.length) {
     const held = new Set((await deps.db.select({ userId: schema.userJobs.userId, jobId: schema.userJobs.jobId }).from(schema.userJobs)
       .where(inArray(schema.userJobs.jobId, adopted.map(row => row.id)))).map(view => `${view.userId}:${view.jobId}`));
-    for (const row of adopted) {
-      const admitted: string[] = [];
-      for (const follower of followers) {
-        if (held.has(`${follower.userId}:${row.id}`)) continue;
-        if (undecided(row.url) && needsDescription(follower.settings.gate)) continue;
-        const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
-        if (!verdict.inTable) continue;
-        admitted.push(follower.userId);
-        viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
-      }
-      if (!row.descriptionText && (admitted.length || deferred.has(row.url))) descriptionQueue.add(row.id);
-      else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
-    }
+    for (const row of adopted) admit(row, false, userId => held.has(`${userId}:${row.id}`));
   }
 
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
@@ -755,7 +738,7 @@ async function scanSource(
       }).from(schema.userJobs).where(and(inArray(schema.userJobs.jobId, seenRows.map(j => j.id)), inArray(schema.userJobs.userId, followers.map(f => f.userId))))
     : [];
   const viewByKey = new Map(views.map(v => [`${v.userId}:${v.jobId}`, v]));
-  const viewUpdates: Array<Record<string, unknown>> = [];
+  const viewUpdates: ViewUpdate[] = [];
   for (const row of seenRows) {
     const job = row;
     const posting = observed.get(job.externalKey)!;
@@ -803,21 +786,15 @@ async function scanSource(
       if (undecided(posting.url) && needsDescription(gate)) continue;
       const verdict = follower.gate.evaluate({ ...fields, description: follower.gate.matchesDescription ? descriptionText : undefined });
       const view = viewByKey.get(`${follower.userId}:${job.id}`);
-      // An account that asked for this role by pasting its URL keeps it, whatever their gate says
-      // and whether or not a later scan adopted the row: they asked for that one by name.
-      const inTable = verdict.inTable || job.addedBy === follower.userId || view?.addedByUrl === true;
+      const inTable = inTableFor(verdict, follower.userId, job, view);
       if (view) {
-        // Written only when something moved: most views of most roles are the same every day, and
-        // `updated_at` is what dates a change the person sees.
-        const values = { keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable };
-        const restore = inTable && isGateArchive(view);
-        if (restore || view.nearMiss || (Object.keys(values) as Array<keyof typeof values>).some(key => JSON.stringify(values[key]) !== JSON.stringify(view[key]))) {
-          viewUpdates.push({ userId: follower.userId, jobId: job.id, ...values, restore });
-        }
+        // A scan leaves `hidden` as it is.
+        const update = viewUpdate(follower.userId, job.id, view, viewVerdict(verdict, inTable));
+        if (update) viewUpdates.push(update);
         // A view whose scoring completed without a score is not paid for again on unchanged inputs.
         if (inTable && (changedFields.length || !view.inTable || (view.fitScore === null && view.scoredAt === null))) scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else if (inTable) {
-        viewInserts.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
+        viewInserts.push(newView(follower.userId, job.id, viewVerdict(verdict, true), false, deps.now()));
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else continue;
       if (inTable && !textInHand && descriptionMoved) descriptionQueue.add(job.id);
@@ -855,19 +832,8 @@ async function scanSource(
       from jsonb_to_recordset(${JSON.stringify(descriptionWrites.slice(offset, offset + 100))}::jsonb) as v(id uuid, text text, hash text, truncated boolean, "prevFetchedAt" timestamptz)
       where j.id=v.id and date_trunc('milliseconds', j.description_fetched_at) is not distinct from v."prevFetchedAt"`);
   }
-  for (let offset = 0; offset < viewUpdates.length; offset += 250) {
-    // A view the gate archived and this listing's gate admits again comes back (`restoreGateArchive`).
-    await deps.db.execute(sql`with changed as (
-      update user_jobs uj set keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
-        excluded=v.excluded, location_ok=v."locationOk", in_table=v."inTable", near_miss=false, ${restoreGateArchive}, updated_at=${deps.now()}
-      from jsonb_to_recordset(${JSON.stringify(viewUpdates.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid,
-        "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, restore boolean)
-      where uj.user_id=v."userId" and uj.job_id=v."jobId"
-      returning uj.user_id, uj.job_id, (v.restore and uj.archived_at is null) as restored
-    )
-    insert into job_events (job_id, user_id, type, payload)
-    select job_id, user_id, 'updated', ${GATE_RESTORE_EVENT}::jsonb from changed where restored`);
-  }
+  // A view the gate archived and this listing's gate admits again comes back.
+  await writeViewUpdates(deps.db, viewUpdates, deps.now());
   for (let offset = 0; offset < viewInserts.length; offset += 250) await deps.db.insert(schema.userJobs).values(viewInserts.slice(offset, offset + 250)).onConflictDoNothing();
   for (let offset = 0; offset < updateEvents.length; offset += 250) await deps.db.insert(schema.jobEvents).values(updateEvents.slice(offset, offset + 250));
   if (result.reopened.length > 0) {
@@ -953,29 +919,17 @@ async function scanSource(
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3);
   if ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || status === "suspect_empty" || persistentlyShrunk) {
-    await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
-      dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),
-      priority: priorityFor("discover"),
-    });
+    await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" });
   }
 
-  const queued: Array<typeof schema.tasks.$inferInsert> = [];
   // Scoring is per account, so the budget is asked per account: one follower with nothing left to
   // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
   // anyway would only fail and retry each task at the hold. Only the accounts with something to
   // score are asked, all in one read.
-  const scorable = deps.ai.enabled ? await accountsWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
+  const scorable = deps.ai.enabled ? await followersWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
   const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
-  for (const payload of scoring) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
-  for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
-  for (let offset = 0; offset < queued.length; offset += 250) await deps.db.insert(schema.tasks).values(queued.slice(offset, offset + 250)).onConflictDoNothing();
-  // A role whose score is on its way says so on the view, so the table can tell waiting from
-  // refused instead of showing one em dash for five different situations.
-  for (let offset = 0; offset < scoring.length; offset += 250) {
-    await deps.db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${deps.now()}
-      from jsonb_to_recordset(${JSON.stringify(scoring.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid)
-      where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
-  }
+  await queueScoring(deps.db, scoring, deps.now());
+  await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
 
   log.info("source scanned", {
     company: company.name,
@@ -1149,6 +1103,8 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   return { postings, method, dropped, contentHash: sha1(pages.map(p => p.contentHash).join("|")), unchanged, recipe, pages, incomplete, incompleteReason: incomplete ? incompleteReason ?? "Listing pagination stopped before all pages could be verified (page, posting or browser limit)." : undefined };
 }
 
+const BROWSER_PAGINATION_INCOMPLETE = "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit.";
+
 async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, cached?: CachedHtmlPage, supplied?: { html: string; url: string }): Promise<HtmlScanOutcome> {
   let html: string;
   let finalUrl = spec.url;
@@ -1178,15 +1134,13 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     // its bytes against this scan like any other fetch.
     const rendered = await ctx.render!(spec.url, { scrollAndExpand: true });
     if (rendered.status !== null && rendered.status >= 400) {
-      // Same rule as the fetcher: 403 is bot protection and blocks the source, 429 and 503 are the
-      // host pacing us and only fail this scan.
-      const kind = rendered.status === 403 ? "blocked" : rendered.status === 429 || rendered.status === 503 ? "rate_limited" : "http";
-      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, kind, rendered.status);
+      // Same rule as the fetcher's.
+      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, statusKind(rendered.status), rendered.status);
     }
     const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
     const outcomes: HtmlScanOutcome[] = [];
     let incomplete = rendered.incomplete ?? false;
-    let incompleteReason = incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined;
+    let incompleteReason = incomplete ? BROWSER_PAGINATION_INCOMPLETE : undefined;
     for (const capture of captures) {
       try {
         const outcome = await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture);
@@ -1198,11 +1152,11 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
       contentHash: capturesHash(captures), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
-      incompleteReason: incomplete ? incompleteReason ?? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
+      incompleteReason: incomplete ? incompleteReason ?? BROWSER_PAGINATION_INCOMPLETE : undefined, traversed: true };
 
   }
 
-  const contentHash = sha1(html.replace(/\s+/g, " "));
+  const contentHash = httpHash ?? sha1(html.replace(/\s+/g, " "));
   const unchanged = contentHash === cached?.contentHash;
 
   if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
@@ -1210,7 +1164,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   if (ats.isExplicitEmptyListing(html, finalUrl)) {
     return { postings: [], method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
   }
-  if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
+  if (unchanged || !deps.ai.enabled) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }
 

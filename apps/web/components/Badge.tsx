@@ -51,12 +51,6 @@ export function Badge({
   );
 }
 
-export function jobStatusTone(status: "new" | "active" | "closed"): Tone {
-  if (status === "new") return "green";
-  if (status === "active") return "blue";
-  return "gray";
-}
-
 export function sourceStatusTone(status: string): Tone {
   switch (status) {
     case "active":

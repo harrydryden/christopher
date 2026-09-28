@@ -1,5 +1,6 @@
 import { CvContentSchema } from "@ava/core/cv";
 import { routeUser } from "@/lib/route-auth";
+import { readCapped } from "@/lib/route-request";
 import { renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 import { refuseCvRender } from "@/lib/cv-render-limit";
 export const runtime = "nodejs";
@@ -11,21 +12,13 @@ export const maxDuration = 30;
 export async function POST(request: Request) {
   const auth = await routeUser();
   if (!auth.ok) return auth.response;
-  const reader = request.body?.getReader();
-  if (!reader) return new Response("CV content is required.", { status: 400 });
-  let size = 0;
-  const chunks: Uint8Array[] = [];
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 150_000) { await reader.cancel(); return new Response("CV preview is too large.", { status: 413 }); }
-      chunks.push(value);
-    }
-  } finally { reader.releaseLock(); }
+  const body = await readCapped(request, 150_000);
+  if (!body.ok) {
+    if (body.reason === "too_large") return new Response("CV preview is too large.", { status: 413 });
+    return new Response(body.reason === "missing" ? "CV content is required." : "Invalid CV content.", { status: 400 });
+  }
   let payload: unknown;
-  try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+  try { payload = JSON.parse(body.bytes.toString("utf8")); }
   catch { return new Response("Invalid CV content.", { status: 400 }); }
   const parsed = CvContentSchema.safeParse(payload);
   if (!parsed.success) return new Response(parsed.error.issues.map(issue => issue.message).join(" "), { status: 400 });

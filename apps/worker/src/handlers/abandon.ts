@@ -1,4 +1,4 @@
-import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds } from "@ava/db";
+import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds, type Db, type ReleasedHolds } from "@ava/db";
 import { cvBuildFailure, type CvBuildFailure, type ScoreBatchRecord } from "@ava/core";
 import type { AbandonHookMap, InterruptedHookMap } from "../queue";
 import { failOpenCvBuildStepsQuietly } from "./cv-journal";
@@ -28,6 +28,24 @@ export function cvInterruptedFailure(attempts?: { attempt: number; maxAttempts: 
     resolvedBy: "user", retryable: false, action: "retry",
     ...(attempts ?? {}), ...(cause ? { cause: cause.slice(0, 500) } : {}),
   });
+}
+
+/**
+ * Close a CV build that is over for good. The draft's status, its open steps and its budget hold
+ * are three records of that one fact, so they are closed together: the draft is failed, whatever
+ * step the build was in the middle of is failed with it (every attempt's, since nothing is coming
+ * back to close them, and the narrative would otherwise end mid-sentence), and the hold it kept
+ * against the account's month is let go, or it refuses the rebuild the person is now asked to
+ * start. Only this build's hold: the account may have another build running.
+ *
+ * Null when the draft was not open to abandon (finished, already failed, or deleted).
+ */
+export async function closeAbandonedCvDraft(db: Db, draftId: string, failure: CvBuildFailure): Promise<{ userId: string; released: ReleasedHolds } | null> {
+  const abandoned = await abandonCvDraft(db, draftId, CV_ABANDONED_MESSAGE, failure);
+  if (!abandoned) return null;
+  await failOpenCvBuildStepsQuietly(db, draftId, CV_ABANDONED_MESSAGE, failure);
+  const released = await releaseAiHolds(db, { userId: abandoned.userId, callSite: "CV", refId: draftId });
+  return { userId: abandoned.userId, released };
 }
 
 /** What the page says while the queue is bringing an interrupted build back. */
@@ -75,17 +93,10 @@ export const onAbandon: AbandonHookMap = {
     if (!draftId) return;
     if (await isCompletedQuizPredecessor(task, deps, draftId)) return;
     const failure = cvInterruptedFailure({ attempt: task.attempts, maxAttempts: task.maxAttempts }, reason);
-    const abandoned = await abandonCvDraft(deps.db, draftId, CV_ABANDONED_MESSAGE, failure);
+    const abandoned = await closeAbandonedCvDraft(deps.db, draftId, failure);
     if (!abandoned) return;
-    // Whatever the build was in the middle of is over; its steps would otherwise stay `running`
-    // for ever and the narrative would end mid-sentence. Every attempt's, because the draft is
-    // failed for good and nothing is coming back to close them.
-    await failOpenCvBuildStepsQuietly(deps.db, draftId, CV_ABANDONED_MESSAGE, failure);
     log.warn("cv draft failed by the worker that gave up on its task", { draftId, taskId: task.id, userId: abandoned.userId });
-    // The build held capacity against this account's monthly budget for the whole hour it was
-    // allowed. Nothing is spending it now, and leaving it held refuses the rebuild we have just
-    // asked the user to start. Only this build's hold: the account may have another build running.
-    const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV", refId: draftId });
+    const { released } = abandoned;
     if (released.count) log.warn("released the abandoned build's AI holds", { draftId, userId: abandoned.userId, ...released });
   },
   // A scoring batch whose results could not be read: its roles are scored live, its holds let go.

@@ -14,6 +14,10 @@ import type { CvLibrary, CvContent, LibraryEntryReview } from "@ava/core";
 import type { CvAssessment, CvJobSource } from "@ava/core/cv-assessment";
 import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@ava/core";
+import { APPLICATION_STATUSES, type ApplicationStatus } from "@ava/core/role-workflow";
+import { EVIDENCE_RATINGS, LIBRARY_REVIEW_SOURCES, type EvidenceRating, type LibraryReviewSource } from "@ava/core/library-review";
+import { LOGO_SOURCES } from "@ava/core/logo-capture";
+import { TASK_TYPE_NAMES, type TaskType } from "@ava/core/tasks";
 import { sql } from "drizzle-orm";
 import { cvRoleKey } from "./cv-role-key";
 import {
@@ -60,27 +64,22 @@ export const JOB_ORIGINS = ["scan", "user"] as const;
  */
 export const SCORE_STATES = ["queued", "scored", "closed", "budget", "ineligible"] as const;
 export type ScoreState = (typeof SCORE_STATES)[number];
-/** Where captured logo bytes came from. Mirrors `LOGO_SOURCES` in @ava/core. */
-export const LOGO_SOURCES = ["site_icon", "icon_service"] as const;
+/**
+ * Column enums whose values core decides are core's own lists, re-exported: where captured logo
+ * bytes came from; what an `applications` row can say (core maps each onto a role stage;
+ * "applying" is the stage a person sets from the table before anything is submitted, which is
+ * why `pdf_base64` is nullable); how much evidence a library entry carries and who reviewed it;
+ * and every task type, in the order `TaskPayloads` names them. These are text columns, so the
+ * lists constrain TypeScript only and adding a value needs no migration.
+ */
+export { APPLICATION_STATUSES, EVIDENCE_RATINGS, LIBRARY_REVIEW_SOURCES, LOGO_SOURCES };
+export type { ApplicationStatus, EvidenceRating, LibraryReviewSource, TaskType };
+export const TASK_TYPES = TASK_TYPE_NAMES;
 export const NAME_SUGGESTION_STATUSES = ["pending", "applied", "dismissed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
-/**
- * What an `applications` row can say. Mirrors `APPLICATION_STATUSES` in @ava/core, which
- * maps each one onto a role stage; the two lists are maintained together because core cannot
- * import this package. "applying" is the stage a person sets from the table before anything is
- * submitted, which is why `pdf_base64` is nullable.
- */
-export const APPLICATION_STATUSES = ["applying", "applied", "screening", "interview", "offer", "accepted", "rejected", "withdrawn"] as const;
-export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 export const USER_ROLES = ["admin", "member"] as const;
 export const AUTH_PROVIDERS = ["google"] as const;
 export const AUTH_TOKEN_PURPOSES = ["password_reset", "email_verification"] as const;
-export const TASK_TYPES = [
-  "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
-  "synthesize_profile", "suggest_filters", "suggest_from_scans", "profile_company", "suggest_companies", "rescore_all",
-  "reevaluate_gate", "generate_cv", "import_posting", "review_library", "import_library_document",
-  "collect_score_batch", "poll_score_batch", "reencode_logos",
-] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 
 // ---------------------------------------------------------------------------
@@ -788,7 +787,6 @@ export type Setting = typeof settings.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
 export type AiCall = typeof aiCalls.$inferSelect;
-export type TaskType = (typeof TASK_TYPES)[number];
 export type SourceType = (typeof SOURCE_TYPES)[number];
 export type UserRole = (typeof USER_ROLES)[number];
 export type JobOrigin = (typeof JOB_ORIGINS)[number];
@@ -802,17 +800,6 @@ export const cvLibraries = pgTable("cv_libraries", {
   content: jsonb("content").$type<CvLibrary>().notNull(),
   createdAt: tsNow("created_at"),
 }, t => [uniqueIndex("cv_libraries_user_version_uidx").on(t.userId, t.version)]);
-
-/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @ava/core. */
-export const EVIDENCE_RATINGS = ["none", "weak", "good", "strong"] as const;
-export type EvidenceRating = (typeof EVIDENCE_RATINGS)[number];
-/**
- * Who produced a review. `rules` is the deterministic baseline computed from the person's own
- * facet tags, written the moment a library is saved; `model` is the A12 review, which lands when
- * the task has run. Mirrors `LIBRARY_REVIEW_SOURCES` in @ava/core.
- */
-export const LIBRARY_REVIEW_SOURCES = ["rules", "model"] as const;
-export type LibraryReviewSource = (typeof LIBRARY_REVIEW_SOURCES)[number];
 
 /**
  * The evidence review of one library entry: what each row was classified as, which facets are

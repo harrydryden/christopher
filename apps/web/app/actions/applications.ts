@@ -8,9 +8,10 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { isRecordableDay, todayDay } from "@/lib/application-dates";
 import { cvPdfFor } from "@/lib/cv-pdf-store";
-import { lockRoleView, recordDecision } from "@/lib/decisions";
+import { lockRoleView, recordDecisions } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
+import { revalidate } from "@/lib/action-helpers";
 
 type Transaction = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 type HistoryEntry = { status: string; at: string; notes: string; on?: string };
@@ -224,7 +225,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
       if (status === "withdrawn") {
         const [active] = await tx.select({ decision: decisions.decision }).from(decisions)
           .where(and(eq(decisions.userId, user.id), eq(decisions.jobId, jobId), eq(decisions.superseded, false))).limit(1);
-        if (active?.decision !== "skip") await recordDecision(tx, user.id, jobId, "skip", "Withdrawn from application");
+        if (active?.decision !== "skip") await recordDecisions(tx, user.id, [jobId], "skip", "Withdrawn from application", "Role not found.");
       }
     });
   } catch (error) {
@@ -232,8 +233,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
   }
   // The pages that show a role's stage: the pipeline, and the roles table on Roles and on the
   // company page. Not the layout: nothing in it reads a stage.
-  revalidatePath("/applications");
-  revalidatePath("/");
+  revalidate("/applications", "/");
   if (companyId) revalidatePath(`/companies/${companyId}`);
   return ok();
 }
@@ -325,7 +325,7 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
       });
     });
   } catch (error) { return actionError(error, "Could not record application. Please try again."); }
-  revalidatePath("/applications"); revalidatePath(`/cv/${cvId}`);
+  revalidate("/applications", `/cv/${cvId}`);
   return ok();
 }
 
@@ -397,8 +397,7 @@ export async function manageRoleCv(jobId: string | null, cvId: string, action: s
     await actionCvs(db(), user.id, [cvId], action as (typeof CV_ACTIONS)[number]);
     const row = jobId ? await pipelineRowForJob(user.id, jobId) : null;
     // The pages that show a role's CV and stage; nothing in the layout reads either.
-    revalidatePath("/applications");
-    revalidatePath("/");
+    revalidate("/applications", "/");
     revalidatePath("/companies/[id]", "page");
     return { ok: true, row };
   } catch (error) {

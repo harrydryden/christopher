@@ -8,11 +8,9 @@
  * `execute` or `statement` line in the audits. It needs no server setting and no preloaded library,
  * so it gives the same count on a laptop, in CI and on the audit host.
  */
-import { spawn } from "node:child_process";
-import { createHmac } from "node:crypto";
-import { createRequire } from "node:module";
 import net from "node:net";
-import { setTimeout as sleep } from "node:timers/promises";
+import { localDatabaseUrl } from "../lib/database.mjs";
+import { startWeb } from "../lib/web.mjs";
 
 export const BENCH_SECRET = "local-benchmark-only-0123456789abcdef0123456789abcdef";
 
@@ -20,21 +18,10 @@ export const BENCH_SECRET = "local-benchmark-only-0123456789abcdef0123456789abcd
  * Only a local scratch database whose name starts with `ava_perf` (ava_perf_bench, ava_perf_ci, …):
  * the fixture writes a hundred accounts into it, and the measurements write sessions and decisions.
  */
-export function assertPerfDatabase(input) {
-  let url;
-  try { url = new URL(input); } catch { throw new Error("DATABASE_URL must name a local ava_perf scratch database"); }
-  const database = decodeURIComponent(url.pathname.slice(1));
-  if (!["postgres:", "postgresql:"].includes(url.protocol) || !["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname)
-      || !/^ava_perf[a-z0-9_]*$/.test(database) || /christopher_/.test(database))
-    throw new Error("DATABASE_URL must name a local scratch database whose name starts with ava_perf (never christopher_dev or christopher_test)");
-  return url;
-}
+export const assertPerfDatabase = input => localDatabaseUrl(input, { name: /^ava_perf[a-z0-9_]*$/, forbid: /christopher_/,
+  message: "DATABASE_URL must name a local scratch database whose name starts with ava_perf (never christopher_dev or christopher_test)" });
 
-/** apps/web/lib/session.ts's cookie. */
-export function sessionCookie(secret, sessionId, expiresEpochSeconds) {
-  const sig = createHmac("sha256", secret).update(`${sessionId}.${expiresEpochSeconds}`).digest("base64url");
-  return `ava_session=v2.${sessionId}.${expiresEpochSeconds}.${sig}`;
-}
+export { sessionCookie } from "../lib/web.mjs";
 
 /** The value at fraction `p` of the sorted values (nearest rank, as the audits computed it). */
 export function percentile(values, p) {
@@ -127,20 +114,7 @@ export function viaRelay(databaseUrl, relayPort) {
  * `next start` of the built interface on `port`, in its own process group so the whole group goes
  * on stop. `WEB_DB_POOL_MAX` sets the pool: 6 is production's pooled default, 3 the direct one.
  */
-export async function startServer({ port, databaseUrl, pool }) {
-  const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
-  const nextBin = require.resolve("next/dist/bin/next");
-  const env = { ...process.env, DATABASE_URL: databaseUrl, SESSION_SECRET: BENCH_SECRET, NODE_ENV: "production", AVA_DISABLE_BROWSER: "1" };
-  if (pool) env.WEB_DB_POOL_MAX = String(pool);
-  let log = "";
-  const child = spawn(process.execPath, [nextBin, "start", "-p", String(port)], { cwd: new URL("../../apps/web", import.meta.url), env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-  child.stdout.on("data", chunk => { log = (log + chunk).slice(-20_000); });
-  child.stderr.on("data", chunk => { log = (log + chunk).slice(-20_000); });
-  const stop = async () => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* gone */ } await sleep(300); };
-  for (let i = 0; i < 90; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/api/health`)).ok) return { stop, log: () => log }; } catch { /* not up */ }
-    await sleep(500);
-  }
-  await stop();
-  throw new Error(`the server did not start on ${port}:\n${log}`);
+export function startServer({ port, databaseUrl, pool }) {
+  const env = { DATABASE_URL: databaseUrl, SESSION_SECRET: BENCH_SECRET, AVA_DISABLE_BROWSER: "1", ...(pool ? { WEB_DB_POOL_MAX: String(pool) } : {}) };
+  return startWeb({ port, env, attempts: 90 });
 }

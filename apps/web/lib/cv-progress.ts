@@ -7,7 +7,7 @@
  */
 import type { CvBuildCheckpoint, CvBuildFailure } from "@ava/core";
 import { stepToWire, type CvJournalStep } from "./cv-build-journal";
-import { CV_PROGRESS_STALE_MS, cvBuildState, cvStepsSignature, cvWorkFlags, cvWorkVersion, type CvBuildDraft, type CvBuildTask } from "./cv-build-state";
+import { CV_PROGRESS_STALE_MS, cvBuildState, cvWorkFlags, cvWorkVersion, type CvBuildDraft, type CvBuildTask } from "./cv-build-state";
 import type { CvProgressReading } from "./cv-progress-types";
 
 export interface CvProgressRows {
@@ -72,9 +72,4 @@ export function cvProgressReading(rows: CvProgressRows, now: Date = new Date(), 
     signature: rows.signature,
     steps: rows.steps.map(stepToWire),
   };
-}
-
-/** The ledger's signature from rows already in hand, for a reading built without the aggregate. */
-export function signatureOf(steps: readonly CvJournalStep[]): string {
-  return cvStepsSignature(steps);
 }

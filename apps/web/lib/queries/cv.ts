@@ -6,10 +6,9 @@ import {
   cvVersions,
   latestLibraryReviews,
   libraryReviewsSignature,
-  listCvBuildSteps,
   tasks,
 } from "@ava/db";
-import type { CvBuildCheckpoint, CvBuildFailure, CvBuildStepView, CvLibrary } from "@ava/core";
+import type { CvBuildCheckpoint, CvBuildFailure, CvLibrary } from "@ava/core";
 import { libraryEntryInputHash, normaliseLibraryReview } from "@ava/core/library-review";
 import type { CvBuildTask } from "@/lib/cv-build-state";
 import type { CvJournalStep } from "@/lib/cv-build-journal";
@@ -25,6 +24,7 @@ import {
 } from "@/lib/cv-library-reviews";
 import { db, type Db } from "@/lib/db";
 import { pageNumber } from "@/components/Pagination";
+import { ifMigrated, missingRelation, presentOnceFound } from "@/lib/schema-skew";
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 const PAGE_SIZE = 50;
@@ -80,38 +80,14 @@ export async function listCvDraftPages(
   );
 }
 
-export async function listCvDraftPage(
-  userId: string,
-  archived: boolean,
-  requestedPage?: string,
-) {
-  return db().transaction(
-    (tx) => readCvDraftPage(tx, userId, archived, requestedPage),
-    { isolationLevel: "repeatable read", accessMode: "read only" },
-  );
-}
-
 /**
- * Whether `cv_versions` exists yet. The deployment may precede the worker's migration, so it is
- * probed, but only until it is there: remembered once present (as `cvBuildColumnsPresent` is), so
- * a CV page and every list of drafts stop paying a round trip for a question already answered, and
- * a release briefly ahead of its migration still recovers by itself.
+ * Whether `cv_versions` exists yet. Probed rather than tried, because the page lists read it inside
+ * a transaction, where a failed statement would abort everything after it.
  */
-let cvVersionsPresent: Promise<boolean> | null = null;
-
-function cvVersionsTablePresent(database: Pick<Db, "execute">): Promise<boolean> {
-  cvVersionsPresent ??= database
+const cvVersionsTablePresent = presentOnceFound((database: Pick<Db, "execute">) =>
+  database
     .execute<{ present: boolean }>(sql`select to_regclass('public.cv_versions') is not null as present`)
-    .then((result) => {
-      const present = !!result.rows[0]?.present;
-      if (!present) cvVersionsPresent = null;
-      return present;
-    }, (error: unknown) => {
-      cvVersionsPresent = null;
-      throw error;
-    });
-  return cvVersionsPresent;
-}
+    .then((result) => !!result.rows[0]?.present));
 
 /** The deployment may precede the worker's migration; keep existing CVs readable. */
 export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, ids: string[]) {
@@ -128,30 +104,17 @@ export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, 
  *
  * The interface deploys separately from the worker that migrates, and `select *` over a column
  * that is not there yet is not a degraded page but a 500 on every CV page and every poll. Probed
- * once and remembered — but only when they are all present, so the release that is briefly ahead
- * of its migration recovers by itself the moment the worker catches up, without a redeploy.
+ * once and remembered once they are all present (`presentOnceFound`).
  */
 const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz"] as const;
-let buildColumnsPresent: Promise<boolean> | null = null;
-
-function cvBuildColumnsPresent(): Promise<boolean> {
-  buildColumnsPresent ??= db()
+const cvBuildColumnsPresent = presentOnceFound(() =>
+  db()
     .execute<{ n: number }>(
       sql`select count(*)::int as n from information_schema.columns
           where table_schema = 'public' and table_name = 'cv_drafts'
             and column_name in (${sql.join(BUILD_COLUMNS.map((column) => sql`${column}`), sql`, `)})`,
     )
-    .then((result) => {
-      const present = (result.rows[0]?.n ?? 0) === BUILD_COLUMNS.length;
-      if (!present) buildColumnsPresent = null;
-      return present;
-    })
-    .catch(() => {
-      buildColumnsPresent = null;
-      return false;
-    });
-  return buildColumnsPresent;
-}
+    .then((result) => (result.rows[0]?.n ?? 0) === BUILD_COLUMNS.length));
 
 /** Every column of `cv_drafts` that predates the build ledger, for a database without the rest. */
 const settledCvDraftColumns = {
@@ -324,7 +287,7 @@ export async function readCvProgress(userId: string, draftId: string, window: Cv
     // statement timeout, a dropped connection — is this reading failing, and the poller backs off:
     // answering it with an empty ledger would wipe the narrative the page already shows, and
     // following the failed query with two more would add load to a database already struggling.
-    if (!isSchemaBehind(error)) throw error;
+    if (!missingRelation(error)) throw error;
     return readCvProgressBehind(userId, draftId);
   }
   if (!row) return null;
@@ -355,18 +318,6 @@ export async function readCvProgress(userId: string, draftId: string, window: Cv
     steps,
     signature: `${row.n ?? 0}:${row.running ?? 0}:${row.last ?? ""}`,
   };
-}
-
-/** PostgreSQL's codes for a missing table and a missing column. */
-const SCHEMA_BEHIND = new Set(["42P01", "42703"]);
-
-/** Whether a query failed because the schema lacks a table or column, however the driver wrapped it. */
-export function isSchemaBehind(error: unknown): boolean {
-  for (let cause = error, depth = 0; cause && typeof cause === "object" && depth < 5; cause = (cause as { cause?: unknown }).cause, depth += 1) {
-    const code = (cause as { code?: unknown }).code;
-    if (typeof code === "string" && SCHEMA_BEHIND.has(code)) return true;
-  }
-  return false;
 }
 
 /** The same reading from a database the worker has not migrated: the draft and its task, no ledger. */
@@ -427,21 +378,6 @@ async function ownCvBuildTaskRow(userId: string, draftId: string) {
 }
 
 /**
- * The motions of one account's build, for the narrative under the milestone strip. Read through
- * the owner: `cv_build_steps` carries a `user_id` and is never read without one.
- *
- * The ledger arrives with the worker's migration, and the interface deploys separately, so a
- * release serving before it reads as "nothing recorded" rather than an error page over a CV.
- */
-export async function getOwnCvBuildSteps(userId: string, draftId: string): Promise<CvBuildStepView[]> {
-  try {
-    return await listCvBuildSteps(db(), userId, draftId);
-  } catch {
-    return [];
-  }
-}
-
-/**
  * How long each motion usually takes, for the estimate beside a running motion and the time left
  * once writing has closed. Only motions with at least `CV_MEDIAN_MIN_RUNS` finished runs in thirty days are
  * kept, because a median of three builds is an anecdote.
@@ -481,27 +417,6 @@ export async function getOwnCvLibrary(userId: string) {
     .orderBy(desc(cvLibraries.version))
     .limit(1);
   return library ?? null;
-}
-
-/** The account's saved versions, newest first. A history is read, not scrolled: twenty is plenty. */
-export async function listLibraryVersions(userId: string, limit = 20) {
-  return db()
-    .select({ version: cvLibraries.version, createdAt: cvLibraries.createdAt })
-    .from(cvLibraries)
-    .where(eq(cvLibraries.userId, userId))
-    .orderBy(desc(cvLibraries.version))
-    .limit(Math.max(1, Math.min(100, limit)));
-}
-
-/** Two of this account's versions by number, for a diff. Never read without the account. */
-export async function getLibraryVersionContents(userId: string, versions: number[]): Promise<Map<number, CvLibrary>> {
-  const wanted = [...new Set(versions.filter(version => Number.isInteger(version)))];
-  if (!wanted.length) return new Map();
-  const rows = await db()
-    .select({ version: cvLibraries.version, content: cvLibraries.content })
-    .from(cvLibraries)
-    .where(and(eq(cvLibraries.userId, userId), inArray(cvLibraries.version, wanted)));
-  return new Map(rows.map(row => [row.version, row.content]));
 }
 
 /** Whether a version number names one of this account's own saved libraries. */
@@ -555,12 +470,10 @@ async function readLibraryReviews(userId: string, content: CvLibrary): Promise<M
     entryId: entry.id,
     inputHash: libraryEntryInputHash(entry, content.employment?.find(job => job.id === entry.employmentId) ?? null),
   }));
-  try {
+  return ifMigrated(async () => {
     const rows = await latestLibraryReviews(db(), userId, wanted);
     return new Map([...rows].map(([entryId, row]) => [entryId, { entryId, source: row.source, review: normaliseLibraryReview(row.review) }]));
-  } catch {
-    return new Map();
-  }
+  }, () => new Map());
 }
 
 /** Everything the Library page shows about how well it is evidenced. One call, one account. */
@@ -579,9 +492,5 @@ export async function getLibraryEvidence(
  * which the poller reads as "nothing has landed" rather than as a failure.
  */
 export async function libraryReviewSignature(userId: string, version: number): Promise<string> {
-  try {
-    return await libraryReviewsSignature(db(), userId, version);
-  } catch {
-    return "";
-  }
+  return ifMigrated(() => libraryReviewsSignature(db(), userId, version), () => "");
 }

@@ -3,11 +3,10 @@
 import { requireAdmin, requireUser } from "@/lib/auth";
 
 import { and, asc, eq, sql } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { careerSources, companySubscriptions, discoveryRuns, tasks } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { UserFacingError, zUuid } from "@/lib/validation";
+import { refuseOn, revalidate } from "@/lib/action-helpers";
 
 /** A unique violation, however the driver wraps it: another row already holds this dedupe key. */
 function isDuplicateKey(error: unknown): boolean {
@@ -47,9 +46,8 @@ export async function retryTask(taskId: string): Promise<void> {
     if (!isDuplicateKey(error)) throw error;
     duplicate = true;
   }
-  revalidatePath("/health");
-  revalidatePath("/admin/health");
-  if (duplicate) redirect(`/admin/health?${new URLSearchParams({ error: "This task is already queued or running again, so there is nothing to retry." }).toString()}`);
+  revalidate("/health", "/admin/health");
+  if (duplicate) refuseOn("/admin/health", "This task is already queued or running again, so there is nothing to retry.");
 }
 
 /**
@@ -96,7 +94,5 @@ export async function keepCurrentSource(runId: string): Promise<void> {
       .where(eq(discoveryRuns.id, id));
     return run.companyId;
   });
-  revalidatePath("/health");
-  revalidatePath("/companies");
-  revalidatePath(`/companies/${companyId}`);
+  revalidate("/health", "/companies", `/companies/${companyId}`);
 }

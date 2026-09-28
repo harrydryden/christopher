@@ -1,6 +1,6 @@
-import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
+import { IncompleteListingError, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, MAX_POSTINGS, type ListingRead } from "./common";
+import { feedAdapter, fetchJson, htmlToText, joinLocation, pathSegments, readOffsetPages, rec, requireSlug, safeUrl, slugOk, specOrNull, str, type PagedRead } from "./common";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
 
@@ -56,43 +56,28 @@ const PAGE_SIZE = 100;
  */
 const MAX_PAGES = 200;
 
-/** Up to `maxPages` pages; `unread` is how many roles the board holds past the last page read. */
-async function readPages(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { unread: number | "unknown" }> {
-  const slug = spec.atsSlug;
-  if (!slug) throw new Error("smartrecruiters spec missing slug");
-  const out: RawPosting[] = [];
-  const limit = PAGE_SIZE;
-  let offset = 0;
-  let total: number | undefined;
-  let companyName: string | undefined;
-  let unread: number | "unknown" = 0;
-  for (let page = 0; page < maxPages; page++) {
-    const { data } = await fetchJson<{ content?: SrPosting[]; totalFound?: number; offset?: number; limit?: number }>(
-      ctx,
-      `${API}/${slug}/postings?limit=${limit}&offset=${offset}`,
-    );
-    const content = Array.isArray(data.content) ? data.content : [];
-    for (const p of content) {
-      const mapped = mapPosting(p, slug);
-      if (mapped) out.push(mapped);
-    }
-    companyName ??= str(content[0]?.company?.name);
-    if (typeof data.totalFound === "number") total = data.totalFound;
-    offset += limit;
-    // Without a total, only a short page proves the board has ended: a full one may have a
-    // successor, and treating it as the last page closed every role past it.
-    unread = content.length === 0 ? 0 : total !== undefined ? Math.max(0, total - offset) : content.length < limit ? 0 : "unknown";
-    if (unread === 0 || out.length >= MAX_POSTINGS) break;
-  }
-  return { postings: out.slice(0, MAX_POSTINGS), total, companyName, unread };
+/** Up to `maxPages` pages, the company's name read from the first posting. */
+async function readPages(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<PagedRead> {
+  const slug = requireSlug(spec);
+  return readOffsetPages({
+    pageSize: PAGE_SIZE,
+    maxPages,
+    totalPolicy: "latest",
+    fetchPage: async (offset) => {
+      const { data } = await fetchJson<{ content?: SrPosting[]; totalFound?: number }>(ctx, `${API}/${slug}/postings?limit=${PAGE_SIZE}&offset=${offset}`);
+      const content = Array.isArray(data.content) ? data.content : [];
+      return { items: content, total: data.totalFound, companyName: str(content[0]?.company?.name) };
+    },
+    map: (p) => mapPosting(p, slug),
+  });
 }
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  const { postings, unread } = await readPages(spec, ctx, MAX_PAGES);
+  const { postings, more, total, nextOffset } = await readPages(spec, ctx, MAX_PAGES);
   // The page budget ran out with roles still unread. Returning what was read as a complete listing
   // is what closes roles that are simply on the next page.
-  if (unread !== 0) {
-    const left = unread === "unknown" ? "more roles" : `${unread} roles`;
+  if (more) {
+    const left = total === undefined ? "more roles" : `${total - nextOffset} roles`;
     throw new IncompleteListingError(`SmartRecruiters listing stopped after ${postings.length} roles with ${left} unread; this scan cannot close roles`, postings);
   }
   return postings;
@@ -117,17 +102,15 @@ async function companyName(spec: SourceSpec, ctx: FetchContext): Promise<string 
   return str(data.content?.[0]?.company?.name);
 }
 
-export const smartrecruiters: Adapter = {
+export const smartrecruiters = feedAdapter({
   type: "smartrecruiters",
   // The listing carries no description and `fetchSmartRecruitersDescription` serves one role at a
   // time, so the scan defers description gates and queues the fetches instead of making up to one
   // 2-second detail request per matching role inside the scan task.
   descriptionsPerPosting: true,
-  specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? smartRecruitersSpec(slug) : null;
-  },
-  fetchPostings,
+  fromUrl: (url) => specOrNull(slugFromUrl(url), smartRecruitersSpec),
+  read: fetchPostings,
   // One page, which carries the company's name as well as the board's total.
-  verify: (spec, ctx) => verifyFromRead(() => readPages(spec, ctx, 1), () => companyName(spec, ctx))(),
-};
+  verifyRead: (spec, ctx) => readPages(spec, ctx, 1),
+  companyName,
+});

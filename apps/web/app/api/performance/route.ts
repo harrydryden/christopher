@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessionCookieValue, sessionSecret, verifySessionCookieValue } from '@/lib/session';
 import { readVitalsBeacon, vitalBucket, VITALS_MAX_BYTES } from '@/lib/web-vitals';
+import { readCapped } from '@/lib/route-request';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -16,25 +17,6 @@ export const dynamic = 'force-dynamic';
  * which is how the rule "no identifiers" is enforced rather than hoped for. A write that fails still
  * answers 204: the beacon has nobody to report to, and a lost sample is not worth a retry.
  */
-/** The body as text, or null as soon as it passes `limit` bytes: an undeclared size is never read in full. */
-async function readAtMost(request: Request, limit: number): Promise<string | null> {
-  if (!request.body) return '';
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
-    chunks.push(value);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
-
 export async function POST(request: Request) {
   const secret = sessionSecret();
   if (!secret || !(await verifySessionCookieValue(sessionCookieValue(await cookies()), secret))) {
@@ -44,9 +26,11 @@ export async function POST(request: Request) {
   // a chunked body declares none.
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > VITALS_MAX_BYTES) return new Response(null, { status: 413 });
-  const body = await readAtMost(request, VITALS_MAX_BYTES);
-  if (body === null) return new Response(null, { status: 413 });
-  const reports = readVitalsBeacon(body);
+  const received = await readCapped(request, VITALS_MAX_BYTES);
+  if (!received.ok && received.reason === "too_large") return new Response(null, { status: 413 });
+  // An empty beacon reads as an empty body, which the shape check refuses.
+  const body = received.ok ? new TextDecoder().decode(received.bytes) : received.reason === "missing" ? "" : null;
+  const reports = body === null ? null : readVitalsBeacon(body);
   if (!reports) return new Response(null, { status: 400 });
   // One row per bucket, so a single statement never touches the same key twice.
   const counts = new Map<string, { route: string; metric: string; bucket: number; count: number }>();

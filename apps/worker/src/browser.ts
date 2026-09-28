@@ -10,6 +10,7 @@
 import { SourceFetchError, type RenderedPage } from "@ava/core";
 import { AddressGuard, type HttpTrafficLedger, type ResolveHost } from "./fetcher";
 import { log } from "./log";
+import { within } from "./timers";
 
 type Playwright = typeof import("playwright");
 type Browser = import("playwright").Browser;
@@ -41,15 +42,6 @@ export const RENDER_TIMEOUT_MS = 60_000;
 export const MAX_RENDER_BYTES = 5_000_000;
 /** How many elements whose text reads as a listing control are examined on one pass. */
 const MAX_LISTING_CONTROL_CANDIDATES = 200;
-
-/** `promise`'s value, or `fallback` if it has not settled within `ms`. Never rejects. */
-function within<T>(promise: Promise<T> | undefined, ms: number, fallback: T): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  return Promise.race([
-    (promise ?? Promise.resolve(fallback)).catch(() => fallback),
-    new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), ms); }),
-  ]).finally(() => clearTimeout(timer));
-}
 
 export interface BrowserOptions {
   userAgent: string;

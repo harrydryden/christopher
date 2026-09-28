@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
-import type { User } from "@ava/db/schema";
+import { routeUser } from "@/lib/route-auth";
+import { readCapped, sameOrigin } from "@/lib/route-request";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { listCvDraftPages } from "@/lib/queries/cv";
 import { manageCvs } from "@/app/actions/cv";
@@ -14,41 +14,26 @@ const json = (value: unknown, status = 200) =>
 
 /** Bounded JSON transport avoids coupling a committed mutation to an RSC page transition. */
 export async function POST(request: Request) {
-  let user: User;
-  try {
-    user = await requireUser();
-  } catch {
-    return json({ ok: false, error: "Please sign in again." }, 401);
-  }
+  // A missing session is a 401; a database that cannot say whose session it is is a 500, not a sign-in.
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
+  const { user } = auth;
   // Cookie-authenticated JSON mutations require an explicit matching browser origin.
-  const url = new URL(request.url);
-  const origin = `${url.protocol}//${request.headers.get("host") ?? url.host}`;
-  if (request.headers.get("origin") !== origin)
+  if (!sameOrigin(request))
     return json({ ok: false, error: "Invalid request origin." }, 403);
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     return json({ ok: false, error: "Send a JSON request." }, 415);
-  const reader = request.body?.getReader();
-  if (!reader)
-    return json({ ok: false, error: "Select at least one CV." }, 400);
-  let raw = "";
+  const body = await readCapped(request, 8192);
+  if (!body.ok) {
+    if (body.reason === "missing") return json({ ok: false, error: "Select at least one CV." }, 400);
+    if (body.reason === "too_large") return json({ ok: false, error: "Select no more than 50 CVs." }, 413);
+    return json({ ok: false, error: "Invalid request body." }, 400);
+  }
+  let raw: string;
   try {
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    let size = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 8192) {
-        await reader.cancel();
-        return json({ ok: false, error: "Select no more than 50 CVs." }, 413);
-      }
-      raw += decoder.decode(value, { stream: true });
-    }
-    raw += decoder.decode();
+    raw = new TextDecoder("utf-8", { fatal: true }).decode(body.bytes);
   } catch {
     return json({ ok: false, error: "Invalid request body." }, 400);
-  } finally {
-    reader.releaseLock();
   }
   let input: z.infer<typeof Input>;
   try {

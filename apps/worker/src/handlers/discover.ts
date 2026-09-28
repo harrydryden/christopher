@@ -1,6 +1,6 @@
 import { withResourceLease } from "../lease";
-import { schema, enqueueTask, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@ava/db";
-import { captureCompanyLogo, deadlineMsFor, dedupeKeyFor, discovery, LogoCaptureError, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@ava/core";
+import { schema, enqueueStandard, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@ava/db";
+import { captureCompanyLogo, deadlineMsFor, discovery, LogoCaptureError, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@ava/core";
 import { and, eq, gte, lt, ne } from "drizzle-orm";
 import { makeFetchContext, makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";
@@ -78,10 +78,7 @@ async function discoverCompany(task: Task, deps: WorkerDeps, runCtx?: RunContext
     return captureLogo(company, deps);
   }
   // A direct ATS result must not skip branding. The separate task keeps image failures out of scans.
-  const logoPayload = { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl };
-  await enqueueTask(deps.db, "discover", logoPayload, {
-    dedupeKey: dedupeKeyFor("discover", logoPayload), priority: 6,
-  });
+  await enqueueStandard(deps.db, "discover", { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl }, { priority: 6 });
 
   // A run older than any discovery may last, still `running`, belongs to a process that died
   // before any hook could close it; this company's timeline must not say "discovering" for ever.
@@ -153,9 +150,7 @@ async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$
     } else {
       chosenSourceId = await upsertSource(tx as unknown as Db, company.id, best, same?.confirmedByUser ?? false);
       status = "resolved";
-      await enqueueTask(tx, "scan_company", { companyId: company.id, trigger: "manual" }, {
-        dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: priorityFor("scan_company"),
-      });
+      await enqueueStandard(tx, "scan_company", { companyId: company.id, trigger: "manual" });
     }
   }
 

@@ -484,24 +484,36 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   }
   const titleOf = (id: string) => rows.find(row => row.id === id)?.title ?? departed.current.get(id)?.row.title ?? "this role";
 
+  /**
+   * One write for one row, in a transition: `body` answers whether it saved, and a throw is refused
+   * with the generic sentence. The write is tracked until it settles, so an undo can queue behind it
+   * (`inFlight.current.get(id) !== run`) and see whether it saved.
+   */
+  function rowWrite(id: string, body: () => Promise<boolean>, refused: (error: string) => void) {
+    const run = new Promise<boolean>(resolve => startTransition(async () => {
+      let saved = false;
+      try {
+        saved = await body();
+      } catch {
+        refused("Could not save. Reload and retry.");
+      } finally { settle(id, run); resolve(saved); }
+    }));
+    track(id, run);
+  }
+
   const [archivingId, setArchivingId] = useState<string | null>(null);
   function archiveRow(id: string) {
     if (inFlight.current.has(id)) return;
     const title = titleOf(id);
-    const run = new Promise<boolean>(resolve => startTransition(async () => {
+    rowWrite(id, async () => {
       setArchivingId(id); setFlashError(null);
-      let saved = false;
       try {
         const result = await archiveRoles([id], !archived);
-        if (!result.ok) { if (!reportedElsewhere(title, result.error)) setFlashError(result.error); }
-        else { saved = true; setRemovedIds(ids => withId(ids, id)); }
-      } catch {
-        const error = "Could not save. Reload and retry.";
-        if (!reportedElsewhere(title, error)) setFlashError(error);
-      }
-      finally { settle(id, run); setArchivingId(null); resolve(saved); }
-    }));
-    track(id, run);
+        if (!result.ok) { if (!reportedElsewhere(title, result.error)) setFlashError(result.error); return false; }
+        setRemovedIds(ids => withId(ids, id));
+        return true;
+      } finally { setArchivingId(null); }
+    }, (error) => { if (!reportedElsewhere(title, error)) setFlashError(error); });
   }
   /** A row's write is over, unless a later one (an undo queued behind it) has taken its place. */
   function settle(id: string, run: Promise<boolean>) {
@@ -677,22 +689,16 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       } else setFlashError(error);
     };
 
-    const run = new Promise<boolean>(resolve => startTransition(async () => {
-      let saved = false;
-      try {
-        const result = await decide(jobId, decision, reason);
-        if (!result.ok) { refused(result.error); return; }
-        saved = true;
-        if (!leaves) {
-          if (box) setReasonBox(b => (b?.jobId === jobId ? null : b));
-          if (decision === null) clearNotice();
-          else if (previous) showNotice(jobId, decidedText(previous, decision));
-        }
-      } catch {
-        refused("Could not save. Reload and retry.");
-      } finally { settle(jobId, run); resolve(saved); }
-    }));
-    track(jobId, run);
+    rowWrite(jobId, async () => {
+      const result = await decide(jobId, decision, reason);
+      if (!result.ok) { refused(result.error); return false; }
+      if (!leaves) {
+        if (box) setReasonBox(b => (b?.jobId === jobId ? null : b));
+        if (decision === null) clearNotice();
+        else if (previous) showNotice(jobId, decidedText(previous, decision));
+      }
+      return true;
+    }, refused);
   }
 
   /**
@@ -712,19 +718,13 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       setReturning(ids => withoutId(ids, jobId));
       setFlashError(error);
     };
-    const run = new Promise<boolean>(resolve => startTransition(async () => {
-      let saved = false;
-      try {
-        // A refused decision has already put the row back: there is nothing to undo.
-        if (prior && !(await prior)) { setReturning(ids => withoutId(ids, jobId)); return; }
-        const result = await decide(jobId, null, "");
-        if (!result.ok) { refused(result.error); return; }
-        saved = true;
-      } catch {
-        refused("Could not save. Reload and retry.");
-      } finally { settle(jobId, run); resolve(saved); }
-    }));
-    track(jobId, run);
+    rowWrite(jobId, async () => {
+      // A refused decision has already put the row back: there is nothing to undo.
+      if (prior && !(await prior)) { setReturning(ids => withoutId(ids, jobId)); return false; }
+      const result = await decide(jobId, null, "");
+      if (!result.ok) { refused(result.error); return false; }
+      return true;
+    }, refused);
   }
 
   // Keyboard nav: only for the primary table (the daily-inbox view). Ignored while typing.

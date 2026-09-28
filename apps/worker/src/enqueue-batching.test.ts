@@ -3,7 +3,8 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import pg from "pg";
-import { createDb, schema, type Db } from "@ava/db";
+import { randomUUID } from "node:crypto";
+import { createDb, queueScoring, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { testDatabaseUrl } from "./test-users";
@@ -42,4 +43,17 @@ it("queues a profile for every unprofiled company in one insert", async () => {
   expect(await queueMissingCompanyProfiles(deps)).toBe(0);
   const queued = await db.execute<{ n: number }>(sql`select count(*)::int as n from tasks where type = 'profile_company'`);
   expect(queued.rows[0]!.n).toBe(6);
+});
+
+it("queues scores through the ordinary enqueue, so a listening worker is woken, and marks the views in one statement", async () => {
+  const pairs = Array.from({ length: 3 }, () => ({ userId: randomUUID(), jobId: randomUUID() }));
+  sent.length = 0;
+  expect(await queueScoring(db, pairs, new Date())).toBe(3);
+  expect(sent.filter(text => /^insert into "tasks"/i.test(text))).toHaveLength(1);
+  expect(sent.filter(text => /pg_notify/.test(text))).toHaveLength(1);
+  expect(sent.filter(text => /^update user_jobs/i.test(text))).toHaveLength(1);
+  // The same work asked for again is already waiting: nothing is inserted, and nobody is woken.
+  sent.length = 0;
+  expect(await queueScoring(db, pairs, new Date())).toBe(0);
+  expect(sent.filter(text => /pg_notify/.test(text))).toHaveLength(0);
 });

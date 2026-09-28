@@ -39,6 +39,7 @@ import { enqueue } from "@/lib/enqueue";
 import { LIBRARY_UPLOAD_MIMES, uploadKind } from "@/lib/library-upload";
 import { getOwnLibraryImport, reopenLibraryImport } from "@/lib/queries/library-imports";
 import { actionError, fail, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
+import { revalidate } from "@/lib/action-helpers";
 
 const MEGABYTES = `${Math.round(LIBRARY_IMPORT_MAX_BYTES / (1024 * 1024))} MB`;
 /** Items one accept form may name: every control on the largest proposal, and no more. */
@@ -199,8 +200,7 @@ export async function acceptLibraryImport(importId: string, form: FormData): Pro
       await resolveLibraryImport(tx as unknown as Db, user.id, id);
     });
     await pruneLibraryImports(db(), user.id);
-    revalidatePath("/library");
-    revalidatePath("/cv");
+    revalidate("/library", "/cv");
     return said(`${addedSentence(added)} They arrive with their rows unconfirmed; confirm the ones you have checked.`);
   } catch (error) {
     return actionError(error, "Those items could not be added. Reload the page and try again.");

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import {
   ACTIVE_ROLE_STAGES, APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, applicationStage, CLOSED_ROLE_STAGES,
-  defaultRoleTab, IN_PROCESS_STEPS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STAGES, ROLE_STATUSES,
+  defaultRoleTab, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STAGES, ROLE_STATUSES,
   ROLE_STATUS_LABELS, ROLE_TABS, roleStage, roleStageRank, roleStatus, type ApplicationStatus, type RoleStage,
 } from "./role-workflow";
 it("keeps user choices independent of matching and puts archive first", () => {
@@ -49,7 +49,7 @@ it("maps every application status onto a stage, collapsing the employer's steps 
     offer: "in_process", accepted: "accepted", rejected: "rejected", withdrawn: "dismissed",
   };
   for (const status of APPLICATION_STATUSES) expect(applicationStage(status)).toBe(expected[status]);
-  for (const step of IN_PROCESS_STEPS) expect(applicationStage(step)).toBe("in_process");
+  for (const step of ["screening", "interview", "offer"] as const) expect(applicationStage(step)).toBe("in_process");
   // No status is left without a stage, and none invents one.
   expect(new Set(APPLICATION_STATUSES.map(applicationStage)).size).toBe(6);
 });

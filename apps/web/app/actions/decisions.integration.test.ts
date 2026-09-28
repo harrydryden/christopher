@@ -233,3 +233,32 @@ describe("what a decision revalidates", () => {
     expect(revalidated).not.toHaveBeenCalled();
   });
 });
+
+describe("one decision writer", () => {
+  /** What a decision left behind for one role, with its own ids written out of it. */
+  async function leftBehind(jobId: string) {
+    const rows = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, jobId)).orderBy(schema.decisions.createdAt);
+    const events = await database.select().from(schema.jobEvents).where(eq(schema.jobEvents.jobId, jobId)).orderBy(schema.jobEvents.at, schema.jobEvents.id);
+    const tasks = await database.select().from(schema.tasks).orderBy(schema.tasks.type);
+    const ids = new Map<string, string>([[jobId, "<job>"], ...rows.map((row, i) => [row.id, `<decision ${i}>`] as [string, string])]);
+    const plain = (value: unknown) => JSON.parse(JSON.stringify(value), (_key, v) => (typeof v === "string" ? [...ids].reduce((text, [id, name]) => text.replaceAll(id, name), v) : v));
+    return {
+      decisions: rows.map(({ decision, reason, jobTitle, companyName, jobLocation, jobDepartment, descriptionSnippet, fitScoreAtDecision, superseded }) =>
+        ({ decision, reason, jobTitle, companyName, jobLocation, jobDepartment, descriptionSnippet, fitScoreAtDecision, superseded })),
+      events: events.map(({ type, userId, payload }) => ({ type, userId, payload })),
+      tasks: plain(tasks.map(({ type, payload, dedupeKey, priority, status }) => ({ type, payload, dedupeKey, priority, status }))),
+    };
+  }
+
+  it("leaves the same rows deciding a role alone as deciding it as a group of one", async () => {
+    const [alone, grouped] = [await role(null), await role(null)];
+    for (const [decision, reason] of [["apply", "Strong match"], ["skip", "Too junior"], [null, ""]] as const) {
+      await database.execute(sql`truncate tasks`);
+      expect(await decide(alone.id, decision, reason)).toEqual({ ok: true });
+      const one = await leftBehind(alone.id);
+      await database.execute(sql`truncate tasks`);
+      expect(await decideRoles([grouped.id], decision, reason)).toEqual({ ok: true });
+      expect(await leftBehind(grouped.id)).toEqual(one);
+    }
+  });
+});

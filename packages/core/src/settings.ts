@@ -10,7 +10,7 @@
 import { CvWritingPreferencesSchema, type CvWritingPreferences } from "./cv-writing-preferences";
 import { isKnownModel } from "./models";
 import { CvThemeSchema, type CvTheme } from "./cv-theme";
-import type { GateSettings } from "./gate";
+import { DEFAULT_GATE_SETTINGS, type GateSettings } from "./gate";
 
 export interface SystemSettings {
   /** Daily run time "HH:MM" in `timezone`. One run for every company anyone follows. */
@@ -162,13 +162,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
-  gate: {
-    includeKeywords: ["operations"],
-    excludeKeywords: [],
-    matchFields: ["title"],
-    locationTerms: [],
-    includeRemote: true,
-  },
+  gate: { ...DEFAULT_GATE_SETTINGS },
   aiBudgetUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD,
   aiBudgetResetAt: null,
   seedProfile: "",

@@ -41,13 +41,13 @@ import {
   ROLE_STAGES,
   aiBudgetRefusalMessage,
   applicationStage,
-  roleStageRank,
   type RoleStage,
 } from "@ava/core";
 import { DUE_WITHIN_DAYS, todayDay } from "@/lib/application-dates";
 import { companyIcon } from "@/lib/company-icon";
 import { cvBuildQuote, cvEditCosts, type CvBuildQuote } from "@/lib/cv-quote";
 import { db } from "@/lib/db";
+import { ifMigrated } from "@/lib/schema-skew";
 import { getSettingsFor } from "@/lib/settings";
 import { pageNumber } from "@/components/Pagination";
 
@@ -590,18 +590,15 @@ export async function pipelineRowForJob(userId: string, jobId: string): Promise<
 async function withBuildProgress(userId: string, rows: PipelineRow[]): Promise<PipelineRow[]> {
   const building = rows.flatMap((row) => (row.cv && row.cv.status === "generating" ? [row.cv.id] : []));
   if (!building.length) return rows;
-  let newest: Map<string, string | null>;
-  try {
+  const newest = await ifMigrated(async () => {
     const result = await db().execute<{ draftId: string; motion: string; status: CvJournalStep["status"]; detail: Record<string, unknown> | null }>(sql`
       select distinct on (s.draft_id) s.draft_id as "draftId", s.motion, s.status, s.detail
       from cv_build_steps s
       where s.user_id = ${userId} and s.draft_id in (${sql.join(building.map((id) => sql`${id}::uuid`), sql`, `)})
         and s.motion <> 'admit_budget'
       order by s.draft_id, (s.status = 'running') desc, s.seq desc`);
-    newest = new Map(result.rows.map((row) => [row.draftId, cvBuildRowLabel({ motion: row.motion, status: row.status, detail: row.detail ?? {} })]));
-  } catch {
-    return rows;
-  }
+    return new Map(result.rows.map((row) => [row.draftId, cvBuildRowLabel({ motion: row.motion, status: row.status, detail: row.detail ?? {} })]));
+  }, () => new Map<string, string | null>());
   return rows.map((row) => (row.cv && newest.has(row.cv.id) ? { ...row, cv: { ...row.cv, progress: newest.get(row.cv.id) ?? null } } : row));
 }
 

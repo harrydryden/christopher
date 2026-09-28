@@ -1,33 +1,16 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
-import { enqueueTasks } from "@ava/db/tasks";
-import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
+import { schema, queueScoring, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
-import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
+import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
-import { isAccountBudgetRefusal } from "../budget";
+import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
 import { log } from "../log";
 
 /** What a handler finishes with when its account has no room left for the call it was about to make. */
 const BUDGET_SKIP = { skipped: "account ai budget exceeded" } as const;
-const REFUSED = Symbol("refused by the account's budget");
-
-/**
- * A model call whose hold the account's own budget may refuse. The pre-check (`aiBudgetStop`)
- * catches an account with nothing left; this catches one with too little left for this call, so
- * the task finishes done and skipped instead of failing, retrying and failing again. Any other
- * refusal — a deployment cap — is still thrown, and backs off as a failure does.
- */
-async function withinBudget<T>(call: Promise<T>): Promise<T | typeof REFUSED> {
-  try {
-    return await call;
-  } catch (err) {
-    if (isAccountBudgetRefusal(err)) return REFUSED;
-    throw err;
-  }
-}
 
 /** Every account carries the seed vocabulary; new accounts get it at creation, this covers older ones. */
 export async function ensureSeedTags(deps: WorkerDeps): Promise<void> {
@@ -46,7 +29,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   await seedTagVocabulary(deps.db, decision.userId);
   const vocab = await deps.db.select({ tag: schema.tagVocabulary.tag }).from(schema.tagVocabulary)
     .where(and(eq(schema.tagVocabulary.userId, decision.userId), eq(schema.tagVocabulary.accepted, true)));
-  const result = await withinBudget(deps.ai.tagReason(
+  const result = await withinAccountBudget(deps.ai.tagReason(
     {
       reason: decision.reason,
       decision: decision.decision,
@@ -55,7 +38,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
     },
     { refType: "decision", refId: decision.id, userId: decision.userId, signal: deps.signal },
   ));
-  if (result === REFUSED) return BUDGET_SKIP;
+  if (result === ACCOUNT_BUDGET_REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
   // Behind the task's fence, so a run the queue has given up on writes nothing after its retry began.
@@ -135,8 +118,7 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   const profile = await latestProfileFor(deps.db, userId);
   const digest = await buildDigest(deps, userId);
 
-  const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
-    .where(eq(schema.cvLibraries.userId, userId)).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
   const role = {
     title: job.title,
     company: company?.name ?? "",
@@ -221,10 +203,10 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   const prep = await prepareScoreJob(deps, userId, jobId);
   if ("done" in prep) return prep.done;
   const { input } = prep.prepared;
-  const result = await withinBudget(deps.ai.scoreJob(input,
+  const result = await withinAccountBudget(deps.ai.scoreJob(input,
     { refType: "job", refId: jobId, userId, signal: deps.signal },
   ));
-  if (result === REFUSED) {
+  if (result === ACCOUNT_BUDGET_REFUSED) {
     await markScoreState(deps, userId, jobId, "budget");
     return BUDGET_SKIP;
   }
@@ -349,7 +331,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
 
   const outcomes = await accountOutcomes(deps, userId);
 
-  const result = await withinBudget(deps.ai.synthesizeProfile({
+  const result = await withinAccountBudget(deps.ai.synthesizeProfile({
     seedProfile: settings.seedProfile,
     pinnedStatements: current?.pinnedStatements ?? [],
     currentProfile: current?.markdown,
@@ -369,7 +351,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
     rejectedCompanySuggestions: rejected.filter((r) => r.reason).map((r) => ({ name: r.name, reason: r.reason ?? "" })),
     outcomes,
   }, { refType: "profile", refId: userId, userId, signal: deps.signal }));
-  if (result === REFUSED) return BUDGET_SKIP;
+  if (result === ACCOUNT_BUDGET_REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
   const version = (current?.version ?? 0) + 1;
@@ -389,10 +371,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
       model: modelForCallSite(settings, "A7"),
       generatedAt: deps.now(),
     });
-    if (changed) {
-      const p = { userId, onlyInTable: true };
-      await enqueueTask(tx, "rescore_all", p, { dedupeKey: dedupeKeyFor("rescore_all", p), priority: priorityFor("rescore_all") });
-    }
+    if (changed) await enqueueStandard(tx, "rescore_all", { userId, onlyInTable: true });
   });
   log.info("profile synthesised", { userId, version, decisions: counts.total, questions: openQuestions.length, changed });
   return { version, decisions: counts.total };
@@ -463,7 +442,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     .where(and(eq(schema.companySubscriptions.userId, userId), eq(schema.companySubscriptions.status, "active")))
     .orderBy(schema.companies.name);
 
-  const result = await withinBudget(deps.ai.suggestFilters({
+  const result = await withinAccountBudget(deps.ai.suggestFilters({
     includeKeywords: settings.gate.includeKeywords,
     excludeKeywords: settings.gate.excludeKeywords,
     locationTerms: settings.gate.locationTerms,
@@ -471,7 +450,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     previouslyRejected: previouslyRejected.map((r) => ({ type: r.type, value: r.value })),
     companies,
   }, { refType: "filters", refId: userId, userId, signal: deps.signal }));
-  if (result === REFUSED) return BUDGET_SKIP;
+  if (result === ACCOUNT_BUDGET_REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
   // Behind the task's fence, so a run the queue has given up on files nothing after its retry began.
@@ -548,8 +527,7 @@ export const RESCORE_INTERVAL_MS = 60 * 60_000;
 async function rescoreInputs(deps: WorkerDeps, userId: string): Promise<string> {
   const settings = await deps.userSettings(userId);
   const profile = await latestProfileFor(deps.db, userId);
-  const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
-    .where(eq(schema.cvLibraries.userId, userId)).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
   return sha1(JSON.stringify([
     profile?.markdown ?? settings.seedProfile ?? "",
     settings.gate,
@@ -573,29 +551,17 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
     // Coalesced: one pass at the end of the hour picks up everything that changed within it, and
     // any other save in the hour folds into the same waiting row by its key.
     const retryAt = new Date(last.finishedAt.getTime() + RESCORE_INTERVAL_MS);
-    const deferred = { userId, onlyInTable: onlyInTable ?? true };
-    await enqueueTask(deps.db, "rescore_all", deferred,
-      { dedupeKey: dedupeKeyFor("rescore_all", deferred), priority: priorityFor("rescore_all"), runAfter: retryAt });
+    await enqueueStandard(deps.db, "rescore_all", { userId, onlyInTable: onlyInTable ?? true }, { runAfter: retryAt });
     return { skipped: "rescored within the hour", retryAt: retryAt.toISOString() };
   }
   const shortlisted = sql<boolean>`exists (select 1 from decisions d where d.user_id = ${schema.userJobs.userId} and d.job_id = ${schema.userJobs.jobId} and d.superseded = false and d.decision = 'apply')`;
   const rows = await deps.db.select({ id: schema.userJobs.jobId, shortlisted }).from(schema.userJobs)
     .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), sql`(${schema.userJobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
-  let queued = 0;
-  for (let offset = 0; offset < rows.length; offset += 250) {
-    const batch = rows.slice(offset, offset + 250);
-    const rowFor = (row: (typeof batch)[number]) => {
-      const payload = { userId, jobId: row.id };
-      return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: row.shortlisted ? 1 : priorityFor("score_job") };
-    };
-    // A shortlisted role's score is the one the person is waiting on: a background score already
-    // queued for it is brought up to that priority rather than left where it was.
-    queued += await enqueueTasks(deps.db, batch.filter(row => row.shortlisted).map(rowFor), 250, true);
-    queued += await enqueueTasks(deps.db, batch.filter(row => !row.shortlisted).map(rowFor));
-    // Every role a new profile version will re-score reads "scoring" until its turn comes.
-    await deps.db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
-      .where(and(eq(schema.userJobs.userId, userId), inArray(schema.userJobs.jobId, batch.map(row => row.id))));
-  }
+  // A shortlisted role's score is the one the person is waiting on: a background score already
+  // queued for it is brought up to that priority rather than left where it was. Every role a new
+  // profile version will re-score reads "scoring" until its turn comes.
+  const queued = await queueScoring(deps.db, rows.filter(row => row.shortlisted).map(row => ({ userId, jobId: row.id, priority: 1 })), deps.now(), { promote: true })
+    + await queueScoring(deps.db, rows.filter(row => !row.shortlisted).map(row => ({ userId, jobId: row.id })), deps.now());
   return { queued, inputsHash };
 }

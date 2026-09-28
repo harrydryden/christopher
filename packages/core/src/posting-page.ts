@@ -8,18 +8,28 @@
  */
 import * as cheerio from "cheerio";
 import { extractJsonLdPostings } from "./ats/jsonld";
-import { extractDomain, stripHtml } from "./normalize";
+import { elementBlocks, extractDomain, stripHtml } from "./normalize";
+
+const DESCRIPTION_DIV_RE = /<div[^>]+(?:id|class)="[^"]*(job-?description|posting|content|opening)[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
+
+/** The content of the first `<name>` element, found in linear time however many are left unclosed. */
+function firstElementContent(html: string, name: string): string | undefined {
+  const [block] = elementBlocks(html, [name], { boundary: true, limit: 1 });
+  return block ? html.slice(block.openEnd, block.closeStart) : undefined;
+}
+
+/** A page with less readable text than this is a shell waiting for its JavaScript, not content. */
+export const JS_SHELL_TEXT = 400;
 
 /** Pick the densest plausible main-content block from a job detail page. */
 export function extractMainText(html: string): string | undefined {
   const candidates = [
-    /<main\b[^>]*>([\s\S]*?)<\/main>/i,
-    /<article\b[^>]*>([\s\S]*?)<\/article>/i,
-    /<div[^>]+(?:id|class)="[^"]*(job-?description|posting|content|opening)[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    () => firstElementContent(html, "main"),
+    () => firstElementContent(html, "article"),
+    () => html.match(DESCRIPTION_DIV_RE)?.[2],
   ];
-  for (const re of candidates) {
-    const m = html.match(re);
-    const body = m?.[m.length - 1];
+  for (const candidate of candidates) {
+    const body = candidate();
     if (body) {
       const text = stripHtml(body);
       if (text.length > 200) return text;

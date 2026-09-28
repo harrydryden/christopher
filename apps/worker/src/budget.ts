@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { recordAiCall, type AiCallRecord, type Db } from "@ava/db";
-import type { AiBudgetRefusal } from "@ava/core";
+import { aiBudgetWindowStart, type AiBudgetRefusal, type AppSettings } from "@ava/core";
+import type { WorkerEnv } from "./env";
 import { log } from "./log";
 
 export type { AiBudgetRefusal };
@@ -37,6 +38,24 @@ export function isAccountBudgetRefusal(err: unknown): err is BudgetRefusedError 
   return err instanceof BudgetRefusedError && err.refusal.limit === "account";
 }
 
+/** What `withinAccountBudget` returns in place of a result when the account's own budget refused the call. */
+export const ACCOUNT_BUDGET_REFUSED = Symbol("refused by the account's budget");
+
+/**
+ * A model call whose hold the account's own budget may refuse. The pre-check (`aiBudgetStop`)
+ * catches an account with nothing left; this catches one with too little left for this call, so
+ * the task finishes done and skipped instead of failing, retrying and failing again. Any other
+ * refusal — a deployment cap — is still thrown, and backs off as a failure does.
+ */
+export async function withinAccountBudget<T>(call: Promise<T>): Promise<T | typeof ACCOUNT_BUDGET_REFUSED> {
+  try {
+    return await call;
+  } catch (err) {
+    if (isAccountBudgetRefusal(err)) return ACCOUNT_BUDGET_REFUSED;
+    throw err;
+  }
+}
+
 /**
  * What an account has spent in its window, and what its calls in flight are holding: the two
  * figures every admission reads. One statement, so the pre-check a handler makes before it starts
@@ -49,6 +68,42 @@ export async function accountAiStanding(db: Pick<Db, "execute">, userId: string,
     (select coalesce(sum(cost_usd::float8), 0) from ai_calls where user_id = ${userId} and at >= ${since}) as spent,
     (select coalesce(sum(amount::float8), 0) from ai_reservations where user_id = ${userId} and expires_at > now()) as held`);
   return { spent: Number(rows.rows[0]?.spent ?? 0), held: Number(rows.rows[0]?.held ?? 0) };
+}
+
+/**
+ * Of `windows`, the accounts with room left in their month: the same arithmetic as
+ * `accountAiStanding` (recorded spend plus what calls in flight are holding), asked for many
+ * accounts in one statement rather than one per account.
+ */
+export async function accountsWithBudget(db: Pick<Db, "execute">, windows: Array<{ userId: string; since: Date; budgetUsd: number }>): Promise<Set<string>> {
+  if (!windows.length) return new Set();
+  const rows = await db.execute<{ user_id: string; spent: number; held: number }>(sql`select v."userId" as user_id,
+    (select coalesce(sum(a.cost_usd::float8), 0) from ai_calls a where a.user_id = v."userId" and a.at >= v.since) as spent,
+    (select coalesce(sum(r.amount::float8), 0) from ai_reservations r where r.user_id = v."userId" and r.expires_at > now()) as held
+    from jsonb_to_recordset(${JSON.stringify(windows.map(w => ({ userId: w.userId, since: w.since.toISOString() })))}::jsonb) as v("userId" uuid, since timestamptz)`);
+  const standing = new Map(rows.rows.map(row => [row.user_id, Number(row.spent) + Number(row.held)]));
+  return new Set(windows.filter(w => (standing.get(w.userId) ?? 0) < w.budgetUsd).map(w => w.userId));
+}
+
+/**
+ * The limits a model call is held against: the account's own month when the work is for one,
+ * counted from its window's start, and the operator's optional deployment caps. `extra` names what
+ * the hold is for, or overrides the worker id (a hold that must outlive this worker takes none).
+ */
+export function budgetLimits(
+  env: Pick<WorkerEnv, "dailyAiBudgetUsd" | "discoveryAiBudgetUsd" | "workerId">,
+  now: Date,
+  account?: { userId: string; settings: Pick<AppSettings, "aiBudgetUsd" | "aiBudgetResetAt"> },
+  extra: Pick<AiBudgetLimits, "refId" | "replaceRef" | "workerId"> = {},
+): AiBudgetLimits {
+  return {
+    account: account && { userId: account.userId, budgetUsd: account.settings.aiBudgetUsd, since: aiBudgetWindowStart(now, account.settings.aiBudgetResetAt) },
+    // Unset, or at the environment's unlimited default, is no cap: tryReserveAi reads no day total.
+    daily: env.dailyAiBudgetUsd,
+    discovery: env.discoveryAiBudgetUsd,
+    workerId: env.workerId,
+    ...extra,
+  };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { IncompleteListingError, SourceFetchError, type FetchContext, type FetchResponse, type RawPosting, type VerifyResult } from "../types";
+import { IncompleteListingError, SourceFetchError, type Adapter, type FetchContext, type FetchResponse, type RawPosting, type SourceSpec, type SourceType, type VerifyResult } from "../types";
 import { stripHtml } from "../normalize";
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
@@ -23,6 +23,66 @@ export function pathSegments(u: URL): string[] {
   return u.pathname.split("/").filter(Boolean);
 }
 
+/**
+ * The board slug a vendor subdomain names: `acme` from `acme.breezy.hr` for the suffix `breezy.hr`.
+ * `reserved` lists the vendor's own subdomains, which are never a board.
+ */
+export function subdomainSlug(url: string, suffix: string, reserved: readonly string[] = []): string | null {
+  const host = safeUrl(url)?.hostname.toLowerCase();
+  if (!host?.endsWith(`.${suffix}`)) return null;
+  const label = host.slice(0, -suffix.length - 1);
+  return /^[a-z0-9][a-z0-9-]*$/.test(label) && slugOk(label) && !reserved.includes(label) ? label : null;
+}
+
+/** The spec a parsed URL builds, or null when the URL named no board. */
+export function specOrNull<T>(parsed: T | null, build: (parsed: T) => SourceSpec): SourceSpec | null {
+  return parsed ? build(parsed) : null;
+}
+
+/**
+ * Every host an adapter reads from, as a suffix: discovery, the HTML job-link heuristic and the
+ * registry all read this one list, so an adapter added here is recognised everywhere at once.
+ */
+export const ATS_HOST_SUFFIXES: readonly string[] = [
+  "greenhouse.io", "grnh.se", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com", "recruitee.com",
+  "personio.de", "personio.com", "bamboohr.com", "myworkdayjobs.com", "pinpointhq.com", "breezy.hr",
+  "teamtailor.com", "icims.com", "jobvite.com", "applytojob.com", "rippling.com", "successfactors.com", "successfactors.eu", "eightfold.ai",
+];
+
+export function isAtsHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return ATS_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
+/** The slug an ATS spec is keyed by; a spec without one is a programming error, not a fetch failure. */
+export function requireSlug(spec: SourceSpec): string {
+  if (!spec.atsSlug) throw new Error(`${spec.type} spec missing slug`);
+  return spec.atsSlug;
+}
+
+/** Map a feed's items to postings, dropping the ones that are not roles, capped at `MAX_POSTINGS`. */
+export function mapPostings<T>(items: readonly T[], map: (item: T) => RawPosting | null): RawPosting[] {
+  return items.map((item) => map(item)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
+}
+
+/** Every location a role lists, primary first and without repeats; undefined unless there are several. */
+export function extraLocations(primary: string | undefined, others: readonly string[]): string[] | undefined {
+  const locations = [...new Set([...(primary ? [primary] : []), ...others])];
+  return locations.length > 1 ? locations : undefined;
+}
+
+/**
+ * Every adapter's reading of an error status. A 429 or 503 is the host pacing us, not refusing us:
+ * it retries tomorrow rather than marking the source blocked, which nothing but a person undoes.
+ * The worker's fetcher throws its own errors first in production; this serves every other
+ * `FetchContext` the same way.
+ */
+export function throwForStatus(res: FetchResponse, url: string): void {
+  if (res.status < 400) return;
+  const kind = res.status === 403 ? "blocked" : res.status === 429 || res.status === 503 ? "rate_limited" : "http";
+  throw new SourceFetchError(`HTTP ${res.status} from ${url}`, kind, res.status);
+}
+
 export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, init?: { maxBodyBytes?: number; timeoutMs?: number; method?: "GET" | "POST"; body?: unknown; headers?: Record<string, string> }): Promise<{ data: T; res: FetchResponse }> {
   const res = await ctx.fetchText(url, {
     method: init?.method ?? "GET",
@@ -31,12 +91,7 @@ export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, ini
     headers: { accept: "application/json", ...(init?.body !== undefined ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
-  if (res.status >= 400) {
-    // A 429 is the host pacing us, not refusing us: it retries tomorrow rather than marking the
-    // source blocked, which nothing but a person undoes.
-    const kind = res.status === 403 ? "blocked" : res.status === 429 || res.status === 503 ? "rate_limited" : "http";
-    throw new SourceFetchError(`HTTP ${res.status} from ${url}`, kind, res.status);
-  }
+  throwForStatus(res, url);
   try {
     return { data: JSON.parse(res.body) as T, res };
   } catch {
@@ -107,13 +162,16 @@ export function sample(postings: RawPosting[], n = 3): RawPosting[] {
  */
 export type Verification = VerifyResult & { transient?: boolean };
 
-/** True for a failure that says nothing about the board: retrying later may well succeed. */
+/**
+ * True for a failure that says nothing about the board: retrying later may well succeed. Read by
+ * name as well as by class, because a verifier across a package boundary may throw its own copy.
+ */
 export function isTransientFailure(err: unknown): boolean {
-  if (err instanceof SourceFetchError) {
-    return err.kind === "rate_limited" || err.kind === "timeout" || err.kind === "network" || (err.kind === "http" && (err.status ?? 0) >= 500);
-  }
+  const e = err as { name?: unknown; kind?: string; status?: number } | null | undefined;
   // The fetcher's refusal to wait any longer for a busy host.
-  return err instanceof Error && err.name === "HostBusyError";
+  if (e?.name === "HostBusyError") return true;
+  if (!(err instanceof SourceFetchError) && e?.name !== "SourceFetchError") return false;
+  return e!.kind === "rate_limited" || e!.kind === "timeout" || e!.kind === "network" || (e!.kind === "http" && (e!.status ?? 0) >= 500);
 }
 
 /** One bounded read of a listing: the roles read and, when the feed says, how many it holds in all. */
@@ -121,6 +179,52 @@ export interface ListingRead {
   postings: RawPosting[];
   total?: number;
   companyName?: string;
+}
+
+/** A read of an offset-paged feed; `more` says the board holds roles past the last page read. */
+export interface PagedRead extends ListingRead {
+  more: boolean;
+  /** The offset after the last page read: how far into the board the read got. */
+  nextOffset: number;
+}
+
+/**
+ * Up to `maxPages` pages of a feed paged by offset. Without a total, only a short page proves the
+ * board has ended: a full one may have a successor, and treating it as the last page closed every
+ * role past it. `totalPolicy: "first"` keeps the first positive total for a feed (Workday) whose
+ * tenants report it on the first page and send 0 after; `"latest"` takes each page's own.
+ */
+export async function readOffsetPages<R>(o: {
+  pageSize: number;
+  maxPages: number;
+  totalPolicy: "first" | "latest";
+  fetchPage: (offset: number) => Promise<{ items: R[]; total?: number; companyName?: string }>;
+  map: (item: R) => RawPosting | null;
+}): Promise<PagedRead> {
+  const out: RawPosting[] = [];
+  let total: number | undefined;
+  let companyName: string | undefined;
+  let more = false;
+  let offset = 0;
+  for (let page = 0; page < o.maxPages; page++) {
+    const { items, total: pageTotal, companyName: pageName } = await o.fetchPage(offset);
+    for (const item of items) {
+      const mapped = o.map(item);
+      if (mapped) out.push(mapped);
+    }
+    companyName ??= pageName;
+    if (typeof pageTotal === "number" && (o.totalPolicy === "latest" || (total === undefined && pageTotal > 0))) total = pageTotal;
+    offset += o.pageSize;
+    more = items.length > 0 && (total !== undefined ? offset < total : items.length === o.pageSize);
+    if (!more || out.length >= MAX_POSTINGS) break;
+  }
+  return { postings: out.slice(0, MAX_POSTINGS), total, companyName, more, nextOffset: offset };
+}
+
+/** The postings of a paged read, or an incomplete listing when the page budget ran out first. */
+export function completeListing(vendor: string, read: PagedRead): RawPosting[] {
+  if (read.more) throw new IncompleteListingError(`${vendor} listing stopped at ${read.postings.length} roles with more pages to read; this scan cannot close roles`, read.postings);
+  return read.postings;
 }
 
 /**
@@ -151,9 +255,33 @@ export function verifyFromRead(read: () => Promise<ListingRead>, companyName?: (
   };
 }
 
-/** `verifyFromRead` for a feed that is a single request. */
-export function verifyFromFetch(fetchPostings: () => Promise<RawPosting[]>, companyName?: () => Promise<string | undefined>) {
-  return verifyFromRead(async () => ({ postings: await fetchPostings() }), companyName);
+/** Reads a listing, as far as `maxPages` pages when it pages at all (single-request feeds ignore it). */
+export type Reader = (spec: SourceSpec, ctx: FetchContext, maxPages?: number) => Promise<RawPosting[]>;
+
+/**
+ * An adapter for a feed. The scan reads the whole listing; verification reads one page, through
+ * `verifyRead` when the feed reports a total and otherwise through `read` with a one-page budget.
+ */
+export function feedAdapter(o: {
+  type: SourceType;
+  fromUrl: (url: string) => SourceSpec | null;
+  read: Reader;
+  verifyRead?: (spec: SourceSpec, ctx: FetchContext) => Promise<ListingRead>;
+  companyName?: (spec: SourceSpec, ctx: FetchContext) => Promise<string | undefined>;
+  descriptionsPerPosting?: boolean;
+}): Adapter {
+  const { read, verifyRead, companyName } = o;
+  return {
+    type: o.type,
+    ...(o.descriptionsPerPosting ? { descriptionsPerPosting: true } : {}),
+    specFromUrl: o.fromUrl,
+    fetchPostings: (spec, ctx) => read(spec, ctx),
+    verify: (spec, ctx) =>
+      verifyFromRead(
+        verifyRead ? () => verifyRead(spec, ctx) : async () => ({ postings: await read(spec, ctx, 1) }),
+        companyName ? () => companyName(spec, ctx) : undefined,
+      )(),
+  };
 }
 
 /**

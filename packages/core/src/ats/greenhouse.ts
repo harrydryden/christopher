@@ -1,6 +1,6 @@
-import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
+import { IncompleteListingError, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, MAX_POSTINGS } from "./common";
+import { extraLocations, feedAdapter, fetchJson, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, MAX_POSTINGS } from "./common";
 
 const API = "https://boards-api.greenhouse.io/v1/boards";
 const EU_API = "https://boards-api.eu.greenhouse.io/v1/boards";
@@ -156,7 +156,6 @@ function mapJob(j: GhJob, extraDepartments: string[] = [], extraOffices: string[
   const location = str(j.location?.name);
   const inlineOffices = (j.offices ?? []).map((o) => str(o.name)).filter((s): s is string => !!s);
   const offices = [...inlineOffices, ...extraOffices];
-  const locations = [...new Set([...(location ? [location] : []), ...offices])];
   const inlineDepartments = (j.departments ?? []).map((d) => str(d.name)).filter((s): s is string => !!s);
   const department = [...new Set([...inlineDepartments, ...extraDepartments])].join(" / ") || undefined;
   const salary = (j.metadata ?? []).find((m) => /salary|compensation|pay range/i.test(str(m.name) ?? ""));
@@ -165,7 +164,7 @@ function mapJob(j: GhJob, extraDepartments: string[] = [], extraOffices: string[
     title,
     url,
     location,
-    locations: locations.length > 1 ? locations : undefined,
+    locations: extraLocations(location, offices),
     department,
     remote: /remote/i.test(location ?? "") || undefined,
     postedAt: parseDate(j.first_published),
@@ -176,8 +175,7 @@ function mapJob(j: GhJob, extraDepartments: string[] = [], extraOffices: string[
 
 /** The board's job list, without descriptions, and the board's own count of its roles. */
 async function listJobs(spec: SourceSpec, ctx: FetchContext): Promise<{ jobs: GhJob[]; total?: number; base: string; slug: string }> {
-  const slug = spec.atsSlug;
-  if (!slug) throw new Error("greenhouse spec missing slug");
+  const slug = requireSlug(spec);
   const base = apiBase(spec);
   const { data } = await fetchJson<{ jobs?: GhJob[]; meta?: { total?: number } }>(ctx, `${base}/${slug}/jobs`, { maxBodyBytes: LIST_MAX_BYTES, timeoutMs: 60_000 });
   if (!Array.isArray(data.jobs)) throw new Error("Greenhouse response is missing its jobs array");
@@ -238,15 +236,11 @@ async function companyName(spec: SourceSpec, ctx: FetchContext): Promise<string 
   return str(rec(data)?.name);
 }
 
-export const greenhouse: Adapter = {
+export const greenhouse = feedAdapter({
   type: "greenhouse",
   descriptionsPerPosting: true,
-  specFromUrl(url) {
-    const board = boardFromUrl(url);
-    return board ? greenhouseSpec(board.slug, board.eu) : null;
-  },
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromRead(() => readForVerify(spec, ctx), () => companyName(spec, ctx))(),
-};
-
-export { joinLocation as _ghJoin };
+  fromUrl: (url) => specOrNull(boardFromUrl(url), (board) => greenhouseSpec(board.slug, board.eu)),
+  read: fetchPostings,
+  verifyRead: readForVerify,
+  companyName,
+});

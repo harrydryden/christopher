@@ -1,5 +1,5 @@
-import { schema, enqueueTasks, type Task } from "@ava/db";
-import { dedupeKeyFor, discovery, extractDomain, isImportOnlyKind, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@ava/core";
+import { schema, taskRow, enqueueTasks, type Task } from "@ava/db";
+import { discovery, extractDomain, isImportOnlyKind, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@ava/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { aiBudgetStop, makeFetchContext, type WorkerDeps } from "../context";
 import { recommendationContext } from "../recommendation-context";
@@ -105,10 +105,7 @@ export async function handleMonitorSource(task: Task, deps: WorkerDeps): Promise
     const documents = await deps.db.select().from(schema.discoveryDocuments).where(and(
       eq(schema.discoveryDocuments.sourceId, sourceId), isNull(schema.discoveryDocuments.processedAt),
     )).orderBy(schema.discoveryDocuments.createdAt).limit(12);
-    await enqueueTasks(deps.db, documents.map(document => ({
-      type: "extract_document" as const, payload: { sourceId, documentId: document.id },
-      dedupeKey: dedupeKeyFor("extract_document", { sourceId, documentId: document.id }), priority: 7,
-    })));
+    await enqueueTasks(deps.db, documents.map(document => taskRow("extract_document", { sourceId, documentId: document.id }, { priority: 7 })));
     const pending = await deps.db.select({ id: schema.discoveryCandidates.id }).from(schema.discoveryCandidates)
       .innerJoin(schema.discoveryDocuments, eq(schema.discoveryCandidates.documentId, schema.discoveryDocuments.id))
       .where(and(eq(schema.discoveryDocuments.sourceId, sourceId), isNull(schema.discoveryCandidates.processedAt))).limit(100);

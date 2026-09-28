@@ -10,7 +10,7 @@ import type { User } from "@ava/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleCompanies, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, SORT_KEYS, type RoleCursor, type RoleRow } from "./jobs";
+import { appliedRoleCount, parseRolesFilters, buildRoleCompanies, buildRoleRowVM, fetchArchiveNotes, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, SORT_KEYS, type RoleCursor, type RoleRow } from "./jobs";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -20,26 +20,41 @@ beforeAll(async () => {
 });
 afterAll(() => pool.end());
 
-const row = (score: number | null) => ({ job: { fitScore: score, status: "open", postedAt: null, firstSeenAt: new Date(), closedAt: null } }) as RoleRow;
+/** One account following one company with a role per entry, each carrying the given fit score. */
+async function rolesWithFit(email: string, scores: Array<number | null>) {
+  await database.execute(sql`truncate users, companies restart identity cascade`);
+  const user: User = await ensureTestUser(database, email);
+  const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme.test", homepageUrl: "https://acme.test" }).returning();
+  const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://acme.test/jobs" }).returning();
+  const inserted = await database.insert(schema.jobs).values(scores.map((_, i) => ({
+    companyId: company!.id, sourceId: source!.id, externalKey: `id:${i}`, title: `Role ${i}`, normalizedTitle: `role ${i}`, url: `https://acme.test/jobs/${i}`,
+  }))).returning();
+  await database.insert(schema.userJobs).values(inserted.map((job, i) => ({ userId: user.id, jobId: job.id, keywordMatched: true, locationOk: true, inTable: true, fitScore: scores[i] ?? null })));
+  return { user, jobs: inserted };
+}
+
 describe("fit ordering", () => {
-  it("keeps unscored roles last in both directions", () => {
-    const rows = [row(null), row(20), row(90)];
-    expect(sortRoleRows(rows, "fit", "desc").map(r => r.job.fitScore)).toEqual([90, 20, null]);
-    expect(sortRoleRows(rows, "fit", "asc").map(r => r.job.fitScore)).toEqual([20, 90, null]);
-    expect(sortRoleRows(rows, "status", "asc").map(r => r.job.fitScore)).toEqual([90, 20, null]);
+  it("keeps unscored roles last in both directions", async () => {
+    const { user } = await rolesWithFit("fit-order@example.com", [null, 20, 90]);
+    const fits = async (sp: Record<string, string>) => (await fetchRoleRows(user.id, parseRolesFilters(sp), false)).map(r => r.job.fitScore);
+    expect(await fits({ sort: "fit", dir: "desc" })).toEqual([90, 20, null]);
+    expect(await fits({ sort: "fit", dir: "asc" })).toEqual([20, 90, null]);
+    expect(await fits({ sort: "status", dir: "asc" })).toEqual([90, 20, null]);
   });
 });
 
 describe("inbox decisions", () => {
-  it("shows only unreviewed roles by default and restores reset decisions", () => {
-    const skipped = { ...row(20), decision: { decision: "skip" } } as RoleRow;
-    const applied = { ...row(20), decision: { decision: "apply" } } as RoleRow;
-    const undecided = { ...row(20), decision: null } as RoleRow;
-    const rows = [skipped, applied, undecided];
-    expect(applyRolesFilters(rows, parseRolesFilters({}))).toEqual([undecided]);
-    expect(applyRolesFilters(rows, parseRolesFilters({ decision: "skip" }))).toEqual([skipped]);
-    expect(applyRolesFilters(rows, parseRolesFilters({ decision: "all" }))).toHaveLength(3);
-    expect(applyRolesFilters([{ ...skipped, decision: null }], parseRolesFilters({}))).toHaveLength(1);
+  it("shows only unreviewed roles by default and restores reset decisions", async () => {
+    const { user, jobs: [skipped, applied, undecided] } = await rolesWithFit("inbox@example.com", [20, 20, 20]);
+    const decision = (job: typeof skipped, value: "apply" | "skip") => ({ userId: user.id, jobId: job!.id, decision: value, jobTitle: job!.title, companyName: "Acme" });
+    await database.insert(schema.decisions).values([decision(skipped, "skip"), decision(applied, "apply")]);
+    const ids = async (sp: Record<string, string>) => (await fetchRoleRows(user.id, parseRolesFilters(sp), false)).map(r => r.job.id).sort();
+    expect(await ids({})).toEqual([undecided!.id]);
+    expect(await ids({ decision: "skip" })).toEqual([skipped!.id]);
+    expect(await ids({ decision: "all" })).toHaveLength(3);
+    // A reset decision is superseded, which puts the role back in the inbox.
+    await database.update(schema.decisions).set({ superseded: true }).where(eq(schema.decisions.jobId, skipped!.id));
+    expect(await ids({})).toEqual([skipped!.id, undecided!.id].sort());
     expect(filtersToQueryString(parseRolesFilters({ decision: "all" }))).toContain("decision=all");
   });
 });
@@ -140,22 +155,6 @@ describe("finding what I decided", () => {
     expect(parseRolesFilters({ since: "nonsense" }).sinceDays).toBeNull();
     expect(filtersToQueryString(parseRolesFilters({ since: "7d" }))).toContain("since=7d");
     expect(filtersToQueryString(parseRolesFilters({}))).not.toContain("since");
-  });
-
-  it("keeps undecided rows out of a since window and sorts the decided ones newest first", () => {
-    const now = new Date("2026-09-19T00:00:00Z");
-    const decidedOn = (at: string | null) => ({
-      ...row(50),
-      decision: at ? { decision: "apply", createdAt: new Date(at) } : null,
-    }) as RoleRow;
-    const old = decidedOn("2026-09-01T00:00:00Z");
-    const recent = decidedOn("2026-09-18T00:00:00Z");
-    const undecided = decidedOn(null);
-    const rows = [old, recent, undecided];
-    const filters = parseRolesFilters({ view: "user-shortlisted", since: "7d" });
-    expect(applyRolesFilters(rows, filters, now)).toEqual([recent]);
-    expect(sortRoleRows([old, recent], "decided", "desc", now)).toEqual([recent, old]);
-    expect(sortRoleRows([recent, old], "decided", "asc", now)).toEqual([old, recent]);
   });
 
   /** The two the Shortlisted and Dismissed tabs offer, read at the database rather than in JS. */
@@ -320,7 +319,7 @@ describe("the shortlist's own breakdown", () => {
   });
 });
 
-describe("a role's recent events", () => {
+describe("a role's archive notes", () => {
   /** One posting followed by several accounts: every account's events hang off the one job. */
   async function sharedPosting() {
     await database.execute(sql`truncate users, companies restart identity cascade`);
@@ -335,36 +334,35 @@ describe("a role's recent events", () => {
   }
   const at = (second: number) => new Date(1_700_000_000_000 + second * 1000);
 
+  const archived = (reason: string) => ({ action: "archived", reason });
+
   it("never returns another account's events, however many it has", async () => {
     const { me, other, jobs: [job] } = await sharedPosting();
     await database.insert(schema.jobEvents).values([
-      ...Array.from({ length: 20 }, (_, i) => ({ jobId: job!.id, userId: other.id, type: "scored" as const, payload: { who: "other", i }, at: at(100 + i) })),
-      { jobId: job!.id, userId: null, type: "discovered" as const, payload: { who: "shared" }, at: at(1) },
-      { jobId: job!.id, userId: me.id, type: "decided" as const, payload: { who: "me" }, at: at(2) },
+      ...Array.from({ length: 20 }, (_, i) => ({ jobId: job!.id, userId: other.id, type: "updated" as const, payload: archived(`other ${i}`), at: at(100 + i) })),
+      { jobId: job!.id, userId: null, type: "updated" as const, payload: archived("shared"), at: at(1) },
+      { jobId: job!.id, userId: me.id, type: "updated" as const, payload: archived("mine"), at: at(2) },
     ]);
-    const events = await fetchRecentEventsFor(me.id, [job!.id]);
-    expect(events.get(job!.id)!.map((e) => e.payload.who)).toEqual(["me", "shared"]);
-    expect(events.get(job!.id)![0]!.at).toEqual(at(2));
+    expect(await fetchArchiveNotes(me.id, job!.id)).toEqual(["Archived: mine", "Archived: shared"]);
   });
 
   it("merges shared and own events newest first and caps them across both", async () => {
     const { me, jobs: [job] } = await sharedPosting();
     // Four of each, interleaved in time: the newest six of the eight, in order.
     await database.insert(schema.jobEvents).values([1, 2, 3, 4, 5, 6, 7, 8].map((second) => ({
-      jobId: job!.id, userId: second % 2 ? null : me.id, type: "updated" as const, payload: { second }, at: at(second),
+      jobId: job!.id, userId: second % 2 ? null : me.id, type: "updated" as const, payload: archived(String(second)), at: at(second),
     })));
-    const events = await fetchRecentEventsFor(me.id, [job!.id], 6);
-    expect(events.get(job!.id)!.map((e) => e.payload.second)).toEqual([8, 7, 6, 5, 4, 3]);
+    expect(await fetchArchiveNotes(me.id, job!.id, 6)).toEqual([8, 7, 6, 5, 4, 3].map((second) => `Archived: ${second}`));
   });
 
-  it("orders events at the same moment by id, leaves eventless jobs out and ignores repeated ids", async () => {
+  it("keeps only the events that put the role away, and names who did when no reason was given", async () => {
     const { me, jobs: [job, quiet] } = await sharedPosting();
-    const ids = ["00000000-0000-4000-8000-00000000000b", "00000000-0000-4000-8000-00000000000a"];
-    await database.insert(schema.jobEvents).values(ids.map((id) => ({ id, jobId: job!.id, userId: null, type: "updated" as const, at: at(5) })));
-    const events = await fetchRecentEventsFor(me.id, [job!.id, quiet!.id, job!.id]);
-    expect(events.get(job!.id)!.map((e) => e.id)).toEqual([...ids].sort());
-    expect(events.has(quiet!.id)).toBe(false);
-    expect(await fetchRecentEventsFor(me.id, [])).toEqual(new Map());
+    await database.insert(schema.jobEvents).values([
+      { jobId: job!.id, userId: me.id, type: "updated" as const, payload: { action: "archived" }, at: at(3) },
+      { jobId: job!.id, userId: me.id, type: "updated" as const, payload: { action: "restored" }, at: at(4) },
+    ]);
+    expect(await fetchArchiveNotes(me.id, job!.id)).toEqual(["Archived: Put away by you"]);
+    expect(await fetchArchiveNotes(me.id, quiet!.id)).toEqual([]);
   });
 });
 

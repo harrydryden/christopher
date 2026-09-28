@@ -24,11 +24,10 @@ import {
 import type { CvTailoringPlan } from "./cv-tailoring";
 export { mentionsDemographicAttribute } from "./cv-demographics";
 import { mentionsDemographicAttribute } from "./cv-demographics";
+import { normaliseText } from "./normalize";
 
-const normalise = (value: string) =>
-  value.normalize("NFKC").replace(/\s+/g, " ").trim();
 function anchored(value: string, full: string) {
-  return normalise(full).includes(normalise(value));
+  return normaliseText(full).includes(normaliseText(value));
 }
 export { anchored as cvQuoteIsAnchored };
 export function validateCvRubric(
@@ -43,7 +42,7 @@ export function validateCvRubric(
       throw new Error(
         "A scoring requirement is not quoted from the saved job description.",
       );
-    const key = normalise(requirement.quote).toLowerCase();
+    const key = normaliseText(requirement.quote).toLowerCase();
     if (ids.has(requirement.id) || quotes.has(key))
       throw new Error(
         "Scoring requirements must be distinct, without duplicate weighting.",
@@ -113,7 +112,7 @@ export function cvLibraryVerdicts(
       const id = evidenceBlockId(ref.sourceId, entryIds);
       const block = byId.get(id);
       if (!block || !anchored(ref.quote, block.text)) continue;
-      const key = `${id}\u0000${normalise(ref.quote)}`;
+      const key = `${id}\u0000${normaliseText(ref.quote)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       libraryEvidence.push({ id, quote: ref.quote });

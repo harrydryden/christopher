@@ -48,11 +48,6 @@ export async function listResolvedSuggestions(userId: string, limit = 50, page =
   return resolveSuggestionRows(rows);
 }
 
-export async function getSuggestion(userId: string, id: string): Promise<CompanySuggestion | null> {
-  const rows = await db().select().from(companySuggestions).where(and(eq(companySuggestions.userId, userId), eq(companySuggestions.id, id))).limit(1);
-  return rows[0] ?? null;
-}
-
 function suggestionSearch(q: string) {
   return q ? ilike(companySuggestions.name, `%${q.slice(0, 200).replace(/[\\%_]/g, "\\$&")}%`) : undefined;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, priorityFor, SHORT_TASK_DEADLINE_MS, SHORT_TASK_TYPES, TASK_DEADLINES_MS, TASK_TYPE_NAMES } from "./tasks";
+import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, deadlineMsFor, INTERACTIVE_TASK_TYPES, priorityFor, TASK_DEADLINES_MS, TASK_TYPE_NAMES, type TaskPayloads, type TaskType } from "./tasks";
 
 describe("task priorities", () => {
   it("floors ageing at the least urgent priority an interactive type is queued at", () => {
@@ -19,6 +19,44 @@ describe("task priorities", () => {
   });
 });
 
+describe("task dedupe keys and priorities", () => {
+  it("keys and ranks one payload of every type exactly as the queue has always stored it", () => {
+    const u = "u1", c = "c1";
+    const cases: { [T in TaskType]: [TaskPayloads[T], string | null, number] } = {
+      extract_document: [{ sourceId: "s1", documentId: "d1" }, "extract_document:d1", 5],
+      verify_company: [{ candidateId: "k1" }, "verify_company:k1", 5],
+      monitor_source: [{ sourceId: "s1" }, "monitor_source:s1", 5],
+      discover: [{ companyId: c }, "discover:c1", 1],
+      scan_company: [{ companyId: c }, "scan_company:c1", 5],
+      run_daily: [{ trigger: "schedule" }, "run_daily", 5],
+      fetch_description: [{ jobId: "j1" }, "fetch_description:j1", 4],
+      score_job: [{ userId: u, jobId: "j1" }, "score_job:u1:j1", 4],
+      tag_reason: [{ decisionId: "x1" }, "tag_reason:x1", 1],
+      synthesize_profile: [{ userId: u }, "synthesize_profile:u1", 6],
+      suggest_filters: [{ userId: u }, "suggest_filters:u1", 6],
+      suggest_from_scans: [{ userId: u }, "suggest_from_scans:u1", 6],
+      profile_company: [{ companyId: c }, "profile_company:c1", 6],
+      suggest_companies: [{ userId: u }, "suggest_companies:u1", 7],
+      rescore_all: [{ userId: u }, "rescore_all:u1", 6],
+      reevaluate_gate: [{ userId: u, companyId: c }, "reevaluate_gate:u1:c1", 1],
+      generate_cv: [{ draftId: "cv1" }, "generate_cv:cv1", 2],
+      import_posting: [{ userId: u, companyId: c, url: "https://a.example/j" }, "import_posting:u1:c1:https://a.example/j", 1],
+      review_library: [{ userId: u, libraryVersion: 3 }, "review_library:u1", 1],
+      import_library_document: [{ userId: u, importId: "i1" }, "import_library_document:i1", 1],
+      collect_score_batch: [{}, "collect_score_batch", 4],
+      poll_score_batch: [{ batchId: "b1" } as TaskPayloads["poll_score_batch"], "poll_score_batch:b1", 4],
+      reencode_logos: [{}, "reencode_logos", 7],
+    };
+    for (const type of TASK_TYPE_NAMES) {
+      const [payload, key, priority] = cases[type];
+      expect(dedupeKeyFor(type, payload as never)).toBe(key);
+      expect(priorityFor(type)).toBe(priority);
+    }
+    expect(dedupeKeyFor("discover", { companyId: c, logoOnly: true, homepageUrl: "https://a.example" })).toBe("company_logo:c1:https://a.example");
+    expect(dedupeKeyFor("reevaluate_gate", {})).toBe("reevaluate_gate:all");
+  });
+});
+
 describe("task deadlines", () => {
   it("covers the model calls of extraction, profile synthesis and company suggestions, under ten minutes", () => {
     // Each makes one high-effort call whose answer alone can take longer than the two-minute default.
@@ -31,13 +69,9 @@ describe("task deadlines", () => {
     }
   });
 
-  it("names as short exactly the types whose deadline fits a serverless invocation", () => {
+  it("names every task type once", () => {
     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
     expect(TASK_TYPE_NAMES).toHaveLength(23);
-    for (const type of TASK_TYPE_NAMES)
-      expect(SHORT_TASK_TYPES.includes(type)).toBe(deadlineMsFor(type) <= SHORT_TASK_DEADLINE_MS);
-    // A CV build, a scan or a discovery can never be claimed by such a runner.
-    for (const type of ["generate_cv", "scan_company", "discover"] as const) expect(SHORT_TASK_TYPES).not.toContain(type);
   });
 });
 

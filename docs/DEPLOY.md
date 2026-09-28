@@ -239,7 +239,8 @@ so 30 s only ever cuts off a pathological document, at a tenth of the cost.
 | `ADMIN_EMAILS` | optional, see step 4 above; defaults to the owner's address |
 
 The interface has guarded reads for a short deployment skew, but that is a recovery measure rather
-than the release order. Apply migrations first, deploy and verify the interface second, then deploy
+than the release order: they degrade only on a table or column that is not there yet (PostgreSQL
+42P01 or 42703, `apps/web/lib/schema-skew.ts`), and any other database error surfaces as one. Apply migrations first, deploy and verify the interface second, then deploy
 the worker. The worker is last because it is the component that can first write a new lifecycle
 state such as `awaiting_evidence`; the corresponding interface must be live before a person can be
 left at that checkpoint. A database missing migrations altogether is a different thing — the

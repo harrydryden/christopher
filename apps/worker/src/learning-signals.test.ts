@@ -24,6 +24,8 @@ import {
   RESCORE_INTERVAL_MS,
 } from "./handlers/learning";
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
+import { handleSuggestCompanies } from "./handlers/companies";
+import { BudgetRefusedError } from "./budget";
 import { ensureTestUser } from "./test-users";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
@@ -421,4 +423,16 @@ it("brings a shortlisted role's waiting score up to the shortlist's priority", a
   const scores = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
   expect(scores).toHaveLength(1);
   expect(scores[0]!.priority).toBe(1);
+});
+
+it("skips company suggestions whose own hold the account's budget refuses, rather than failing and retrying", async () => {
+  await seedRole();
+  const suggestCompanies = vi.fn().mockRejectedValue(new BudgetRefusedError({ limit: "account", limitUsd: 1, spent: 0.99, held: 0 }, "no room"));
+  const result = await handleSuggestCompanies({ id: null, type: "suggest_companies", payload: { userId }, attempts: 1 } as never, aiDeps({ suggestCompanies }));
+  expect(result).toEqual({ skipped: "account ai budget exceeded" });
+  expect(suggestCompanies).toHaveBeenCalledTimes(1);
+
+  // A deployment cap is not the account's to skip: it still fails, and backs off as a failure does.
+  const dayCap = vi.fn().mockRejectedValue(new BudgetRefusedError({ limit: "day", limitUsd: 1, spent: 1, held: 0 }, "day cap"));
+  await expect(handleSuggestCompanies({ id: null, type: "suggest_companies", payload: { userId }, attempts: 1 } as never, aiDeps({ suggestCompanies: dayCap }))).rejects.toThrow("day cap");
 });

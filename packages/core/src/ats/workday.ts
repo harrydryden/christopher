@@ -1,7 +1,7 @@
 /** VERIFY: the /wday/cxs endpoint is undocumented but stable across tenants; shapes confirmed against fixtures. */
-import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseRelativePosted } from "../normalize";
-import { fetchJson, pathSegments, safeUrl, str, verifyFromRead, MAX_POSTINGS, type ListingRead } from "./common";
+import { completeListing, feedAdapter, fetchJson, pathSegments, readOffsetPages, safeUrl, str, MAX_POSTINGS, type PagedRead } from "./common";
 
 const HOST_RE = /^([a-z0-9][a-z0-9-]*)\.(wd\d+)\.myworkdayjobs\.com$/;
 const LOCALE_RE = /^[a-z]{2}(-[A-Za-z]{2})?$/;
@@ -69,46 +69,30 @@ const PAGE_SIZE = 20;
 /** Every page a listing may take: the posting cap at Workday's twenty roles a page. */
 const MAX_PAGES = MAX_POSTINGS / PAGE_SIZE;
 
-/** Up to `maxPages` pages of the listing; `more` says the board holds roles past the last one read. */
-async function readPages(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { more: boolean }> {
+/** Up to `maxPages` pages of the listing. */
+async function readPages(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<PagedRead> {
   const p = parts(spec);
   if (!p) throw new Error("workday spec missing host/tenant/site");
   const now = ctx.now?.() ?? new Date();
-  const out: RawPosting[] = [];
-  const limit = PAGE_SIZE;
-  // Some tenants report `total` on the first page only and send 0 on every page after it, so the
-  // count is taken once: trusting the later zero made page two look like the end of the board.
-  let total: number | undefined;
-  let more = false;
-  for (let page = 0; page < maxPages; page++) {
-    const offset = page * limit;
-    const { data } = await fetchJson<{ total?: number; jobPostings?: WdPosting[] }>(ctx, `https://${p.host}/wday/cxs/${p.tenant}/${p.site}/jobs`, {
-      method: "POST",
-      body: { appliedFacets: {}, limit, offset, searchText: "" },
-    });
-    const postings = Array.isArray(data.jobPostings) ? data.jobPostings : [];
-    for (const wp of postings) {
-      const mapped = mapPosting(wp, p.host, p.site, now);
-      if (mapped) out.push(mapped);
-    }
-    if (total === undefined && typeof data.total === "number" && data.total > 0) total = data.total;
-    if (postings.length === 0) { more = false; break; }
-    // With no usable total, a full page is the only evidence left that another page exists.
-    more = total === undefined ? postings.length === limit : offset + limit < total;
-    if (!more) break;
-  }
-  return { postings: out.slice(0, MAX_POSTINGS), total, more };
+  return readOffsetPages({
+    pageSize: PAGE_SIZE,
+    maxPages,
+    // Some tenants report `total` on the first page only and send 0 on every page after it, so the
+    // count is taken once: trusting the later zero made page two look like the end of the board.
+    totalPolicy: "first",
+    fetchPage: async (offset) => {
+      const { data } = await fetchJson<{ total?: number; jobPostings?: WdPosting[] }>(ctx, `https://${p.host}/wday/cxs/${p.tenant}/${p.site}/jobs`, {
+        method: "POST",
+        body: { appliedFacets: {}, limit: PAGE_SIZE, offset, searchText: "" },
+      });
+      return { items: Array.isArray(data.jobPostings) ? data.jobPostings : [], total: data.total };
+    },
+    map: (wp) => mapPosting(wp, p.host, p.site, now),
+  });
 }
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  const { postings, more } = await readPages(spec, ctx, MAX_PAGES);
-  if (more) throw new IncompleteListingError(`Workday listing stopped at ${postings.length} roles with more pages to read; this scan cannot close roles`, postings);
-  return postings;
+  return completeListing("Workday", await readPages(spec, ctx, MAX_PAGES));
 }
 
-export const workday: Adapter = {
-  type: "workday",
-  specFromUrl: fromUrl,
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromRead(() => readPages(spec, ctx, 1))(),
-};
+export const workday = feedAdapter({ type: "workday", fromUrl, read: fetchPostings, verifyRead: (spec, ctx) => readPages(spec, ctx, 1) });

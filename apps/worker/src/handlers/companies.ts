@@ -4,10 +4,11 @@
  * the companies that account follows. Every suggestion is verified deterministically before the
  * user ever sees it (SPEC R-8.3).
  */
-import { schema, enqueueTasks, type Task } from "@ava/db";
-import { dedupeKeyFor, discovery, ensureHttpUrl, evaluateGate, extractDomain, priorityFor, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
+import { schema, taskRow, enqueueTasks, type Task } from "@ava/db";
+import { discovery, ensureHttpUrl, evaluateGate, extractDomain, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetStop, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
+import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
 import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";
 import { withResourceLease } from "../lease";
@@ -140,13 +141,14 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
     .slice(0, 40)
     .map((s) => ({ name: s.name, reason: s.rejectionReason! }));
 
-  const candidates = await deps.ai.suggestCompanies({
+  const candidates = await withinAccountBudget(deps.ai.suggestCompanies({
     portfolio: selectExamples(portfolio),
     preferenceProfile: (await recommendationContext(deps, userId)).preferences,
     excludeDomains,
     rejected,
     limit: limit ?? 15,
-  }, { refType: "suggestions", refId: userId, userId });
+  }, { refType: "suggestions", refId: userId, userId }));
+  if (candidates === ACCOUNT_BUDGET_REFUSED) return { skipped: "account ai budget exceeded" };
   if (!candidates || candidates.length === 0) return { skipped: "no candidates returned" };
 
   const nameToId = new Map(companies.map((c) => [c.name.toLowerCase(), c.id]));
@@ -264,12 +266,7 @@ export async function queueMissingCompanyProfiles(deps: WorkerDeps): Promise<num
     .leftJoin(schema.companyProfiles, eq(schema.companyProfiles.companyId, schema.companies.id))
     .where(and(eq(schema.companies.status, "active"), or(isNull(schema.companyProfiles.id), sql`${schema.companyProfiles.generatedAt} < ${stale}`)))
     .limit(20);
-  return enqueueTasks(deps.db, rows.map(row => ({
-    type: "profile_company" as const,
-    payload: { companyId: row.id },
-    dedupeKey: dedupeKeyFor("profile_company", { companyId: row.id }),
-    priority: priorityFor("profile_company"),
-  })));
+  return enqueueTasks(deps.db, rows.map(row => taskRow("profile_company", { companyId: row.id })));
 }
 
 export { serialiseCandidate, gatherCompanyText as _gatherCompanyTextForTests, latestProfile as _latestProfile };

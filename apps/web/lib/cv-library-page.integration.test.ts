@@ -32,16 +32,13 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 
 import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { GET as reviewsRoute } from "@/app/api/cv/library/reviews/route";
-import { diffCvLibraries } from "./cv-library-diff";
 import { cvLibraryReadiness } from "./cv-ready";
 import { archivedBlocks, editableEmployment, removeJob, restoreJob } from "./cv-library-rows";
 import { openStoredLibrary } from "./cv-library-open";
 import {
   getLibraryEvidence,
-  getLibraryVersionContents,
   getOwnCvLibrary,
   libraryReviewSignature,
-  listLibraryVersions,
   ownsLibraryVersion,
 } from "./queries/cv";
 
@@ -276,16 +273,6 @@ it("archives a removed job's evidence instead of deleting it, and shows it nowhe
   expect((await getLibraryEvidence(user.id, after)).entries).toEqual([]);
   expect(cvTailoringEvidence(after.content).filter(item => item.entryId)).toEqual([]);
   expect(() => groupCvLibrary(opened)).toThrow("Confirm at least one responsibility or outcome");
-
-  // And the history says what that save did, rather than comparing equal to the version before it.
-  const contents = await getLibraryVersionContents(user.id, [before.version, after.version]);
-  const diff = diffCvLibraries(
-    openStoredLibrary(contents.get(before.version)),
-    openStoredLibrary(contents.get(after.version)),
-    before.version,
-    after.version,
-  );
-  expect(diff.blocksRemoved).toEqual(["Operations Director · Acme · Jan 2023 – Present"]);
 });
 
 it("puts a removed job back, with its wording and its employment record intact", async () => {
@@ -359,32 +346,12 @@ it("shows the refusal the worker recorded instead of waiting for a pass that wil
   expect(evidence.entries[0]!.evaluating).toBe(false);
 });
 
-it("lists this account's versions newest first and compares two of them", async () => {
-  await save(libraryFixture(["Led a team"]), 0);
-  await save(libraryFixture(["Led a team of nine", "Cut handovers by 40%"]), 1);
-  await save(libraryFixture(["Led a team of nine", "Cut handovers by 40%", "Shipped the new rota in March"]), 2);
-
-  const versions = await listLibraryVersions(user.id);
-  expect(versions.map(row => row.version)).toEqual([3, 2, 1]);
-  expect(versions[0]!.createdAt).toBeInstanceOf(Date);
-
-  const contents = await getLibraryVersionContents(user.id, [1, 3]);
-  const diff = diffCvLibraries(contents.get(1)!, contents.get(3)!, 1, 3);
-  expect(diff.blocks).toHaveLength(1);
-  expect(diff.blocks[0]).toMatchObject({
-    added: ["Cut handovers by 40%", "Shipped the new rota in March"],
-    removed: [],
-    changed: [{ before: "Led a team", after: "Led a team of nine" }],
-  });
-});
-
 it("never reads another account's versions or answers for them", async () => {
   await save(libraryFixture(["Led a team"]), 0);
   const mine = (await getOwnCvLibrary(user.id))!;
   const other = await signInTestUser(database, process.env.SESSION_SECRET!, "someone-else@example.com", "member");
 
   expect(await ownsLibraryVersion(other.user.id, mine.version)).toBe(false);
-  expect(await getLibraryVersionContents(other.user.id, [mine.version])).toEqual(new Map());
   expect(await libraryReviewSignature(other.user.id, mine.version)).toBe("0:");
 
   // The route is asked for a version the signed-in account has not saved.

@@ -41,4 +41,35 @@ describe("postingOnCompanyHost", () => {
     expect(postingOnCompanyHost("https://jobs.acme-careers.net/listing/42", acme, [html])).toBe(true);
     expect(postingOnCompanyHost("https://other.acme-careers.net/listing/42", acme, [html])).toBe(false);
   });
+
+  // Ported from the worker's own copy of the rule, which this function replaced.
+  it("knows a company's own hosts from its homepage, its careers pages and its own boards", () => {
+    const company = { domain: "acme.example", homepageUrl: "https://www.acme.example/" };
+    const sources = [
+      source({ apiUrl: "https://boards-api.greenhouse.io/v1/boards/acme/jobs" }),
+      source({ type: "html", url: "https://careers.acmejobs.example/listing", atsSlug: null }),
+    ];
+    expect(postingOnCompanyHost("https://acme.example/jobs/1", company, sources)).toBe(true);
+    expect(postingOnCompanyHost("https://jobs.acme.example/1", company, sources)).toBe(true);
+    expect(postingOnCompanyHost("https://careers.acmejobs.example/role/9", company, sources)).toBe(true);
+    expect(postingOnCompanyHost("https://job-boards.greenhouse.io/acme/jobs/4001", company, sources)).toBe(true);
+    // A vendor's host is shared by every customer: another company's board on it is not this one's.
+    expect(postingOnCompanyHost("https://job-boards.greenhouse.io/someone-else/jobs/4001", company, sources)).toBe(false);
+    expect(postingOnCompanyHost("https://notacme.example/jobs/1", company, sources)).toBe(false);
+    expect(postingOnCompanyHost("https://evil.example/acme.example/jobs/1", company, sources)).toBe(false);
+    expect(postingOnCompanyHost("not a url", company, sources)).toBe(false);
+  });
+
+  it("trusts the registrable domain only when the homepage is on it", () => {
+    const company = { domain: "acme.example", homepageUrl: "https://www.acme-robotics.example/" };
+    expect(postingOnCompanyHost("https://www.acme-robotics.example/careers/1", company, [])).toBe(true);
+    expect(postingOnCompanyHost("https://jobs.acme.example/1", company, [])).toBe(false);
+  });
+
+  it("reads only an html source's host as the company's, and a Greenhouse EU board apart from the US one", () => {
+    const monitored = source({ type: "rss", url: "https://feeds.example/acme.xml", atsSlug: null });
+    expect(postingOnCompanyHost("https://feeds.example/acme/1", acme, [monitored])).toBe(false);
+    expect(postingOnCompanyHost("https://job-boards.eu.greenhouse.io/acme/jobs/1", acme, [source({})])).toBe(false);
+    expect(postingOnCompanyHost("https://job-boards.eu.greenhouse.io/acme/jobs/1", acme, [source({ atsSite: "eu" })])).toBe(true);
+  });
 });

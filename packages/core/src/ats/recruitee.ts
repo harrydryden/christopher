@@ -1,16 +1,9 @@
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
+import { feedAdapter, fetchJson, htmlToText, joinLocation, mapPostings, requireSlug, specOrNull, str, subdomainSlug, INLINE_DESCRIPTIONS_FETCH } from "./common";
 
 export function recruiteeSpec(slug: string): SourceSpec {
   return { type: "recruitee", url: `https://${slug}.recruitee.com`, apiUrl: `https://${slug}.recruitee.com/api/offers/`, atsSlug: slug };
-}
-
-function slugFromUrl(url: string): string | null {
-  const u = safeUrl(url);
-  if (!u) return null;
-  const m = u.hostname.toLowerCase().match(/^([a-z0-9][a-z0-9-]*)\.recruitee\.com$/);
-  return m && slugOk(m[1]) ? m[1]! : null;
 }
 
 interface RtOffer {
@@ -53,19 +46,10 @@ function mapOffer(o: RtOffer, slug: string): RawPosting | null {
 }
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  const slug = spec.atsSlug;
-  if (!slug) throw new Error("recruitee spec missing slug");
+  const slug = requireSlug(spec);
   const { data } = await fetchJson<{ offers?: RtOffer[] }>(ctx, `https://${slug}.recruitee.com/api/offers/`, INLINE_DESCRIPTIONS_FETCH);
   const offers = Array.isArray(data.offers) ? data.offers : [];
-  return offers.map((o) => mapOffer(o, slug)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
+  return mapPostings(offers, (o) => mapOffer(o, slug));
 }
 
-export const recruitee: Adapter = {
-  type: "recruitee",
-  specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? recruiteeSpec(slug) : null;
-  },
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))(),
-};
+export const recruitee = feedAdapter({ type: "recruitee", fromUrl: (url) => specOrNull(subdomainSlug(url, "recruitee.com"), recruiteeSpec), read: fetchPostings });

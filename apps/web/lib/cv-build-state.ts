@@ -18,7 +18,6 @@ import {
   CV_FAILURE_POLICIES,
   type CvBuildCheckpoint,
   type CvBuildFailure,
-  type CvBuildStepStatus,
   type CvFailureAction,
   type CvFailureKind,
 } from "@ava/core";
@@ -69,17 +68,6 @@ export function cvWorkVersion(draft: { status: string; failure?: CvBuildFailure 
 
 // The ledger's signature lives with the journal's types, where the browser can read it too.
 export { cvStepsSignature, type CvStepMoment } from "./cv-build-journal";
-
-/** `cvBuildStepsSignature`'s string reduced to what `cvStepsSignature` produces for the same rows. */
-export function normaliseCvStepsSignature(signature: string): string {
-  // The moment is the third field and carries colons of its own, so it is split off by position.
-  const counts = signature.indexOf(":", signature.indexOf(":") + 1);
-  if (counts === -1) return signature;
-  const moment = signature.slice(counts + 1);
-  if (!moment) return signature;
-  const at = new Date(moment);
-  return `${signature.slice(0, counts + 1)}${Number.isNaN(at.getTime()) ? moment : at.toISOString()}`;
-}
 
 export interface CvBuildTask {
   status: "queued" | "running" | "done" | "failed";

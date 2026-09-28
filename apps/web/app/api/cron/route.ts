@@ -15,18 +15,13 @@ import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth";
 import { sessionSecret } from "@/lib/session";
+import { sameOrigin } from "@/lib/route-request";
 import { runScheduledWork } from "./scheduled-work";
 
 function bearerMatches(header: string | null, secret: string): boolean {
   const supplied = Buffer.from(header ?? "");
   const expected = Buffer.from(`Bearer ${secret}`);
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
-}
-
-/** The browser names the page a POST came from; a cross-site one names another origin. */
-function sameOrigin(request: Request): boolean {
-  const url = new URL(request.url);
-  return request.headers.get("origin") === `${url.protocol}//${request.headers.get("host") ?? url.host}`;
 }
 
 export const dynamic = "force-dynamic";

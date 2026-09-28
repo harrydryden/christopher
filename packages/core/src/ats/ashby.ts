@@ -1,6 +1,6 @@
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
+import { extraLocations, feedAdapter, fetchJson, htmlToText, mapPostings, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, INLINE_DESCRIPTIONS_FETCH } from "./common";
 
 export function ashbySpec(slug: string): SourceSpec {
   return {
@@ -46,13 +46,12 @@ function mapJob(j: AshbyJob): RawPosting | null {
   if (!title || !url) return null;
   const location = str(j.location);
   const secondary = (j.secondaryLocations ?? []).map((s) => str(s.location)).filter((s): s is string => !!s);
-  const locations = [...new Set([...(location ? [location] : []), ...secondary])];
   return {
     externalId: str(j.id),
     title,
     url,
     location,
-    locations: locations.length > 1 ? locations : undefined,
+    locations: extraLocations(location, secondary),
     department: [str(j.department), str(j.team)].filter(Boolean).join(" / ") || undefined,
     employmentType: str(j.employmentType),
     remote: j.isRemote === true ? true : undefined,
@@ -64,19 +63,10 @@ function mapJob(j: AshbyJob): RawPosting | null {
 }
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  if (!spec.atsSlug) throw new Error("ashby spec missing slug");
-  const { data } = await fetchJson<unknown>(ctx, ashbySpec(spec.atsSlug).apiUrl!, INLINE_DESCRIPTIONS_FETCH);
+  const { data } = await fetchJson<unknown>(ctx, ashbySpec(requireSlug(spec)).apiUrl!, INLINE_DESCRIPTIONS_FETCH);
   const jobs = rec(data)?.jobs;
   const list = Array.isArray(jobs) ? (jobs as AshbyJob[]) : [];
-  return list.map(mapJob).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
+  return mapPostings(list, mapJob);
 }
 
-export const ashby: Adapter = {
-  type: "ashby",
-  specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? ashbySpec(slug) : null;
-  },
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))(),
-};
+export const ashby = feedAdapter({ type: "ashby", fromUrl: (url) => specOrNull(slugFromUrl(url), ashbySpec), read: fetchPostings });

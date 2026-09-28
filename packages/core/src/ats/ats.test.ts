@@ -4,7 +4,7 @@ import * as fx from "../fixtures";
 import { adapters, descriptionsFetchedPerPosting, fetchDescriptionFor, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { extractJsonLdPostings } from "./jsonld";
 import { applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, isExplicitEmptyListing, validateRecipe } from "./html";
-import { IncompleteListingError, type FetchContext, type HtmlRecipe } from "../types";
+import { IncompleteListingError, type FetchContext, type HtmlRecipe, type SourceFetchError, type SourceSpec } from "../types";
 import { INLINE_DESCRIPTIONS_MAX_BYTES } from "./common";
 
 const ctx = createFakeFetchContext({
@@ -325,6 +325,22 @@ describe("other adapters", () => {
     } });
     await expect(getAdapter("workable").fetchPostings(specFromAnyUrl("https://apply.workable.com/acme/")!, limited)).rejects.toThrow(/429/);
   });
+  it("reads a 429 or 503 as the host pacing us and a 403 as a refusal, on HTML, tier-2, Personio and RSS reads alike", async () => {
+    const statusFor: Record<string, number> = {
+      "https://acme.example/careers": 429,
+      "https://jobs.jobvite.com/acme/jobs": 503,
+      "https://acme.jobs.personio.de/xml?language=en": 429,
+      "https://acme.example/feed.xml": 429,
+      "https://acme.example/refused": 403,
+    };
+    const paced = createFakeFetchContext({ routes: Object.fromEntries(Object.entries(statusFor).map(([url, status]) => [url, { status, body: "" }])) });
+    const kindOf = (spec: SourceSpec) => getAdapter(spec.type).fetchPostings(spec, paced).then(() => "ok", (e: unknown) => (e as SourceFetchError).kind);
+    expect(await kindOf({ type: "html", url: "https://acme.example/careers" })).toBe("rate_limited");
+    expect(await kindOf(specFromAnyUrl("https://jobs.jobvite.com/acme/jobs")!)).toBe("rate_limited");
+    expect(await kindOf(specFromAnyUrl("https://acme.jobs.personio.de/")!)).toBe("rate_limited");
+    expect(await kindOf({ type: "rss", url: "https://acme.example/feed.xml" })).toBe("rate_limited");
+    expect(await kindOf({ type: "html", url: "https://acme.example/refused" })).toBe("blocked");
+  });
   it("workday verifies from its first page and the tenant's own total", async () => {
     const page = { total: 500, jobPostings: Array.from({ length: 20 }, (_, i) => ({ title: `Role ${i}`, externalPath: `/job/London/Role-${i}_R-${i}`, locationsText: "London" })) };
     const tenant = createFakeFetchContext({ routes: { "https://acmecorp.wd1.myworkdayjobs.com/wday/cxs/acmecorp/External/jobs": { body: page } } });
@@ -573,6 +589,13 @@ describe("HTML extraction", () => {
       <a href="https://jobs.ashbyhq.com/acme/123">Platform Engineer</a>
     </main>`;
     expect(findJobLinks(html, "https://example.com/about").map(link => link.text)).toEqual(["Platform Engineer"]);
+  });
+  it("counts links to every ATS host as job links, SuccessFactors and Eightfold included", () => {
+    const html = `<main>
+      <a href="https://career5.successfactors.eu/sfcareer/jobreqcareer?jobId=1">Data Analyst</a>
+      <a href="https://acme.eightfold.ai/careers?pid=42">Platform Engineer</a>
+    </main>`;
+    expect(findJobLinks(html, "https://acme.example/about").map(link => link.text)).toEqual(["Data Analyst", "Platform Engineer"]);
   });
   it("prefers JSON-LD when present", () => {
     const postings = extractPostingsFromHtml(fx.JSONLD_LISTING_HTML, "https://acmefoods.example.com/careers");

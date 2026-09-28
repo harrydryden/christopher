@@ -1,11 +1,11 @@
-import { createDb, totalAiSpend, type Db } from "@ava/db";
-import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryAiHooks, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
+import { createDb, type Db } from "@ava/db";
+import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, modelForCallSite, type AppSettings, type DiscoveryAiHooks, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
 import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref, type ReserveHint } from "@ava/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
 import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
-import { accountAiStanding, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
+import { accountAiStanding, budgetLimits, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
 import { log } from "./log";
 import { encodeLogoWebp } from "./logo-encode";
 import { recordModelCall } from "./otel";
@@ -137,17 +137,9 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
    */
   const reserve = async (callSite: string, estimate: number, ref: Ref, hint?: ReserveHint) => {
     const at = now();
-    const account = ref.userId ? await userSettings(ref.userId) : null;
-    const hold = await tryReserveAi(db, callSite, estimate, {
-      account: ref.userId && account
-        ? { userId: ref.userId, budgetUsd: account.aiBudgetUsd, since: aiBudgetWindowStart(at, account.aiBudgetResetAt) }
-        : undefined,
-      // Unset, or at the environment's unlimited default, is no cap: tryReserveAi reads no day total.
-      daily: env.dailyAiBudgetUsd,
-      discovery: env.discoveryAiBudgetUsd,
-      workerId: env.workerId,
-      // Never shorter than the call may run, so a live call's hold is not swept from under it.
-    }, at, holdMinutesFor(hint));
+    const account = ref.userId ? { userId: ref.userId, settings: await userSettings(ref.userId) } : undefined;
+    // Never shorter than the call may run, so a live call's hold is not swept from under it.
+    const hold = await tryReserveAi(db, callSite, estimate, budgetLimits(env, at, account), at, holdMinutesFor(hint));
     if ("refused" in hold)
       // One sentence for a refused hold, wherever it was refused: the CV build and this composed
       // their own, and the two drifted into telling the person different things about one budget.
@@ -293,14 +285,6 @@ export function makeDiscoveryContext(
   };
 }
 
-/**
- * Every account's AI spend this month, in USD: every call, whoever it was for, since the month
- * began. Budgets are per account, so this is a report of the deployment rather than a limit.
- */
-export async function aiSpendThisMonth(db: Db, now: Date): Promise<number> {
-  return totalAiSpend(db, aiBudgetWindowStart(now, null));
-}
-
 /** Why no model call may be made now. Worded to be returned as a task's `skipped` reason. */
 export type AiBudgetStop = "ai unavailable" | "account ai budget exceeded";
 
@@ -322,10 +306,3 @@ export async function aiBudgetStop(deps: WorkerDeps, userId?: string): Promise<A
   const { spent, held } = await accountAiStanding(deps.db, userId, aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt));
   return spent + held >= account.aiBudgetUsd ? "account ai budget exceeded" : null;
 }
-
-/** Whether a model call must not be made: `userId`'s own budget, when the work belongs to an account. */
-export async function aiBudgetExceeded(deps: WorkerDeps, userId?: string): Promise<boolean> {
-  return (await aiBudgetStop(deps, userId)) !== null;
-}
-
-export { discovery as _discoveryNs };

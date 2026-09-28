@@ -24,7 +24,7 @@ import { suggestionCount } from "./suggestions";
 
 const followingCount = async (userId: string) => (await scanStripFacts(userId)).following;
 const lastCompletedScanAt = async (userId: string) => (await scanStripFacts(userId)).lastScanAt;
-import { latestScanByCompany, listCatalogue, listCompanies } from "./companies";
+import { latestScanByCompany, listCataloguePage, listCompanies } from "./companies";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -185,7 +185,7 @@ describe("per-source scan lookups agree with the catalogue-wide queries they rep
     const listed = await listCompanies(user.id, 1);
     expect(Object.fromEntries(listed.map(row => [row.company.id, row.lastScan && { status: row.lastScan.status, startedAt: row.lastScan.startedAt.toISOString() }])))
       .toEqual(Object.fromEntries(ids.map(id => [id, expected[id] ?? null])));
-    const catalogue = await listCatalogue(user.id, 1);
+    const { rows: catalogue } = await listCataloguePage(user.id, 1);
     expect(Object.fromEntries(catalogue.map(row => [row.company.id, row.lastScan && { status: row.lastScan.status, startedAt: row.lastScan.startedAt.toISOString() }])))
       .toEqual(Object.fromEntries(ids.map(id => [id, expected[id] ?? null])));
   });

@@ -21,13 +21,13 @@
  * is not printed and not in any report Lighthouse uploads (reports go to `lighthouse-reports/`).
  */
 import { spawn } from "node:child_process";
-import { createHmac, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { setTimeout as sleep } from "node:timers/promises";
+import { disposableAdmin, startWeb } from "../lib/web.mjs";
 
 export const LHCI_EMAIL = "lhci@ava.invalid";
 export const LHCI_DOMAIN = "lhci.invalid";
@@ -66,38 +66,27 @@ export function mobileConfig(desktop) {
   return config;
 }
 
-/** apps/web/lib/session.ts's cookie: `v2.<sessionId>.<expires>.<base64url HMAC-SHA256>`. */
-export function sessionCookie(secret, sessionId, expiresEpochSeconds) {
-  const sig = createHmac("sha256", secret).update(`${sessionId}.${expiresEpochSeconds}`).digest("base64url");
-  return `ava_session=v2.${sessionId}.${expiresEpochSeconds}.${sig}`;
-}
+export { sessionCookie } from "../lib/web.mjs";
 
 async function seed(pool, secret) {
-  const { rows: [user] } = await pool.query(
-    `insert into users (email, name, role, claimed_at, email_verified_at) values ($1, 'Lighthouse', 'admin', now(), now())
-     on conflict (email) do update set role = 'admin', claimed_at = coalesce(users.claimed_at, now()) returning id`, [LHCI_EMAIL]);
-  const expires = Math.floor(Date.now() / 1000) + 3600;
-  const { rows: [session] } = await pool.query("insert into sessions (user_id, expires_at, user_agent) values ($1, to_timestamp($2), 'lighthouse-ci') returning id", [user.id, expires]);
-  const { rows: [company] } = await pool.query(
-    `insert into companies (name, homepage_url, domain) values ('Lighthouse Company', 'https://lhci.invalid', $1)
-     on conflict (domain) do update set name = excluded.name returning id`, [LHCI_DOMAIN]);
-  await pool.query("insert into company_subscriptions (user_id, company_id) values ($1, $2) on conflict do nothing", [user.id, company.id]);
-  const { rows: [source] } = await pool.query("insert into career_sources (company_id, type, url, status) values ($1, 'greenhouse', 'https://lhci.invalid/careers', 'active') returning id", [company.id]);
+  const { userId, cookie, companyId } = await disposableAdmin(pool, {
+    email: LHCI_EMAIL, name: "Lighthouse", domain: LHCI_DOMAIN, companyName: "Lighthouse Company", secret, userAgent: "lighthouse-ci" });
+  const { rows: [source] } = await pool.query("insert into career_sources (company_id, type, url, status) values ($1, 'greenhouse', 'https://lhci.invalid/careers', 'active') returning id", [companyId]);
   const { rows: [job] } = await pool.query(
     `insert into jobs (company_id, source_id, external_key, title, normalized_title, url, location, locations, description_text)
      values ($1, $2, 'lhci-1', 'Engineering Manager', 'engineering manager', 'https://lhci.invalid/jobs/1', 'London, UK', '["London, UK"]'::jsonb, repeat('Engineering work with measurable outcomes. ', 60))
-     returning id, title, description_text`, [company.id, source.id]);
-  await pool.query("insert into user_jobs (user_id, job_id, in_table, keyword_matched, location_ok, fit_score, score_state) values ($1, $2, true, true, true, 78, 'scored')", [user.id, job.id]);
+     returning id, title, description_text`, [companyId, source.id]);
+  await pool.query("insert into user_jobs (user_id, job_id, in_table, keyword_matched, location_ok, fit_score, score_state) values ($1, $2, true, true, true, 78, 'scored')", [userId, job.id]);
   const library = { name: "Lighthouse", contact: LHCI_EMAIL, profile: "Engineering leader focused on reliable delivery. ".repeat(20),
     entries: [{ id: "experience-1", kind: "experience", heading: "Engineering leadership — Example Co", company: "Example Co", details: "Led delivery and improved throughput by 25%.\n".repeat(20) }] };
-  await pool.query("insert into cv_libraries (user_id, version, content) values ($1, 1, $2)", [user.id, library]);
+  await pool.query("insert into cv_libraries (user_id, version, content) values ($1, 1, $2)", [userId, library]);
   const content = { name: "Lighthouse", contact: LHCI_EMAIL, summary: "Engineering leader focused on reliable delivery.",
     sections: [{ entryId: "experience-1", kind: "experience", heading: "Engineering leadership — Example Co", bullets: ["Led delivery and improved throughput by 25%."] }], gaps: [] };
   const { rows: [draft] } = await pool.query(
     `insert into cv_drafts (user_id, job_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, content)
      values ($1, $2, $3, 'Lighthouse Company', $4, 1, $5, 'lighthouse-fixture', 'ready', $6) returning id`,
-    [user.id, job.id, job.title, job.description_text, library, content]);
-  return { draftId: draft.id, cookie: sessionCookie(secret, session.id, expires) };
+    [userId, job.id, job.title, job.description_text, library, content]);
+  return { draftId: draft.id, cookie };
 }
 
 async function removeSeed(pool) {
@@ -150,7 +139,6 @@ async function main() {
   if (previewAt >= 0) return preview(process.argv[previewAt + 1] ?? "");
   const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
   const { Pool } = require("pg");
-  const nextBin = require.resolve("next/dist/bin/next");
   const lhci = createRequire(new URL("../../package.json", import.meta.url)).resolve("@lhci/cli/src/cli.js");
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -159,18 +147,12 @@ async function main() {
   const passes = process.argv.includes("--mobile-only") ? ["mobile"] : process.argv.includes("--desktop-only") ? ["desktop"] : ["desktop", "mobile"];
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const dir = mkdtempSync(join(tmpdir(), "ava-lhci-"));
-  let server;
+  let web;
   let exitCode = 0;
   try {
     const { draftId, cookie } = await seed(pool, secret);
     const env = { ...process.env, DATABASE_URL: databaseUrl, SESSION_SECRET: secret, NODE_ENV: "production", PORT: String(port) };
-    server = spawn(process.execPath, [nextBin, "start", "-p", String(port)], { cwd: new URL("../../apps/web", import.meta.url), env, stdio: ["ignore", "ignore", "inherit"], detached: true });
-    let ready = false;
-    for (let i = 0; i < 60 && !ready; i++) {
-      try { ready = (await fetch(`http://127.0.0.1:${port}/api/health`)).ok; } catch { /* not up yet */ }
-      if (!ready) await sleep(1_000);
-    }
-    if (!ready) throw new Error("the server never became ready");
+    web = await startWeb({ port, env, intervalMs: 1_000, stdio: ["ignore", "ignore", "inherit"] });
     const desktop = signedInConfig(JSON.parse(readFileSync(new URL("lighthouserc.json", ROOT), "utf8")), { draftId, cookie, port, chromeFlags: process.env.LHCI_CHROME_FLAGS });
     for (const pass of passes) {
       const path = join(dir, `lighthouserc.${pass}.json`);
@@ -180,7 +162,7 @@ async function main() {
       if (code !== 0 && pass === "desktop") exitCode = code;
     }
   } finally {
-    if (server?.pid) { try { process.kill(-server.pid, "SIGKILL"); } catch { /* gone */ } }
+    await web?.stop();
     await removeSeed(pool).catch(error => { console.error(`could not remove the Lighthouse account: ${error.message}`); exitCode ||= 1; });
     await pool.end();
     rmSync(dir, { recursive: true, force: true });

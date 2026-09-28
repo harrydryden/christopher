@@ -9,16 +9,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { localDatabaseUrl } from './lib/database.mjs';
 
 export function validateRecoveryUrls(sourceInput, targetInput) {
-  const source = new URL(sourceInput), target = new URL(targetInput);
-  const local = u => ['127.0.0.1', 'localhost', '::1'].includes(u.hostname);
-  if (!['postgres:', 'postgresql:'].includes(source.protocol) || !['postgres:', 'postgresql:'].includes(target.protocol) || !local(source) || !local(target))
-    throw new Error('Recovery drill requires local PostgreSQL source and target URLs');
-  if (decodeURIComponent(source.pathname.slice(1)) !== 'christopher_users_benchmark')
-    throw new Error('Recovery source must be christopher_users_benchmark');
-  if (decodeURIComponent(target.pathname.slice(1)) !== 'christopher_recovery_drill')
-    throw new Error('Recovery target must be christopher_recovery_drill');
+  const source = localDatabaseUrl(sourceInput, { name: 'christopher_users_benchmark', message: 'Recovery source must be the local christopher_users_benchmark' });
+  const target = localDatabaseUrl(targetInput, { name: 'christopher_recovery_drill', message: 'Recovery target must be the local christopher_recovery_drill' });
   if (source.hostname !== target.hostname || source.port !== target.port || source.username !== target.username)
     throw new Error('Recovery source and target must use the same local PostgreSQL server and user');
   return { source, target };

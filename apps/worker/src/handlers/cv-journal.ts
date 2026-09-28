@@ -1,4 +1,4 @@
-import { usd, type CvBuildFailure, type CvBuildMotion, type CvBuildStepDetails, type CvBuildStepStatus, type CvCallUsage } from "@ava/core";
+import { callCost, usd, type CvBuildFailure, type CvBuildMotion, type CvBuildStepDetails, type CvBuildStepStatus, type CvCallUsage } from "@ava/core";
 import { failOpenCvBuildSteps, finishCvBuildStep, schema, startCvBuildStep, type Db } from "@ava/db";
 import { eq } from "drizzle-orm";
 import { LeaseLostError } from "../lease";
@@ -37,9 +37,9 @@ export class CvOpenStep<M extends CvBuildMotion = CvBuildMotion> implements CvJo
    * a step's cost is complete however it ends, not only when it ends well.
    */
   addCost(usage: CvCallUsage): void {
-    const tokens = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+    // The unrounded cost is added, and the sum rounded, so many small calls do not drift.
     this.gathered.usd = usd(Number(this.gathered.usd ?? 0) + usage.costUsd);
-    this.gathered.tokens = Number(this.gathered.tokens ?? 0) + tokens;
+    this.gathered.tokens = Number(this.gathered.tokens ?? 0) + (callCost(usage).tokens ?? 0);
   }
 }
 

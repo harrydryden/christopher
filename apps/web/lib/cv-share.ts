@@ -150,10 +150,6 @@ const REFUSAL_SENTENCES: Record<CvShareRefusal, string> = {
   comments_off: "This link is read-only, so it does not take notes.",
 };
 
-export function cvShareRefusalSentence(reason: CvShareRefusal): string {
-  return REFUSAL_SENTENCES[reason];
-}
-
 /** The error codes the comments route hands back in the query string, and what each one says. */
 export const CV_SHARE_ERROR_SENTENCES: Record<string, string> = {
   gone: CV_SHARE_GONE_SENTENCE,

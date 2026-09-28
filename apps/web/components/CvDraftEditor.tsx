@@ -1,5 +1,5 @@
 "use client";
-import { CV_PROFILE_ID, cvEditFormId, cvSectionBlockId } from "@/lib/cv-content-links";
+import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import { useFormStatus } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.

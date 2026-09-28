@@ -5,12 +5,13 @@
  * USERS_BENCHMARK_FOLLOWS give the thousand-account shape (for example 1000, 1500 and 20).
  */
 import { createRequire } from 'node:module';
-import { createHmac } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { writeFile, readFile } from 'node:fs/promises';
 import { cpus, freemem, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { localDatabaseUrl } from './lib/database.mjs';
+import { sessionCookie, startWeb } from './lib/web.mjs';
 // The pollers' own rules, imported rather than copied, so the probe cannot drift from the app.
 import { BANNER_FIRST_MS, FIRST_POLL_MS, LONGEST_POLL_MS, nextPollDelay } from '../apps/web/lib/polling.ts';
 
@@ -104,18 +105,60 @@ export function benchmarkShape(env = process.env) {
 export function needsRender(shown, reading) {
   return reading.ok && shown !== undefined && reading.version !== shown;
 }
-export function assertDedicatedDatabase(input, expected = 'christopher_users_benchmark') {
-  const url = new URL(input);
-  const database = decodeURIComponent(url.pathname.slice(1));
-  if (!['postgres:', 'postgresql:'].includes(url.protocol) ||
-      !['127.0.0.1', 'localhost', '::1'].includes(url.hostname) ||
-      database !== expected) throw new Error(`Use the dedicated local ${expected} database`);
-  return url;
-}
+export const assertDedicatedDatabase = (input, expected = 'christopher_users_benchmark') =>
+  localDatabaseUrl(input, { name: expected, message: `Use the dedicated local ${expected} database` });
 export function summarise(values) {
   const times = values.map(x => x.ms).sort((a, b) => a - b);
   const at = p => times.length ? Math.round(times[Math.min(times.length - 1, Math.floor(times.length * p))]) : null;
   return { requests: values.length, errors: values.filter(x => !x.ok).length, p50Ms: at(.5), p95Ms: at(.95), maxMs: times.length ? Math.round(times.at(-1)) : null };
+}
+
+/**
+ * The probe's accounts and catalogue, shared with the perf fixture: `shape.accounts` claimed
+ * accounts, `shape.companies` companies with a source and `shape.jobsPerCompany` roles each, the
+ * follows, every followed role in each account's table, a seed profile, a Library, one CV and one
+ * application per account, and a session per account expiring at `expiresEpochSeconds`. Returns
+ * the sessions, ordered by email.
+ */
+export async function seedAccounts(pool, shape, expiresEpochSeconds) {
+  await pool.query(`insert into users(email,name,claimed_at,email_verified_at)
+    select 'load-'||n||'@benchmark.invalid','Load user '||n,now(),now() from generate_series(1,$1::int) n`, [shape.accounts]);
+  await pool.query(`insert into companies(name,domain,homepage_url)
+    select 'Load company '||n,'load-'||n||'.invalid','https://load-'||n||'.invalid' from generate_series(1,$1::int) n`, [shape.companies]);
+  await pool.query(`insert into career_sources(company_id,type,url,status)
+    select id,case when row_number() over(order by id)%3=0 then 'html' else 'greenhouse' end,homepage_url||'/careers','active' from companies`);
+  await pool.query(`insert into jobs(company_id,source_id,external_key,title,normalized_title,url,location,locations,description_text)
+    select c.id,s.id,'load-'||n,'Engineer '||n,'engineer '||n,c.homepage_url||'/jobs/'||n,
+    'London, UK','["London, UK"]'::jsonb,repeat('Engineering work with measurable customer outcomes. ',100)
+    from companies c join career_sources s on s.company_id=c.id cross join generate_series(1,$1::int) n`, [shape.jobsPerCompany]);
+  // Account n follows the `follows` companies from n × follows on, wrapping round the catalogue:
+  // every account follows all of a small catalogue, and a large one is shared out evenly.
+  await pool.query(`insert into company_subscriptions(user_id,company_id)
+    select u.id,c.id from (select id,row_number() over(order by email)-1 n from users where email like '%@benchmark.invalid') u
+    join (select id,row_number() over(order by id)-1 n from companies) c on ((c.n-u.n*$1::int)%$2::int+$2::int)%$2::int<$1::int`, [shape.follows, shape.companies]);
+  await pool.query(`insert into user_jobs(user_id,job_id,in_table,keyword_matched,location_ok,fit_score,score_state)
+    select s.user_id,j.id,true,true,true,55+(row_number() over(partition by s.user_id order by j.id)%40),'scored'
+    from company_subscriptions s join jobs j on j.company_id=s.company_id`);
+  await pool.query(`insert into user_settings(user_id,key,value)
+    select id,'seedProfile','"Engineering leadership in London"'::jsonb from users where email like '%@benchmark.invalid'`);
+  await pool.query(`insert into cv_libraries(user_id,version,content)
+    select id,1,jsonb_build_object('name',name,'contact',email,'profile',repeat('Engineering leader focused on reliable delivery. ',40),
+    'entries',jsonb_build_array(jsonb_build_object('id','experience-1','kind','experience','heading','Engineering leadership — Load Company','company','Load Company','details',repeat('Led delivery and improved throughput by 25%.\\n',45))))
+    from users where email like '%@benchmark.invalid'`);
+  await pool.query(`insert into cv_drafts(user_id,job_id,job_title,company_name,job_description,library_version,library_snapshot,model,status,content)
+    select u.id,j.id,j.title,c.name,j.description_text,1,l.content,'benchmark-fixture','ready',
+    jsonb_build_object('name',u.name,'contact',u.email,'summary','Engineering leader focused on reliable delivery.',
+      'sections',jsonb_build_array(jsonb_build_object('entryId','experience-1','kind','experience','heading','Engineering leadership — Load Company',
+        'bullets',jsonb_build_array('Led delivery and improved throughput by 25%.'))),'gaps','[]'::jsonb)
+    from users u join lateral (select j.* from jobs j join company_subscriptions s on s.company_id=j.company_id and s.user_id=u.id order by j.id limit 1) j on true
+    join companies c on c.id=j.company_id join cv_libraries l on l.user_id=u.id and l.version=1
+    where u.email like '%@benchmark.invalid'`);
+  await pool.query(`insert into applications(user_id,cv_id,job_id,job_title,company_name,applied_on,status,notes,history)
+    select d.user_id,d.id,d.job_id,d.job_title,d.company_name,current_date::text,'applied','Benchmark application',
+    jsonb_build_array(jsonb_build_object('status','applied','at',now()::text,'notes','Benchmark application')) from cv_drafts d`);
+  const { rows: sessions } = await pool.query(`insert into sessions(user_id,expires_at)
+    select id,to_timestamp($1) from users where email like '%@benchmark.invalid' order by email returning id,user_id`, [expiresEpochSeconds]);
+  return sessions;
 }
 
 async function main() {
@@ -130,8 +173,8 @@ async function main() {
   if (!Number.isSafeInteger(soakSeconds) || soakSeconds < 30 || soakSeconds > 300) throw new Error('USERS_SOAK_SECONDS must be 30..300');
   if (!Number.isSafeInteger(idleSeconds) || idleSeconds < 10 || idleSeconds > 120) throw new Error('USERS_IDLE_SECONDS must be 10..120');
   const secret = 'local-benchmark-only-0123456789abcdef0123456789abcdef';
-  let server, sampler;
-  let serverLog = '', resourcePhase = 'startup';
+  let web, sampler;
+  let resourcePhase = 'startup';
   const phases = [], resources = [];
   const deadline = async (work, label, seconds = TARGETS.maxPhaseSeconds) => {
     let timer;
@@ -146,62 +189,15 @@ async function main() {
       (select count(*)::int from companies) companies,
       (select count(*)::int from users where claimed_at is not null) claimed_users`);
     if (state.companies || state.claimed_users) throw new Error('Benchmark database must be empty apart from the unclaimed migration bootstrap account');
-    await pool.query(`insert into users(email,name,claimed_at,email_verified_at)
-      select 'load-'||n||'@benchmark.invalid','Load user '||n,now(),now() from generate_series(1,$1::int) n`, [shape.accounts]);
-    await pool.query(`insert into companies(name,domain,homepage_url)
-      select 'Load company '||n,'load-'||n||'.invalid','https://load-'||n||'.invalid' from generate_series(1,$1::int) n`, [shape.companies]);
-    await pool.query(`insert into career_sources(company_id,type,url,status)
-      select id,case when row_number() over(order by id)%3=0 then 'html' else 'greenhouse' end,homepage_url||'/careers','active' from companies`);
-    await pool.query(`insert into jobs(company_id,source_id,external_key,title,normalized_title,url,location,locations,description_text)
-      select c.id,s.id,'load-'||n,'Engineer '||n,'engineer '||n,c.homepage_url||'/jobs/'||n,
-      'London, UK','["London, UK"]'::jsonb,repeat('Engineering work with measurable customer outcomes. ',100)
-      from companies c join career_sources s on s.company_id=c.id cross join generate_series(1,$1::int) n`, [shape.jobsPerCompany]);
-    // Account n follows the `follows` companies from n × follows on, wrapping round the catalogue:
-    // every account follows all of a small catalogue, and a large one is shared out evenly.
-    await pool.query(`insert into company_subscriptions(user_id,company_id)
-      select u.id,c.id from (select id,row_number() over(order by email)-1 n from users where email like '%@benchmark.invalid') u
-      join (select id,row_number() over(order by id)-1 n from companies) c on ((c.n-u.n*$1::int)%$2::int+$2::int)%$2::int<$1::int`, [shape.follows, shape.companies]);
-    await pool.query(`insert into user_jobs(user_id,job_id,in_table,keyword_matched,location_ok,fit_score,score_state)
-      select s.user_id,j.id,true,true,true,55+(row_number() over(partition by s.user_id order by j.id)%40),'scored'
-      from company_subscriptions s join jobs j on j.company_id=s.company_id`);
-    await pool.query(`insert into user_settings(user_id,key,value)
-      select id,'seedProfile','"Engineering leadership in London"'::jsonb from users where email like '%@benchmark.invalid'`);
-    await pool.query(`insert into cv_libraries(user_id,version,content)
-      select id,1,jsonb_build_object('name',name,'contact',email,'profile',repeat('Engineering leader focused on reliable delivery. ',40),
-      'entries',jsonb_build_array(jsonb_build_object('id','experience-1','kind','experience','heading','Engineering leadership — Load Company','company','Load Company','details',repeat('Led delivery and improved throughput by 25%.\\n',45))))
-      from users where email like '%@benchmark.invalid'`);
-    await pool.query(`insert into cv_drafts(user_id,job_id,job_title,company_name,job_description,library_version,library_snapshot,model,status,content)
-      select u.id,j.id,j.title,c.name,j.description_text,1,l.content,'benchmark-fixture','ready',
-      jsonb_build_object('name',u.name,'contact',u.email,'summary','Engineering leader focused on reliable delivery.',
-        'sections',jsonb_build_array(jsonb_build_object('entryId','experience-1','kind','experience','heading','Engineering leadership — Load Company',
-          'bullets',jsonb_build_array('Led delivery and improved throughput by 25%.'))),'gaps','[]'::jsonb)
-      from users u join lateral (select j.* from jobs j join company_subscriptions s on s.company_id=j.company_id and s.user_id=u.id order by j.id limit 1) j on true
-      join companies c on c.id=j.company_id join cv_libraries l on l.user_id=u.id and l.version=1
-      where u.email like '%@benchmark.invalid'`);
-    await pool.query(`insert into applications(user_id,cv_id,job_id,job_title,company_name,applied_on,status,notes,history)
-      select d.user_id,d.id,d.job_id,d.job_title,d.company_name,current_date::text,'applied','Benchmark application',
-      jsonb_build_array(jsonb_build_object('status','applied','at',now()::text,'notes','Benchmark application')) from cv_drafts d`);
     const expires = Math.floor(Date.now() / 1000) + 3600;
-    const { rows: sessions } = await pool.query(`insert into sessions(user_id,expires_at)
-      select id,to_timestamp($1) from users where email like '%@benchmark.invalid' order by email returning id,user_id`, [expires]);
+    const sessions = await seedAccounts(pool, shape, expires);
     const { rows: drafts } = await pool.query(`select id,user_id from cv_drafts where archived_at is null`);
     const draftByUser = new Map(drafts.map(row => [row.user_id, row.id]));
     await pool.query('analyze');
-    const cookies = sessions.map(({ id }) => `ava_session=v2.${id}.${expires}.${createHmac('sha256', secret).update(`${id}.${expires}`).digest('base64url')}`);
-    server = spawn(process.execPath, ['--inspect=127.0.0.1:0', require.resolve('next/dist/bin/next'), 'start', '-p', String(port)], {
-      cwd: new URL('../apps/web', import.meta.url), detached: true,
-      env: { ...process.env, SESSION_SECRET: secret, NODE_ENV: 'production', AVA_DISABLE_BROWSER: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    server.stdout.on('data', b => { serverLog = (serverLog + b).slice(-20_000); });
-    server.stderr.on('data', b => { serverLog = (serverLog + b).slice(-20_000); });
-    let ready = false;
-    for (let i = 0; i < 60; i++) {
-      try { if ((await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1_000) })).ok) { ready = true; break; } } catch {}
-      await new Promise(r => setTimeout(r, 500));
-    }
-    if (!ready) throw new Error(`Server did not start: ${serverLog}`);
+    const cookies = sessions.map(({ id }) => sessionCookie(secret, id, expires));
+    web = await startWeb({ port, env: { SESSION_SECRET: secret, AVA_DISABLE_BROWSER: '1' }, nodeArgs: ['--inspect=127.0.0.1:0'], probeTimeoutMs: 1_000 });
     async function appHeapMiB() {
-      const inspectorUrl = serverLog.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
+      const inspectorUrl = web.log().match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
       if (!inspectorUrl) return null;
       return new Promise(resolveHeap => {
         const socket = new WebSocket(inspectorUrl);
@@ -218,10 +214,10 @@ async function main() {
     sampler = setInterval(async () => {
       try {
         const { rows: [db] } = await pool.query(`select count(*)::int connections,count(*) filter(where state='active')::int active from pg_stat_activity where datname=current_database()`);
-        const status = server?.pid ? await readFile(`/proc/${server.pid}/status`, 'utf8').catch(() => '') : '';
+        const status = web.child.pid ? await readFile(`/proc/${web.child.pid}/status`, 'utf8').catch(() => '') : '';
         let rssKiB = Number(status.match(/VmRSS:\s+(\d+)/)?.[1] ?? 0);
-        if (!rssKiB && server?.pid) rssKiB = await new Promise(resolveRss =>
-          execFile('ps', ['-o', 'rss=', '-p', String(server.pid)], (error, stdout) => resolveRss(error ? 0 : Number(stdout.trim()))));
+        if (!rssKiB && web.child.pid) rssKiB = await new Promise(resolveRss =>
+          execFile('ps', ['-o', 'rss=', '-p', String(web.child.pid)], (error, stdout) => resolveRss(error ? 0 : Number(stdout.trim()))));
         resources.push({ at: new Date().toISOString(), phase: resourcePhase, serverRssMiB: rssKiB ? Math.round(rssKiB / 1024) : null,
           serverHeapUsedMiB: await appHeapMiB(), benchmarkRssMiB: Math.round(process.memoryUsage().rss / 1048576),
           benchmarkHeapUsedMiB: Math.round(process.memoryUsage().heapUsed / 1048576), hostFreeMiB: Math.round(freemem() / 1048576), dbConnections: db.connections, dbActive: db.active });
@@ -237,7 +233,7 @@ async function main() {
         return { path, ms: performance.now() - start, status: response.status, bytes: body.length, ok: response.status === 200 && !/Application error|Internal Server Error/.test(visible) };
       } catch (error) { return { path, ms: performance.now() - start, status: 0, ok: false, error: String(error) }; }
     };
-    for (const path of paths) { const warm = await request(path, cookies[0]); if (!warm.ok) throw new Error(`Warm-up failed: ${JSON.stringify(warm)}\n${serverLog}`); }
+    for (const path of paths) { const warm = await request(path, cookies[0]); if (!warm.ok) throw new Error(`Warm-up failed: ${JSON.stringify(warm)}\n${web.log()}`); }
     async function reads(concurrency, total, label) {
       const results = []; let next = 0; const start = performance.now();
       await Promise.all(Array.from({ length: concurrency }, async () => {
@@ -451,7 +447,7 @@ async function main() {
     if (!report.passed) process.exitCode = 1;
   } finally {
     if (sampler) clearInterval(sampler);
-    if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch {} }
+    await web?.stop({ graceMs: 5_000 });
     await pool.end();
   }
 }

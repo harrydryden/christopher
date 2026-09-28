@@ -18,6 +18,29 @@ import type { DiscoveryActionResult } from "@/lib/discovery-ux";
  */
 const MAX_DISCOVERY_SOURCES = 20;
 
+/**
+ * The URL a website or LinkedIn source is read from, normalised, or the sentence that refuses it:
+ * `invalid` when it is not a plain public http(s) address, `notLinkedIn` for a LinkedIn source
+ * pointed elsewhere, or the public-address refusal the worker would give.
+ */
+function sourceUrlFrom(value: string, kind: string, sentences: { invalid: string; notLinkedIn: string }): { url: string } | { error: string } {
+  let url: string;
+  try {
+    if (!value || value.length > 2048 || /^(?!https?:)[a-z][a-z0-9+.-]*:/i.test(value)) throw new Error();
+    const parsedUrl = new URL(ensureHttpUrl(value));
+    if (parsedUrl.username || parsedUrl.password) throw new Error();
+    if (kind === "linkedin" && parsedUrl.hostname !== "linkedin.com" && !parsedUrl.hostname.endsWith(".linkedin.com")) return { error: sentences.notLinkedIn };
+    url = normalizeUrl(parsedUrl.href);
+  } catch { return { error: sentences.invalid }; }
+  const unsafe = unsafeUrlRefusal(url);
+  return unsafe ? { error: unsafe } : { url };
+}
+
+/** Whether another of the account's sources already reads this URL, or this email newsletter by name. */
+function sameSource(row: { url: string | null; kind: string; name: string }, url: string | null, name: string): boolean {
+  return url ? !!row.url && normalizeUrl(row.url) === url : row.kind === "email" && row.name.toLowerCase() === name.toLowerCase();
+}
+
 const sourceInput = z.object({ name: z.string().trim().min(1).max(200), kind: z.enum(["website", "email", "linkedin"]), intervalDays: z.coerce.number().int().min(1).max(90) });
 export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActionResult> {
   const user = await requireVerifiedUser();
@@ -26,16 +49,9 @@ export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActi
   const { name, kind, intervalDays } = parsed.data;
   let url: string | null = null;
   if (kind !== "email") {
-    try {
-      const value = String(form.get("url") ?? "").trim();
-      if (!value || value.length > 2048 || /^(?!https?:)[a-z][a-z0-9+.-]*:/i.test(value)) throw new Error();
-      const parsedUrl = new URL(ensureHttpUrl(value));
-      if (parsedUrl.username || parsedUrl.password) throw new Error();
-      if (kind === "linkedin" && parsedUrl.hostname !== "linkedin.com" && !parsedUrl.hostname.endsWith(".linkedin.com")) return { ok: false, error: "Use a LinkedIn URL, or select Website for another site." };
-      url = normalizeUrl(parsedUrl.href);
-    } catch { return { ok: false, error: "Enter a valid public website or LinkedIn URL." }; }
-    const unsafe = unsafeUrlRefusal(url);
-    if (unsafe) return { ok: false, error: unsafe };
+    const checked = sourceUrlFrom(String(form.get("url") ?? "").trim(), kind, { invalid: "Enter a valid public website or LinkedIn URL.", notLinkedIn: "Use a LinkedIn URL, or select Website for another site." });
+    if ("error" in checked) return { ok: false, error: checked.error };
+    url = checked.url;
   }
   const created = await db().transaction(async tx => {
     // Serialise this account's additions, including separate browser tabs, so neither the duplicate
@@ -43,7 +59,7 @@ export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActi
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`discovery-sources:${user.id}`}))`);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${user.id}:${url ?? `email:${name.toLowerCase()}`}`}))`);
     const existing = await tx.select().from(discoverySources).where(eq(discoverySources.userId, user.id));
-    if (existing.some(row => url ? row.url && normalizeUrl(row.url) === url : row.kind === "email" && row.name.toLowerCase() === name.toLowerCase())) return "duplicate";
+    if (existing.some(row => sameSource(row, url, name))) return "duplicate";
     if (existing.length >= MAX_DISCOVERY_SOURCES) return "full";
     await tx.insert(discoverySources).values({ userId: user.id, name, kind, intervalDays, url });
     return "created";
@@ -68,20 +84,13 @@ export async function updateDiscoverySource(id: string, form: FormData): Promise
     if (!name || name.length > 200) return "Enter a source name of up to 200 characters.";
     let url = source.url;
     if (source.kind !== "email" && form.has("url")) {
-      try {
-        const value = String(form.get("url") ?? "").trim();
-        if (!value || value.length > 2048 || /^(?!https?:)[a-z][a-z0-9+.-]*:/i.test(value)) throw new Error();
-        const parsedUrl = new URL(ensureHttpUrl(value));
-        if (parsedUrl.username || parsedUrl.password) throw new Error();
-        if (source.kind === "linkedin" && parsedUrl.hostname !== "linkedin.com" && !parsedUrl.hostname.endsWith(".linkedin.com")) return "Use a LinkedIn URL for this source.";
-        url = normalizeUrl(parsedUrl.href);
-      } catch { return "Enter a valid public source URL."; }
-      const unsafe = url ? unsafeUrlRefusal(url) : null;
-      if (unsafe) return unsafe;
+      const checked = sourceUrlFrom(String(form.get("url") ?? "").trim(), source.kind, { invalid: "Enter a valid public source URL.", notLinkedIn: "Use a LinkedIn URL for this source." });
+      if ("error" in checked) return checked.error;
+      url = checked.url;
     }
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${user.id}:${url ?? `email:${name.toLowerCase()}`}`}))`);
     const existing = await tx.select().from(discoverySources).where(eq(discoverySources.userId, user.id));
-    if (existing.some(row => row.id !== sourceId && (url ? row.url && normalizeUrl(row.url) === url : row.kind === "email" && row.name.toLowerCase() === name.toLowerCase()))) return "Another source already uses this URL or email newsletter name.";
+    if (existing.some(row => row.id !== sourceId && sameSource(row, url, name))) return "Another source already uses this URL or email newsletter name.";
     const nextRunAt = (!source.enabled && enabled) || url !== source.url ? new Date() : interval.data !== source.intervalDays
       ? new Date(Date.now() + interval.data * 86400000) : source.nextRunAt;
     await tx.update(discoverySources).set({ name, url, intervalDays: interval.data, enabled, nextRunAt }).where(eq(discoverySources.id, sourceId));

@@ -29,8 +29,3 @@ export const MODEL_IDS: readonly string[] = MODEL_CHOICES.map(m => m.id);
 export function isKnownModel(id: string): boolean {
   return MODEL_IDS.includes(id);
 }
-
-/** Human-readable label for a stored ID, falling back to the raw ID for superseded models. */
-export function modelLabel(id: string): string {
-  return MODEL_CHOICES.find(m => m.id === id)?.label ?? id;
-}

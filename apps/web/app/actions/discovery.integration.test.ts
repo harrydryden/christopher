@@ -4,12 +4,14 @@ import { createTestDb } from "@/test/db";
 import type { User } from "@ava/db/schema";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
-import { discoverySourceState } from "@/lib/discovery-ux";
+import { discoverySourceHealth } from "@/lib/discovery-ux";
+
+const discoverySourceState = (input: Parameters<typeof discoverySourceHealth>[0]) => discoverySourceHealth(input).state;
 import { ensureTestUser } from "@/test/auth";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
-const auth = vi.hoisted(() => ({ requireUser: vi.fn(), requireSession: vi.fn(), requireVerifiedUser: vi.fn() }));
+const auth = vi.hoisted(() => ({ requireUser: vi.fn(), requireVerifiedUser: vi.fn() }));
 vi.mock("@/lib/auth", () => auth);
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -21,7 +23,6 @@ beforeAll(async () => { const client = createTestDb(); database = client.db; poo
 afterAll(async () => { if (database) await database.execute(sql`truncate discovery_sources cascade`); await pool?.end(); });
 beforeEach(async () => {
   auth.requireUser.mockReset(); auth.requireUser.mockImplementation(async () => user);
-  auth.requireSession.mockReset(); auth.requireSession.mockImplementation(async () => user);
   auth.requireVerifiedUser.mockReset(); auth.requireVerifiedUser.mockImplementation(async () => auth.requireUser());
   await database.execute(sql`truncate discovery_sources, company_suggestions, companies, tasks, settings, user_settings restart identity cascade`);
   // Filters first: following a recommended company waits on a gate this account chose.

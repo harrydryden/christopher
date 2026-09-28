@@ -14,7 +14,7 @@ import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@ava/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@ava/core";
 import { runMigrations } from "@ava/db/migrate";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { cvBuildState } from "@/lib/cv-build-state";
 import { ensureTestUser, signInTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
@@ -90,10 +90,13 @@ import {
   fetchRolePage,
   fetchRoleDetails,
   parseRolesFilters,
-  fetchTableJobs,
-  fetchRecentEventsFor,
+  countRoles,
+  fetchArchiveNotes,
 } from "@/lib/queries/jobs";
-import { saveAiBudget, saveAiSettings, saveKeywords } from "./settings";
+
+/** Every role on this account's live tabs, or in its archive: the table before any display filter. */
+const tableCount = (userId: string, archived = false) => countRoles(userId, parseRolesFilters({ decision: "all" }), archived);
+import { saveAiBudget, saveAiSettings, saveGate } from "./settings";
 import {
   addCompanies,
   useDiscoveryCandidate,
@@ -334,7 +337,7 @@ describe("authenticated mutations", () => {
     const { job } = await fixture();
     const form = new FormData();
     form.set("includeKeywords", "engineering");
-    await saveKeywords({ ok: true }, form);
+    await saveGate({ ok: true }, form);
     const [updated] = await database
       .select()
       .from(schema.userJobs)
@@ -447,17 +450,17 @@ describe("learning controls", () => {
 describe("priority workflows", () => {
   it("archives without deleting evidence, restores and synchronously applies seniority", async () => {
     const { job } = await fixture();
-    expect((await fetchTableJobs(user.id)).length).toBe(1);
+    expect(await tableCount(user.id)).toBe(1);
     expect((await archiveRoles([job.id], true)).ok).toBe(true);
-    expect(await fetchTableJobs(user.id)).toHaveLength(0);
-    expect(await fetchTableJobs(user.id, true)).toHaveLength(1);
+    expect(await tableCount(user.id)).toBe(0);
+    expect(await tableCount(user.id, true)).toBe(1);
     const form = new FormData();
     form.set("includeKeywords", "operations");
     form.set("seniorityKeywords", "director");
-    await saveKeywords({ ok: true }, form);
-    expect(await fetchTableJobs(user.id, true)).toHaveLength(1);
+    await saveGate({ ok: true }, form);
+    expect(await tableCount(user.id, true)).toBe(1);
     await archiveRoles([job.id], false);
-    expect(await fetchTableJobs(user.id)).toHaveLength(0);
+    expect(await tableCount(user.id)).toBe(0);
     const [stored] = await database
       .select()
       .from(schema.userJobs)
@@ -518,8 +521,6 @@ describe("priority workflows", () => {
   it("loads descriptions only for requested role detail IDs", async () => {
     const { job } = await fixture();
     await database.update(schema.jobs).set({ descriptionText: "Stored role description" }).where(eq(schema.jobs.id, job.id));
-    const summaries = await fetchTableJobs(user.id, false, true);
-    expect(summaries.find((row) => row.job.id === job.id)!.job.descriptionText).toBeNull();
     const details = await fetchRoleDetails(user.id, [job.id]);
     expect(details).toHaveLength(1);
     expect(details[0]!.job.descriptionText).toBe("Stored role description");
@@ -767,7 +768,7 @@ it("queues an explicit board URL even while homepage discovery is pending", asyn
   ).toBe(true);
 });
 
-it("returns only the newest requested events per role", async () => {
+it("returns only the newest requested archive notes per role", async () => {
   const { job } = await fixture();
   await database
     .insert(schema.jobEvents)
@@ -775,12 +776,11 @@ it("returns only the newest requested events per role", async () => {
       Array.from({ length: 30 }, (_, i) => ({
         jobId: job.id,
         type: "updated" as const,
-        payload: { i },
+        payload: { action: "archived", reason: String(i) },
         at: new Date(1700000000000 + i * 1000),
       })),
     );
-  const events = await fetchRecentEventsFor(user.id, [job.id], 3);
-  expect(events.get(job.id)!.map((e) => e.payload.i)).toEqual([29, 28, 27]);
+  expect(await fetchArchiveNotes(user.id, job.id, 3)).toEqual(["Archived: 29", "Archived: 28", "Archived: 27"]);
 });
 
 it("atomically adds a full submission of companies and queues setup, with a bounded response for duplicate imports", async () => {
@@ -800,7 +800,7 @@ it("atomically adds a full submission of companies and queues setup, with a boun
 
 describe("four-status role workflow", () => {
   it("keeps counts, filtered pages and export selection aligned across transitions", async () => {
-    const { fetchRoleCounts, applyRolesFilters } = await import("@/lib/queries/jobs");
+    const { fetchRoleCounts, fetchRoleRows } = await import("@/lib/queries/jobs");
     const { listCompanies } = await import("@/lib/queries/companies");
     const { job, company } = await fixture();
     const read = async (view: string) => fetchRolePage(user.id, parseRolesFilters({ view }), view === "archived", 99, 1);
@@ -813,7 +813,7 @@ describe("four-status role workflow", () => {
     expect((await fetchRoleCounts(user.id, company.id))["user-shortlisted"]).toBe(1);
     const [summary] = await listCompanies(user.id);
     expect(summary!.reviewRoles).toBe(0); expect(summary!.shortlistedRoles).toBe(1);
-    const exported = applyRolesFilters(await fetchTableJobs(user.id, false, true), parseRolesFilters({ view: "user-shortlisted" }));
+    const exported = await fetchRoleRows(user.id, parseRolesFilters({ view: "user-shortlisted" }), false);
     expect(exported.map((row) => row.job.id)).toEqual([job.id]);
     expect((await archiveRoles([job.id], true)).ok).toBe(true);
     expect((await read("archived")).total).toBe(1);
@@ -1671,11 +1671,15 @@ it("assesses, improves with current evidence, finalises and exports through the 
     await expect(saveCvDraft(child.id, { ok: true }, edit)).rejects.toThrow(
       "redirect:/cv/",
     );
+    // The child has two children by now: the adopted improvement and this direct edit. The edit
+    // is the newest, so it is asked for by name rather than left to whichever row comes first.
     const revised = (
       await database
         .select()
         .from(schema.cvDrafts)
         .where(eq(schema.cvDrafts.parentId, child.id))
+        .orderBy(desc(schema.cvDrafts.revision), desc(schema.cvDrafts.createdAt))
+        .limit(1)
     )[0]!;
     expect(revised.assessment).toBeNull();
     expect(revised.finalisedAt).toBeNull();

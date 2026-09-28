@@ -4,10 +4,10 @@
  * takes the caller's transaction and an account id the caller has already authenticated, so none
  * of it may be a public endpoint.
  */
-import { and, eq, sql } from "drizzle-orm";
-import { companies, decisions, jobEvents, jobs, userJobs } from "@ava/db/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { decisions, jobEvents, userJobs } from "@ava/db/schema";
 import type { db } from "./db";
-import { enqueue } from "./enqueue";
+import { enqueue, enqueueMany } from "./enqueue";
 import { UserFacingError } from "./validation";
 
 export type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
@@ -98,66 +98,72 @@ export async function restoreDismissedApplications(tx: Tx, userId: string, jobId
 }
 
 /**
- * Record (or edit) one decision on a role, or undo it when `decision` is null, inside the caller's
- * transaction. It always supersedes the previous active decision; a new one is inserted with a
- * denormalised snapshot so the learning corpus survives job or company deletion.
+ * Record (or edit) a decision on each of these roles with one shared reason, or undo them when
+ * `decision` is null, inside the caller's transaction. Each supersedes the role's previous active
+ * decision (undo keeps the audit record: superseded, never deleted), and a new one is inserted with
+ * a denormalised snapshot so the learning corpus survives job or company deletion. Written
+ * set-based, so a group leaves exactly what the same roles decided one at a time would — one active
+ * decision row each, one `decided` event each, and the same tasks — and all or nothing: a role that
+ * is not this account's writes nothing at all, and is refused with `notFound`.
  */
-export async function recordDecision(tx: Tx, userId: string, jobId: string, decision: "apply" | "skip" | null, reason: string): Promise<{ decisionId: string | null }> {
-  const locked = await lockRoleView(tx, userId, jobId);
-  if (!locked) throw new UserFacingError("Role not found.");
+export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists."): Promise<void> {
+  const ids = [...new Set(jobIds)].sort();
+  const now = new Date();
+
+  // One locking read in a stable order, like the archive: the whole group or none of it. The same
+  // row lock `lockRoleView` takes, so taking it again under a caller that already holds it is harmless.
+  const rows = await tx.select({ jobId: userJobs.jobId, inTable: userJobs.inTable, archivedAt: userJobs.archivedAt }).from(userJobs)
+    .where(and(eq(userJobs.userId, userId), inArray(userJobs.jobId, ids))).orderBy(userJobs.jobId).for("update");
+  if (rows.length !== ids.length) throw new UserFacingError(notFound);
   const before = await countStandingDecisions(tx, userId);
-  const [existing] = await tx
-    .select({ id: decisions.id, decision: decisions.decision })
-    .from(decisions)
-    .where(and(eq(decisions.userId, userId), eq(decisions.jobId, jobId), eq(decisions.superseded, false)))
-    .limit(1);
+
+  const superseded = await tx.update(decisions).set({ superseded: true })
+    .where(and(eq(decisions.userId, userId), inArray(decisions.jobId, ids), eq(decisions.superseded, false)))
+    .returning({ jobId: decisions.jobId, decision: decisions.decision });
 
   if (decision === null) {
-    if (existing) await tx.update(decisions).set({ superseded: true }).where(eq(decisions.id, existing.id));
-    if (existing?.decision === "skip") await restoreDismissedApplications(tx, userId, [jobId]);
-    if (!locked.inTable && !locked.archivedAt) {
-      // The gate's archive, stamped as such: the view comes back by itself once the gate admits it.
-      const at = new Date();
-      await tx.update(userJobs).set({ archivedAt: at, gateArchivedAt: at, updatedAt: at }).where(and(eq(userJobs.userId, userId), eq(userJobs.jobId, jobId)));
-      await tx.insert(jobEvents).values({ jobId, userId, type: "updated", payload: { action: "archived", actor: "system", reason: "No longer matches your criteria" } });
+    // What undoing each dismissal puts back.
+    await restoreDismissedApplications(tx, userId, superseded.filter(row => row.decision === "skip" && row.jobId).map(row => row.jobId!));
+    // A role the gate no longer admits was only in the table because a decision held it: the
+    // gate's archive, stamped as such, so the view comes back by itself once the gate admits it.
+    const drops = rows.filter(row => !row.inTable && !row.archivedAt).map(row => row.jobId);
+    if (drops.length) {
+      await tx.update(userJobs).set({ archivedAt: now, gateArchivedAt: now, updatedAt: now })
+        .where(and(eq(userJobs.userId, userId), inArray(userJobs.jobId, drops)));
+      await tx.insert(jobEvents).values(drops.map(jobId => ({
+        jobId, userId, type: "updated" as const,
+        payload: { action: "archived", actor: "system", reason: "No longer matches your criteria" },
+      })));
     }
-    await tx.insert(jobEvents).values({ jobId, userId, type: "decided", payload: { decision: null } });
+    await tx.insert(jobEvents).values(ids.map(jobId => ({ jobId, userId, type: "decided" as const, payload: { decision: null } })));
     await enqueue("synthesize_profile", { userId, force: true }, tx);
-    return { decisionId: null };
+    return;
   }
 
-  await tx.update(userJobs).set({ archivedAt: null, updatedAt: new Date() }).where(and(eq(userJobs.userId, userId), eq(userJobs.jobId, jobId)));
-  if (existing) await tx.update(decisions).set({ superseded: true }).where(eq(decisions.id, existing.id));
+  await tx.update(userJobs).set({ archivedAt: null, updatedAt: now })
+    .where(and(eq(userJobs.userId, userId), inArray(userJobs.jobId, ids)));
 
-  const [row] = await tx.select({ job: jobs, fitScore: userJobs.fitScore }).from(jobs)
-    .innerJoin(userJobs, and(eq(userJobs.jobId, jobs.id), eq(userJobs.userId, userId)))
-    .where(eq(jobs.id, jobId)).limit(1);
-  if (!row) throw new UserFacingError("Role not found.");
-  const job = row.job;
-  const [company] = await tx.select({ name: companies.name }).from(companies).where(eq(companies.id, job.companyId)).limit(1);
+  const inserted = await tx.execute<{ id: string; job_id: string }>(sql`
+    insert into decisions (user_id, job_id, decision, reason, job_title, company_name, job_location, job_department, description_snippet, fit_score_at_decision)
+    select ${userId}::uuid, j.id, ${decision}, ${reason}, j.title, coalesce(c.name, ''), j.location, j.department,
+           left(j.description_text, 300), v.fit_score
+    from jobs j
+    join user_jobs v on v.job_id = j.id and v.user_id = ${userId}::uuid
+    left join companies c on c.id = j.company_id
+    where j.id in (${idList(ids)})
+    returning id, job_id`);
+  const insertedRows = [...inserted.rows];
+  if (insertedRows.length !== ids.length) throw new UserFacingError(notFound);
 
-  const [inserted] = await tx
-    .insert(decisions)
-    .values({
-      userId,
-      jobId,
-      decision,
-      reason,
-      jobTitle: job.title,
-      companyName: company?.name ?? "",
-      jobLocation: job.location,
-      jobDepartment: job.department,
-      descriptionSnippet: job.descriptionText ? job.descriptionText.slice(0, 300) : null,
-      fitScoreAtDecision: row.fitScore,
-    })
-    .returning({ id: decisions.id });
-  const decisionId = inserted?.id ?? null;
+  const payload = JSON.stringify({ decision, reason });
+  await tx.execute(sql`insert into job_events (job_id, user_id, type, payload)
+    select v.job_id, ${userId}::uuid, 'decided', ${payload}::jsonb
+    from user_jobs v
+    where v.user_id = ${userId}::uuid and v.job_id in (${idList(ids)})`);
 
-  await tx.insert(jobEvents).values({ jobId, userId, type: "decided", payload: { decision, reason } });
-  if (decision === "apply") await enqueue("score_job", { userId, jobId }, tx);
-  if (decision === "skip") await withdrawLiveApplications(tx, userId, [jobId]);
-  if (decisionId && reason) await enqueue("tag_reason", { decisionId }, tx);
+  if (decision === "apply") await enqueueMany("score_job", ids.map(jobId => ({ userId, jobId })), tx);
+  if (decision === "skip") await withdrawLiveApplications(tx, userId, ids);
+  if (reason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
   await enqueue("synthesize_profile", { userId, force: false }, tx);
   await queueFilterSuggestionsOnCrossing(tx, userId, before);
-  return { decisionId };
 }

@@ -46,18 +46,6 @@ export const LIMITS = {
   newsletterSource: { max: 50, windowMs: 24 * 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimit>;
 
-export async function isRateLimited(key: string, limit: RateLimit, now: Date = new Date()): Promise<boolean> {
-  const [row] = await db()
-    .select({ n: sql<number>`count(*)::int` })
-    .from(loginAttempts)
-    .where(and(eq(loginAttempts.key, key), gt(loginAttempts.at, new Date(now.getTime() - limit.windowMs))));
-  return (row?.n ?? 0) >= limit.max;
-}
-
-export async function recordAttempt(key: string, now: Date = new Date()): Promise<void> {
-  await db().insert(loginAttempts).values({ key, at: now });
-}
-
 export interface RateLimitReservation {
   id: string;
   key: string;

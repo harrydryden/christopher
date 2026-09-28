@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, startTransition, use, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -35,6 +35,7 @@ const isThenable = (value: QuoteSource): value is Promise<PipelineCvQuotes> => t
 
 /** The one sentence the product uses for work an unconfirmed account cannot start. */
 import { VERIFY_SENTENCE as UNVERIFIED } from "@/components/VerifyNotice";
+import { useActionCall } from "@/components/useActionCall";
 
 
 /** "In process · Interview": the stage, and — for the three steps it collapses — which one. */
@@ -253,8 +254,7 @@ function CvPanel({
   onPatched: (row: PipelineRow) => void;
 }) {
   const router = useRouter();
-  const [managing, setManaging] = useState(false);
-  const [manageError, setManageError] = useState<string | null>(null);
+  const { busy: managing, error: manageError, setError: setManageError, run } = useActionCall();
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => { if (focus) heading.current?.focus(); }, [focus]);
   const buildLabel = row.cv ? "Rebuild CV" : "Build CV";
@@ -265,21 +265,14 @@ function CvPanel({
    * leave the cell showing a CV that is gone.
    */
   function runManage(cvId: string, action: "archive" | "restore" | "delete") {
-    if (managing) return;
-    if (action === "delete" && !confirm("Permanently delete this CV? Saved application PDFs will be kept.")) return;
-    setManaging(true);
-    setManageError(null);
-    startTransition(async () => {
-      try {
-        const result = await manageRoleCv(row.jobId, cvId, action);
-        if (!result.ok) setManageError(result.error);
-        else if (result.row) onPatched(result.row);
-        router.refresh();
-      } catch {
-        setManageError("Could not update this CV. Reload and retry.");
-      } finally {
-        setManaging(false);
-      }
+    run(true, async () => {
+      const result = await manageRoleCv(row.jobId, cvId, action);
+      if (!result.ok) setManageError(result.error);
+      else if (result.row) onPatched(result.row);
+      router.refresh();
+    }, {
+      failed: "Could not update this CV. Reload and retry.",
+      confirm: action === "delete" ? "Permanently delete this CV? Saved application PDFs will be kept." : undefined,
     });
   }
   return (

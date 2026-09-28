@@ -1,8 +1,8 @@
-import { schema, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
-import { ats, compileGate, dedupeKeyFor, extractMainText, priorityFor, sha1, stripHtml, type AppSettings, type CompiledGate } from "@ava/core";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { schema, queueScoring, archiveNonMatches, gateCompiler, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, type Task, type ViewUpdate } from "@ava/db";
+import { ats, extractMainText, sha1, stripHtml, type AppSettings } from "@ava/core";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
-import { makeFetchContext, aiBudgetExceeded } from "../context";
+import { makeFetchContext } from "../context";
 import { loadUserSettingsMany } from "../settings";
 import { log } from "../log";
 
@@ -44,7 +44,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
       if (res.status < 400) {
         const jsonLd = ats.extractJsonLdPostings(res.body, job.url).find((p) => p.descriptionText);
         text = jsonLd?.descriptionText ?? extractMainText(res.body);
-        if ((!text || text.length < 200) && !(await aiBudgetExceeded(deps))) {
+        if ((!text || text.length < 200) && deps.ai.enabled) {
           const rawText = stripHtml(res.body).slice(0, 20_000);
           const cleaned = await deps.ai.cleanDescription({ title: job.title, rawText }, { refType: "job", refId: job.id });
           // The model may cut and tidy the page, never write it: its text is shared with every
@@ -135,56 +135,29 @@ async function refreshFollowers(
         .where(and(eq(schema.decisions.jobId, job.id), eq(schema.decisions.decision, "apply"), eq(schema.decisions.superseded, false), inArray(schema.decisions.userId, eligible)))).map(row => row.userId))
     : new Set<string>();
 
-  const compiled = new Map<string, CompiledGate>();
-  const updates: Array<Record<string, unknown>> = [];
+  const gateFor = gateCompiler();
+  const updates: ViewUpdate[] = [];
   const inserts: Array<typeof schema.userJobs.$inferInsert> = [];
   const scoring: string[] = [];
   for (const userId of eligible) {
-    const own = settings.get(userId)!;
-    const key = JSON.stringify(own.gate);
-    let gate = compiled.get(key);
-    if (!gate) compiled.set(key, gate = compileGate(own.gate));
-    const verdict = gate.evaluate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote });
+    const verdict = gateFor(settings.get(userId)!.gate).evaluate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote });
     const view = viewOf.get(userId);
-    // Asked for by name (the paste that created it, or one that found it stored): in the table
-    // whatever the gate says.
-    const inTable = verdict.inTable || job.addedBy === userId || view?.addedByUrl === true;
-    const values = { keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable, hidden: false };
+    const inTable = inTableFor(verdict, userId, job, view);
+    const values = viewVerdict(verdict, inTable, { hidden: false });
     if (view) {
-      const restore = inTable && isGateArchive(view);
-      if (restore || view.nearMiss || (Object.keys(values) as Array<keyof typeof values>).some(k => JSON.stringify(values[k]) !== JSON.stringify(view[k]))) {
-        updates.push({ userId, ...values, restore });
-      }
+      const update = viewUpdate(userId, job.id, view, values);
+      if (update) updates.push(update);
       // Scores were cleared above when the text changed, so a stored score here still stands.
       const unscored = descriptionChanged || (view.fitScore === null && view.scoredAt === null);
       if (job.status === "open" && unscored && (inTable || shortlisted.has(userId))) scoring.push(userId);
     } else if (inTable) {
-      inserts.push({ userId, jobId: job.id, ...values, nearMiss: false, seeded: true, createdAt: now, updatedAt: now });
+      inserts.push(newView(userId, job.id, values, true, now));
       if (job.status === "open") scoring.push(userId);
     }
   }
-  if (updates.length) {
-    await db.execute(sql`with changed as (
-      update user_jobs uj set keyword_matched = v."keywordMatched", keyword_terms = v."keywordTerms", excluded = v.excluded,
-        location_ok = v."locationOk", in_table = v."inTable", near_miss = false, hidden = v.hidden, ${restoreGateArchive}, updated_at = ${now}
-      from jsonb_to_recordset(${JSON.stringify(updates)}::jsonb)
-      as v("userId" uuid, "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, hidden boolean, restore boolean)
-      where uj.job_id = ${job.id} and uj.user_id = v."userId"
-      returning uj.user_id, (v.restore and uj.archived_at is null) as restored
-    )
-    insert into job_events (job_id, user_id, type, payload)
-    select ${job.id}::uuid, user_id, 'updated', ${GATE_RESTORE_EVENT}::jsonb from changed where restored`);
-  }
+  await writeViewUpdates(db, updates, now);
   if (inserts.length) await db.insert(schema.userJobs).values(inserts).onConflictDoNothing();
-  if (scoring.length) {
-    await db.insert(schema.tasks).values(scoring.map(userId => {
-      const payload = { userId, jobId: job.id };
-      return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") };
-    })).onConflictDoNothing();
-    // Say so on the view as well, so the table reads "scoring" rather than a blank.
-    await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: now })
-      .where(and(eq(schema.userJobs.jobId, job.id), inArray(schema.userJobs.userId, scoring)));
-  }
+  await queueScoring(db, scoring.map(userId => ({ userId, jobId: job.id })), now);
 }
 
 /**

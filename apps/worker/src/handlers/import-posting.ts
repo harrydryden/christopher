@@ -13,15 +13,17 @@
  * sentence the interface shows. Only a transport failure throws, because only a transport failure
  * is worth the queue's backoff.
  */
-import { schema, enqueueTask, reevaluateGate, type Db, type Task } from "@ava/db";
+import { schema, enqueueStandard, enqueueTask, reevaluateGate, type Db, type Task } from "@ava/db";
 import {
   ats,
   dedupeKeyFor,
   evaluateGate,
   extractPostingFromPage,
+  JS_SHELL_TEXT,
   looksRemote,
   normalisePostingUrl,
   normalizeTitle,
+  postingOnCompanyHost,
   priorityFor,
   sha1,
   SourceFetchError,
@@ -39,9 +41,6 @@ const MAX_DESCRIPTION = 30_000;
 
 /** Below this the stored text is a stub, and the description fetch (adapter, page, model) is worth a go. */
 const SHORT_DESCRIPTION = 200;
-
-/** A page with less text than this is a shell waiting for JavaScript, not a posting. */
-const JS_SHELL_TEXT = 400;
 
 /** What the interface shows about the gate, whether or not the role went into the table anyway. */
 interface GateSummary {
@@ -75,40 +74,6 @@ const hostOf = (url: string): string => {
   }
 };
 
-/** A URL's host, lower-cased and without a leading `www.`; null when it is not a URL. */
-const bareHost = (url: string | null | undefined): string | null => {
-  if (!url) return null;
-  try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-};
-
-const within = (host: string, parent: string) => host === parent || host.endsWith(`.${parent}`);
-
-/**
- * Whether a posting URL is on one of the company's own hosts: its domain or homepage, the host of
- * a careers source it has (unless that is an applicant-tracking vendor's, which every customer
- * shares), or its own board on such a vendor, recognised by the vendor and the board's slug.
- */
-export function onCompanyHost(
-  url: string,
-  company: { domain: string | null; homepageUrl: string | null },
-  sources: Array<{ type: string; url: string; apiUrl: string | null; atsSlug: string | null }>,
-): boolean {
-  const host = bareHost(url);
-  if (!host) return false;
-  const own = [company.domain?.toLowerCase().replace(/^www\./, "") ?? null, bareHost(company.homepageUrl)];
-  for (const source of sources) for (const address of [source.url, source.apiUrl]) {
-    const sourceHost = bareHost(address);
-    if (sourceHost && !ats.isAtsHost(sourceHost)) own.push(sourceHost);
-  }
-  if (own.some(parent => parent && within(host, parent))) return true;
-  const board = ats.specFromAnyUrl(url);
-  return !!board?.atsSlug && sources.some(source => source.type === board.type && source.atsSlug?.toLowerCase() === board.atsSlug!.toLowerCase());
-}
-
 /** How a failed fetch reads in a sentence, so a retried task's `tasks.error` says something useful. */
 function transportReason(err: unknown): string {
   if (err instanceof SourceFetchError) {
@@ -125,7 +90,7 @@ function transportReason(err: unknown): string {
 }
 
 export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const { userId, companyId, url } = task.payload as unknown as TaskPayloads["import_posting"];
+  const { userId, companyId, url, foreignHost } = task.payload as unknown as TaskPayloads["import_posting"];
   const deferrals = (task.payload as { hostBusyRetries?: number }).hostBusyRetries ?? 0;
   const now = deps.now();
   const host = hostOf(url);
@@ -233,8 +198,9 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
   // Only a posting on the company's own hosts joins the catalogue for every follower. A link to
   // anywhere else, or one that redirected there, is this account's alone: it is stored for them and
   // never offered to another follower's gate, so one paste cannot put a stranger's page, filed under
-  // a company everyone follows, into everyone's table.
-  const shared = onCompanyHost(url, company, sources) && onCompanyHost(storedUrl, company, sources);
+  // a company everyone follows, into everyone's table. The interface's verdict at paste time
+  // (`foreignHost`) stands; the same rule is applied again here for where the page finally landed.
+  const shared = !foreignHost && postingOnCompanyHost(url, company, sources) && postingOnCompanyHost(storedUrl, company, sources);
 
   // Every other follower's gate decides for itself whether a shared role reaches them, so their
   // settings are read here rather than from inside the transaction.
@@ -301,8 +267,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
       // The score is queued in the same transaction, so the view says so from the moment it exists.
       scoreState: "queued", scoreStateAt: now,
     }).onConflictDoNothing();
-    const scorePayload = { userId, jobId: created.id };
-    await enqueueTask(tx, "score_job", scorePayload, { dedupeKey: dedupeKeyFor("score_job", scorePayload), priority: 1 });
+    await enqueueStandard(tx, "score_job", { userId, jobId: created.id }, { priority: 1 });
 
     // Everyone else who follows the company meets it as they would any other new posting: their
     // own gate decides, and nothing is forced into anybody else's table.
@@ -313,9 +278,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     // A page that gave up a title and little else is worth one more read: the adapter, the page
     // and the cleaning model all have a go at the text this one did not carry.
     if (!descriptionText || descriptionText.length < SHORT_DESCRIPTION) {
-      await enqueueTask(tx, "fetch_description", { jobId: created.id }, {
-        dedupeKey: dedupeKeyFor("fetch_description", { jobId: created.id }), priority: priorityFor("fetch_description"),
-      });
+      await enqueueStandard(tx, "fetch_description", { jobId: created.id });
     }
 
     log.info("posting imported", { company: company.name, userId, jobId: created.id, title: created.title, url: storedUrl, inTable: verdict.inTable, shared, followers: followers.length });
@@ -344,10 +307,7 @@ async function adoptExistingView(
   }, settings.gate);
   const [view] = await deps.db.select({ inTable: schema.userJobs.inTable, archivedAt: schema.userJobs.archivedAt, addedByUrl: schema.userJobs.addedByUrl, fitScore: schema.userJobs.fitScore, scoredAt: schema.userJobs.scoredAt })
     .from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
-  const score = async () => {
-    const payload = { userId, jobId };
-    await enqueueTask(deps.db, "score_job", payload, { dedupeKey: dedupeKeyFor("score_job", payload), priority: 1 });
-  };
+  const score = () => enqueueStandard(deps.db, "score_job", { userId, jobId }, { priority: 1 });
   if (!view) {
     const inserted = await deps.db.insert(schema.userJobs).values({
       userId, jobId,

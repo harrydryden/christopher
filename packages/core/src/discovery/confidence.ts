@@ -4,23 +4,36 @@ import { companyNamesMatch } from "./text";
 export const AUTO_ACCEPT_CONFIDENCE = 0.85;
 export const CONFIRM_CONFIDENCE = 0.5;
 
-/** Base confidence per discovery method, from SPEC 3.2 step 8. */
-const BASE: Record<string, number> = {
-  ats_network: 0.97,
-  ats_link: 0.95,
-  ats_script: 0.95,
-  ats_bundle: 0.95,
-  pasted_ats: 0.95,
-  listing_jsonld: 0.85,
-  listing_html: 0.85,
-  listing_empty: 0.85,
-  pasted_listing: 0.85,
-  ai_listing: 0.75,
-  ats_sitemap: 0.7,
-  ats_probe: 0.7,
-  ats_guess: 0.7,
-  landing: 0.5,
-};
+/**
+ * Every discovery method: `base` is its confidence (SPEC 3.2 step 8), `rank` how a candidate it
+ * found is ordered against another found for the same source or at the same confidence. One table,
+ * so a method cannot be added to one and silently get rank 0 or confidence 0.4 from the other.
+ */
+const METHODS = {
+  ats_network: { rank: 9, base: 0.97 },
+  pasted_ats: { rank: 9, base: 0.95 },
+  ats_link: { rank: 8, base: 0.95 },
+  ats_script: { rank: 8, base: 0.95 },
+  ats_bundle: { rank: 7, base: 0.95 },
+  listing_jsonld: { rank: 6, base: 0.85 },
+  listing_html: { rank: 6, base: 0.85 },
+  listing_empty: { rank: 6, base: 0.85 },
+  pasted_listing: { rank: 6, base: 0.85 },
+  ai_listing: { rank: 5, base: 0.75 },
+  ats_sitemap: { rank: 3, base: 0.7 },
+  ats_probe: { rank: 3, base: 0.7 },
+  ats_guess: { rank: 3, base: 0.7 },
+  landing: { rank: 1, base: 0.5 },
+} as const satisfies Record<string, { rank: number; base: number }>;
+
+export type DiscoveryMethod = keyof typeof METHODS;
+
+const methodEntry = (method: string): { rank: number; base: number } | undefined => (METHODS as Record<string, { rank: number; base: number }>)[method];
+
+/** How strongly a method's candidate is preferred; 0 for one outside the table (a verified catalogue board). */
+export function methodRank(method: string): number {
+  return methodEntry(method)?.rank ?? 0;
+}
 
 export interface ConfidenceContext {
   /** Company name taken from the homepage, used to sanity-check a verified feed. */
@@ -38,7 +51,7 @@ export interface ConfidenceContext {
 const IDENTITY_PENALTY = 0.15;
 
 export function confidenceFor(candidate: Pick<DiscoveryCandidate, "method" | "companyName" | "count">, ctx: ConfidenceContext = {}): number {
-  let score = BASE[candidate.method] ?? 0.4;
+  let score = methodEntry(candidate.method)?.base ?? 0.4;
   const extraMethods = Math.max(0, (ctx.methodCount ?? 1) - 1);
   score += extraMethods * 0.02;
   if (candidate.companyName && ctx.homepageCompanyName && !companyNamesMatch(candidate.companyName, ctx.homepageCompanyName)) {

@@ -33,7 +33,6 @@ import {
   CV_BUILD_MOTIONS,
   CV_BUILD_STAGES,
   aiBudgetRefusalMessage,
-  aiBudgetWindowStart,
   assessmentTally,
   cvMaxPages,
   cvRelevanceTerms,
@@ -60,7 +59,7 @@ import {
   type CvCallDoing,
 } from "@ava/core/cv-build-failure";
 import { withResourceLease } from "../lease";
-import { recordAiUsage, tryReserveAi, type AiBudgetLimits, type AiBudgetRefusal, type AiHold } from "../budget";
+import { budgetLimits, recordAiUsage, tryReserveAi, type AiBudgetLimits, type AiBudgetRefusal, type AiHold } from "../budget";
 import { backoffMs, type TaskRunContext } from "../queue";
 import { CvJournal, type CvJournalLoss, type CvOpenStep } from "./cv-journal";
 import {
@@ -370,8 +369,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       const baseline = inputs.reusedContent && legacyFenced &&
         cvAssessmentCurrent(draft.assessment, inputs.saved!, draft.jobDescription, library)
         ? draft.assessment! : undefined;
-      const account = await deps.userSettings(draft.userId);
-      const since = aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt);
+      // Which build a hold is for, so giving up on one build never releases another's.
+      const limits = budgetLimits(deps.env, deps.now(), { userId: draft.userId, settings: await deps.userSettings(draft.userId) },
+        { refId: draft.id, replaceRef: true });
       /**
        * Admit one stage against the account's budget, inside the account's lock, immediately
        * before it runs. Any other hold for this draft is dead — a stage whose release was lost, or
@@ -382,15 +382,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
        */
       const admit = async (stageName: CvBuildStageName, expected: number): Promise<CvStageHold> =>
         journal.run("admit_budget", { stage: stageName, expectedUsd: usd(expected) }, async step => {
-          const admitted = await sink.reserve(expected, {
-            account: { userId: draft.userId, budgetUsd: account.aiBudgetUsd, since },
-            daily: deps.env.dailyAiBudgetUsd ?? 1000000,
-            discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
-            workerId: deps.env.workerId,
-            // Which build this hold is for, so giving up on one build never releases another's.
-            refId: draft.id,
-            replaceRef: true,
-          });
+          const admitted = await sink.reserve(expected, limits);
           if ("refused" in admitted) {
             step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
               leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });

@@ -30,6 +30,7 @@ import {
 } from "./cv";
 import { cvQuoteIsAnchored } from "./cv-review";
 import { assertPublicHttpUrl, UnsafeUrlError } from "./url-safety";
+import { escapeRegex, normaliseText } from "./normalize";
 
 type CvEntry = CvLibrary["entries"][number];
 
@@ -146,8 +147,7 @@ export const StoredLibraryProposalSchema = z.object({
     .max(LIBRARY_IMPORT_MAX_SKILLS),
 });
 
-const normalise = (value: string) => value.normalize("NFKC").replace(/\s+/gu, " ").trim();
-const key = (value: string) => normalise(value).toLowerCase();
+const key = (value: string) => normaliseText(value).toLowerCase();
 
 /** `YYYY` or `YYYY-MM`, which is every date `EmploymentSchema` accepts besides blank. */
 const CAREER_DATE = /^(\d{4})(?:-(0[1-9]|1[0-2]))?$/;
@@ -167,7 +167,6 @@ const MONTH_NAMES = [
   ["july", "jul"], ["august", "aug"], ["september", "sept", "sep"], ["october", "oct"], ["november", "nov"], ["december", "dec"],
 ];
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * A date the job's own heading carries, or as much of it as it carries, or nothing.
@@ -188,7 +187,7 @@ function anchoredDate(value: string | null | undefined, passage: string): string
   if (!new RegExp(`(?<!\\d)${year}(?!\\d)`).test(passage)) return "";
   if (!month) return year!;
   const number = Number(month);
-  const named = MONTH_NAMES[number - 1]!.map(escapeRegExp).join("|");
+  const named = MONTH_NAMES[number - 1]!.map(escapeRegex).join("|");
   const written = [
     new RegExp(`\\b(?:${named})\\.?,?\\s?${year}(?!\\d)`, "i"),
     new RegExp(`(?<!\\d)0?${number}\\s?[/.\\-]\\s?${year}(?!\\d)`),
@@ -202,7 +201,7 @@ function anchoredDate(value: string | null | undefined, passage: string): string
  * job's heading is a few lines, not a count of characters that runs on into the next job.
  */
 function documentLines(document: string) {
-  const lines = document.split(/\r\n?|\n/).map(normalise);
+  const lines = document.split(/\r\n?|\n/).map(normaliseText);
   const starts: number[] = [];
   let at = 0;
   for (const line of lines) {
@@ -223,7 +222,7 @@ function documentLines(document: string) {
   /** The lines `needle` is written across, wherever it appears, a line break counting as a space. */
   const find = (needle: string): Array<{ first: number; last: number }> => {
     if (!needle) return [];
-    const pattern = new RegExp(escapeRegExp(needle).replace(/ /g, "[ \\n]"), "g");
+    const pattern = new RegExp(escapeRegex(needle).replace(/ /g, "[ \\n]"), "g");
     const found: Array<{ first: number; last: number }> = [];
     for (let match = pattern.exec(flat); match && found.length < 50; match = pattern.exec(flat)) {
       found.push({ first: lineAt(match.index), last: lineAt(match.index + match[0].length - 1) });
@@ -240,7 +239,7 @@ function documentLines(document: string) {
  * anchored by "Good communication", nor "SQL" by "NoSQL".
  */
 function anchoredWord(text: string, document: string): boolean {
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(text)}(?![\\p{L}\\p{N}])`, "u").test(document);
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(text)}(?![\\p{L}\\p{N}])`, "u").test(document);
 }
 
 /** How many items a proposal holds, for the sentence the Library page opens the card with. */
@@ -257,15 +256,6 @@ export function countProposedItems(
     education: proposal.education.filter(item => take(item.id)).length,
     skills: proposal.skills.filter(item => take(item.id)).length,
   };
-}
-
-/** Every id a proposal offers, in the order the card shows them. All of them start ticked. */
-export function proposedItemIds(proposal: LibraryProposal): string[] {
-  return [
-    ...proposal.employment.flatMap(job => [job.id, ...job.responsibilities.map(row => row.id)]),
-    ...proposal.education.map(item => item.id),
-    ...proposal.skills.map(item => item.id),
-  ];
 }
 
 /**
@@ -294,13 +284,13 @@ export function validateLibraryProposal(
 ): { proposal: LibraryProposal; dropped: number } {
   const plan = LibraryProposalSchema.parse(value);
   const document = documentText ?? "";
-  const text = normalise(document);
-  const anchored = (value: string) => !!normalise(value) && cvQuoteIsAnchored(value, document);
-  const within = (value: string, passage: string) => !!normalise(value) && passage.includes(normalise(value));
+  const text = normaliseText(document);
+  const anchored = (value: string) => !!normaliseText(value) && cvQuoteIsAnchored(value, document);
+  const within = (value: string, passage: string) => !!normaliseText(value) && passage.includes(normaliseText(value));
   let dropped = 0;
 
   const written = documentLines(document);
-  const quotes = new Set(plan.employment.map(job => normalise(job.quote)).filter(Boolean));
+  const quotes = new Set(plan.employment.map(job => normaliseText(job.quote)).filter(Boolean));
   /** The lines heading a job whose quote is written across `first`–`last`. */
   const headingOf = (first: number, last: number, quote: string) => {
     const ends = (line: string | undefined) =>
@@ -314,9 +304,9 @@ export function validateLibraryProposal(
   // Where each job is headed in the document: the first place its quote is written with its title
   // in the heading around it, preferring one whose heading names its employer too.
   const placed = plan.employment.map((job, order) => {
-    const company = normalise(job.company).slice(0, 160);
-    const title = normalise(job.title).slice(0, 160);
-    const quote = normalise(job.quote);
+    const company = normaliseText(job.company).slice(0, 160);
+    const title = normaliseText(job.title).slice(0, 160);
+    const quote = normaliseText(job.quote);
     const headings = written.find(quote).map(place => headingOf(place.first, place.last, quote)).filter(place => within(title, place.text));
     const named = headings.find(place => within(company, place.text));
     const heading = named ?? headings[0];
@@ -363,36 +353,36 @@ export function validateLibraryProposal(
     const seenRows = new Set<string>();
     const id = `job-${employment.length}`;
     for (const row of rows) {
-      const said = normalise(row.text).slice(0, 4000);
+      const said = normaliseText(row.text).slice(0, 4000);
       if (!within(said, passage) || !within(row.quote, passage) || seenRows.has(key(said))
         || responsibilities.length >= LIBRARY_IMPORT_MAX_ROWS) {
         dropped += 1;
         continue;
       }
       seenRows.add(key(said));
-      responsibilities.push({ id: `${id}-row-${responsibilities.length}`, text: said, quote: normalise(row.quote).slice(0, 4000) });
+      responsibilities.push({ id: `${id}-row-${responsibilities.length}`, text: said, quote: normaliseText(row.quote).slice(0, 4000) });
     }
-    employment.push({ id, company, title, startDate, endDate, current, quote: normalise(job.quote).slice(0, 2000), responsibilities });
+    employment.push({ id, company, title, startDate, endDate, current, quote: normaliseText(job.quote).slice(0, 2000), responsibilities });
   }
 
   const education: ProposedQualification[] = [];
   const seenEducation = new Set<string>();
   for (const item of plan.education ?? []) {
-    const heading = normalise(item.heading).slice(0, 250);
-    const detail = normalise(item.detail).slice(0, 4000);
+    const heading = normaliseText(item.heading).slice(0, 250);
+    const detail = normaliseText(item.detail).slice(0, 4000);
     if (!anchored(heading) || !anchored(detail) || !anchored(item.quote)
       || seenEducation.has(key(heading + detail)) || education.length >= LIBRARY_IMPORT_MAX_JOBS) {
       dropped += 1;
       continue;
     }
     seenEducation.add(key(heading + detail));
-    education.push({ id: `education-${education.length}`, heading, detail, quote: normalise(item.quote).slice(0, 4000) });
+    education.push({ id: `education-${education.length}`, heading, detail, quote: normaliseText(item.quote).slice(0, 4000) });
   }
 
   const skills: ProposedSkill[] = [];
   const seenSkills = new Set<string>();
   for (const item of plan.skills ?? []) {
-    const skill = normalise(item.text);
+    const skill = normaliseText(item.text);
     if (!skill || skill.length > 80 || !anchoredWord(skill, text) || seenSkills.has(key(skill))
       || skills.length >= LIBRARY_IMPORT_MAX_SKILLS) {
       dropped += 1;

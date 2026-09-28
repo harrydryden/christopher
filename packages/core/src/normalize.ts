@@ -71,6 +71,10 @@ export function normalisePostingUrl(url: string): string {
   return u.toString();
 }
 
+// The two text helpers live in `text.ts`, which reaches no Node module, so the browser-safe
+// modules (the evidence rubric) can share them; they are re-exported here for every other caller.
+export { escapeRegex, normaliseText } from "./text";
+
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()

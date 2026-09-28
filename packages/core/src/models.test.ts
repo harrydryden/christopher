@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MODEL_CHOICES, MODEL_IDS, isKnownModel, modelLabel } from "./models";
+import { MODEL_IDS, isKnownModel } from "./models";
 import { DEFAULT_SETTINGS } from "./settings";
 
 describe("model choices", () => {
@@ -24,10 +24,5 @@ describe("model choices", () => {
   it("keeps the shipped defaults inside the supported list", () => {
     expect(isKnownModel(DEFAULT_SETTINGS.defaultModel)).toBe(true);
     expect(isKnownModel(DEFAULT_SETTINGS.cvModel)).toBe(true);
-  });
-
-  it("labels a supported model and falls back to the raw ID", () => {
-    expect(modelLabel("claude-sonnet-5")).toBe(MODEL_CHOICES.find(m => m.id === "claude-sonnet-5")!.label);
-    expect(modelLabel("claude-opus-4-8")).toBe("claude-opus-4-8");
   });
 });

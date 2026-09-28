@@ -1,22 +1,14 @@
 /** VERIFY: the /json endpoint is undocumented. */
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, joinLocation, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { feedAdapter, fetchJson, joinLocation, rec, requireSlug, specOrNull, str, subdomainSlug, MAX_POSTINGS } from "./common";
 
 export function breezySpec(slug: string): SourceSpec {
   return { type: "breezy", url: `https://${slug}.breezy.hr`, apiUrl: `https://${slug}.breezy.hr/json`, atsSlug: slug };
 }
 
-function slugFromUrl(url: string): string | null {
-  const u = safeUrl(url);
-  if (!u) return null;
-  const m = u.hostname.toLowerCase().match(/^([a-z0-9][a-z0-9-]*)\.breezy\.hr$/);
-  return m && slugOk(m[1]) ? m[1]! : null;
-}
-
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  const slug = spec.atsSlug;
-  if (!slug) throw new Error("breezy spec missing slug");
+  const slug = requireSlug(spec);
   const { data } = await fetchJson<unknown>(ctx, `https://${slug}.breezy.hr/json`);
   const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
   const out: RawPosting[] = [];
@@ -40,12 +32,4 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   return out.slice(0, MAX_POSTINGS);
 }
 
-export const breezy: Adapter = {
-  type: "breezy",
-  specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? breezySpec(slug) : null;
-  },
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))(),
-};
+export const breezy = feedAdapter({ type: "breezy", fromUrl: (url) => specOrNull(subdomainSlug(url, "breezy.hr"), breezySpec), read: fetchPostings });

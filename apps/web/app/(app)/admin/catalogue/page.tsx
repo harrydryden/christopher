@@ -1,5 +1,5 @@
 import { applyNameSuggestion, dismissNameSuggestion, removeCatalogueCompany, removeCatalogueSource, saveCatalogueCompany } from "@/app/actions/admin";
-import { Badge, companyStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
+import { Badge, companyStatusTone, sourceStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { CompanyFavicon } from "@/components/CompanyFavicon";

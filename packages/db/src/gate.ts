@@ -1,7 +1,8 @@
-import { compileGate, dedupeKeyFor, priorityFor, type AppSettings } from "@ava/core";
+import { compileGate, type AppSettings, type CompiledGate, type GateResult, type GateSettings } from "@ava/core";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
+import { queueScoring } from "./tasks";
 
 export interface GateScope {
   /** One posting only (a description just arrived). */
@@ -50,11 +51,93 @@ export function isGateArchive(view: { archivedAt: Date | string | null; gateArch
  * gate archived comes back the moment the gate admits it again. Only the gate's own archive
  * (`archived_at` still equal to `gate_archived_at`) is undone; one a person made never is.
  */
-export const restoreGateArchive = sql`archived_at = case when v."inTable" and uj.archived_at is not null and uj.archived_at = uj.gate_archived_at then null else uj.archived_at end,
+const restoreGateArchive = sql`archived_at = case when v."inTable" and uj.archived_at is not null and uj.archived_at = uj.gate_archived_at then null else uj.archived_at end,
   gate_archived_at = case when v."inTable" and uj.archived_at is not null and uj.archived_at = uj.gate_archived_at then null else uj.gate_archived_at end`;
 
 /** The event a view the gate brought back carries, beside the one its archive recorded. */
-export const GATE_RESTORE_EVENT = '{"action":"unarchived","actor":"system","reason":"Matches your criteria again"}';
+const GATE_RESTORE_EVENT = '{"action":"unarchived","actor":"system","reason":"Matches your criteria again"}';
+
+/**
+ * Compiled gates by their settings, so accounts with the same gate share one compilation for a
+ * whole pass instead of building its patterns once per account or per posting.
+ */
+export function gateCompiler(): (gate: GateSettings) => CompiledGate {
+  const compiled = new Map<string, CompiledGate>();
+  return gate => {
+    const key = JSON.stringify(gate);
+    let found = compiled.get(key);
+    if (!found) compiled.set(key, found = compileGate(gate));
+    return found;
+  };
+}
+
+/**
+ * Whether an account's view of a posting is in its table: the gate admits it, or the account
+ * asked for it by name, by pasting its URL, whether the paste created the posting or found it
+ * already stored (and whether or not a scan later adopted the row). The same exemption
+ * `archiveNonMatches` makes for a role the person decided on or wrote a CV for.
+ */
+export function inTableFor(verdict: GateResult, userId: string, job: { addedBy: string | null }, view?: { addedByUrl: boolean | null } | null): boolean {
+  return verdict.inTable || job.addedBy === userId || view?.addedByUrl === true;
+}
+
+/** The verdict columns a gate decision writes onto a view. `hidden` is written only when given. */
+export interface ViewVerdict {
+  keywordMatched: boolean;
+  keywordTerms: string[];
+  excluded: boolean;
+  locationOk: boolean;
+  inTable: boolean;
+  hidden?: boolean;
+}
+
+export function viewVerdict(verdict: GateResult, inTable: boolean, opts: { hidden?: boolean } = {}): ViewVerdict {
+  return { keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable,
+    ...(opts.hidden === undefined ? {} : { hidden: opts.hidden }) };
+}
+
+/** A new view of a posting, for an account whose gate (or paste) put it in the table. */
+export function newView(userId: string, jobId: string, values: ViewVerdict, seeded: boolean, now: Date): typeof schema.userJobs.$inferInsert {
+  return { userId, jobId, ...values, seeded, createdAt: now, updatedAt: now };
+}
+
+export type ViewUpdate = ViewVerdict & { userId: string; jobId: string; restore: boolean };
+
+/**
+ * The write an existing view needs for `values`, or null when nothing moved: most views of most
+ * roles are the same every day, and `updated_at` dates a change the person sees. A view the gate
+ * archived and now admits again is a change even when every verdict column already agrees (an
+ * earlier widening set `in_table` and left the archive in place), and so is a legacy near-miss
+ * row when the caller read `nearMiss`, which the write clears.
+ */
+export function viewUpdate(userId: string, jobId: string, view: Record<string, unknown> & {
+  nearMiss?: boolean | null; archivedAt: Date | string | null; gateArchivedAt: Date | string | null;
+}, values: ViewVerdict): ViewUpdate | null {
+  const restore = values.inTable && isGateArchive(view);
+  const moved = (Object.keys(values) as Array<keyof ViewVerdict>).some(key => JSON.stringify(values[key]) !== JSON.stringify(view[key]));
+  return restore || view.nearMiss || moved ? { userId, jobId, ...values, restore } : null;
+}
+
+/**
+ * Write verdict columns onto existing views, 250 to a statement. Every write clears the retired
+ * near-miss flag; `hidden` is set only on rows that carry it. A view whose gate archive this undoes
+ * (`restoreGateArchive`) gets the event that says so, in the same statement.
+ */
+export async function writeViewUpdates(db: Pick<Db, "execute">, updates: ViewUpdate[], now: Date): Promise<void> {
+  for (let offset = 0; offset < updates.length; offset += 250) {
+    await db.execute(sql`with changed as (
+      update user_jobs uj set keyword_matched = v."keywordMatched", keyword_terms = v."keywordTerms", excluded = v.excluded,
+        location_ok = v."locationOk", in_table = v."inTable", near_miss = false, hidden = coalesce(v.hidden, uj.hidden),
+        ${restoreGateArchive}, updated_at = ${now}
+      from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid,
+        "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, hidden boolean, restore boolean)
+      where uj.user_id = v."userId" and uj.job_id = v."jobId"
+      returning uj.user_id, uj.job_id, (v.restore and uj.archived_at is null) as restored
+    )
+    insert into job_events (job_id, user_id, type, payload)
+    select job_id, user_id, 'updated', ${GATE_RESTORE_EVENT}::jsonb from changed where restored`);
+  }
+}
 
 export interface ReevaluateOptions {
   /**
@@ -81,7 +164,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   // accounts that match on title and location alone.
   const matchesDescription = settings.gate.matchFields.includes("description");
   // Built once for the whole walk rather than per posting.
-  const gateOf = compileGate(settings.gate);
+  const gateOf = gateCompiler()(settings.gate);
   // The walk covers open roles and roles closed in the last thirty days (R-5.4), plus every role
   // this account already has a view of, so a narrowed gate still puts older views away. A role
   // that closed months ago is not one to create a view for, and walking the whole history of every
@@ -111,63 +194,33 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     const rows = page.rows;
     if (!rows.length) return null;
     examined += rows.length;
-    const updates: Array<Record<string, unknown>> = [];
+    const updates: ViewUpdate[] = [];
     const inserts: Array<typeof schema.userJobs.$inferInsert> = [];
-    const scoring: Array<typeof schema.tasks.$inferInsert> = [];
+    const scoring: Array<{ userId: string; jobId: string }> = [];
     for (const job of rows) {
       const gate = gateOf.evaluate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote });
-      // A role this account added by pasting its URL stays in their table whatever the gate says:
-      // they asked for that one by name, whether the paste created the posting or found it already
-      // stored. The same exemption `archiveNonMatches` already makes for a role they decided on or
-      // wrote a CV for — work the person did on that role.
-      const inTable = gate.inTable || job.addedBy === userId || job.addedByUrl === true;
-      const values = { keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms, excluded: gate.excluded, locationOk: gate.locationOk, inTable, hidden: false };
+      const inTable = inTableFor(gate, userId, job, job);
+      const values = viewVerdict(gate, inTable, { hidden: false });
       if (job.viewed) {
-        // A view the gate archived and now admits again is a change even when every verdict column
-        // already agrees: an earlier widening set `in_table` and left the archive in place.
-        const restore = inTable && isGateArchive(job);
-        if (restore || Object.entries(values).some(([k, v]) => JSON.stringify(v) !== JSON.stringify(job[k as keyof GateRow]))) {
-          updates.push({ jobId: job.id, ...values, restore });
+        // The walk does not read `near_miss`, so a legacy near-miss row alone is not rewritten.
+        const update = viewUpdate(userId, job.id, job, values);
+        if (update) {
+          updates.push(update);
           changed++;
         }
       } else if (inTable) {
         // The scan had already seen this posting: new to this account, not a new vacancy.
-        inserts.push({ userId, jobId: job.id, ...values, seeded: true, createdAt: now, updatedAt: now });
+        inserts.push(newView(userId, job.id, values, true, now));
         created++;
       } else continue;
       // A view whose scoring completed without a score is not asked again for the same inputs.
-      if (inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") {
-        const payload = { userId, jobId: job.id };
-        scoring.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
-      }
+      if (inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") scoring.push({ userId, jobId: job.id });
     }
-    for (let offset = 0; offset < updates.length; offset += 250) {
-      await db.execute(sql`with changed as (
-        update user_jobs uj set keyword_matched = v."keywordMatched", keyword_terms = v."keywordTerms",
-          excluded = v.excluded, location_ok = v."locationOk", in_table = v."inTable", near_miss = false, hidden = v.hidden,
-          ${restoreGateArchive}, updated_at = ${now}
-        from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb)
-        as v("jobId" uuid, "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, hidden boolean, restore boolean)
-        where uj.user_id = ${userId} and uj.job_id = v."jobId"
-        returning uj.job_id, (v.restore and uj.archived_at is null) as restored
-      )
-      insert into job_events (job_id, user_id, type, payload)
-      select job_id, ${userId}::uuid, 'updated', ${GATE_RESTORE_EVENT}::jsonb from changed where restored`);
-    }
+    await writeViewUpdates(db, updates, now);
     for (let offset = 0; offset < inserts.length; offset += 250) {
       await db.insert(schema.userJobs).values(inserts.slice(offset, offset + 250)).onConflictDoNothing();
     }
-    for (let offset = 0; offset < scoring.length; offset += 250) {
-      const queued = await db.insert(schema.tasks).values(scoring.slice(offset, offset + 250)).onConflictDoNothing().returning({ id: schema.tasks.id });
-      queuedForScoring += queued.length;
-    }
-    // Say so on the view as well as in the queue: a role waiting for its score reads "scoring"
-    // rather than as a blank the reader cannot tell from "not scored: budget spent".
-    if (scoring.length) {
-      await db.execute(sql`update user_jobs set score_state = 'queued', score_state_at = ${now}
-        where user_id = ${userId}
-          and job_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(scoring.map(row => (row.payload as { jobId: string }).jobId))}::jsonb))`);
-    }
+    queuedForScoring += await queueScoring(db, scoring, now);
     return rows.at(-1)!.id;
     });
     if (last === null) break;

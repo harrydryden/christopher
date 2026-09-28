@@ -8,10 +8,8 @@
 import { verifyCvWorkspace } from "./smoke-cv.mjs";
 import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
 import { createRequire } from "node:module";
-import { once } from "node:events";
 import { spawn } from "node:child_process";
-import { createHmac } from "node:crypto";
-import { setTimeout as sleep } from "node:timers/promises";
+import { disposableAdmin, startWeb } from "./lib/web.mjs";
 
 const nextBin = createRequire(new URL("../apps/web/package.json", import.meta.url)).resolve("next/dist/bin/next");
 
@@ -23,43 +21,6 @@ const skipBuild = process.argv.includes("--no-build");
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
 const SMOKE_EMAIL = "smoke@ava.invalid";
 const SMOKE_DOMAIN = "smoke.invalid";
-
-/**
- * A disposable administrator account with one session row. Same cookie shape as apps/web/lib/session.ts:
- * "v2.<sessionId>.<expiresEpochSeconds>.<base64url HMAC-SHA256(sessionId.expires)>".
- */
-async function signIn(pool) {
-  const { rows: [user] } = await pool.query(
-    `insert into users (email, name, role, claimed_at, email_verified_at) values ($1, 'Smoke test', 'admin', now(), now())
-     on conflict (email) do update set role = 'admin', claimed_at = coalesce(users.claimed_at, now()) returning id`,
-    [SMOKE_EMAIL],
-  );
-  const expires = Math.floor(Date.now() / 1000) + 3600;
-  const { rows: [session] } = await pool.query(
-    "insert into sessions (user_id, expires_at, user_agent) values ($1, to_timestamp($2), 'smoke-web') returning id",
-    [user.id, expires],
-  );
-  const sig = createHmac("sha256", SECRET).update(`${session.id}.${expires}`).digest("base64url");
-  return { userId: user.id, cookie: `ava_session=v2.${session.id}.${expires}.${sig}` };
-}
-
-/**
- * A company this account follows, so the company page has something to render. The catalogue is
- * shared, so the row is its own throwaway domain rather than one of the seeded companies, and it
- * goes at the end with the account.
- */
-async function followCompany(pool, userId) {
-  const { rows: [company] } = await pool.query(
-    `insert into companies (name, homepage_url, domain) values ('Smoke Company', 'https://smoke.invalid', $1)
-     on conflict (domain) do update set name = excluded.name returning id`,
-    [SMOKE_DOMAIN],
-  );
-  await pool.query(
-    "insert into company_subscriptions (user_id, company_id) values ($1, $2) on conflict do nothing",
-    [userId, company.id],
-  );
-  return company.id;
-}
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -198,36 +159,16 @@ async function main() {
   }
 
   console.log(`starting on :${PORT}…`);
-  // `next start` forks a `next-server` child that outlives its parent, so the server gets its own
-  // process group and, whatever happens below, the whole group is killed on exit rather than left
-  // on the port for the next run to find.
-  const server = spawn(process.execPath, [nextBin, "start", "-p", String(PORT)], { cwd: "apps/web", env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-  process.on("exit", () => { try { process.kill(-server.pid, "SIGKILL"); } catch { /* already gone */ } });
-  let serverLog = "";
-  server.stdout.on("data", (d) => (serverLog += d.toString()));
-  server.stderr.on("data", (d) => (serverLog += d.toString()));
-
-  let ready = false;
-  for (let i = 0; i < 60; i++) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/api/health`);
-      if (res.ok) {
-        ready = true;
-        break;
-      }
-    } catch {
-      /* not up yet */
-    }
-    await sleep(1000);
-  }
-  if (!ready) {
-    console.error(serverLog);
-    server.kill("SIGTERM");
-    throw new Error("the server never became ready");
-  }
+  // Whatever happens below, the server's whole process group is killed on exit rather than left on
+  // the port for the next run to find.
+  const server = await startWeb({ port: PORT, env, intervalMs: 1000, logLimit: Infinity });
+  process.on("exit", server.kill);
 
   const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
-  const { cookie, userId } = await signIn(pool);
+  // A disposable administrator following a throwaway company, so the company page has something
+  // to render; both go at the end.
+  const { cookie, userId, companyId } = await disposableAdmin(pool, {
+    email: SMOKE_EMAIL, name: "Smoke test", domain: SMOKE_DOMAIN, companyName: "Smoke Company", secret: SECRET, userAgent: "smoke-web" });
   const failures = [];
 
   // An unauthenticated request must be turned away.
@@ -236,7 +177,6 @@ async function main() {
   else if (!(anon.headers.get("location") ?? "").includes("/login")) failures.push(`/ redirected to ${anon.headers.get("location")}, expected /login`);
 
   // The company page and its logo are per company, so they join the list once there is one.
-  const companyId = await followCompany(pool, userId);
   // The company with no source shows the setup card; the header says when it was last scanned,
   // when the next scan is due, and how many roles here this account is pursuing.
   const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company", "next scheduled scan", "applications", "What has happened so far", "Nobody has looked for this"]]];
@@ -363,19 +303,12 @@ async function main() {
   await pool.query("delete from companies where domain = $1", [SMOKE_DOMAIN]);
   await pool.end();
 
-  const exited = once(server, "exit");
-  server.kill("SIGTERM");
-  await Promise.race([exited, sleep(5000)]);
-  if (server.exitCode === null && server.signalCode === null) {
-    server.kill("SIGKILL");
-    await exited;
-  }
-  try { process.kill(-server.pid, "SIGKILL"); } catch { /* the group is already gone */ }
+  await server.stop({ graceMs: 5000 });
 
   if (failures.length) {
     console.error("\nFAILURES:");
     for (const f of failures) console.error(`  - ${f}`);
-    console.error("\nserver output:\n" + serverLog.slice(-4000));
+    console.error("\nserver output:\n" + server.log().slice(-4000));
     process.exit(1);
   }
   console.log("\nall pages rendered");

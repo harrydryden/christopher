@@ -16,10 +16,10 @@
  * for what are some of the most common enterprise systems.
  */
 import * as cheerio from "cheerio";
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { IncompleteListingError, SourceFetchError } from "../types";
 import { absoluteUrl, parseDate } from "../normalize";
-import { fetchJson, htmlToText, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
+import { completeListing, feedAdapter, fetchJson, readOffsetPages, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, throwForStatus, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type PagedRead } from "./common";
 
 /** Most listing pages one HTML source is walked through; 50 rows a page covers the cap. */
 const MAX_PAGES = 200;
@@ -31,9 +31,7 @@ function clean(s: string | undefined | null): string | undefined {
 
 async function fetchHtml(ctx: FetchContext, url: string): Promise<string> {
   const res = await ctx.fetchText(url, { headers: { accept: "text/html" } });
-  if (res.status >= 400) {
-    throw new SourceFetchError(`HTTP ${res.status} from ${url}`, res.status === 403 || res.status === 429 ? "blocked" : "http", res.status);
-  }
+  throwForStatus(res, url);
   return res.body;
 }
 
@@ -82,20 +80,6 @@ async function paginate(
   return out;
 }
 
-/** Reads a listing, as far as `maxPages` pages when it pages at all. */
-type Reader = (spec: SourceSpec, ctx: FetchContext, maxPages?: number) => Promise<RawPosting[]>;
-
-/** Verification reads one page (`verifyRead` when the feed reports a total); the scan reads them all. */
-function adapterFor(type: SourceType2, specFromUrl: Adapter["specFromUrl"], read: Reader, verifyRead?: (spec: SourceSpec, ctx: FetchContext) => Promise<ListingRead>): Adapter {
-  return {
-    type,
-    specFromUrl,
-    fetchPostings: (spec, ctx) => read(spec, ctx),
-    verify: (spec, ctx) => verifyFromRead(verifyRead ? () => verifyRead(spec, ctx) : async () => ({ postings: await read(spec, ctx, 1) }))(),
-  };
-}
-type SourceType2 = "teamtailor" | "icims" | "jobvite" | "jazzhr" | "rippling" | "successfactors" | "eightfold";
-
 // ---------------------------------------------------------------------------
 // Eightfold — JSON. `GET https://{host}/api/apply/v2/jobs?domain={domain}&start=0&num=100`
 // Observed on *.eightfold.ai career sites and on custom domains served by it.
@@ -132,49 +116,44 @@ interface EfPosition { id?: number | string; name?: string; location?: string; l
 
 const EIGHTFOLD_PAGE = 100;
 
-/** Up to `maxPages` pages; `more` says the board holds roles past the last page read. */
-async function eightfoldRead(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { more: boolean }> {
+function mapEightfold(p: EfPosition, host: string): RawPosting | null {
+  const title = str(p.name), id = str(p.id);
+  if (!title || !id) return null;
+  const location = str(p.location);
+  const locations = (p.locations ?? []).map(str).filter((s): s is string => !!s);
+  return {
+    externalId: id, title,
+    url: str(p.canonicalPositionUrl) ?? `https://${host}/careers/job/${id}`,
+    location: location ?? locations[0],
+    locations: locations.length > 1 ? locations : undefined,
+    department: str(p.department),
+    remote: /remote/i.test(location ?? "") || undefined,
+    postedAt: parseDate(p.t_create),
+    descriptionHtml: str(p.job_description),
+    descriptionText: htmlToText(p.job_description),
+  };
+}
+
+/** Up to `maxPages` pages of the listing. */
+async function eightfoldRead(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<PagedRead> {
   const host = spec.atsSite, domain = spec.atsSlug;
   if (!host || !domain) throw new Error("eightfold spec missing host/domain");
-  const out: RawPosting[] = [];
-  const num = EIGHTFOLD_PAGE;
-  let total: number | undefined;
-  let more = false;
-  for (let page = 0; page < maxPages; page++) {
-    const start = page * num;
-    // Descriptions come inline, so a page of a hundred can pass the default body cap.
-    const { data } = await fetchJson<{ count?: number; positions?: EfPosition[] }>(ctx, `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${start}&num=${num}`, INLINE_DESCRIPTIONS_FETCH);
-    const positions = Array.isArray(data.positions) ? data.positions : [];
-    for (const p of positions) {
-      const title = str(p.name), id = str(p.id);
-      if (!title || !id) continue;
-      const location = str(p.location);
-      const locations = (p.locations ?? []).map(str).filter((s): s is string => !!s);
-      out.push({
-        externalId: id, title,
-        url: str(p.canonicalPositionUrl) ?? `https://${host}/careers/job/${id}`,
-        location: location ?? locations[0],
-        locations: locations.length > 1 ? locations : undefined,
-        department: str(p.department),
-        remote: /remote/i.test(location ?? "") || undefined,
-        postedAt: parseDate(p.t_create),
-        descriptionHtml: str(p.job_description),
-        descriptionText: htmlToText(p.job_description),
-      });
-    }
-    if (typeof data.count === "number") total = data.count;
-    // Without a count, only a short page proves the board has ended.
-    more = positions.length > 0 && (total !== undefined ? start + num < total : positions.length === num);
-    if (!more || out.length >= MAX_POSTINGS) break;
-  }
-  return { postings: out.slice(0, MAX_POSTINGS), total, more };
+  return readOffsetPages({
+    pageSize: EIGHTFOLD_PAGE,
+    maxPages,
+    totalPolicy: "latest",
+    fetchPage: async (start) => {
+      // Descriptions come inline, so a page of a hundred can pass the default body cap.
+      const { data } = await fetchJson<{ count?: number; positions?: EfPosition[] }>(ctx, `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${start}&num=${EIGHTFOLD_PAGE}`, INLINE_DESCRIPTIONS_FETCH);
+      return { items: Array.isArray(data.positions) ? data.positions : [], total: data.count };
+    },
+    map: (p) => mapEightfold(p, host),
+  });
 }
 async function eightfoldPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  const { postings, more } = await eightfoldRead(spec, ctx, MAX_POSTINGS / EIGHTFOLD_PAGE);
-  if (more) throw new IncompleteListingError(`Eightfold listing stopped at ${postings.length} roles with more pages to read; this scan cannot close roles`, postings);
-  return postings;
+  return completeListing("Eightfold", await eightfoldRead(spec, ctx, MAX_POSTINGS / EIGHTFOLD_PAGE));
 }
-export const eightfold = adapterFor("eightfold", eightfoldFromUrl, eightfoldPostings, (spec, ctx) => eightfoldRead(spec, ctx, 1));
+export const eightfold = feedAdapter({ type: "eightfold", fromUrl: eightfoldFromUrl, read: eightfoldPostings, verifyRead: (spec, ctx) => eightfoldRead(spec, ctx, 1) });
 
 // ---------------------------------------------------------------------------
 // Rippling — JSON. `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs`
@@ -193,8 +172,7 @@ function ripplingFromUrl(url: string): SourceSpec | null {
   return null;
 }
 async function ripplingPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  if (!spec.atsSlug) throw new Error("rippling spec missing slug");
-  const { data } = await fetchJson<unknown>(ctx, spec.apiUrl ?? ripplingSpec(spec.atsSlug).apiUrl!);
+  const { data } = await fetchJson<unknown>(ctx, spec.apiUrl ?? ripplingSpec(requireSlug(spec)).apiUrl!);
   const list = Array.isArray(data) ? data : Array.isArray(rec(data)?.items) ? (rec(data)!.items as unknown[]) : [];
   const out: RawPosting[] = [];
   for (const item of list) {
@@ -212,7 +190,7 @@ async function ripplingPostings(spec: SourceSpec, ctx: FetchContext): Promise<Ra
   }
   return out.slice(0, MAX_POSTINGS);
 }
-export const rippling = adapterFor("rippling", ripplingFromUrl, ripplingPostings);
+export const rippling = feedAdapter({ type: "rippling", fromUrl: ripplingFromUrl, read: ripplingPostings });
 
 // ---------------------------------------------------------------------------
 // Teamtailor — server-rendered listing at `https://{slug}.teamtailor.com/jobs`
@@ -223,13 +201,7 @@ export const rippling = adapterFor("rippling", ripplingFromUrl, ripplingPostings
 export function teamtailorSpec(origin: string, slug?: string): SourceSpec {
   return { type: "teamtailor", url: `${origin}/jobs`, atsSlug: slug };
 }
-function teamtailorFromUrl(url: string): SourceSpec | null {
-  const u = safeUrl(url);
-  if (!u) return null;
-  const m = u.hostname.toLowerCase().match(/^([a-z0-9][a-z0-9-]*)\.teamtailor\.com$/);
-  if (!m || !slugOk(m[1]) || m[1] === "career" || m[1] === "app") return null;
-  return teamtailorSpec(`https://${u.hostname.toLowerCase()}`, m[1]);
-}
+const teamtailorFromUrl = (url: string) => specOrNull(subdomainSlug(url, "teamtailor.com", ["career", "app"]), (slug) => teamtailorSpec(`https://${slug}.teamtailor.com`, slug));
 const TT_JOB_RE = /\/jobs\/(\d+)-[^/?#]*/;
 export function parseTeamtailor(html: string, pageUrl: string): { postings: RawPosting[]; markers: boolean } {
   const $ = cheerio.load(html);
@@ -257,7 +229,7 @@ async function teamtailorPostings(spec: SourceSpec, ctx: FetchContext, maxPages?
   const base = spec.url.replace(/\/+$/, "").replace(/\?.*$/, "");
   return paginate(ctx, (page) => (page === 1 ? base : `${base}?page=${page}`), parseTeamtailor, { firstIndex: 1, maxPages });
 }
-export const teamtailor = adapterFor("teamtailor", teamtailorFromUrl, teamtailorPostings);
+export const teamtailor = feedAdapter({ type: "teamtailor", fromUrl: teamtailorFromUrl, read: teamtailorPostings });
 
 // ---------------------------------------------------------------------------
 // iCIMS — `https://careers-{slug}.icims.com/jobs/search?ss=1&pr={page}&in_iframe=1`
@@ -302,7 +274,7 @@ async function icimsPostings(spec: SourceSpec, ctx: FetchContext, maxPages?: num
   if (!host) throw new Error("icims spec missing host");
   return paginate(ctx, (page) => `https://${host}/jobs/search?ss=1&in_iframe=1&pr=${page}`, parseIcims, { maxPages });
 }
-export const icims = adapterFor("icims", icimsFromUrl, icimsPostings);
+export const icims = feedAdapter({ type: "icims", fromUrl: icimsFromUrl, read: icimsPostings });
 
 // ---------------------------------------------------------------------------
 // SAP SuccessFactors — `https://{site}/search/?q=&startrow={n}` on
@@ -353,7 +325,7 @@ async function successfactorsPostings(spec: SourceSpec, ctx: FetchContext, maxPa
   const origin = (spec.atsSite ?? spec.url).replace(/\/search\/?.*$/, "").replace(/\/+$/, "");
   return paginate(ctx, (startrow) => `${origin}/search/?q=&startrow=${startrow}`, parseSuccessfactors, { stepFromFirstPage: successfactorsPageSize, maxPages });
 }
-export const successfactors = adapterFor("successfactors", successfactorsFromUrl, successfactorsPostings);
+export const successfactors = feedAdapter({ type: "successfactors", fromUrl: successfactorsFromUrl, read: successfactorsPostings });
 
 // ---------------------------------------------------------------------------
 // Jobvite — `https://jobs.jobvite.com/{slug}/jobs` lists every job in one
@@ -395,7 +367,7 @@ async function jobvitePostings(spec: SourceSpec, ctx: FetchContext): Promise<Raw
   if (postings.length === 0 && !markers) throw new SourceFetchError(`no listing markers found at ${spec.url}; the board may have changed shape`, "parse");
   return postings.slice(0, MAX_POSTINGS);
 }
-export const jobvite = adapterFor("jobvite", jobviteFromUrl, jobvitePostings);
+export const jobvite = feedAdapter({ type: "jobvite", fromUrl: jobviteFromUrl, read: jobvitePostings });
 
 // ---------------------------------------------------------------------------
 // JazzHR — `https://{slug}.applytojob.com/apply/` lists every job in one
@@ -405,13 +377,7 @@ export const jobvite = adapterFor("jobvite", jobviteFromUrl, jobvitePostings);
 export function jazzhrSpec(slug: string): SourceSpec {
   return { type: "jazzhr", url: `https://${slug}.applytojob.com/apply/`, atsSlug: slug };
 }
-function jazzhrFromUrl(url: string): SourceSpec | null {
-  const u = safeUrl(url);
-  if (!u) return null;
-  const m = u.hostname.toLowerCase().match(/^([a-z0-9][a-z0-9-]*)\.applytojob\.com$/);
-  if (!m || !slugOk(m[1]) || m[1] === "www" || m[1] === "app") return null;
-  return jazzhrSpec(m[1]);
-}
+const jazzhrFromUrl = (url: string) => specOrNull(subdomainSlug(url, "applytojob.com", ["www", "app"]), jazzhrSpec);
 export function parseJazzhr(html: string, pageUrl: string): { postings: RawPosting[]; markers: boolean } {
   const $ = cheerio.load(html);
   const postings: RawPosting[] = [];
@@ -436,5 +402,5 @@ async function jazzhrPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawP
   if (postings.length === 0 && !markers) throw new SourceFetchError(`no listing markers found at ${spec.url}; the board may have changed shape`, "parse");
   return postings.slice(0, MAX_POSTINGS);
 }
-export const jazzhr = adapterFor("jazzhr", jazzhrFromUrl, jazzhrPostings);
+export const jazzhr = feedAdapter({ type: "jazzhr", fromUrl: jazzhrFromUrl, read: jazzhrPostings });
 

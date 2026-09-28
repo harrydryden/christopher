@@ -18,11 +18,13 @@ import { lockRoleView } from "@/lib/decisions";
 import { cvBuildQuote } from "@/lib/cv-quote";
 import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
 import { db } from "@/lib/db";
+import { enqueue } from "@/lib/enqueue";
 import { userSettings as userSettingsTable } from "@ava/db/schema";
 import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
+import { revalidate } from "@/lib/action-helpers";
 
 /**
  * The CV model a build is asked of: the one this account has chosen now. A draft records the model
@@ -137,8 +139,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
     if (error instanceof z.ZodError) return fail(cvLibraryIssues(error, submitted));
     return actionError(error, "Could not save the library. Please try again.");
   }
-  revalidatePath("/library");
-  revalidatePath("/cv");
+  revalidate("/library", "/cv");
   return ok();
 }
 
@@ -271,7 +272,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
         archivedAt: new Date(),
         gapQuiz: { ...quiz, status: "answered", answers: parsedAnswers.data, completedAt, continuationDraftId: continuation.id },
       }).where(and(eq(cvDrafts.id, draft.id), eq(cvDrafts.userId, user.id)));
-      await enqueueTask(tx, "generate_cv", { draftId: continuation.id }, { dedupeKey: `generate_cv:${continuation.id}`, priority: 2 });
+      await enqueue("generate_cv", { draftId: continuation.id }, tx);
       return continuation.id;
     });
   } catch (error) {
@@ -298,9 +299,7 @@ export async function saveCvWritingPreferences(_prev: ActionResult, form: FormDa
   }
   // Written on the Library, where the wording they shape is written; still read on Settings and
   // by every build, so all three are revalidated.
-  revalidatePath("/library");
-  revalidatePath("/settings");
-  revalidatePath("/cv");
+  revalidate("/library", "/settings", "/cv");
   return ok();
 }
 
@@ -312,8 +311,7 @@ export async function saveCvAppearance(_prev: ActionResult, form: FormData): Pro
   } catch {
     return fail("Could not save appearance. Check the colours, font and page limit, then try again.");
   }
-  revalidatePath("/settings");
-  revalidatePath("/cv");
+  revalidate("/settings", "/cv");
   return ok();
 }
 
@@ -324,8 +322,7 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
   if (!isKnownModel(model)) return fail("Choose a supported model for CV generation.");
   if (model === modelForCallSite(settings, "A3")) return fail("Choose a different model from the website extraction model.");
   await setUserSetting(user.id, "cvModel", model);
-  revalidatePath("/settings");
-  revalidatePath("/cv");
+  revalidate("/settings", "/cv");
   return ok();
 }
 export async function manageCvs(_prev: ActionResult, form: FormData): Promise<ActionResult> {
@@ -340,8 +337,7 @@ export async function manageCvs(_prev: ActionResult, form: FormData): Promise<Ac
     console.error(JSON.stringify({ event: "cv_management_failed", action: parsed.data.action, count: parsed.data.ids.length }));
     return actionError(error, "Could not update the selected CVs. Please try again.", "cv_management_failed");
   }
-  revalidatePath("/cv");
-  revalidatePath("/applications");
+  revalidate("/cv", "/applications");
   return ok();
 }
 
@@ -463,12 +459,7 @@ export async function requestCv(
           buildCheckpoint: { tailoringEnabled: true },
         })
         .returning();
-      await enqueueTask(
-        tx,
-        "generate_cv",
-        { draftId: draft!.id },
-        { dedupeKey: `generate_cv:${draft!.id}`, priority: 2 },
-      );
+      await enqueue("generate_cv", { draftId: draft!.id }, tx);
       // Building a CV for a role is the moment applying starts, so the role gets its application
       // row here — status `applying`, no CV reference and no PDF, because nothing has been
       // submitted. It is written under the same lifecycle lock as the draft, and only on the path
@@ -490,9 +481,7 @@ export async function requestCv(
   } catch (error) {
     return actionError(error, "Could not queue the CV. Please try again.");
   }
-  revalidatePath("/library");
-  revalidatePath("/applications");
-  revalidatePath("/cv");
+  revalidate("/library", "/applications", "/cv");
   redirect(`/cv/${draftId}`);
 }
 export async function saveCvDraft(
@@ -591,12 +580,7 @@ export async function saveCvDraft(
             },
           })
           .returning();
-        await enqueueTask(
-          tx,
-          "generate_cv",
-          { draftId: fitting!.id, ...rubric, improvements, mode: "improve" },
-          { dedupeKey: `generate_cv:${fitting!.id}`, priority: 2 },
-        );
+        await enqueue("generate_cv", { draftId: fitting!.id, ...rubric, improvements, mode: "improve" }, tx);
         return fitting!.id;
       }
       const [saved] = await tx
@@ -617,20 +601,14 @@ export async function saveCvDraft(
           buildCheckpoint: draft.assessment ? { sourceRubric: draft.assessment.rubric } : null,
         })
         .returning();
-      await enqueueTask(
-        tx,
-        "generate_cv",
-        { draftId: saved!.id, mode: "assess", ...rubric },
-        { dedupeKey: `generate_cv:${saved!.id}`, priority: 2 },
-      );
+      await enqueue("generate_cv", { draftId: saved!.id, mode: "assess", ...rubric }, tx);
       return saved!.id;
     });
   } catch (error) {
     if (error instanceof z.ZodError) return fail(cvContentIssues(error));
     return actionError(error, "Could not save the draft. Please try again.");
   }
-  revalidatePath("/settings");
-  revalidatePath("/cv");
+  revalidate("/settings", "/cv");
   redirect(`/cv/${savedId}`);
 }
 
@@ -747,12 +725,7 @@ export async function assessCvDraft(
       // as the person's own wording and never offered one. A revision with no wording is written
       // again as its task first asked, which the worker reads from the checkpoint kept above.
       const typed = !!draft.content && !(refreshed ? undefined : checkpoint.contentAt);
-      const queued = await enqueueTask(
-        tx,
-        "generate_cv",
-        { draftId: id, ...(typed ? { mode: "assess" } : {}) },
-        { dedupeKey: `generate_cv:${id}`, priority: 2 },
-      );
+      const queued = await enqueue("generate_cv", { draftId: id, ...(typed ? { mode: "assess" as const } : {}) }, tx);
       if (!queued)
         throw new UserFacingError("The previous task is still finishing. Retry shortly.");
     });

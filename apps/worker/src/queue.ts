@@ -3,7 +3,8 @@ import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK
 import { and, eq, getTableColumns, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
-import { LeaseBusyError, LeaseLostError, type RunDeps } from "./lease";
+import { LeaseBusyError, LeaseLostError, withBoundedLocks, type RunDeps } from "./lease";
+import { settleWithin, startRenewal } from "./timers";
 import { log, withLogContext } from "./log";
 import { vitals } from "./vitals";
 
@@ -102,19 +103,6 @@ export const STOP_GRACE_MS = 15_000;
 
 /** The longest `stop()` waits on the database for each of the hand-back and the hold release. */
 export const HAND_BACK_TIMEOUT_MS = 4_000;
-
-/** Resolves once `work` settles or `ms` has passed, whichever is first; never rejects. */
-export async function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      work.then(() => undefined, () => undefined),
-      new Promise<void>(resolve => { timer = setTimeout(resolve, ms); timer.unref?.(); }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 export interface QueueOptions {
   /** The general slots: scans, discovery, imports, scoring. A memory budget (`WORKER_CONCURRENCY`). */
@@ -314,9 +302,7 @@ function isLockTimeout(err: unknown): boolean {
  */
 export async function renewTask(db: Db, task: Task): Promise<boolean | null> {
   try {
-    return await db.transaction(async tx => {
-      await tx.execute(sql`set local lock_timeout = '2s'`);
-      await tx.execute(sql`set local statement_timeout = '5s'`);
+    return await withBoundedLocks(db, async tx => {
       // Named, as the claim is: one Parse per connection for a statement every run sends each beat.
       const rows = await tx.update(schema.tasks).set({ lockedAt: sql`${sql.placeholder("lockedAt")}` })
         .where(and(eq(schema.tasks.id, sql.placeholder("id")), eq(schema.tasks.status, "running"),
@@ -400,26 +386,40 @@ export async function failTask(db: Db, task: Task, err: unknown): Promise<"retry
   return retry ? "retry" : "failed";
 }
 
-/** Run the type's abandonment hook, if it has one. A hook that throws never fails the recovery. */
-export async function runAbandonHook(task: SweptTask, reason: string, context: AbandonContext): Promise<void> {
-  const hook = context.onAbandon?.[task.type];
-  if (!hook || !context.deps) return;
+/** Run a type's hook, when it has one. A hook that throws never fails the recovery. */
+async function runHook(kind: "abandonment" | "interruption", task: SweptTask, run: (() => Promise<void>) | undefined): Promise<void> {
   try {
-    await hook(task, context.deps, reason);
+    await run?.();
   } catch (err) {
-    log.error("abandonment hook failed", { id: task.id, type: task.type, error: (err as Error)?.message });
+    log.error(`${kind} hook failed`, { id: task.id, type: task.type, error: (err as Error)?.message });
   }
 }
 
-/** Run the type's interruption hook, if it has one. A hook that throws never fails the recovery. */
-async function runInterruptedHook(task: Task, deps: WorkerDeps, hooks: InterruptedHookMap | undefined, info: { retryAt?: string }): Promise<void> {
-  const hook = hooks?.[task.type];
-  if (!hook) return;
-  try {
-    await hook(task, deps, info);
-  } catch (err) {
-    log.error("interruption hook failed", { id: task.id, type: task.type, error: (err as Error)?.message });
+/** Run the type's abandonment hook, if it has one. */
+export async function runAbandonHook(task: SweptTask, reason: string, { onAbandon, deps }: AbandonContext): Promise<void> {
+  const hook = onAbandon?.[task.type];
+  await runHook("abandonment", task, hook && deps ? () => hook(task, deps, reason) : undefined);
+}
+
+/**
+ * The ledger entry for a task given up on for good. One shape for the crash sweep and the last
+ * attempt of a handler that kept throwing, which Health reads as one kind.
+ */
+function abandonedEvent(task: SweptTask, error: string, workerId: string): Parameters<typeof recordWorkerEvent>[1] {
+  return {
+    workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
+    detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error },
+  };
+}
+
+/** Release every AI hold `workerId` took, with the ledger entry when there were any. */
+async function releaseWorkerHolds(db: Db, workerId: string, reason: "boot" | "shutdown"): Promise<ReleasedHolds> {
+  const holds = await releaseAiHolds(db, { workerId });
+  if (holds.count) {
+    log.warn(reason === "boot" ? "released ai holds left behind by an unclean exit" : "released ai reservations on shutdown", { workerId, ...holds });
+    await recordWorkerEvent(db, { workerId, kind: "holds_released", detail: { ...holds, reason } });
   }
+  return holds;
 }
 
 /**
@@ -438,10 +438,7 @@ export async function abandonTask(db: Db, task: SweptTask, error: string, worker
     .returning({ id: schema.tasks.id });
   if (!rows.length) return false;
   log.warn("task abandoned", { id: task.id, type: task.type, attempts: task.attempts, lockedBy: task.lockedBy, error });
-  await recordWorkerEvent(db, {
-    workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
-    detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error },
-  });
+  await recordWorkerEvent(db, abandonedEvent(task, error, workerId));
   await runAbandonHook(task, error, context);
   return true;
 }
@@ -600,11 +597,7 @@ export async function recoverFromCrash(
   // remainder after each abandonment hook has released its own.
   let holds: ReleasedHolds = { count: 0, amountUsd: 0 };
   try {
-    holds = await releaseAiHolds(deps.db, { workerId: opts.workerId });
-    if (holds.count) {
-      log.warn("released ai holds left behind by an unclean exit", { workerId: opts.workerId, ...holds });
-      await recordWorkerEvent(deps.db, { workerId: opts.workerId, kind: "holds_released", detail: { ...holds, reason: "boot" } });
-    }
+    holds = await releaseWorkerHolds(deps.db, opts.workerId, "boot");
   } catch (err) {
     log.error("failed to release ai holds on boot", err);
   }
@@ -783,11 +776,7 @@ export class TaskQueue {
   /** Drop this worker's live reservations: nothing it is stopping will settle them. */
   private async releaseHolds(): Promise<void> {
     try {
-      const released = await releaseAiHolds(this.deps.db, { workerId: this.opts.workerId });
-      if (released.count) {
-        log.warn("released ai reservations on shutdown", { ...released, workerId: this.opts.workerId });
-        await recordWorkerEvent(this.deps.db, { workerId: this.opts.workerId, kind: "holds_released", detail: { ...released, reason: "shutdown" } });
-      }
+      await releaseWorkerHolds(this.deps.db, this.opts.workerId, "shutdown");
     } catch (err) {
       log.error("failed to release ai reservations on shutdown", err);
     }
@@ -1005,12 +994,11 @@ export class TaskQueue {
     this.controllers.set(task.id, stop);
     /** Stopped because this worker is shutting down: the task goes back, whatever the run did. */
     const handedBack = () => stop.signal.reason instanceof ShutdownError;
-    let renewing = false;
     const heartbeatMs = this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3));
-    const heartbeat = setInterval(() => {
-      if (renewing) return;
-      renewing = true;
-      const renewal = renewTask(this.deps.db, task).then(renewed => {
+    const heartbeat = startRenewal({
+      everyMs: heartbeatMs,
+      timeoutMs: Math.min(heartbeatMs, HEARTBEAT_TIMEOUT_MS),
+      renew: () => renewTask(this.deps.db, task).then(renewed => {
         // Blocked behind a write transaction on the row, most often this run's own: try again.
         if (renewed === null) { log.debug("task heartbeat waited on the row lock", { id: task.id, type: task.type }); return; }
         // The task is someone else's now: this run's writes are stale and it must not spend more.
@@ -1018,15 +1006,9 @@ export class TaskQueue {
           log.warn("task heartbeat lost the task", { id: task.id, type: task.type });
           stop.abort(new LeaseLostError("Task lease lost; another worker holds it"));
         }
-      }).catch(err => log.warn("task heartbeat failed", err));
-      // A renewal that never settles used to latch the heartbeat off for good, so the task went
-      // stale in five minutes and a second attempt ran alongside this one. One hung renewal now
-      // costs one beat: the latch clears on a timeout and the next beat issues a fresh renewal.
-      void Promise.race([renewal, heartbeatTimeout(Math.min(heartbeatMs, HEARTBEAT_TIMEOUT_MS), () =>
-        log.warn("task heartbeat timed out", { id: task.id, type: task.type }))])
-        .finally(() => { renewing = false; });
-    }, heartbeatMs);
-    heartbeat.unref();
+      }).catch(err => log.warn("task heartbeat failed", err)),
+      onTimeout: () => log.warn("task heartbeat timed out", { id: task.id, type: task.type }),
+    });
     const before = vitals();
     try {
       if (!handler) throw new Error(`no handler for task type ${task.type}`);
@@ -1095,21 +1077,18 @@ export class TaskQueue {
         // given up on, and its writes are fenced out. A task with attempts left is coming back, so
         // the type's hook says so where the person is looking; one with none is closed off by the
         // abandonment hook below instead.
-        if (outcome === "retry")
-          await runInterruptedHook(task, this.deps, this.opts.onInterrupted,
-            { retryAt: new Date(Date.now() + backoffMs(task.attempts)).toISOString() });
+        const interrupted = this.opts.onInterrupted?.[task.type];
+        if (outcome === "retry" && interrupted)
+          await runHook("interruption", task, () => interrupted(task, this.deps, { retryAt: new Date(Date.now() + backoffMs(task.attempts)).toISOString() }));
       }
       // The last attempt of a handler that keeps throwing leaves the same half-finished work
       // behind as a crash, so it closes it off the same way.
       if (outcome === "failed") {
-        await this.record({
-          workerId: this.opts.workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
-          detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error: (err as Error).message },
-        });
+        await this.record(abandonedEvent(task, (err as Error).message, this.opts.workerId));
         await runAbandonHook(task, (err as Error).message, { deps: this.deps, onAbandon: this.opts.onAbandon });
       }
     } finally {
-      clearInterval(heartbeat);
+      heartbeat.stop();
       this.running.delete(task.id);
       this.controllers.delete(task.id);
       this.active--;
@@ -1134,11 +1113,3 @@ export function sleep(ms: number): Promise<void> {
 
 /** The longest one heartbeat renewal may take before the next beat is allowed to try again. */
 const HEARTBEAT_TIMEOUT_MS = 10_000;
-
-/** Resolves after `ms`, saying so once, without holding the process open. */
-function heartbeatTimeout(ms: number, onTimeout: () => void): Promise<void> {
-  return new Promise<void>(resolve => {
-    const timer = setTimeout(() => { onTimeout(); resolve(); }, ms);
-    timer.unref?.();
-  });
-}

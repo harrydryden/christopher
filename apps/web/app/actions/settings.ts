@@ -13,6 +13,7 @@ import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
 import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
 import { stageRoutesFromForm } from "@/lib/stage-routes";
 import { fail, ok, type ActionResult } from "@/lib/validation";
+import { revalidate } from "@/lib/action-helpers";
 
 const MATCH_FIELDS: MatchField[] = ["title", "department", "description"];
 
@@ -48,15 +49,8 @@ export async function saveGate(_prev: ActionResult, formData: FormData): Promise
   const parsed = gateFromForm(formData, settings.gate);
   if (!parsed.ok) return fail(parsed.error);
   await saveSettingsAndGate(user.id, { gate: parsed.gate }, { rescore: !needsEmailConfirmation(user) });
-  revalidatePath("/settings");
-  revalidatePath("/companies");
-  revalidatePath("/");
+  revalidate("/settings", "/companies", "/");
   return ok();
-}
-
-/** The Keywords card: the same save, with only the keyword fields on the form. */
-export async function saveKeywords(prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  return saveGate(prev, formData);
 }
 
 export async function saveMatchFields(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
@@ -65,14 +59,8 @@ export async function saveMatchFields(_prev: ActionResult, formData: FormData): 
   const raw = formData.getAll("matchFields").map(String);
   const matchFields = MATCH_FIELDS.filter((f) => raw.includes(f));
   await saveSettingsAndGate(user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } }, { rescore: !needsEmailConfirmation(user) });
-  revalidatePath("/settings");
-  revalidatePath("/");
+  revalidate("/settings", "/");
   return ok();
-}
-
-/** The Location filter card: the same save, with only the location fields on the form. */
-export async function saveLocationFilter(prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  return saveGate(prev, formData);
 }
 
 /** Automatic score hiding is retired: a stored `hideThreshold` is left where it is and ignored. */
@@ -85,8 +73,7 @@ export async function saveTableSettings(_prev: ActionResult, formData: FormData)
 
   // A display setting: the gate does not read it, so it re-evaluates and re-scores nothing.
   await setUserSetting(user.id, "showClosedDays", showClosedDays);
-  revalidatePath("/settings");
-  revalidatePath("/");
+  revalidate("/settings", "/");
   return ok();
 }
 
@@ -94,8 +81,7 @@ export async function saveTableSettings(_prev: ActionResult, formData: FormData)
 export async function saveSuggestionSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   await setUserSetting(user.id, "suggestionsEnabled", formData.get("suggestionsEnabled") === "1");
-  revalidatePath("/settings");
-  revalidatePath("/suggestions");
+  revalidate("/settings", "/suggestions");
   return ok();
 }
 
@@ -103,8 +89,7 @@ export async function saveSuggestionSettings(_prev: ActionResult, formData: Form
 export async function saveRegistrationSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   await requireAdmin();
   await setSystemSetting("registrationOpen", formData.get("registrationOpen") === "1");
-  revalidatePath("/admin");
-  revalidatePath("/signup");
+  revalidate("/admin", "/signup");
   return ok();
 }
 
@@ -128,9 +113,7 @@ export async function saveSchedule(_prev: ActionResult, formData: FormData): Pro
   await setSystemSetting("timezone", timezone);
   await setSystemSetting("closeAfterMissingScans", closeAfterMissingScans);
   await setSystemSetting("respectRobotsTxt", respectRobotsTxt);
-  revalidatePath("/admin/settings");
-  revalidatePath("/settings");
-  revalidatePath("/");
+  revalidate("/admin/settings", "/settings", "/");
   return ok();
 }
 
@@ -140,8 +123,7 @@ export async function saveAiSettings(_prev: ActionResult, formData: FormData): P
   if (!isKnownModel(defaultModel)) return fail("Choose a supported model for the default.");
 
   await setSystemSetting("defaultModel", defaultModel);
-  revalidatePath("/admin/settings");
-  revalidatePath("/settings");
+  revalidate("/admin/settings", "/settings");
   return ok();
 }
 
@@ -205,8 +187,7 @@ export async function saveAiBudget(_prev: ActionResult, formData: FormData): Pro
     }
   }
   await setUserSetting(user.id, "aiBudgetUsd", budget);
-  revalidatePath("/settings");
-  revalidatePath("/admin");
+  revalidate("/settings", "/admin");
   return ok();
 }
 
@@ -214,7 +195,5 @@ export async function saveAiBudget(_prev: ActionResult, formData: FormData): Pro
 export async function runDailyScanNow(): Promise<void> {
   await requireAdmin();
   await enqueue("run_daily", { trigger: "manual" });
-  revalidatePath("/admin/settings");
-  revalidatePath("/admin/health");
-  revalidatePath("/health");
+  revalidate("/admin/settings", "/admin/health", "/health");
 }

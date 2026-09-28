@@ -7,8 +7,8 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription } from "@ava/db/schema";
-import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, MAX_COMPANIES_PER_SUBMISSION, normalisePostingUrl, priorityFor } from "@ava/core";
+import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription, type User } from "@ava/db/schema";
+import { discovery, ensureHttpUrl, extractDomain, MAX_COMPANIES_PER_SUBMISSION, normalisePostingUrl } from "@ava/core";
 import { postingOnCompanyHost } from "@/lib/posting-host";
 import { unsafeUrlRefusal } from "@/lib/public-url";
 import { applySuggestedName, normaliseCompanyName, upsertNameSuggestion } from "@/lib/company-names";
@@ -18,6 +18,7 @@ import { requireChosenGate } from "@/lib/queries/setup";
 import { getSettingsFor } from "@/lib/settings";
 import { actionError, fail, isUserFacingError, UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
 import { assertFollowCapacity } from "@/lib/follow-limits";
+import { refuseOn, revalidate } from "@/lib/action-helpers";
 
 const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
 
@@ -36,6 +37,22 @@ async function requireFollowed(userId: string, companyId: string, options: { liv
   return subscription;
 }
 
+/** The preamble of every action that starts shared work on one followed company: a confirmed address and a live follow. */
+async function liveFollow(companyId: string): Promise<{ user: User; id: string }> {
+  const user = await requireVerifiedUser();
+  const id = zUuid().parse(companyId);
+  await requireFollowed(user.id, id, { live: true });
+  return { user, id };
+}
+
+/** A company nobody followed for a while may have no usable source any more: find one. */
+async function discoverIfSourceless(tx: Pick<ReturnType<typeof db>, "select" | "insert" | "execute">, companyId: string): Promise<void> {
+  const sources = await tx.select({ status: careerSources.status }).from(careerSources).where(eq(careerSources.companyId, companyId));
+  if (!sources.some(s => s.status === "active" || s.status === "failing" || s.status === "needs_confirmation")) {
+    await enqueue("discover", { companyId, reason: "added" }, tx);
+  }
+}
+
 /** What a follower is told when the change they asked for belongs to an administrator. */
 const REPLACING_IS_ADMINS = "This company already has a working source, and only an administrator can replace it. Keep the current source, or ask an administrator.";
 
@@ -43,7 +60,7 @@ const REPLACING_IS_ADMINS = "This company already has a working source, and only
 async function admitExistingRoles(userId: string, companyId: string, writer: ReturnType<typeof db>, options: { queue?: boolean } = {}): Promise<void> {
   const [count] = options.queue ? [] : await writer.select({ n: sql<number>`count(*)::int` }).from(jobs).where(eq(jobs.companyId, companyId));
   if (options.queue || (count?.n ?? 0) > 500) {
-    await enqueueTask(writer, "reevaluate_gate", { userId, companyId }, { dedupeKey: `reevaluate_gate:${userId}:${companyId}`, priority: 1, promote: true });
+    await enqueue("reevaluate_gate", { userId, companyId }, writer);
     return;
   }
   await reevaluateGate(writer, userId, await getSettingsFor(userId, writer), new Date(), { companyId });
@@ -55,11 +72,6 @@ async function admitExistingRoles(userId: string, companyId: string, writer: Ret
  * submission holds its connection for a bounded time.
  */
 const INLINE_ADMISSIONS = 5;
-
-/** Back to the Companies page with a refusal the page reads out. */
-function refuseOnCompanies(sentence: string, returnTo: AddReturnPath = "/companies"): never {
-  redirect(`${returnTo}?${new URLSearchParams({ error: sentence }).toString()}`);
-}
 
 /**
  * Where the add form sends its answer. A fixed list, never a URL from the form: the Discover tab's
@@ -82,7 +94,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
   // Every new company is discovered and then scanned daily for everyone who follows it, so one
   // paste adds a bounded amount of shared work (design: a paste is not a bulk import).
   if (lines.length > MAX_COMPANIES_PER_SUBMISSION) {
-    refuseOnCompanies(`Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`, returnTo);
+    refuseOn(returnTo, `Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`);
   }
 
   const candidates: Array<{ name: string; homepageUrl: string; domain: string }> = [];
@@ -132,11 +144,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
         } else if (outcome.created || outcome.reactivated) {
           followed++;
           admit.push(companyId);
-          // A company nobody followed for a while may have no usable source any more.
-          const sources = await tx.select({ status: careerSources.status }).from(careerSources).where(eq(careerSources.companyId, companyId));
-          if (!sources.some(s => s.status === "active" || s.status === "failing" || s.status === "needs_confirmation")) {
-            await enqueue("discover", { companyId, reason: "added" }, tx);
-          }
+          await discoverIfSourceless(tx, companyId);
         } else skipped.push(candidate.domain);
       }
     }
@@ -147,11 +155,9 @@ export async function addCompanies(formData: FormData): Promise<void> {
     if (!isUserFacingError(error)) throw error;
     refusal = error.message;
   });
-  if (refusal) refuseOnCompanies(refusal, returnTo);
+  if (refusal) refuseOn(returnTo, refusal);
 
-  revalidatePath("/companies");
-  revalidatePath("/suggestions");
-  revalidatePath("/");
+  revalidate("/companies", "/suggestions", "/");
   const params = new URLSearchParams({ added: String(added) });
   if (followed) params.set("followed", String(followed));
   if (skipped.length) params.set("skipped", skipped.slice(0, 8).map(s => s.slice(0, 100)).join(", ") + (skipped.length > 8 ? `; and ${skipped.length - 8} more` : ""));
@@ -175,16 +181,11 @@ export async function followCompany(companyId: string): Promise<ActionResult> {
       await assertFollowCapacity(tx, user, { companyIds: [id] });
       const outcome = await subscribeToCompany(tx, user.id, id);
       if (!outcome.created && !outcome.reactivated) return `You already follow ${company.name}.`;
-      const sources = await tx.select({ status: careerSources.status }).from(careerSources).where(eq(careerSources.companyId, id));
-      if (!sources.some(s => s.status === "active" || s.status === "failing" || s.status === "needs_confirmation")) {
-        await enqueue("discover", { companyId: id, reason: "added" }, tx);
-      }
+      await discoverIfSourceless(tx, id);
       await admitExistingRoles(user.id, id, tx as unknown as ReturnType<typeof db>);
       return `You now follow ${company.name}; its matching roles are in your table.`;
     });
-    revalidatePath("/companies");
-    revalidatePath("/suggestions");
-    revalidatePath("/");
+    revalidate("/companies", "/suggestions", "/");
     return { ok: true, message };
   } catch (error) {
     return actionError(error, "Could not follow this company.", "follow_company_failed");
@@ -215,9 +216,8 @@ async function setCompanyStatus(companyId: string, status: "active" | "paused" |
     const changed = await setSubscriptionStatus(tx, user.id, id, nextStatus);
     if (!changed) throw new UserFacingError("You do not follow this company.");
   });
-  if (refusal) refuseOnCompanies(refusal);
-  revalidatePath("/companies");
-  revalidatePath(`/companies/${id}`);
+  if (refusal) refuseOn("/companies", refusal);
+  revalidate("/companies", `/companies/${id}`);
 }
 
 export async function pauseCompany(companyId: string): Promise<void> {
@@ -234,9 +234,7 @@ export async function archiveCompany(companyId: string): Promise<void> {
 
 /** Refresh uses existing sources first; discovery is recovery, not a separate routine action. */
 export async function refreshCompany(companyId: string): Promise<void> {
-  const user = await requireVerifiedUser();
-  const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
+  const { id } = await liveFollow(companyId);
   const review = await db().transaction(async tx => {
     const [company] = await tx.select({ status: companies.status, homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).for("update");
     if (!company || company.status !== "active") return false;
@@ -252,27 +250,21 @@ export async function refreshCompany(companyId: string): Promise<void> {
     else await enqueue("discover", { companyId: id, reason: "manual" }, tx);
     return false;
   });
-  revalidatePath("/companies"); revalidatePath(`/companies/${id}`);
+  revalidate("/companies", `/companies/${id}`);
   if (review) redirect(`/companies/${id}`);
 }
 
 /** A scan is shared: the worker serves a rescan from a result made in the last half hour. */
 export async function rescanCompany(companyId: string): Promise<void> {
-  const user = await requireVerifiedUser();
-  const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
+  const { id } = await liveFollow(companyId);
   await enqueue("scan_company", { companyId: id, trigger: "manual" });
-  revalidatePath("/companies");
-  revalidatePath(`/companies/${id}`);
+  revalidate("/companies", `/companies/${id}`);
 }
 
 export async function rediscoverCompany(companyId: string): Promise<void> {
-  const user = await requireVerifiedUser();
-  const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
+  const { id } = await liveFollow(companyId);
   await enqueue("discover", { companyId: id, reason: "manual" });
-  revalidatePath("/companies");
-  revalidatePath(`/companies/${id}`);
+  revalidate("/companies", `/companies/${id}`);
 }
 
 /** The notepad's text. Notes are the follower's own; the shared name is an administrator's. */
@@ -286,8 +278,7 @@ export async function saveCompanyNotes(companyId: string, notes: string): Promis
     if (text.length > 20_000) return fail("These notes are too long. Keep them under 20,000 characters.");
     await db().update(companySubscriptions).set({ notes: text.trim() === "" ? null : text })
       .where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id)));
-    revalidatePath(`/companies/${id}`);
-    revalidatePath("/companies");
+    revalidate(`/companies/${id}`, "/companies");
     return { ok: true };
   } catch (error) {
     return actionError(error, "Could not save your notes.", "save_company_notes_failed");
@@ -307,9 +298,7 @@ export async function saveCompanyNotes(companyId: string, notes: string): Promis
  * since a redirect can leave the company's hosts after this check.
  */
 export async function importPosting(companyId: string, formData: FormData): Promise<void> {
-  const user = await requireVerifiedUser();
-  const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
+  const { user, id } = await liveFollow(companyId);
   const url = normalisePostingUrl(zUrlString().parse(String(formData.get("url") ?? "")));
   const unsafe = unsafeUrlRefusal(url);
   if (unsafe) throw new UserFacingError(unsafe);
@@ -318,7 +307,7 @@ export async function importPosting(companyId: string, formData: FormData): Prom
   const sources = await db().select({ type: careerSources.type, url: careerSources.url, apiUrl: careerSources.apiUrl, atsSlug: careerSources.atsSlug, atsSite: careerSources.atsSite, status: careerSources.status })
     .from(careerSources).where(eq(careerSources.companyId, id));
   const payload = { userId: user.id, companyId: id, url, foreignHost: !postingOnCompanyHost(url, company, sources) };
-  await enqueueTask(db(), "import_posting", payload, { dedupeKey: dedupeKeyFor("import_posting", payload), priority: priorityFor("import_posting"), promote: true });
+  await enqueue("import_posting", payload);
   revalidatePath(`/companies/${id}`);
 }
 
@@ -338,9 +327,7 @@ export async function suggestCompanyName(companyId: string, _previous: ActionRes
       const suggestionId = await upsertNameSuggestion(tx, id, user.id, name);
       return user.role === "admin" ? await applySuggestedName(tx, suggestionId, user.id) : null;
     });
-    revalidatePath(`/companies/${id}`);
-    revalidatePath("/companies");
-    revalidatePath("/admin/catalogue");
+    revalidate(`/companies/${id}`, "/companies", "/admin/catalogue");
     return applied ? { ok: true, message: `Renamed to «${applied.name}».` } : { ok: true, message: "An administrator will review your suggestion." };
   } catch (error) {
     return actionError(error, "Could not save your suggestion.", "suggest_company_name_failed");
@@ -349,9 +336,7 @@ export async function suggestCompanyName(companyId: string, _previous: ActionRes
 
 /** Capture this company's logo again: the same shared task the daily sweep queues. */
 export async function refreshCompanyLogo(companyId: string): Promise<void> {
-  const user = await requireVerifiedUser();
-  const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
+  const { id } = await liveFollow(companyId);
   const [company] = await db().select({ homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).limit(1);
   if (!company) return;
   await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl: company.homepageUrl });
@@ -479,9 +464,7 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
 }
 
 export async function pasteDiscoveryUrl(companyId: string, formData: FormData): Promise<void> {
-  const user = await requireVerifiedUser();
-  const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
+  const { id } = await liveFollow(companyId);
   const url = zUrlString().parse(String(formData.get("url") ?? ""));
   const unsafe = unsafeUrlRefusal(url);
   if (unsafe) throw new UserFacingError(unsafe);
@@ -496,9 +479,7 @@ export async function pasteDiscoveryUrl(companyId: string, formData: FormData): 
 }
 
 export async function refreshCompanyProfile(companyId: string): Promise<void> {
-  const user = await requireVerifiedUser();
-  const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
+  const { id } = await liveFollow(companyId);
   await enqueue("profile_company", { companyId: id });
   revalidatePath(`/companies/${id}`);
 }
@@ -512,7 +493,6 @@ export async function unfollowCompany(companyId: string): Promise<void> {
     await tx.execute(sql`delete from user_jobs uj using jobs j where j.id = uj.job_id and uj.user_id = ${user.id} and j.company_id = ${id}`);
     await syncCompanyStatus(tx, id);
   });
-  revalidatePath("/");
-  revalidatePath("/companies");
+  revalidate("/", "/companies");
   redirect("/companies");
 }

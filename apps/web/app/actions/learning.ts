@@ -5,23 +5,14 @@ import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
-import { filterSuggestions, tagVocabulary, type User } from "@ava/db/schema";
+import { filterSuggestions, tagVocabulary, type FilterSuggestion, type User } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
 import { describeFilterSuggestion, extractSuggestionValue } from "@/lib/filterSuggestions";
 import { getSettings, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
 import { actionError, fail, zUuid, type ActionResult } from "@/lib/validation";
-
-/**
- * The Learning page binds its forms straight to these actions, so an expected refusal — a stale
- * page, an empty or overlong answer — goes back to the page as a sentence (`?error=`) rather than
- * being thrown into a crash page that loses what was typed.
- */
-function refuseOnLearning(sentence: string): never {
-  redirect(`/learning?${new URLSearchParams({ error: sentence }).toString()}`);
-}
+import { refuseOn, revalidate } from "@/lib/action-helpers";
 
 /**
  * Pinned statements and answers go into every profile synthesis verbatim, so each one is a
@@ -37,11 +28,11 @@ const PROFILE_CHANGED = "Your preference profile changed since this page loaded,
  * most decisions — so a page opened before one landed is stale, which is a refusal with a reason.
  */
 async function appendOwnProfile(userId: string, expectedVersion: number, input: Parameters<typeof appendProfile>[3]): Promise<void> {
-  if (!Number.isInteger(expectedVersion) || expectedVersion < 0) refuseOnLearning(PROFILE_CHANGED);
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 0) refuseOn("/learning", PROFILE_CHANGED);
   try {
     await appendProfile(db(), userId, expectedVersion, input);
   } catch (error) {
-    if (((await latestProfileFor(db(), userId))?.version ?? 0) !== expectedVersion) refuseOnLearning(PROFILE_CHANGED);
+    if (((await latestProfileFor(db(), userId))?.version ?? 0) !== expectedVersion) refuseOn("/learning", PROFILE_CHANGED);
     throw error;
   }
 }
@@ -51,6 +42,14 @@ async function appendOwnProfile(userId: string, expectedVersion: number, input: 
  * confirmed address, like every other action that spends (R-6.3's seed profile is the exception
  * below). Reading the page, rejecting a suggestion and accepting a tag spend nothing and do not.
  */
+/** The gate list each term suggestion adds its term to. */
+const GATE_FIELD_FOR: Partial<Record<FilterSuggestion["type"], "includeKeywords" | "seniorityKeywords" | "excludeKeywords" | "locationTerms">> = {
+  keyword_include: "includeKeywords",
+  seniority_include: "seniorityKeywords",
+  keyword_exclude: "excludeKeywords",
+  location: "locationTerms",
+};
+
 export async function savePinnedStatements(formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const raw = String(formData.get("pinnedStatements") ?? "");
@@ -58,8 +57,8 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  if (lines.length > PINNED_STATEMENTS_MAX) refuseOnLearning(`Pin at most ${PINNED_STATEMENTS_MAX} statements.`);
-  if (lines.some((line) => line.length > PINNED_STATEMENT_LIMIT)) refuseOnLearning(`Keep each pinned statement under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
+  if (lines.length > PINNED_STATEMENTS_MAX) refuseOn("/learning", `Pin at most ${PINNED_STATEMENTS_MAX} statements.`);
+  if (lines.some((line) => line.length > PINNED_STATEMENT_LIMIT)) refuseOn("/learning", `Keep each pinned statement under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
   const latest = await latestProfileFor(db(), user.id);
   const expectedVersion = Number(formData.get("profileVersion") ?? latest?.version ?? 0);
   await appendOwnProfile(user.id, expectedVersion, {
@@ -74,13 +73,13 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
 export async function answerOpenQuestion(questionId: string, formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const answer = String(formData.get("answer") ?? "").trim();
-  if (!answer) refuseOnLearning("Write an answer before saving it.");
-  if (answer.length > PINNED_STATEMENT_LIMIT) refuseOnLearning(`Keep an answer under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
+  if (!answer) refuseOn("/learning", "Write an answer before saving it.");
+  if (answer.length > PINNED_STATEMENT_LIMIT) refuseOn("/learning", `Keep an answer under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
   const latest = await latestProfileFor(db(), user.id);
   const questions = latest?.openQuestions ?? [];
   const question = questions.find((q) => q.id === questionId);
-  if (!latest || !question) refuseOnLearning(PROFILE_CHANGED);
-  if (latest.pinnedStatements.length >= PINNED_STATEMENTS_MAX) refuseOnLearning(`Your profile already pins ${PINNED_STATEMENTS_MAX} statements. Remove one before answering.`);
+  if (!latest || !question) refuseOn("/learning", PROFILE_CHANGED);
+  if (latest.pinnedStatements.length >= PINNED_STATEMENTS_MAX) refuseOn("/learning", `Your profile already pins ${PINNED_STATEMENTS_MAX} statements. Remove one before answering.`);
 
   const updatedQuestions = questions.map((q) => (q.id === questionId ? { ...q, answer } : q));
   const updatedPinned = [...latest.pinnedStatements, `Q: ${question.question} A: ${answer}`];
@@ -110,16 +109,14 @@ async function writeSeedProfile(user: User, raw: string): Promise<string | null>
   if (text.length > SEED_PROFILE_LIMIT) return `Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`;
   await setUserSetting(user.id, "seedProfile", text);
   if (!needsEmailConfirmation(user)) await enqueue("synthesize_profile", { userId: user.id, force: true });
-  revalidatePath("/learning");
-  revalidatePath("/settings");
-  revalidatePath("/");
+  revalidate("/learning", "/settings", "/");
   return null;
 }
 
 export async function saveSeedProfile(formData: FormData): Promise<void> {
   const user = await requireUser();
   const error = await writeSeedProfile(user, String(formData.get("seedProfile") ?? ""));
-  if (error) refuseOnLearning(error);
+  if (error) refuseOn("/learning", error);
 }
 
 /** The Settings card's twin, for a `SettingsForm` that shows its errors inline. */
@@ -152,21 +149,15 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
     const extracted = extractSuggestionValue(suggestion);
     const before = await countRolesInTable(user.id);
 
-    if (suggestion.type === "keyword_include" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, includeKeywords: [...new Set([...settings.gate.includeKeywords, extracted.term])] } });
-    } else if (suggestion.type === "seniority_include" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, seniorityKeywords: [...new Set([...(settings.gate.seniorityKeywords ?? []), extracted.term])] } });
-    } else if (suggestion.type === "keyword_exclude" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, excludeKeywords: [...new Set([...settings.gate.excludeKeywords, extracted.term])] } });
-    } else if (suggestion.type === "location" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, locationTerms: [...new Set([...settings.gate.locationTerms, extracted.term])] } });
+    const field = GATE_FIELD_FOR[suggestion.type];
+    if (field && extracted.kind === "term") {
+      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, [field]: [...new Set([...(settings.gate[field] ?? []), extracted.term])] } });
     } else if (suggestion.type === "hide_threshold") {
       // Automatic score hiding is retired. A suggestion stored before that is resolved rather than
       // applied, so Accept on a stale page settles it instead of failing.
       await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
       // The Roles page's suggestions strip shows pending suggestions too.
-      revalidatePath("/learning");
-      revalidatePath("/");
+      revalidate("/learning", "/");
       return { ok: true, message: "Settled: hiding roles by score is retired." };
     } else if (suggestion.type === "pause_company") {
       // A pause names one of the account's followed companies by id; a suggestion that names none
@@ -177,9 +168,7 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
 
     // The gate save above already re-evaluated the table, or queued the pass that will.
     await db().update(filterSuggestions).set({ status: "accepted", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
-    revalidatePath("/learning");
-    revalidatePath("/settings");
-    revalidatePath("/");
+    revalidate("/learning", "/settings", "/");
 
     if (suggestion.type === "pause_company") return { ok: true, message: "Paused that company; its roles stop arriving." };
     const admitted = Math.max(0, (await countRolesInTable(user.id)) - before);
@@ -198,7 +187,7 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
 /** The Learning card's form-shaped twin of `acceptFilterSuggestionWithReport`: a refusal goes back to the page. */
 export async function acceptFilterSuggestion(suggestionId: string): Promise<void> {
   const result = await acceptFilterSuggestionWithReport(suggestionId);
-  if (!result.ok) refuseOnLearning(result.error);
+  if (!result.ok) refuseOn("/learning", result.error);
 }
 
 /** Mine the latest scan of every source for role types and seniority labels the gate is missing. */
@@ -211,12 +200,11 @@ export async function suggestFromScansNow(): Promise<void> {
 export async function rejectFilterSuggestion(suggestionId: string): Promise<void> {
   const user = await requireUser();
   const parsed = zUuid().safeParse(suggestionId);
-  if (!parsed.success) refuseOnLearning("That suggestion has already been settled.");
+  if (!parsed.success) refuseOn("/learning", "That suggestion has already been settled.");
   const id = parsed.data;
   await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id)));
   // The Roles page's suggestions strip lists pending suggestions and dismisses from there.
-  revalidatePath("/learning");
-  revalidatePath("/");
+  revalidate("/learning", "/");
 }
 
 export async function resynthesizeNow(): Promise<void> {
@@ -228,14 +216,13 @@ export async function resynthesizeNow(): Promise<void> {
 export async function rescoreAllRoles(): Promise<void> {
   const user = await requireVerifiedUser();
   await enqueue("rescore_all", { userId: user.id, onlyInTable: true });
-  revalidatePath("/learning");
-  revalidatePath("/settings");
+  revalidate("/learning", "/settings");
 }
 
 export async function savePreferenceProfile(formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const markdown = String(formData.get("markdown") ?? "").trim();
-  if (!markdown || markdown.length > 50_000) refuseOnLearning("Enter a profile of between 1 and 50,000 characters.");
+  if (!markdown || markdown.length > 50_000) refuseOn("/learning", "Enter a profile of between 1 and 50,000 characters.");
   const expectedVersion = Number(formData.get("profileVersion") ?? 0);
   const latest = await latestProfileFor(db(), user.id);
   await appendOwnProfile(user.id, expectedVersion, {
@@ -248,7 +235,7 @@ export async function savePreferenceProfile(formData: FormData): Promise<void> {
 
 export async function acceptReasonTag(tag: string): Promise<void> {
   const user = await requireUser();
-  if (!tag || tag.length > 100) refuseOnLearning("That reason tag is not in your list.");
+  if (!tag || tag.length > 100) refuseOn("/learning", "That reason tag is not in your list.");
   await db().update(tagVocabulary).set({ accepted: true }).where(and(eq(tagVocabulary.userId, user.id), eq(tagVocabulary.tag, tag)));
   revalidatePath("/learning");
 }

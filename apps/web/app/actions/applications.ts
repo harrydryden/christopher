@@ -8,7 +8,7 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { isRecordableDay, todayDay } from "@/lib/application-dates";
 import { cvPdfFor } from "@/lib/cv-pdf-store";
-import { lockRoleView, recordDecision } from "@/lib/decisions";
+import { lockRoleView, recordDecisions } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
 
@@ -224,7 +224,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
       if (status === "withdrawn") {
         const [active] = await tx.select({ decision: decisions.decision }).from(decisions)
           .where(and(eq(decisions.userId, user.id), eq(decisions.jobId, jobId), eq(decisions.superseded, false))).limit(1);
-        if (active?.decision !== "skip") await recordDecision(tx, user.id, jobId, "skip", "Withdrawn from application");
+        if (active?.decision !== "skip") await recordDecisions(tx, user.id, [jobId], "skip", "Withdrawn from application", "Role not found.");
       }
     });
   } catch (error) {

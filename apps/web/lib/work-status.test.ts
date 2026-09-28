@@ -19,7 +19,7 @@ let mine: string;
 let theirs: string;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { companyWorkQuery, getCompanyWorkStatus, getRolesWorkStatus } from "./work-status";
-import { recordDecision } from "@/lib/decisions";
+import { recordDecisions } from "@/lib/decisions";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -199,10 +199,10 @@ describe("getRolesWorkStatus's fingerprint", () => {
   });
 
   it("moves for a decision, an undo and an archive", async () => {
-    await moves(() => database.transaction((tx) => recordDecision(tx as never, a.id, mineJob, "skip", "Not interested")));
-    await moves(() => database.transaction((tx) => recordDecision(tx as never, a.id, mineJob, null, "")));
+    await moves(() => database.transaction((tx) => recordDecisions(tx as never, a.id, [mineJob], "skip", "Not interested")));
+    await moves(() => database.transaction((tx) => recordDecisions(tx as never, a.id, [mineJob], null, "")));
     await moves(() => database.execute(sql`update user_jobs set archived_at = now(), updated_at = ${later()} where user_id = ${a.id} and job_id = ${sharedJob}`));
-    await moves(() => database.transaction((tx) => recordDecision(tx as never, b.id, sharedJob, "apply", "")), b, a);
+    await moves(() => database.transaction((tx) => recordDecisions(tx as never, b.id, [sharedJob], "apply", "")), b, a);
   });
 
   it("moves for a filter suggestion arriving or being answered, the strip above the table", async () => {

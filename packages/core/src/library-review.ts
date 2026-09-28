@@ -47,7 +47,7 @@ import {
   type EvidenceMark,
 } from "./evidence-rubric";
 import { cvQuoteIsAnchored, mentionsDemographicAttribute } from "./cv-review";
-import { sha1 } from "./normalize";
+import { normaliseText, sha1 } from "./normalize";
 
 type CvEntry = CvLibrary["entries"][number];
 
@@ -228,9 +228,8 @@ function promptsForMissing(missing: EvidenceFacet[]): string[] {
  * row.
  */
 export function facetForPrompt(prompt: string): EvidenceFacet | null {
-  const asked = prompt.normalize("NFKC").replace(/\s+/gu, " ").trim().toLowerCase();
-  return EVIDENCE_FACETS.find(facet =>
-    EVIDENCE_FACET_PROMPTS[facet].normalize("NFKC").replace(/\s+/gu, " ").trim().toLowerCase() === asked) ?? null;
+  const asked = normaliseText(prompt).toLowerCase();
+  return EVIDENCE_FACETS.find(facet => normaliseText(EVIDENCE_FACET_PROMPTS[facet]).toLowerCase() === asked) ?? null;
 }
 
 /**
@@ -294,8 +293,6 @@ export const LibraryReviewPlanSchema = z.object({
 export type LibraryReviewPlan = z.infer<typeof LibraryReviewPlanSchema>;
 export type LibraryReviewPlanEntry = LibraryReviewPlan["entries"][number];
 
-const normaliseRow = (value: string) => value.normalize("NFKC").replace(/\s+/gu, " ").trim();
-
 /** The types named here, unique, in the canonical order, and nothing that is not one of the six. */
 const knownFacets = (facets: readonly string[]): EvidenceFacet[] => EVIDENCE_FACETS.filter(facet => facets.includes(facet));
 
@@ -332,17 +329,17 @@ export function validateLibraryReview(
   if (plan.entryId !== entry.id) throw new Error("The evidence review named an entry it was not given.");
   const covered = new Map<string, LibraryReviewPlanEntry["rows"][number]>();
   for (const row of plan.rows) {
-    const key = normaliseRow(row.row);
+    const key = normaliseText(row.row);
     if (!covered.has(key)) covered.set(key, row);
   }
   let classified = 0;
   let needed = 0;
   const rows: LibraryRowReview[] = reviewableRows(entry).map(row => {
     const tagged = rowFacets(entry, row);
-    const held = known.get(normaliseRow(row));
+    const held = known.get(normaliseText(row));
     if (held) return { ...held, row, tagged };
     needed++;
-    const said = covered.get(normaliseRow(row));
+    const said = covered.get(normaliseText(row));
     if (said) classified++;
     const anchored = !!said && (said.quote === null || cvQuoteIsAnchored(said.quote, row));
     if (!said || !anchored) {
@@ -375,7 +372,7 @@ export function validateLibraryReview(
 export function knownLibraryRows(review: LibraryEntryReview): Map<string, LibraryRowReview> {
   const known = new Map<string, LibraryRowReview>();
   for (const row of review.rows) {
-    const key = normaliseRow(row.row);
+    const key = normaliseText(row.row);
     if (row.verified && !known.has(key)) known.set(key, row);
   }
   return known;
@@ -383,7 +380,7 @@ export function knownLibraryRows(review: LibraryEntryReview): Map<string, Librar
 
 /** The rows of an entry a review has to classify, given the rows already known. */
 export function rowsToClassify(entry: CvEntry, known: ReadonlyMap<string, LibraryRowReview> = new Map()): string[] {
-  return reviewableRows(entry).filter(row => !known.has(normaliseRow(row)));
+  return reviewableRows(entry).filter(row => !known.has(normaliseText(row)));
 }
 
 /**
@@ -397,8 +394,8 @@ export function libraryPlanCovers(
   known: ReadonlyMap<string, LibraryRowReview> = new Map(),
 ): boolean {
   if (!plan || plan.entryId !== entry.id) return false;
-  const returned = new Set(plan.rows.map(row => normaliseRow(row.row)));
-  return rowsToClassify(entry, known).every(row => returned.has(normaliseRow(row)));
+  const returned = new Set(plan.rows.map(row => normaliseText(row.row)));
+  return rowsToClassify(entry, known).every(row => returned.has(normaliseText(row)));
 }
 
 /**

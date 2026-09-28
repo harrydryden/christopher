@@ -1,17 +1,18 @@
 import { z } from "zod";
-import { cvRequirementWeight, type CvRubric } from "./cv-assessment";
-import type { CvLibrary, CvPlan } from "./cv";
+import { cvRequirementWeight, RequirementStatusSchema, type CvRubric } from "./cv-assessment";
+import { CvPlanSourceRefSchema, type CvLibrary, type CvPlan } from "./cv";
+import { evidenceRows } from "./cv-helpers";
 import type { CvGapQuestion } from "./cv-gap-quiz";
 import { mentionsDemographicAttribute } from "./cv-demographics";
 
-const TailoringStatusSchema = z.enum(["demonstrated", "partial", "missing", "unknown"]);
-export const CvTailoringSourceRefSchema = z.object({ sourceId: z.string().min(1).max(220), quote: z.string().trim().min(1).max(1600) });
+/** A plan's citation: the same shape as a CV plan's own source reference. */
+export const CvTailoringSourceRefSchema = CvPlanSourceRefSchema;
 export type CvTailoringSourceRef = z.infer<typeof CvTailoringSourceRefSchema>;
 
 export const CvTailoringPlanSchema = z.object({
   requirements: z.array(z.object({
     requirementId: z.string().min(1).max(40),
-    status: TailoringStatusSchema,
+    status: RequirementStatusSchema,
     evidence: z.array(CvTailoringSourceRefSchema).max(8),
     reason: z.string().trim().min(1).max(700),
   })).min(1).max(30),
@@ -30,8 +31,6 @@ export const CvTailoringPlanSchema = z.object({
 });
 export type CvTailoringPlan = z.infer<typeof CvTailoringPlanSchema>;
 export type CvTailoringEvidenceItem = { id: string; text: string; entryId?: string; row?: number };
-const evidenceRows = (entry: CvLibrary["entries"][number]) => entry.details.split(/\r?\n/)
-  .map(line => line.replace(/^\s*[•*\-]\s+/, "").trim()).filter(row => row && !row.endsWith(":"));
 
 /** Give the planner addressable rows, rather than forcing it to cite an entire role block. */
 export function cvTailoringEvidence(library: CvLibrary): CvTailoringEvidenceItem[] {

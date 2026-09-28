@@ -24,6 +24,7 @@
  * Nothing here gates anything.
  */
 import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "./cv-helpers";
+import { normaliseText } from "./normalize";
 
 export interface EvidenceMarkSpec {
   facet: EvidenceFacet;
@@ -261,7 +262,7 @@ const AUDIENCE = /\b((for|to|across|with|on behalf of|serving|supporting|advisin
  * see the note above on which way the errors are allowed to fall.
  */
 export function detectEvidenceMarks(row: string): EvidenceMark[] {
-  const text = row.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const text = normaliseText(row);
   if (!text) return [];
   const words = text.split(" ").length;
   const quantity = QUANTITY.test(text);

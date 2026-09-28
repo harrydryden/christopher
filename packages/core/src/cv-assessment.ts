@@ -26,7 +26,9 @@ export const CvRubricSchema = z.object({
   caveats: z.array(z.string().max(500)).max(8),
 });
 export type CvRubric = z.infer<typeof CvRubricSchema>;
-const status = z.enum(["demonstrated", "partial", "missing", "unknown"]);
+/** How well the library evidences one requirement; shared by the review and the tailoring plan. */
+export const RequirementStatusSchema = z.enum(["demonstrated", "partial", "missing", "unknown"]);
+const status = RequirementStatusSchema;
 const source = z.object({ id: z.string().min(1).max(180), quote });
 export const CvReviewPlanSchema = z.object({
   matches: z

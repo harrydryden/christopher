@@ -2,7 +2,7 @@
  * Keyword and location gate. Decides which stored postings appear in the main table.
  * Pure functions; see docs/SPEC.md section 3.5.
  */
-import { looksRemote } from "./normalize";
+import { escapeRegex, looksRemote } from "./normalize";
 
 export type MatchField = "title" | "department" | "description";
 
@@ -44,10 +44,6 @@ export interface GateResult {
   locationTerms: string[];
   remote: boolean;
   inTable: boolean;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

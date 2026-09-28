@@ -8,6 +8,7 @@ import {
   employmentHeading,
   responsibilityRows,
   cvTailoringEvidence,
+  cvTailoringPlanForWriter,
   validateCvTailoringPlan,
   libraryPlanCovers,
   reviewableRows,
@@ -1402,7 +1403,7 @@ export class AiEngine {
       ...(stylePreferences ? { stylePreferences } : {}), ...(preferredWording ? { preferredWording } : {}) } });
     const role = JSON.stringify({ jobTitle: input.jobTitle, company: input.company, description: input.description,
       maxPages: input.maxPages ?? CV_PAGE_LIMITS.default,
-      ...(input.rubric ? { rubric: input.rubric } : {}), ...(input.tailoringPlan ? { tailoringPlan: input.tailoringPlan } : {}) });
+      ...(input.rubric ? { rubric: input.rubric } : {}), ...(input.tailoringPlan ? { tailoringPlan: cvTailoringPlanForWriter(input.tailoringPlan) } : {}) });
     const volatile = {
       ...(input.writingBudget ? { writingBudget: input.writingBudget } : {}),
       ...(input.improvements?.length ? { improvements: input.improvements } : {}),

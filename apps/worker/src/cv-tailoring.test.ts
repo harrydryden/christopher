@@ -4,7 +4,7 @@ import { enqueueTask, listCvBuildSteps, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
 import type { CvAssessment, CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
-import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
+import { cvTailoringPlanForWriter, type CvTailoringPlan } from "@ava/core/cv-tailoring";
 import { dedupeKeyFor } from "@ava/core";
 import { DEFAULT_CV_THEME } from "@ava/core/cv";
 import { eq, sql } from "drizzle-orm";
@@ -149,7 +149,7 @@ it("a completed quiz reuses its semantic plan, skips another pause and passes pr
   expect((await draftAfter(draft.id)).status).toBe("ready");
   expect(scripted.calls).not.toContain("planner");
   expect(scripted.calls.filter(call => call === "author")).toHaveLength(1);
-  expect(scripted.authorInputs[0]).toMatchObject({ tailoringPlan: noGapPlan });
+  expect(scripted.authorInputs[0]).toMatchObject({ tailoringPlan: cvTailoringPlanForWriter(noGapPlan) });
   expect(JSON.stringify((await draftAfter(draft.id)).content)).toContain("summarySources");
 });
 

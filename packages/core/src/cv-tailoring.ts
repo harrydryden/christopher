@@ -31,6 +31,35 @@ export const CvTailoringPlanSchema = z.object({
   }) satisfies z.ZodType<CvGapQuestion>).max(4),
 });
 export type CvTailoringPlan = z.infer<typeof CvTailoringPlanSchema>;
+
+/**
+ * The planner's answer. Its reasons are read by nobody downstream — the writer gets the plan
+ * without them (`cvTailoringPlanForWriter`) — so the prompt asks for one clause of at most 160
+ * characters. The schema's ceiling is 300, not 160: the length is only a hint in the output
+ * grammar, and a reason a few characters over it should not discard a paid plan. A stored plan
+ * is read with `CvTailoringPlanSchema`, which still accepts the longer reasons older plans carry.
+ */
+export const CvTailoringPlanOutputSchema = CvTailoringPlanSchema.extend({
+  requirements: z.array(CvTailoringPlanSchema.shape.requirements.element.extend({
+    reason: z.string().trim().min(1).max(300),
+  })).min(1).max(30),
+});
+
+/** What the writer is given of the plan: the verdict and the rows it rests on, by id. */
+export type CvTailoringPlanForWriter = {
+  requirements: Array<{ requirementId: string; status: CvTailoringPlan["requirements"][number]["status"]; evidence: string[] }>;
+};
+
+/**
+ * The plan as the writer's role block embeds it: each requirement's status and the ids of the rows
+ * that evidence it. The reasons and the quotes are left out — the writer has every row, by id, in
+ * the library block, and nothing it writes depends on why the planner judged as it did.
+ */
+export function cvTailoringPlanForWriter(plan: CvTailoringPlan): CvTailoringPlanForWriter {
+  return { requirements: plan.requirements.map(item => ({
+    requirementId: item.requirementId, status: item.status, evidence: item.evidence.map(reference => reference.sourceId),
+  })) };
+}
 export type CvTailoringEvidenceItem = { id: string; text: string; entryId?: string; row?: number };
 
 /** Give the planner addressable rows, rather than forcing it to cite an entire role block. */

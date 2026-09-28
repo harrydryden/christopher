@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CvRubricSchema, CvReviewPlanSchema } from "@ava/core/cv-assessment";
-import { CvPlanSchema, CvTailoringPlanSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@ava/core";
+import { CvPlanSchema, CvTailoringPlanOutputSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@ava/core";
 import { CV_AUTHOR_PROMPT, CV_REVIEW_PROMPT, CV_RUBRIC_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import * as P from "./prompts";
 import * as S from "./schemas";
@@ -103,7 +103,7 @@ export function expectedOutputTokens(entry: PromptEntry, effort: Effort = entry.
 /** Assessment batches hold at most this many requirements and this many claims. */
 export const CV_REVIEW_BATCH_SIZE = 8;
 
-const CV_REVIEW_BATCH_PROMPT = CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.\nWhen the batch carries libraryVerdicts, the library side of each of its requirements is already settled by the evidence plan, which judged the confirmed evidence by the same rules: assess only the printed CV for status and cvEvidence, and do not return libraryStatus or libraryEvidence. Write each reason and improvement knowing what the library holds for that requirement, so an improvement points to the library evidence the CV leaves out, or asks for evidence the library lacks.";
+const CV_REVIEW_BATCH_PROMPT = CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Leave improvement empty for a demonstrated requirement and reason empty for a supported claim: nothing reads them. Every other reason and improvement is one or two sentences, and an unsupported or uncertain claim must say why in at most 300 characters. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.\nWhen the batch carries libraryVerdicts, the library side of each of its requirements is already settled by the evidence plan, which judged the confirmed evidence by the same rules: assess only the printed CV for status and cvEvidence, and do not return libraryStatus or libraryEvidence. Write each reason and improvement knowing what the library holds for that requirement, so an improvement points to the library evidence the CV leaves out, or asks for evidence the library lacks.";
 
 /**
  * One batch's answer. The library side of a match is optional: a batch whose library side the
@@ -115,7 +115,8 @@ export const CvReviewBatchSchema = CvReviewPlanSchema.extend({
     libraryStatus: CvReviewPlanSchema.shape.matches.element.shape.libraryStatus.optional(),
     libraryEvidence: CvReviewPlanSchema.shape.matches.element.shape.libraryEvidence.optional(),
   })).max(CV_REVIEW_BATCH_SIZE),
-  claims: z.array(CvReviewPlanSchema.shape.claims.element).max(CV_REVIEW_BATCH_SIZE),
+  // A supported claim's reason may be empty; any other claim's is required (`reviewBatchIssues`).
+  claims: z.array(CvReviewPlanSchema.shape.claims.element.extend({ reason: z.string().max(300) })).max(CV_REVIEW_BATCH_SIZE),
 });
 
 const SINGLE: CacheLayout = { system: "5m", stable: [] };
@@ -220,7 +221,7 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   "cv.rubric": define({ id: "cv.rubric", callSite: "CV", stage: "rubric", system: CV_RUBRIC_PROMPT, schema: CvRubricSchema,
     // Thinking counts towards the ceiling; recorded rubrics reach 5.2k of the old 8k.
     route: { model: "cvModel", effort: "high" }, maxTokens: 12_000, timeoutMs: 120_000, priority: "interactive", expectedOutputTokens: 4_500 }),
-  "cv.planning": define({ id: "cv.planning", callSite: "CV", stage: "planning", system: CV_TAILORING_PROMPT, schema: CvTailoringPlanSchema,
+  "cv.planning": define({ id: "cv.planning", callSite: "CV", stage: "planning", system: CV_TAILORING_PROMPT, schema: CvTailoringPlanOutputSchema,
     route: { model: "cvModel", effort: "high" }, maxTokens: 16_000, timeoutMs: 240_000, priority: "interactive", expectedOutputTokens: 6_000 }),
   "cv.author": define({ id: "cv.author", callSite: "CV", stage: "author", system: CV_AUTHOR_PROMPT, schema: CvPlanSchema,
     // Thinking counts towards the output ceiling, and recorded two-page builds have reached 15.6k

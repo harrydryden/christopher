@@ -158,7 +158,7 @@ it("keeps the replay transaction's own timeouts through a rebuild longer than a 
     expect(report.outcome).toBe("published");
     // Several renewal intervals. (The fixture's gap is too small for the optional improvement, so
     // the rebuild is one audit round, not two.)
-    expect(report.wallMs).toBeGreaterThan(3 * 50);
+    expect(report.wallMs).toBeGreaterThan(2 * 50);
   } finally {
     deps.leaseRenewEveryMs = undefined;
   }

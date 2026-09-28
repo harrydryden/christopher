@@ -80,6 +80,8 @@ export function reviewBatchIssues(review: CvReviewBatchAnswer, context: Context)
     if (!valid(claim.evidence, context.evidence) || (claim.status === "supported" &&
         (!claim.evidence.length || (sourceId && !claim.evidence.some(ref => ref.id === sourceId)))))
       issues.push({ kind: "claim", index, correction: `${claim.claimId}: supported requires an exact source quote${sourceId ? ` from ${sourceId}` : " from the supplied library"}. Recheck claimSources; otherwise use uncertain or unsupported. Never substitute unrelated evidence.` });
+    else if (claim.status !== "supported" && !claim.reason.trim())
+      issues.push({ kind: "claim", index, correction: `${claim.claimId}: an ${claim.status} claim needs a reason saying what the evidence does not support.` });
   });
   return issues;
 }

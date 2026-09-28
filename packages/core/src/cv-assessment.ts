@@ -51,7 +51,9 @@ export const CvReviewPlanSchema = z.object({
         claimId: z.string().min(1).max(180),
         status: z.enum(["supported", "unsupported", "uncertain"]),
         evidence: z.array(source).max(8),
-        reason: z.string().min(1).max(700),
+        // Nothing shows a supported claim's reason, so the audit may leave it empty; an
+        // unsupported or uncertain claim must still say why (`validateCvReview`, `reviewBatchIssues`).
+        reason: z.string().max(700),
       }),
     )
     .min(1)

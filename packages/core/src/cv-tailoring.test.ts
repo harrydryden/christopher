@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import type { CvRubric } from "./cv-assessment";
 import type { CvLibrary, CvPlan } from "./cv";
-import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "./cv-tailoring";
+import { CvTailoringPlanOutputSchema, CvTailoringPlanSchema, cvTailoringEvidence, cvTailoringPlanForWriter, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "./cv-tailoring";
 import { selectCvToFit } from "./cv-fit";
 
 const library: CvLibrary = {
@@ -29,6 +29,20 @@ it("validates every requirement and rejects invented IDs and non-source quotes",
     { ...tailoring.requirements[0]!, evidence: [{ sourceId: "entry:role:row:0", quote: "Doubled international revenue" }] },
     tailoring.requirements[1]!,
   ] }, rubric, sources)).toThrow("quote is not present");
+});
+
+it("gives the writer each verdict and its rows by id, without the planner's reasons or quotes", () => {
+  expect(cvTailoringPlanForWriter({ ...tailoring, gapQuestions: [] })).toEqual({ requirements: [
+    { requirementId: "r1", status: "demonstrated", evidence: ["entry:role:row:0"] },
+    { requirementId: "r2", status: "demonstrated", evidence: ["entry:role:row:1"] },
+  ] });
+});
+
+it("caps a new plan's reasons below a stored plan's, which keeps reading older, longer ones", () => {
+  const long = { ...tailoring, requirements: [{ ...tailoring.requirements[0]!, reason: "x".repeat(400) }, tailoring.requirements[1]!] };
+  expect(CvTailoringPlanSchema.safeParse(long).success).toBe(true);
+  expect(CvTailoringPlanOutputSchema.safeParse(long).success).toBe(false);
+  expect(CvTailoringPlanOutputSchema.safeParse(tailoring).success).toBe(true);
 });
 
 it("feeds only active confirmed experience rows to planning and refuses unsafe gap questions", () => {

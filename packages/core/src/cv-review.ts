@@ -195,6 +195,8 @@ export function validateCvReview(
     validateQuotes(claim.evidence, evidence);
     if (claim.status === "supported" && !claim.evidence.length)
       throw new Error("A supported claim needs confirmed source evidence.");
+    if (claim.status !== "supported" && !claim.reason.trim())
+      throw new Error("An unsupported or uncertain claim needs a reason.");
     const section = content.sections.find((section) =>
       cvSectionClaimIds(section).includes(claim.claimId),
     );

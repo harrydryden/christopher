@@ -89,6 +89,8 @@ describe("the writer's user turn", () => {
     expect(Object.keys(JSON.parse(blocks[0]!.text))).toEqual(["library"]);
     expect(JSON.parse(blocks[0]!.text).library).toMatchObject({ stylePreferences: "Plain British English.", preferredWording: "Kept wording." });
     expect(Object.keys(JSON.parse(blocks[1]!.text))).toEqual(["jobTitle", "company", "description", "maxPages", "tailoringPlan"]);
+    // The plan without its reasons and quotes: the rows are in the library block, by id.
+    expect(JSON.parse(blocks[1]!.text).tailoringPlan).toEqual({ requirements: [{ requirementId: "r1", status: "demonstrated", evidence: ["entry:e1:row:0"] }] });
     expect(Object.keys(JSON.parse(blocks[2]!.text))).toEqual(["writingBudget", "improvements"]);
     // No marker on the system prompt: a five-minute one may not precede the hour-long library.
     expect(systemOf(calls[0]!)[0]!.cache_control).toBeUndefined();

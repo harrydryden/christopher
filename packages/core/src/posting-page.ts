@@ -18,6 +18,9 @@ function firstElementContent(html: string, name: string): string | undefined {
   return block ? html.slice(block.openEnd, block.closeStart) : undefined;
 }
 
+/** A page with less readable text than this is a shell waiting for its JavaScript, not content. */
+export const JS_SHELL_TEXT = 400;
+
 /** Pick the densest plausible main-content block from a job detail page. */
 export function extractMainText(html: string): string | undefined {
   const candidates = [

@@ -40,7 +40,7 @@ import {
 } from "@ava/core";
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@ava/db";
-import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
+import { makeFetchContext, type WorkerDeps } from "../context";
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";
@@ -1149,6 +1149,8 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   return { postings, method, dropped, contentHash: sha1(pages.map(p => p.contentHash).join("|")), unchanged, recipe, pages, incomplete, incompleteReason: incomplete ? incompleteReason ?? "Listing pagination stopped before all pages could be verified (page, posting or browser limit)." : undefined };
 }
 
+const BROWSER_PAGINATION_INCOMPLETE = "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit.";
+
 async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, cached?: CachedHtmlPage, supplied?: { html: string; url: string }): Promise<HtmlScanOutcome> {
   let html: string;
   let finalUrl = spec.url;
@@ -1186,7 +1188,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
     const outcomes: HtmlScanOutcome[] = [];
     let incomplete = rendered.incomplete ?? false;
-    let incompleteReason = incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined;
+    let incompleteReason = incomplete ? BROWSER_PAGINATION_INCOMPLETE : undefined;
     for (const capture of captures) {
       try {
         const outcome = await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture);
@@ -1198,11 +1200,11 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
       contentHash: capturesHash(captures), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
-      incompleteReason: incomplete ? incompleteReason ?? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
+      incompleteReason: incomplete ? incompleteReason ?? BROWSER_PAGINATION_INCOMPLETE : undefined, traversed: true };
 
   }
 
-  const contentHash = sha1(html.replace(/\s+/g, " "));
+  const contentHash = httpHash ?? sha1(html.replace(/\s+/g, " "));
   const unchanged = contentHash === cached?.contentHash;
 
   if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
@@ -1210,7 +1212,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   if (ats.isExplicitEmptyListing(html, finalUrl)) {
     return { postings: [], method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
   }
-  if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
+  if (unchanged || !deps.ai.enabled) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }
 

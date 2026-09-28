@@ -1,6 +1,6 @@
 import { companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTasks, type Task } from "@ava/db";
 import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@ava/core";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
 import { SUGGEST_FROM_SCANS_EVERY_MS } from "./suggest-from-scans";
@@ -148,13 +148,3 @@ async function finalise(deps: WorkerDeps): Promise<number> {
   }
   return finalised;
 }
-
-export async function companiesWithoutSources(deps: WorkerDeps): Promise<string[]> {
-  const rows = await deps.db.execute<{ id: string }>(sql`
-    select c.id from companies c
-    left join career_sources cs on cs.company_id = c.id and cs.status in ('active','failing')
-    where c.status = 'active' and cs.id is null`);
-  return rows.rows.map((r) => r.id);
-}
-
-export { inArray as _inArray };

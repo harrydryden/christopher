@@ -2,7 +2,7 @@ import { schema, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_REST
 import { ats, compileGate, dedupeKeyFor, extractMainText, priorityFor, sha1, stripHtml, type AppSettings, type CompiledGate } from "@ava/core";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
-import { makeFetchContext, aiBudgetExceeded } from "../context";
+import { makeFetchContext } from "../context";
 import { loadUserSettingsMany } from "../settings";
 import { log } from "../log";
 
@@ -44,7 +44,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
       if (res.status < 400) {
         const jsonLd = ats.extractJsonLdPostings(res.body, job.url).find((p) => p.descriptionText);
         text = jsonLd?.descriptionText ?? extractMainText(res.body);
-        if ((!text || text.length < 200) && !(await aiBudgetExceeded(deps))) {
+        if ((!text || text.length < 200) && deps.ai.enabled) {
           const rawText = stripHtml(res.body).slice(0, 20_000);
           const cleaned = await deps.ai.cleanDescription({ title: job.title, rawText }, { refType: "job", refId: job.id });
           // The model may cut and tidy the page, never write it: its text is shared with every

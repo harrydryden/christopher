@@ -32,6 +32,7 @@ import {
   aiBudgetWindowStart,
   aiFeatureLabel,
   countProposedItems,
+  JS_SHELL_TEXT,
   libraryImportUrl,
   stripHtml,
   usd,
@@ -58,9 +59,6 @@ const SHORTEST_DOCUMENT = 40;
 
 /** How long the extraction may hold its share of the month: the task's deadline, with room to spare. */
 const HOLD_MINUTES = 10;
-
-/** A page that answers with less text than this is a shell waiting for its JavaScript. */
-const JS_SHELL_TEXT = 400;
 
 /** How many times one import waits for its host's turn before the queue's own retries take over. */
 const MAX_HOST_WAITS = 10;

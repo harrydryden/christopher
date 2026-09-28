@@ -19,6 +19,7 @@ import {
   dedupeKeyFor,
   evaluateGate,
   extractPostingFromPage,
+  JS_SHELL_TEXT,
   looksRemote,
   normalisePostingUrl,
   normalizeTitle,
@@ -40,9 +41,6 @@ const MAX_DESCRIPTION = 30_000;
 
 /** Below this the stored text is a stub, and the description fetch (adapter, page, model) is worth a go. */
 const SHORT_DESCRIPTION = 200;
-
-/** A page with less text than this is a shell waiting for JavaScript, not a posting. */
-const JS_SHELL_TEXT = 400;
 
 /** What the interface shows about the gate, whether or not the role went into the table anyway. */
 interface GateSummary {

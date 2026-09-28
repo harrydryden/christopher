@@ -469,7 +469,7 @@ it.each([
     ({ ...snapshot, name: "Renamed Candidate", contact: "Leeds", theme: { ...DEFAULT_CV_THEME, primary: "#123456" } }), 1],
   ["plans again when a row of evidence changes", (snapshot: typeof library) =>
     ({ ...snapshot, entries: [{ ...snapshot.entries[0]!, details: `${snapshot.entries[0]!.details}\nCut costs by 10%`,
-      confirmedResponsibilities: [...snapshot.entries[0]!.confirmedResponsibilities, "Cut costs by 10%"] }, snapshot.entries[1]!] }), 2],
+      confirmedResponsibilities: ["Led a team", "Delivered transformation", "Cut costs by 10%"] }, snapshot.entries[1]!] }), 2],
 ])("%s", async (_label, change, planners) => {
   // The writer is rate-limited once, after the plan is checkpointed, so the build resumes from it.
   const scripted = scriptedClient();

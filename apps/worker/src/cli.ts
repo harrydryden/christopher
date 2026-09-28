@@ -28,17 +28,15 @@
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { schema, enqueueTask, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@ava/db";
+import { schema, enqueueStandard, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import {
-  dedupeKeyFor,
   discovery,
   displayStatus,
   ensureHttpUrl,
   extractDomain,
   formatDuration,
   liveFor,
-  priorityFor,
   renamedEnv,
   sanitiseStageRoutes,
   type StageRoutes,
@@ -169,10 +167,7 @@ async function main() {
           if (!company) throw new Error(`could not add ${domain}`);
           const subscription = await subscribeToCompany(deps.db, user.id, company.id);
           if (created) {
-            await enqueueTask(deps.db, "discover", { companyId: created.id, reason: "added" }, {
-              dedupeKey: dedupeKeyFor("discover", { companyId: created.id }),
-              priority: priorityFor("discover"),
-            });
+            await enqueueStandard(deps.db, "discover", { companyId: created.id, reason: "added" });
             console.log(`added ${domain} (${created.id}) and followed it as ${user.email}`);
           } else {
             const settings = await deps.userSettings(user.id);
@@ -187,10 +182,7 @@ async function main() {
       case "discover": {
         const { companies: targets, url } = await discoverTargets(deps.db, args);
         for (const c of targets) {
-          await enqueueTask(deps.db, "discover", { companyId: c.id, reason: "manual", url }, {
-            dedupeKey: dedupeKeyFor("discover", { companyId: c.id }),
-            priority: priorityFor("discover"),
-          });
+          await enqueueStandard(deps.db, "discover", { companyId: c.id, reason: "manual", url });
         }
         console.log(targets.length === 1 ? `queued discovery for ${targets[0]!.name}` : `queued discovery for ${targets.length} companies`);
         break;
@@ -198,20 +190,17 @@ async function main() {
       case "scan": {
         if (args[0]) {
           const company = await findCompany(deps.db, args[0]);
-          await enqueueTask(deps.db, "scan_company", { companyId: company.id, trigger: "manual" }, {
-            dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }),
-            priority: priorityFor("scan_company"),
-          });
+          await enqueueStandard(deps.db, "scan_company", { companyId: company.id, trigger: "manual" });
           console.log(`queued a scan of ${company.name}`);
         } else {
-          await enqueueTask(deps.db, "run_daily", { trigger: "manual" }, { dedupeKey: null, priority: priorityFor("run_daily") });
+          await enqueueStandard(deps.db, "run_daily", { trigger: "manual" }, { dedupeKey: null });
           console.log("queued a full run");
         }
         break;
       }
       case "reencode-logos": {
         // The one-off backfill: the worker walks the stored logos in bounded passes.
-        const id = await enqueueTask(deps.db, "reencode_logos", {}, { dedupeKey: dedupeKeyFor("reencode_logos", {}), priority: priorityFor("reencode_logos") });
+        const id = await enqueueStandard(deps.db, "reencode_logos", {});
         console.log(id ? "queued the logo re-encode; the worker walks the catalogue in passes of 25" : "a logo re-encode is already queued");
         break;
       }

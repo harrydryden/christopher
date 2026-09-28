@@ -15,8 +15,8 @@
  * moves to now: that time is the version in the logo's URL, which browsers and the CDN cache as
  * immutable, so without the bump nobody would ever be sent the smaller file.
  */
-import { enqueueTask, schema, type Task } from "@ava/db";
-import { dedupeKeyFor, normaliseLogo, priorityFor, type TaskPayloads } from "@ava/core";
+import { enqueueStandard, schema, type Task } from "@ava/db";
+import { normaliseLogo, type TaskPayloads } from "@ava/core";
 import { and, asc, eq, gt, notInArray } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { encodeLogoWebp } from "../logo-encode";
@@ -80,10 +80,7 @@ export async function handleReencodeLogos(
 
   const last = rows.at(-1)?.companyId;
   const more = rows.length === batch && last !== undefined;
-  if (more) {
-    const next = { afterCompanyId: last };
-    await enqueueTask(deps.db, "reencode_logos", next, { dedupeKey: dedupeKeyFor("reencode_logos", next), priority: priorityFor("reencode_logos") });
-  }
+  if (more) await enqueueStandard(deps.db, "reencode_logos", { afterCompanyId: last });
   const result = { examined: rows.length, reencoded, kept, replaced, bytesBefore, bytesAfter, next: more ? last : null };
   log.info("logos re-encoded", result);
   return result;

@@ -1,4 +1,4 @@
-import { companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTasks, type Task } from "@ava/db";
+import { taskRow, companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTasks, type Task } from "@ava/db";
 import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@ava/core";
 import { and, eq, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -69,14 +69,11 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
   if (!run) throw new Error("failed to create scan run");
 
   const spreadMs = payload.trigger === "schedule" ? (deps.env.scanSpreadMinutes ?? 60) * 60_000 : 0;
-  for (let offset = 0; offset < companies.length; offset += 250) {
-    await deps.db.insert(schema.tasks).values(companies.slice(offset, offset + 250).map(company => {
-      const p = { companyId: company.id, scanRunId: run.id, trigger: payload.trigger };
-      const fraction = Number.parseInt(company.id.replaceAll("-", "").slice(0, 8), 16) / 0xffffffff;
-      return { type: "scan_company" as const, payload: p, dedupeKey: `${dedupeKeyFor("scan_company", p)}:${run.id}`,
-        priority: priorityFor("scan_company"), runAfter: new Date(deps.now().getTime() + fraction * spreadMs) };
-    })).onConflictDoNothing();
-  }
+  await enqueueTasks(deps.db, companies.map(company => {
+    const p = { companyId: company.id, scanRunId: run.id, trigger: payload.trigger };
+    const fraction = Number.parseInt(company.id.replaceAll("-", "").slice(0, 8), 16) / 0xffffffff;
+    return taskRow("scan_company", p, { dedupeKey: `${dedupeKeyFor("scan_company", p)}:${run.id}`, runAfter: new Date(deps.now().getTime() + fraction * spreadMs) });
+  }));
 
   // The logo sweep rides with the scan fan-out rather than on a schedule of its own: it is the
   // once-a-day pass over the catalogue, and a company nobody has captured yet, one whose icon is
@@ -84,10 +81,8 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
   // dedupe key means a sweep that runs twice, or one that runs while yesterday's task is still
   // queued, adds nothing.
   const dueLogos = await companiesDueLogoCapture(deps.db, deps.now(), LOGO_CAPTURES_PER_DAY);
-  const logosQueued = await enqueueTasks(deps.db, dueLogos.map(company => {
-    const payload = { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl };
-    return { type: "discover" as const, payload, dedupeKey: dedupeKeyFor("discover", payload), priority: 6 };
-  }));
+  const logosQueued = await enqueueTasks(deps.db, dueLogos.map(company =>
+    taskRow("discover", { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl }, { priority: 6 })));
 
   if (task.id) await deps.db.update(schema.tasks).set({ result: { scanRunId: run.id, companies: companies.length } }).where(eq(schema.tasks.id, task.id));
   log.info("daily run started", { runId: run.id, runDate, companies: companies.length, logosQueued, retired });

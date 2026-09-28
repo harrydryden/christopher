@@ -1,7 +1,7 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
 import { enqueueTasks } from "@ava/db/tasks";
-import { schema, enqueueTask, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
+import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -372,10 +372,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
       model: modelForCallSite(settings, "A7"),
       generatedAt: deps.now(),
     });
-    if (changed) {
-      const p = { userId, onlyInTable: true };
-      await enqueueTask(tx, "rescore_all", p, { dedupeKey: dedupeKeyFor("rescore_all", p), priority: priorityFor("rescore_all") });
-    }
+    if (changed) await enqueueStandard(tx, "rescore_all", { userId, onlyInTable: true });
   });
   log.info("profile synthesised", { userId, version, decisions: counts.total, questions: openQuestions.length, changed });
   return { version, decisions: counts.total };
@@ -555,9 +552,7 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
     // Coalesced: one pass at the end of the hour picks up everything that changed within it, and
     // any other save in the hour folds into the same waiting row by its key.
     const retryAt = new Date(last.finishedAt.getTime() + RESCORE_INTERVAL_MS);
-    const deferred = { userId, onlyInTable: onlyInTable ?? true };
-    await enqueueTask(deps.db, "rescore_all", deferred,
-      { dedupeKey: dedupeKeyFor("rescore_all", deferred), priority: priorityFor("rescore_all"), runAfter: retryAt });
+    await enqueueStandard(deps.db, "rescore_all", { userId, onlyInTable: onlyInTable ?? true }, { runAfter: retryAt });
     return { skipped: "rescored within the hour", retryAt: retryAt.toISOString() };
   }
   const shortlisted = sql<boolean>`exists (select 1 from decisions d where d.user_id = ${schema.userJobs.userId} and d.job_id = ${schema.userJobs.jobId} and d.superseded = false and d.decision = 'apply')`;

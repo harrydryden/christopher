@@ -4,8 +4,8 @@
  * the companies that account follows. Every suggestion is verified deterministically before the
  * user ever sees it (SPEC R-8.3).
  */
-import { schema, enqueueTasks, type Task } from "@ava/db";
-import { dedupeKeyFor, discovery, ensureHttpUrl, evaluateGate, extractDomain, priorityFor, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
+import { schema, taskRow, enqueueTasks, type Task } from "@ava/db";
+import { discovery, ensureHttpUrl, evaluateGate, extractDomain, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetStop, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
@@ -266,12 +266,7 @@ export async function queueMissingCompanyProfiles(deps: WorkerDeps): Promise<num
     .leftJoin(schema.companyProfiles, eq(schema.companyProfiles.companyId, schema.companies.id))
     .where(and(eq(schema.companies.status, "active"), or(isNull(schema.companyProfiles.id), sql`${schema.companyProfiles.generatedAt} < ${stale}`)))
     .limit(20);
-  return enqueueTasks(deps.db, rows.map(row => ({
-    type: "profile_company" as const,
-    payload: { companyId: row.id },
-    dedupeKey: dedupeKeyFor("profile_company", { companyId: row.id }),
-    priority: priorityFor("profile_company"),
-  })));
+  return enqueueTasks(deps.db, rows.map(row => taskRow("profile_company", { companyId: row.id })));
 }
 
 export { serialiseCandidate, gatherCompanyText as _gatherCompanyTextForTests, latestProfile as _latestProfile };

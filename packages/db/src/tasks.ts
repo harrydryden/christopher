@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@ava/core";
 import type { Db } from "./client";
 import { tasks } from "./schema";
 
@@ -67,6 +68,20 @@ function valuesFor(row: EnqueueRow) {
     runAfter: row.runAfter ?? sql`now()`,
     maxAttempts: row.maxAttempts ?? 3,
   };
+}
+
+/**
+ * A row for `enqueueTasks` with its type's own dedupe key and priority, typed by its payload.
+ * `options` replaces either, or adds a start time or promotion.
+ */
+export function taskRow<T extends TaskType>(type: T, payload: TaskPayloads[T], options: EnqueueOptions = {}): EnqueueRow {
+  return { type, payload: payload as unknown as Record<string, unknown>, dedupeKey: dedupeKeyFor(type, payload), priority: priorityFor(type), ...options };
+}
+
+/** `enqueueTask` with its type's own dedupe key and priority (see `taskRow`). */
+export async function enqueueStandard<T extends TaskType>(db: TaskWriter, type: T, payload: TaskPayloads[T], options: EnqueueOptions = {}): Promise<string | null> {
+  const row = taskRow(type, payload, options);
+  return enqueueTask(db, type, row.payload, row);
 }
 
 /**

@@ -16,9 +16,9 @@
  * therefore moves a row, and never adds or removes one.
  */
 import { createHash } from "node:crypto";
-import { enqueueTask, notifyTaskWorkers, recordAiCall, schema, type Task } from "@ava/db";
+import { enqueueStandard, notifyTaskWorkers, recordAiCall, schema, type Task } from "@ava/db";
 import {
-  dedupeKeyFor, priorityFor, scoreBatchCustomId, scoreBatchHolds, scoreBatchPollDelayMs,
+  scoreBatchCustomId, scoreBatchHolds, scoreBatchPollDelayMs,
   SCORE_BATCH_HOLD_MINUTES, SCORE_BATCH_MAX_ITEMS, type ScoreBatchItem, type ScoreBatchRecord, type TaskPayloads,
 } from "@ava/core";
 import type { AiUsageRecord, BatchScoreRequest, ScoreJobResult } from "@ava/ai";
@@ -199,15 +199,13 @@ export async function handleCollectScoreBatch(task: Task, deps: WorkerDeps): Pro
     // transaction, so the record of what was sent and the roles it answers for land together.
     await settle(batchable.map(item => item.task), () => deps.db.transaction(async tx => {
       const writer = tx as unknown as WorkerDeps["db"];
-      await enqueueTask(writer, "poll_score_batch", record as unknown as Record<string, unknown>, {
-        dedupeKey: dedupeKeyFor("poll_score_batch", record), priority: priorityFor("poll_score_batch"),
-        runAfter: new Date(Date.now() + scoreBatchPollDelayMs(0)), maxAttempts: SCORE_BATCH_POLL_ATTEMPTS,
-      });
+      await enqueueStandard(writer, "poll_score_batch", record,
+        { runAfter: new Date(Date.now() + scoreBatchPollDelayMs(0)), maxAttempts: SCORE_BATCH_POLL_ATTEMPTS });
       for (const item of batchable) await finishClaimed(writer, item.task, { batched: batchId });
     }));
     // A backlog longer than one collection is collected again at once rather than in N minutes.
     if (claimed.length >= SCORE_BATCH_MAX_ITEMS)
-      await enqueueTask(deps.db, "collect_score_batch", { reason: "backlog" }, { dedupeKey: dedupeKeyFor("collect_score_batch", {}), priority: priorityFor("collect_score_batch") });
+      await enqueueStandard(deps.db, "collect_score_batch", { reason: "backlog" });
     log.info("score batch sent", { batchId, requests: batchable.length, accounts: holds.size });
     return { ...outcome, batchId, batched: batchable.length, accounts: holds.size,
       heldUsd: Number(batchable.reduce((sum, item) => sum + item.request.estimateUsd, 0).toFixed(6)) };

@@ -8,7 +8,7 @@
  * follower and posting, created only once the posting passes that follower's gate.
  */
 import { withSpan } from "../otel";
-import { schema, enqueueTask, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
+import { schema, enqueueStandard, enqueueTask, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
 import {
   ats,
   aiBudgetWindowStart,
@@ -947,10 +947,7 @@ async function scanSource(
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3);
   if ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || status === "suspect_empty" || persistentlyShrunk) {
-    await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
-      dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),
-      priority: priorityFor("discover"),
-    });
+    await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" });
   }
 
   const queued: Array<typeof schema.tasks.$inferInsert> = [];

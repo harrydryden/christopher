@@ -13,7 +13,7 @@
  * sentence the interface shows. Only a transport failure throws, because only a transport failure
  * is worth the queue's backoff.
  */
-import { schema, enqueueTask, reevaluateGate, type Db, type Task } from "@ava/db";
+import { schema, enqueueStandard, enqueueTask, reevaluateGate, type Db, type Task } from "@ava/db";
 import {
   ats,
   dedupeKeyFor,
@@ -267,8 +267,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
       // The score is queued in the same transaction, so the view says so from the moment it exists.
       scoreState: "queued", scoreStateAt: now,
     }).onConflictDoNothing();
-    const scorePayload = { userId, jobId: created.id };
-    await enqueueTask(tx, "score_job", scorePayload, { dedupeKey: dedupeKeyFor("score_job", scorePayload), priority: 1 });
+    await enqueueStandard(tx, "score_job", { userId, jobId: created.id }, { priority: 1 });
 
     // Everyone else who follows the company meets it as they would any other new posting: their
     // own gate decides, and nothing is forced into anybody else's table.
@@ -279,9 +278,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     // A page that gave up a title and little else is worth one more read: the adapter, the page
     // and the cleaning model all have a go at the text this one did not carry.
     if (!descriptionText || descriptionText.length < SHORT_DESCRIPTION) {
-      await enqueueTask(tx, "fetch_description", { jobId: created.id }, {
-        dedupeKey: dedupeKeyFor("fetch_description", { jobId: created.id }), priority: priorityFor("fetch_description"),
-      });
+      await enqueueStandard(tx, "fetch_description", { jobId: created.id });
     }
 
     log.info("posting imported", { company: company.name, userId, jobId: created.id, title: created.title, url: storedUrl, inTable: verdict.inTable, shared, followers: followers.length });
@@ -310,10 +307,7 @@ async function adoptExistingView(
   }, settings.gate);
   const [view] = await deps.db.select({ inTable: schema.userJobs.inTable, archivedAt: schema.userJobs.archivedAt, addedByUrl: schema.userJobs.addedByUrl, fitScore: schema.userJobs.fitScore, scoredAt: schema.userJobs.scoredAt })
     .from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
-  const score = async () => {
-    const payload = { userId, jobId };
-    await enqueueTask(deps.db, "score_job", payload, { dedupeKey: dedupeKeyFor("score_job", payload), priority: 1 });
-  };
+  const score = () => enqueueStandard(deps.db, "score_job", { userId, jobId }, { priority: 1 });
   if (!view) {
     const inserted = await deps.db.insert(schema.userJobs).values({
       userId, jobId,

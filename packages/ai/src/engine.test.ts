@@ -1375,6 +1375,10 @@ describe("library evidence review (A12)", () => {
 
     expect(calls).toHaveLength(2);
     expect(userBlocks(calls[1]!.params)[1]!.text).toContain("left these entries out");
+    // The retry asks only for the entry still owed; the one answered in full is not sent again.
+    expect(userBlocks(calls[1]!.params)[1]!.text).toContain("Entry [entry1]");
+    expect(userBlocks(calls[1]!.params)[1]!.text).not.toContain("Entry [entry0]");
+    expect(userBlocks(calls[1]!.params)[0]!.text).toBe(userBlocks(calls[0]!.params)[0]!.text);
     expect(events).toEqual([{ phase: "start", uncovered: undefined }, { phase: "retry", uncovered: 1 }, { phase: "done", uncovered: 1 }]);
     expect(reviews[0]!.rows.every(row => row.verified)).toBe(true);
     expect(reviews[1]!.rows.every(row => !row.verified)).toBe(true);

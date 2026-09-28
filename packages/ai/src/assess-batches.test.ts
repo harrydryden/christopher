@@ -176,3 +176,63 @@ describe("an audit whose library side the evidence plan settles", () => {
     expect(audit.review!.matches.every(match => match.status === "demonstrated")).toBe(true);
   });
 });
+
+describe("a corrective re-run", () => {
+  const scripted = (answer: (params: Record<string, unknown>, index: number) => unknown) => {
+    const calls: Array<Record<string, unknown>> = [];
+    const client: AiClientLike = { messages: { create: async params => {
+      calls.push(params);
+      return { parsed_output: answer(params, calls.length - 1), usage: { input_tokens: 10, output_tokens: 10 } };
+    } } };
+    return { calls, client };
+  };
+  /** The first answer misquotes the CV for r1 and cites nothing for claim2. */
+  const flawed = (params: Record<string, unknown>) => {
+    const answer = answerFor(payloadOf(params));
+    answer.matches[1]!.cvEvidence = [{ id: "profile", quote: "Invented wording" }];
+    answer.claims[2]!.evidence = [];
+    return answer;
+  };
+
+  it("asks again only about the flagged requirements and claims, and merges the answer into the first by id", async () => {
+    const { client, calls } = scripted((params, index) => index === 0 ? flawed(params) : answerFor(payloadOf(params)));
+    const audit = await createAiEngine({ client, getModel: () => "claude-fable-5-1" }).assessCvBatches(inputFor(4, 3));
+    expect(calls).toHaveLength(2);
+    const retry = payloadOf(calls[1]!);
+    expect(retry.requirements.map((item: { id: string }) => item.id)).toEqual(["r1"]);
+    expect(retry.claims.map((item: { id: string }) => item.id)).toEqual(["claim2"]);
+    expect(retry.corrections).toHaveLength(2);
+    // The cached context is the same blocks the first call sent.
+    expect((calls[1]!.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content.slice(0, 2)).toEqual((calls[0]!.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content.slice(0, 2));
+    expect(audit.batches[0]!.status).toBe("done");
+    expect(audit.review!.matches.map(match => match.requirementId)).toEqual(["r0", "r1", "r2", "r3"]);
+    expect(audit.review!.matches.every(match => match.status === "demonstrated")).toBe(true);
+    expect(audit.review!.claims.map(claim => [claim.claimId, claim.status])).toEqual([["claim0", "supported"], ["claim1", "supported"], ["claim2", "supported"]]);
+  });
+
+  it("marks what the re-run still gets wrong, or leaves out, unverified, and keeps the rest of the first answer", async () => {
+    const { client } = scripted((params, index) => {
+      if (index === 0) return flawed(params);
+      // Still misquoted for r1, and claim2 left out altogether.
+      const answer = answerFor(payloadOf(params));
+      answer.matches[0]!.cvEvidence = [{ id: "profile", quote: "Invented wording" }];
+      return { ...answer, claims: [] };
+    });
+    const audit = await createAiEngine({ client, getModel: () => "claude-fable-5-1" }).assessCvBatches(inputFor(4, 3));
+    expect(audit.review!.matches.map(match => [match.requirementId, match.status])).toEqual([["r0", "demonstrated"], ["r1", "unknown"], ["r2", "demonstrated"], ["r3", "demonstrated"]]);
+    expect(audit.review!.claims.map(claim => [claim.claimId, claim.status])).toEqual([["claim0", "supported"], ["claim1", "supported"], ["claim2", "uncertain"]]);
+  });
+
+  it("asks for a finding the first answer left out along with the flagged ones, and completes the batch with it", async () => {
+    const { client, calls } = scripted((params, index) => {
+      if (index > 0) return answerFor(payloadOf(params));
+      const answer = flawed(params);
+      answer.matches.splice(3, 1);
+      return answer;
+    });
+    const audit = await createAiEngine({ client, getModel: () => "claude-fable-5-1" }).assessCvBatches(inputFor(4, 3));
+    expect(payloadOf(calls[1]!).requirements.map((item: { id: string }) => item.id)).toEqual(["r1", "r3"]);
+    expect(audit.batches[0]!.status).toBe("done");
+    expect(audit.review!.matches.map(match => match.requirementId)).toEqual(["r0", "r1", "r2", "r3"]);
+  });
+});

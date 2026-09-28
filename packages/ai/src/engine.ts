@@ -1,7 +1,7 @@
 import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import { mentionsDemographicAttribute } from "@ava/core/cv-review";
-import { cvReviewBatches, libraryVerdictLines, reviewBatchIssues, markUnverifiedFindings, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
+import { cvReviewBatches, libraryVerdictLines, mergeRetry, reviewBatchIssues, markUnverifiedFindings, retryScope, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
 import {
   CV_PAGE_LIMITS,
   LIBRARY_REVIEW_BATCH,
@@ -1413,17 +1413,23 @@ export class AiEngine {
       await say("start");
       const first = settled(sourcedByBlock(await runBatch(batch, undefined, onStart, onRecord), entryIds));
       if (!first) return ended();
-      const corrections = reviewBatchIssues(first, context).map(issue => issue.correction);
+      const issues = reviewBatchIssues(first, context);
+      const corrections = issues.map(issue => issue.correction);
       // With no issues every match carries its library side: fixed by the plan, or returned and checked.
       let result = markUnverifiedFindings(first, []);
       if (corrections.length) {
-        // The first call is finished and paid for; what follows is a second charge for this batch.
+        // The first call is finished and paid for; what follows is a second charge for this batch,
+        // so it asks again only about what was wrong: the flagged requirements and claims, and any
+        // the first answer left out, with the same corrections and the same cached context.
+        const flagged = retryScope(first, issues, batch);
         await say("retry", { corrections: corrections.length });
-        const second = settled(sourcedByBlock(await runBatch(batch, corrections, undefined, onRecord), entryIds));
+        const second = settled(sourcedByBlock(await runBatch(flagged, corrections, undefined, onRecord), entryIds));
         if (!second) return ended(corrections.length);
-        // A repeated attribution mistake earns no credit and remains visible for review.
-        // The final strict source validator still checks all accepted evidence quotes.
-        result = markUnverifiedFindings(second, reviewBatchIssues(second, context));
+        // The second answer replaces the first only for what it was asked about, by id. What is
+        // still wrong earns no credit and remains visible for review; the final strict source
+        // validator still checks all accepted evidence quotes.
+        const merged = mergeRetry(first, second, flagged);
+        result = markUnverifiedFindings(merged, reviewBatchIssues(merged, context));
       }
       const extra = corrections.length ? { corrections: corrections.length } : {};
       const complete = (expected: string[], actual: string[]) =>
@@ -2075,7 +2081,9 @@ export class AiEngine {
       let uncovered = uncoveredBy(plan);
       if (uncovered.length) {
         await say("retry", { usage, uncovered: uncovered.length });
-        const again = await ask(entries, uncovered.map(entry => entry.id), undefined, record => { usage = record; });
+        // Only the entries still owed: the ones answered in full stand, and asking for them again
+        // paid for a second copy of every row the first answer had already classified.
+        const again = await ask(uncovered, uncovered.map(entry => entry.id), undefined, record => { usage = record; });
         if (!plan && !again) {
           await say("failed", { usage, uncovered: uncovered.length });
           return null;

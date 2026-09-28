@@ -380,8 +380,8 @@ it("keeps an entry the model left out on its baseline, and asks about it again o
   deps.aiClient = first.client;
 
   expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({ reviewed: 1, unread: 1 });
-  // Asked once more in the same pass, as the engine does, and still left out.
-  expect(first.calls.map(call => call.entries)).toEqual([["role", "later"], ["role", "later"]]);
+  // Asked once more in the same pass, for that entry alone, as the engine does, and still left out.
+  expect(first.calls.map(call => call.entries)).toEqual([["role", "later"], ["later"]]);
   const stored = await reviews();
   expect(stored.map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "model"]]);
   // Its own facet tags still score it; the silence is not a model's zero.

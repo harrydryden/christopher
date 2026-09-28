@@ -21,10 +21,6 @@ export function relativeTime(date: Date | null | undefined, now: Date = new Date
   return future ? `in ${year}y` : `${year}y ago`;
 }
 
-export function isoOrUndefined(date: Date | null | undefined): string | undefined {
-  return date ? date.toISOString() : undefined;
-}
-
 export function formatUsd(n: number): string {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
 }
@@ -100,18 +96,6 @@ export function pluralize(n: number, singular: string, plural: string = `${singu
   return n === 1 ? singular : plural;
 }
 
-const EVENT_TYPE_LABELS: Record<string, string> = {
-  discovered: "Discovered",
-  updated: "Updated",
-  closed: "Closed",
-  reopened: "Reopened",
-  scored: "Scored",
-  decided: "Decided",
-  hidden: "Hidden",
-  unhidden: "Unhidden",
-  description_fetched: "Description fetched",
-};
-
 const SCAN_STATUS_LABELS: Record<string, string> = {
   ok: "Scanned",
   partial: "Partial scan",
@@ -122,10 +106,6 @@ const SCAN_STATUS_LABELS: Record<string, string> = {
 /** Prose form of a scan status, for a sentence rather than a badge. */
 export function scanStatusLabel(status: string): string {
   return SCAN_STATUS_LABELS[status] ?? status;
-}
-
-export function eventTypeLabel(type: string): string {
-  return EVENT_TYPE_LABELS[type] ?? type;
 }
 
 /**

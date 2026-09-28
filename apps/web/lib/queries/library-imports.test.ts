@@ -3,7 +3,7 @@
  * in the state the row says they are in.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, createLibraryImport, schema, type Db } from "@ava/db";
+import { createDb, createLibraryImport, listOpenLibraryImports, schema, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import type { User } from "@ava/db/schema";
 import { runMigrations } from "@ava/db/migrate";
@@ -16,7 +16,10 @@ let user: User;
 let other: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 
-import { getOwnLibraryImport, libraryImportsPending, listLibraryImports, reopenLibraryImport } from "./library-imports";
+import { getOwnLibraryImport, listLibraryImports, reopenLibraryImport } from "./library-imports";
+
+/** Is anything still being read? What the Library page polls on. */
+const libraryImportsPending = async (userId: string) => (await listOpenLibraryImports(database, userId, 10)).some(row => !row.processedAt);
 
 const DOCUMENT = "Director of Operations, Acme Logistics. Cut handover time from two days to four hours.";
 const at = (minutes: number) => new Date(Date.parse("2026-09-19T09:00:00Z") + minutes * 60_000);

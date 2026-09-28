@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, eq, inArray, notLike, sql } from "drizzle-orm";
+import { eq, notLike, sql } from "drizzle-orm";
 import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
 import { dedupeKeyFor, isSystemSettingsKey, isUserSettingsKey, priorityFor, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
 import { enqueueTask, reevaluateGate } from "@ava/db";
@@ -94,13 +94,4 @@ export async function saveSettingsAndGate(userId: string, entries: Partial<UserS
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
     if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
   });
-}
-
-/** Any of these keys, for one account or the system, in one call. Callers know which side each key belongs to. */
-export async function readSettingRows(userId: string, keys: string[]) {
-  const [system, user] = await Promise.all([
-    db().select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable).where(inArray(settingsTable.key, keys)),
-    db().select({ key: userSettingsTable.key, value: userSettingsTable.value }).from(userSettingsTable).where(and(eq(userSettingsTable.userId, userId), inArray(userSettingsTable.key, keys))),
-  ]);
-  return [...system, ...user];
 }

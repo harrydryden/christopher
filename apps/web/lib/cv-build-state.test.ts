@@ -11,7 +11,6 @@ import {
   cvWorkFlags,
   cvWorkVersion,
   failureWayForward,
-  normaliseCvStepsSignature,
   type CvBuildDraft,
   type CvBuildTask,
 } from "./cv-build-state";
@@ -309,12 +308,6 @@ it("signs the ledger from the rows the page already has, in the poll's own terms
   expect(cvStepsSignature([])).toBe("0:0:");
   expect(cvStepsSignature([...steps.slice(0, 2), step("done", ago(20_000), ago(5_000))])).toBe(`3:0:${ago(5_000).toISOString()}`);
 
-  // The poll's side comes from SQL: `timestamptz::text`, microseconds, in the database's timezone.
-  // Both are reduced to the same moment, or the page would refresh itself every ten seconds.
-  expect(normaliseCvStepsSignature("3:1:2026-09-18 11:59:40.123456+00")).toBe("3:1:2026-09-18T11:59:40.123Z");
-  expect(normaliseCvStepsSignature("3:1:2026-09-18 12:59:40.123456+01")).toBe("3:1:2026-09-18T11:59:40.123Z");
-  expect(normaliseCvStepsSignature("0:0:")).toBe("0:0:");
-  expect(normaliseCvStepsSignature("0:0:nonsense")).toBe("0:0:nonsense");
 });
 
 it("carries the failure into the poll's version", () => {

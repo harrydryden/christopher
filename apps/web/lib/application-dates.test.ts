@@ -15,10 +15,12 @@ import {
   isCalendarDay,
   isRecordableDay,
   nextStep,
-  nextStepLine,
   todayDay,
   weekdayLabel,
 } from "./application-dates";
+
+/** The sentence alone. */
+const nextStepLine = (...args: Parameters<typeof nextStep>) => nextStep(...args)?.line ?? null;
 
 const NOW = new Date("2026-09-19T12:00:00.000Z");
 const step = (nextAction: string | null, nextActionOn: string | null = null) => ({

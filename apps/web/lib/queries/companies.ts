@@ -13,7 +13,6 @@ import {
   companySubscriptions,
   discoveryRuns,
   jobs,
-  scanRuns,
   scans,
   tasks,
   userJobs,
@@ -318,13 +317,6 @@ export async function getCompanyProfile(companyId: string): Promise<CompanyProfi
     .where(eq(companyProfiles.companyId, companyId))
     .orderBy(desc(companyProfiles.generatedAt))
     .limit(1);
-  return rows[0] ?? null;
-}
-
-export async function getLatestScanRun(): Promise<
-  (typeof scanRuns.$inferSelect) | null
-> {
-  const rows = await db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(1);
   return rows[0] ?? null;
 }
 
@@ -656,11 +648,6 @@ export async function listCataloguePage(viewerId: string, requestedPage: number,
   if (!rows.length) return { rows: [], total, page, suggestions: [] };
   const [catalogue, suggestions] = await Promise.all([catalogueRows(viewerId, rows), pendingNameSuggestionsFor(rows.map((c) => c.id))]);
   return { rows: catalogue, total, page, suggestions };
-}
-
-export async function listCatalogue(viewerId: string, page = 1, q = ""): Promise<CatalogueRow[]> {
-  const rows = await db().select().from(companies).where(companySearch(q)).orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
-  return catalogueRows(viewerId, rows);
 }
 
 async function catalogueRows(viewerId: string, rows: Company[]): Promise<CatalogueRow[]> {

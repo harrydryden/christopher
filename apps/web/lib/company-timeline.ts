@@ -393,8 +393,3 @@ export function companySetupLine(steps: CompanyTimelineStep[]): string {
   const last = [...steps].reverse().find((s) => s.status === "done");
   return last?.text ?? steps[0]!.text;
 }
-
-/** Is anything still moving? The page polls, and the elapsed figures tick, only while it is. */
-export function companySetupRunning(steps: CompanyTimelineStep[]): boolean {
-  return steps.some((s) => s.running);
-}

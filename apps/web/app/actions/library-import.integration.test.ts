@@ -22,7 +22,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 let other: User;
-const auth = vi.hoisted(() => ({ requireUser: vi.fn(), requireSession: vi.fn(), requireVerifiedUser: vi.fn() }));
+const auth = vi.hoisted(() => ({ requireUser: vi.fn(), requireVerifiedUser: vi.fn() }));
 vi.mock("@/lib/auth", () => auth);
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -101,7 +101,6 @@ afterAll(async () => {
 
 beforeEach(async () => {
   auth.requireUser.mockReset(); auth.requireUser.mockImplementation(async () => user);
-  auth.requireSession.mockReset(); auth.requireSession.mockImplementation(async () => user);
   auth.requireVerifiedUser.mockReset(); auth.requireVerifiedUser.mockImplementation(async () => auth.requireUser());
   await database.execute(sql`truncate library_imports, cv_libraries, tasks, user_settings restart identity cascade`);
 });

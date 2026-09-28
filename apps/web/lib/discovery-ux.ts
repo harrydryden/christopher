@@ -53,11 +53,6 @@ export function discoverySourceHealth(input: SourceHealthInput): SourceHealth {
   return ok(input.lastCheckedAt ? "Up to date" : "Ready for first check");
 }
 
-/** Kept for callers that only need the label. */
-export function discoverySourceState(input: SourceHealthInput): string {
-  return discoverySourceHealth(input).state;
-}
-
 /** The sources whose automation the user expects to run and which is not running. */
 export function notWorkingSources<T extends SourceHealthInput & { name: string }>(sources: T[]): T[] {
   return sources.filter((source) => !discoverySourceHealth(source).working);

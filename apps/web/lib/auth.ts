@@ -85,11 +85,6 @@ export async function requireAdmin(): Promise<User> {
   return user;
 }
 
-/** Older call sites only needed to know that a session exists. */
-export async function requireSession(): Promise<User> {
-  return requireUser();
-}
-
 export async function isAdmin(): Promise<boolean> {
   return (await getCurrentUser())?.user.role === "admin";
 }
@@ -136,8 +131,4 @@ export async function endSession(): Promise<void> {
 export async function endOtherSessions(userId: string, keepSessionId: string): Promise<number> {
   const rows = await db().delete(sessions).where(and(eq(sessions.userId, userId), ne(sessions.id, keepSessionId))).returning({ id: sessions.id });
   return rows.length;
-}
-
-export async function endAllSessions(userId: string): Promise<void> {
-  await db().delete(sessions).where(eq(sessions.userId, userId));
 }

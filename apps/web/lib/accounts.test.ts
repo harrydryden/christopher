@@ -12,7 +12,7 @@ let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { adminEmails, authenticateWithPassword, changePassword, confirmEmailWithToken, previewVerification, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail, signInWithGoogle } from "./accounts";
 import { consumeAuthToken, issueAuthToken } from "./auth-tokens";
-import { clearAttempts, isRateLimited, LIMITS, recordAttempt } from "./rate-limit";
+import { clearAttempts, LIMITS, reserveRateLimits } from "./rate-limit";
 
 const PASSWORD = "correct horse battery staple";
 const OWNER = "owner@example.com";
@@ -345,15 +345,15 @@ describe("single-use links", () => {
 describe("throttling", () => {
   it("counts attempts inside the window only, per key", async () => {
     const key = "login:email:ada@example.com";
-    for (let i = 0; i < LIMITS.loginEmail.max - 1; i++) await recordAttempt(key);
-    expect(await isRateLimited(key, LIMITS.loginEmail)).toBe(false);
-    await recordAttempt(key);
-    expect(await isRateLimited(key, LIMITS.loginEmail)).toBe(true);
-    expect(await isRateLimited("login:email:bob@example.com", LIMITS.loginEmail)).toBe(false);
+    const admitted = async (k = key) => (await reserveRateLimits([{ key: k, limit: LIMITS.loginEmail }])) !== null;
+    for (let i = 0; i < LIMITS.loginEmail.max; i++) expect(await admitted()).toBe(true);
+    expect(await admitted()).toBe(false);
+    expect(await admitted("login:email:bob@example.com")).toBe(true);
     await clearAttempts(key);
-    expect(await isRateLimited(key, LIMITS.loginEmail)).toBe(false);
+    expect(await admitted()).toBe(true);
+    await clearAttempts(key);
     const past = new Date(Date.now() - LIMITS.loginEmail.windowMs - 1000);
-    for (let i = 0; i < LIMITS.loginEmail.max; i++) await recordAttempt(key, past);
-    expect(await isRateLimited(key, LIMITS.loginEmail)).toBe(false);
+    await database.insert(schema.loginAttempts).values(Array.from({ length: LIMITS.loginEmail.max }, () => ({ key, at: past })));
+    expect(await admitted()).toBe(true);
   });
 });

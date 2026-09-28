@@ -129,11 +129,6 @@ export function nextStep(row: NextStepRow, now: Date = new Date()): NextStepNote
   return { line: `Next: ${action} · by ${dayWithWeekdayLabel(on)}`, overdue: false };
 }
 
-/** The same, as the sentence alone. */
-export function nextStepLine(row: NextStepRow, now: Date = new Date()): string | null {
-  return nextStep(row, now)?.line ?? null;
-}
-
 /** How far ahead the Applications header looks when it counts what is owed. */
 export const DUE_WITHIN_DAYS = 7;
 

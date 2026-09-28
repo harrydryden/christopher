@@ -67,11 +67,6 @@ export async function listPendingFilterSuggestions(userId: string): Promise<Filt
   return db().select().from(filterSuggestions).where(and(eq(filterSuggestions.userId, userId), eq(filterSuggestions.status, "pending"))).orderBy(desc(filterSuggestions.createdAt));
 }
 
-export async function getFilterSuggestion(userId: string, id: string): Promise<FilterSuggestion | null> {
-  const rows = await db().select().from(filterSuggestions).where(and(eq(filterSuggestions.userId, userId), eq(filterSuggestions.id, id))).limit(1);
-  return rows[0] ?? null;
-}
-
 export interface FilterSuggestionRow {
   suggestion: FilterSuggestion;
   companyName: string | null;

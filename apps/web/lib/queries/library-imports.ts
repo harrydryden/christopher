@@ -61,12 +61,6 @@ export async function getOwnLibraryImport(userId: string, id: string) {
   return getLibraryImport(db(), userId, id);
 }
 
-/** Is anything still being read? The page polls itself while this is true. */
-export async function libraryImportsPending(userId: string): Promise<boolean> {
-  const rows = await listOpenLibraryImports(db(), userId, 10);
-  return rows.some(row => !row.processedAt);
-}
-
 /**
  * Put an import back in the queue's way: read this document again.
  *

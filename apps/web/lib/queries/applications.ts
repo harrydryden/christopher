@@ -41,7 +41,6 @@ import {
   ROLE_STAGES,
   aiBudgetRefusalMessage,
   applicationStage,
-  roleStageRank,
   type RoleStage,
 } from "@ava/core";
 import { DUE_WITHIN_DAYS, todayDay } from "@/lib/application-dates";

@@ -1,6 +1,6 @@
 /**
  * The scan-run summary: what the banner on every page, the poll in every open tab and Health's run
- * history all read. It has to be right per account, cheap for many runs at once, and briefly cached.
+ * history all read. It has to be right per account and cheap for many runs at once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, scanRunSummaries, scanRunSummary, subscribeToCompany, type Db } from "@ava/db";
@@ -14,7 +14,9 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { scanRunReport, scanRunReports, clearScanSummaryCache } from "@/lib/scan-run-report";
+import { scanRunReports } from "@/lib/scan-run-report";
+
+const reportOf = async (run: Parameters<typeof scanRunReports>[0][number], userId?: string) => (await scanRunReports([run], userId))[0]!;
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -26,7 +28,6 @@ afterAll(() => pool.end());
 beforeEach(async () => {
   await database.execute(sql`truncate companies, scan_runs, tasks, users restart identity cascade`);
   user = await ensureTestUser(database, "summary@example.com");
-  clearScanSummaryCache();
 });
 
 /** A company with one careers source; `followed` decides whether this account sees it. */
@@ -102,23 +103,19 @@ it("summarises many runs in one query, per account, and answers for a run with n
   expect(await scanRunSummary(database, crypto.randomUUID(), user.id)).toEqual({ sources: 0, pending: 0, companies_ok: 0, new_roles: 0, closed_roles: 0 });
 });
 
-it("holds one account's summary of one run for half a minute, and reports many runs together", async () => {
+it("reports one account's view of a run apart from the deployment's", async () => {
   const mine = await company("acme", true);
   const [run] = await database.insert(schema.scanRuns).values({ runDate: "2026-09-12", trigger: "manual", companiesTotal: 1 }).returning();
   await database.insert(schema.scans).values({ sourceId: mine.sourceId, scanRunId: run!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 2 });
   await postings(mine.sourceId, mine.id, 2, [user.id], "first");
-  expect((await scanRunReport(run!, user.id)).newRoles).toBe(2);
+  expect((await reportOf(run!, user.id)).newRoles).toBe(2);
 
-  // A second source reports in, but the banner is not recomputed on every render of every tab.
+  // A second source reports in, and the next reading counts it.
   const [second] = await database.insert(schema.careerSources).values({ companyId: mine.id, type: "html", url: "https://acme.example/more" }).returning();
   await database.insert(schema.scans).values({ sourceId: second!.id, scanRunId: run!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 5 });
   await postings(second!.id, mine.id, 5, [user.id], "second");
-  expect((await scanRunReport(run!, user.id)).newRoles).toBe(2);
-  // The whole deployment's view of the same run is a separate entry, so it is read fresh.
-  expect((await scanRunReport(run!)).newRoles).toBe(7);
-
-  clearScanSummaryCache();
-  expect((await scanRunReport(run!, user.id)).newRoles).toBe(7);
+  expect((await reportOf(run!, user.id)).newRoles).toBe(7);
+  expect((await reportOf(run!)).newRoles).toBe(7);
 
   const [reported] = await scanRunReports([run!], user.id);
   // Per account the total counts the sources scanned plus those still queued, as it always has.
@@ -143,15 +140,12 @@ it("counts new roles per gate: two followers of one company never see each other
   // The whole deployment's figure is still what the scan observed.
   expect((await scanRunSummary(database, run!.id)).new_roles).toBe(5);
 
-  // Through the 30-second cache the two accounts stay separate entries.
-  expect((await scanRunReport(run!, user.id)).newRoles).toBe(5);
-  expect((await scanRunReport(run!, other.id)).newRoles).toBe(1);
+  // Reported per account, the two stay apart.
+  expect((await reportOf(run!, user.id)).newRoles).toBe(5);
+  expect((await reportOf(run!, other.id)).newRoles).toBe(1);
   await database.delete(schema.userJobs).where(sql`user_id = ${user.id} and job_id = ${admitted[0]!}`);
-  expect((await scanRunReport(run!, user.id)).newRoles).toBe(5);
-  expect((await scanRunReport(run!, other.id)).newRoles).toBe(1);
-  clearScanSummaryCache();
-  expect((await scanRunReport(run!, user.id)).newRoles).toBe(4);
-  expect((await scanRunReport(run!, other.id)).newRoles).toBe(1);
+  expect((await reportOf(run!, user.id)).newRoles).toBe(4);
+  expect((await reportOf(run!, other.id)).newRoles).toBe(1);
 });
 
 it("counts a posting stored by an earlier run as new only for the run that stored it", async () => {

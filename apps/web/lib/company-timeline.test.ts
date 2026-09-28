@@ -6,7 +6,6 @@ import { expect, it } from "vitest";
 import { deadlineFor } from "@ava/core";
 import {
   companySetupLine,
-  companySetupRunning,
   narrateCompanySetup,
   sourceWords,
   type CompanySetupRows,
@@ -52,7 +51,7 @@ it("says nothing has happened yet, and what each step usually takes", () => {
   expect(byKey(steps, "source").text).toBe("No careers page confirmed yet");
   expect(byKey(steps, "scan").text).toBe("Waiting for a careers page to read");
   expect(byKey(steps, "table").text).toBe("Waiting for a scan to read the board");
-  expect(companySetupRunning(steps)).toBe(false);
+  expect(steps.some((s) => s.running)).toBe(false);
   expect(companySetupLine(steps)).toBe("Nobody has looked for this company's careers page yet.");
 });
 
@@ -60,7 +59,7 @@ it("times discovery from the run while it is open, and from the task before ther
   const queued = narrate({ discoveryTask: { state: "queued", startedAt: null } });
   expect(byKey(queued, "discovery")).toMatchObject({ status: "running", text: "Finding the careers page", elapsedMs: null });
   expect(byKey(queued, "discovery").note).toBe("Queued behind the worker's other work.");
-  expect(companySetupRunning(queued)).toBe(true);
+  expect(queued.some((s) => s.running)).toBe(true);
 
   const running = narrate({
     run: { status: "running", startedAt: secondsAgo(40), finishedAt: null, candidates: [], chosenSourceId: null, error: null },
@@ -146,7 +145,7 @@ it("reports the scan by what it read, and the table by what this account's gate 
   const scored = narrate({ source: GREENHOUSE, scan, table: { inTable: 4, scoring: 0, scored: 4 } });
   expect(byKey(scored, "table").text).toBe("Scored · next scheduled scan at 06:00 Europe/London");
   expect(companySetupLine(scored)).toBe("Scored · next scheduled scan at 06:00 Europe/London");
-  expect(companySetupRunning(scored)).toBe(false);
+  expect(scored.some((s) => s.running)).toBe(false);
 
   // One role the worker has not scored — a spent budget, most often — is said rather than hidden.
   const partlyScored = narrate({ source: GREENHOUSE, scan, table: { inTable: 4, scoring: 0, scored: 3 } });

@@ -80,17 +80,6 @@ export async function listCvDraftPages(
   );
 }
 
-export async function listCvDraftPage(
-  userId: string,
-  archived: boolean,
-  requestedPage?: string,
-) {
-  return db().transaction(
-    (tx) => readCvDraftPage(tx, userId, archived, requestedPage),
-    { isolationLevel: "repeatable read", accessMode: "read only" },
-  );
-}
-
 /**
  * Whether `cv_versions` exists yet. Probed rather than tried, because the page lists read it inside
  * a transaction, where a failed statement would abort everything after it.

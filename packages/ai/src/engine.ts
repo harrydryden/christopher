@@ -1109,67 +1109,61 @@ export class AiEngine {
         throw new Error("AI budget reserved or exhausted; retry later");
       }
     }
-    // What the requests before the last one used: a paused turn is resumed as a new request, and
-    // every one of them is billed, so the one record this call leaves carries them all.
-    let prior: Usage = {};
-    try {
-      const sending: Sending = { timeoutMs: entry.timeoutMs, meta, fallback, stats, ...(call.onStart ? { onStart: call.onStart } : {}), ...(signal ? { signal } : {}) };
-      let response = await this.complete(request, sending);
-      // A server tool that reached its iteration limit pauses the turn; sending the turn back, as
-      // it stands, lets it carry on from there. No extra user turn: the assistant's is resumed.
-      for (let resumed = 0; response.stop_reason === "pause_turn" && resumed < MAX_PAUSE_CONTINUATIONS && !signal?.aborted; resumed++) {
-        prior = addUsage(prior, response.usage ?? {});
-        request.messages = [...(request.messages as unknown[]), { role: "assistant", content: response.content ?? [] }];
-        response = await this.complete(request, sending);
-      }
-      const usage = addUsage(prior, response.usage ?? {});
+    // The one ledger row this call leaves, whether it answered or failed.
+    const usageRecord = (served: string, usage: Usage, outcome: Pick<AiUsageRecord, "ok" | "error" | "failure" | "stopReason">): AiUsageRecord => {
       const tokens = tokensOf(usage);
-      const { validated, error, failure, refused } = this.judge<T>(entry, response);
-      const served = response.model ?? model;
-      const record: AiUsageRecord = {
+      const { ok, error, failure, stopReason } = outcome;
+      return {
         callSite,
         model: served,
         ...tokens,
         // A web search is billed per request as well as by the tokens its results add to the turn.
         costUsd: estimateCostUsd(served, tokens) + serverToolCostUsd(usage.server_tool_use),
         durationMs: Date.now() - started,
-        ok: validated !== null,
+        ok,
         error,
         ...(failure ? { failure } : {}),
         ...streamFigures(stats),
-        ...(response.stop_reason ? { stopReason: response.stop_reason } : {}),
+        ...(stopReason ? { stopReason } : {}),
         ...identity,
       };
+    };
+    // What the requests before the last one used: a paused turn is resumed as a new request, and
+    // every one of them is billed, so the one record this call leaves carries them all.
+    let prior: Usage = {};
+    try {
+      let record: AiUsageRecord;
+      let result: T | null = null;
+      let note: [string, unknown] | undefined;
+      try {
+        const sending: Sending = { timeoutMs: entry.timeoutMs, meta, fallback, stats, ...(call.onStart ? { onStart: call.onStart } : {}), ...(signal ? { signal } : {}) };
+        let response = await this.complete(request, sending);
+        // A server tool that reached its iteration limit pauses the turn; sending the turn back, as
+        // it stands, lets it carry on from there. No extra user turn: the assistant's is resumed.
+        for (let resumed = 0; response.stop_reason === "pause_turn" && resumed < MAX_PAUSE_CONTINUATIONS && !signal?.aborted; resumed++) {
+          prior = addUsage(prior, response.usage ?? {});
+          request.messages = [...(request.messages as unknown[]), { role: "assistant", content: response.content ?? [] }];
+          response = await this.complete(request, sending);
+        }
+        const { validated, error, failure, refused } = this.judge<T>(entry, response);
+        record = usageRecord(response.model ?? model, addUsage(prior, response.usage ?? {}),
+          { ok: validated !== null, error, failure, stopReason: response.stop_reason ?? undefined });
+        result = validated;
+        if (refused) note = [`${callSite} refused`, response.stop_details];
+      } catch (err) {
+        // A call that failed before it began spent nothing. One cut off part-way was billed for the
+        // prompt it had processed, which is in the snapshot the cut-off carries. It is priced at the
+        // model that served it when the snapshot names one, as the success path is: a server-side
+        // fallback bills at the model that answered, not the one that was asked.
+        const snapshot = err instanceof CallCutOff ? err.snapshot : undefined;
+        record = usageRecord(snapshot?.model ?? model, addUsage(prior, snapshot?.usage ?? {}),
+          { ok: false, error: (err as Error).message.slice(0, 500), failure: classifyAiFailure(err) ?? undefined });
+        note = [`${callSite} failed`, err];
+      }
       landed = await this.record(record);
       call.onRecord?.(record);
-      if (refused) this.log(`${callSite} refused`, response.stop_details);
-      return validated;
-    } catch (err) {
-      // A call that failed before it began spent nothing. One cut off part-way was billed for the
-      // prompt it had processed, which is in the snapshot the cut-off carries.
-      const snapshot = err instanceof CallCutOff ? err.snapshot : undefined;
-      const partial: Usage = addUsage(prior, snapshot?.usage ?? {});
-      const tokens = tokensOf(partial);
-      // Price at the model that served the call when the snapshot names one, as the success path
-      // does: a server-side fallback bills at the model that answered, not the one that was asked.
-      const served = snapshot?.model ?? model;
-      const failure = classifyAiFailure(err);
-      const record: AiUsageRecord = {
-        callSite,
-        model: served,
-        ...tokens,
-        costUsd: estimateCostUsd(served, tokens) + serverToolCostUsd(partial.server_tool_use),
-        durationMs: Date.now() - started,
-        ok: false,
-        error: (err as Error).message.slice(0, 500),
-        ...(failure ? { failure } : {}),
-        ...streamFigures(stats),
-        ...identity,
-      };
-      landed = await this.record(record);
-      call.onRecord?.(record);
-      this.log(`${callSite} failed`, err);
-      return null;
+      if (note) this.log(...note);
+      return result;
     } finally {
       releaseSlot();
       // A call whose cost never reached the ledger keeps its hold until the hold expires.

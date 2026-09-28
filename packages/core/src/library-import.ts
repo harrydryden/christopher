@@ -72,15 +72,21 @@ export const LibraryProposalSchema = z.object({
     endDate: z.string().max(40).nullable().optional(),
     current: z.boolean().nullable().optional(),
     quote: z.string().max(2000),
+    /**
+     * `text` is copied verbatim from the document and anchored there, so it is its own quote: the
+     * model no longer types the row twice. `quote` is still read, and ignored, from an answer or a
+     * stored proposal written before that.
+     */
     responsibilities: z.array(z.object({
       text: z.string().max(4000),
-      quote: z.string().max(4000),
+      quote: z.string().max(4000).nullable().optional(),
     })).max(60).nullable().optional(),
   })).max(60),
+  /** `heading` and `detail` are both anchored, and `detail` is the line as written: its quote. */
   education: z.array(z.object({
     heading: z.string().max(400),
     detail: z.string().max(4000),
-    quote: z.string().max(4000),
+    quote: z.string().max(4000).nullable().optional(),
   })).max(60).nullable().optional(),
   skills: z.array(z.object({ text: z.string().max(200) })).max(60).nullable().optional(),
 });
@@ -263,13 +269,13 @@ export function countProposedItems(
  *
  * A job is anchored as one passage, not as words found anywhere in the document: its quote has to
  * be in the document, its title and its employer within the heading around that quote, its dates
- * in that same heading, and each of its responsibilities — the row and its quote — between that
+ * in that same heading, and each of its responsibilities — the row, which is its own quote — between that
  * heading and the next job's. Checked one by one, a title from one line and an employer from
  * another made a job nobody had, a year from the education line dated a role, and a row was filed
  * under whichever job the model chose. An employer named once above several roles, as LinkedIn's
  * own export writes it, anchors each role under it until another employer's role comes between.
  *
- * A qualification survives when its heading, its detail and its quote are in the document; a skill
+ * A qualification survives when its heading and its detail (its quote) are in the document; a skill
  * when the document writes it as a word. `dropped` counts every item that did not survive, because
  * "we read your CV and found nothing" and "we read your CV and refused six things it claimed" are
  * different sentences and the person is owed the second one.
@@ -354,13 +360,13 @@ export function validateLibraryProposal(
     const id = `job-${employment.length}`;
     for (const row of rows) {
       const said = normaliseText(row.text).slice(0, 4000);
-      if (!within(said, passage) || !within(row.quote, passage) || seenRows.has(key(said))
+      if (!within(said, passage) || seenRows.has(key(said))
         || responsibilities.length >= LIBRARY_IMPORT_MAX_ROWS) {
         dropped += 1;
         continue;
       }
       seenRows.add(key(said));
-      responsibilities.push({ id: `${id}-row-${responsibilities.length}`, text: said, quote: normaliseText(row.quote).slice(0, 4000) });
+      responsibilities.push({ id: `${id}-row-${responsibilities.length}`, text: said, quote: said });
     }
     employment.push({ id, company, title, startDate, endDate, current, quote: normaliseText(job.quote).slice(0, 2000), responsibilities });
   }
@@ -370,13 +376,13 @@ export function validateLibraryProposal(
   for (const item of plan.education ?? []) {
     const heading = normaliseText(item.heading).slice(0, 250);
     const detail = normaliseText(item.detail).slice(0, 4000);
-    if (!anchored(heading) || !anchored(detail) || !anchored(item.quote)
+    if (!anchored(heading) || !anchored(detail)
       || seenEducation.has(key(heading + detail)) || education.length >= LIBRARY_IMPORT_MAX_JOBS) {
       dropped += 1;
       continue;
     }
     seenEducation.add(key(heading + detail));
-    education.push({ id: `education-${education.length}`, heading, detail, quote: normaliseText(item.quote).slice(0, 4000) });
+    education.push({ id: `education-${education.length}`, heading, detail, quote: detail });
   }
 
   const skills: ProposedSkill[] = [];

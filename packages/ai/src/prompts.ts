@@ -198,13 +198,13 @@ Employment: one entry per job the document states, in the order it gives them.
   job before it. Set current to true only where the document says the person is still there, and
   then leave endDate empty.
 - responsibilities: the things the document says they did in that job, one row per statement, each
-  copied from the document rather than summarised, with quote copied verbatim from that same row.
-  Do not merge two statements into one, do not split one across two, and do not add a row to round
+  copied verbatim from the document rather than summarised: the row is its own quote, so give text
+  only. Do not merge two statements into one, do not split one across two, and do not add a row to round
   a job out. A job the document describes in a sentence has one row.
 
 Education: each qualification, course or certification the document states. heading is what a
 reader would recognise it by — the institution or the award — and detail is the line as written,
-both copied from the document, with quote copied verbatim from it.
+both copied verbatim from the document; detail is its own quote, so give heading and detail only.
 
 Skills: the individual skills the document lists, each a short label of at most eighty characters,
 copied as written. Take them only where the document names them; never infer a skill from a

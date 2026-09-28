@@ -281,8 +281,10 @@ export function estimateLibraryImportUsd(model: string, size: { documentBytes: n
   const document = Math.max(0, size.documentBytes) / 3;
   return estimateCostUsd(model, {
     inputTokens: document + 1_200,
-    // A long career copied twice — each row and the quote behind it — under the call's ceiling.
-    outputTokens: Math.min(16_000, Math.max(1_500, document / 2)),
+    // A long career copied once — each row is its own quote, only a job's heading line is quoted
+    // beside it — under the call's ceiling. It was held at half the document while every row was
+    // copied twice; dropping the second copy removes about a third of the answer.
+    outputTokens: Math.min(16_000, Math.max(1_500, document / 3)),
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
   });

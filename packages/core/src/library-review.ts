@@ -51,13 +51,14 @@ import { sha1 } from "./normalize";
 
 type CvEntry = CvLibrary["entries"][number];
 
-/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @ava/db. */
+/** How much evidence an entry carries; @ava/db's column enum is this list, re-exported. */
 export const EVIDENCE_RATINGS = ["none", "weak", "good", "strong"] as const;
 export type EvidenceRating = (typeof EVIDENCE_RATINGS)[number];
 
 /**
- * Who produced a review: the deterministic baseline from the person's own tags, or the model.
- * Mirrors `LIBRARY_REVIEW_SOURCES` in @ava/db.
+ * Who produced a review. `rules` is the deterministic baseline computed from the person's own
+ * facet tags, written the moment a library is saved; `model` is the model's review, which lands
+ * when the task has run. @ava/db's column enum is this list, re-exported.
  */
 export const LIBRARY_REVIEW_SOURCES = ["rules", "model"] as const;
 export type LibraryReviewSource = (typeof LIBRARY_REVIEW_SOURCES)[number];

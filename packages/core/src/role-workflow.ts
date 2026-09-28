@@ -69,11 +69,7 @@ export const ROLE_STAGE_DESCRIPTIONS: Record<RoleStage, string> = {
   dismissed: "You passed on it, withdrew, or it stopped matching and was archived.",
 };
 
-/**
- * What an `applications` row can say. Kept identical to `APPLICATION_STATUSES` in @ava/db,
- * which is the column's enum: core cannot import the database package, so the two lists are
- * maintained together and `applicationStage` is the only thing that reads them.
- */
+/** What an `applications` row can say; @ava/db's column enum is this list, re-exported. */
 export const APPLICATION_STATUSES = ["applying", "applied", "screening", "interview", "offer", "accepted", "rejected", "withdrawn"] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 

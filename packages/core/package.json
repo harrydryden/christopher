@@ -75,6 +75,14 @@
     "./evidence-rubric-text": {
       "types": "./src/evidence-rubric-text.ts",
       "default": "./src/evidence-rubric-text.ts"
+    },
+    "./tasks": {
+      "types": "./src/tasks.ts",
+      "default": "./src/tasks.ts"
+    },
+    "./logo-capture": {
+      "types": "./src/logo-capture.ts",
+      "default": "./src/logo-capture.ts"
     }
   },
   "scripts": {

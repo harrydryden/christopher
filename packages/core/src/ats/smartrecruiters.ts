@@ -1,6 +1,6 @@
-import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
+import { IncompleteListingError, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, MAX_POSTINGS, type ListingRead } from "./common";
+import { feedAdapter, fetchJson, htmlToText, joinLocation, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, MAX_POSTINGS, type ListingRead } from "./common";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
 
@@ -58,8 +58,7 @@ const MAX_PAGES = 200;
 
 /** Up to `maxPages` pages; `unread` is how many roles the board holds past the last page read. */
 async function readPages(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { unread: number | "unknown" }> {
-  const slug = spec.atsSlug;
-  if (!slug) throw new Error("smartrecruiters spec missing slug");
+  const slug = requireSlug(spec);
   const out: RawPosting[] = [];
   const limit = PAGE_SIZE;
   let offset = 0;
@@ -117,17 +116,15 @@ async function companyName(spec: SourceSpec, ctx: FetchContext): Promise<string 
   return str(data.content?.[0]?.company?.name);
 }
 
-export const smartrecruiters: Adapter = {
+export const smartrecruiters = feedAdapter({
   type: "smartrecruiters",
   // The listing carries no description and `fetchSmartRecruitersDescription` serves one role at a
   // time, so the scan defers description gates and queues the fetches instead of making up to one
   // 2-second detail request per matching role inside the scan task.
   descriptionsPerPosting: true,
-  specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? smartRecruitersSpec(slug) : null;
-  },
-  fetchPostings,
+  fromUrl: (url) => specOrNull(slugFromUrl(url), smartRecruitersSpec),
+  read: fetchPostings,
   // One page, which carries the company's name as well as the board's total.
-  verify: (spec, ctx) => verifyFromRead(() => readPages(spec, ctx, 1), () => companyName(spec, ctx))(),
-};
+  verifyRead: (spec, ctx) => readPages(spec, ctx, 1),
+  companyName,
+});

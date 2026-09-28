@@ -1,17 +1,10 @@
 /** VERIFY: postings.json is undocumented. */
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, rec, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
+import { feedAdapter, fetchJson, rec, requireSlug, specOrNull, str, subdomainSlug, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
 
 export function pinpointSpec(slug: string): SourceSpec {
   return { type: "pinpoint", url: `https://${slug}.pinpointhq.com`, apiUrl: `https://${slug}.pinpointhq.com/postings.json`, atsSlug: slug };
-}
-
-function slugFromUrl(url: string): string | null {
-  const u = safeUrl(url);
-  if (!u) return null;
-  const m = u.hostname.toLowerCase().match(/^([a-z0-9][a-z0-9-]*)\.pinpointhq\.com$/);
-  return m && slugOk(m[1]) ? m[1]! : null;
 }
 
 /** Pinpoint returns either `{name: "..."}` objects or plain strings. */
@@ -20,8 +13,7 @@ function labelOf(v: unknown): string | undefined {
 }
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  const slug = spec.atsSlug;
-  if (!slug) throw new Error("pinpoint spec missing slug");
+  const slug = requireSlug(spec);
   const { data } = await fetchJson<unknown>(ctx, `https://${slug}.pinpointhq.com/postings.json`, INLINE_DESCRIPTIONS_FETCH);
   const list = Array.isArray(rec(data)?.data) ? (rec(data)!.data as Array<Record<string, unknown>>) : Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
   const out: RawPosting[] = [];
@@ -42,12 +34,4 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   return out.slice(0, MAX_POSTINGS);
 }
 
-export const pinpoint: Adapter = {
-  type: "pinpoint",
-  specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? pinpointSpec(slug) : null;
-  },
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))(),
-};
+export const pinpoint = feedAdapter({ type: "pinpoint", fromUrl: (url) => specOrNull(subdomainSlug(url, "pinpointhq.com"), pinpointSpec), read: fetchPostings });

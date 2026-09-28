@@ -1,4 +1,4 @@
-import { IncompleteListingError, SourceFetchError, type FetchContext, type FetchResponse, type RawPosting, type VerifyResult } from "../types";
+import { IncompleteListingError, SourceFetchError, type Adapter, type FetchContext, type FetchResponse, type RawPosting, type SourceSpec, type SourceType, type VerifyResult } from "../types";
 import { stripHtml } from "../normalize";
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
@@ -21,6 +21,39 @@ export function safeUrl(input: string): URL | null {
 
 export function pathSegments(u: URL): string[] {
   return u.pathname.split("/").filter(Boolean);
+}
+
+/**
+ * The board slug a vendor subdomain names: `acme` from `acme.breezy.hr` for the suffix `breezy.hr`.
+ * `reserved` lists the vendor's own subdomains, which are never a board.
+ */
+export function subdomainSlug(url: string, suffix: string, reserved: readonly string[] = []): string | null {
+  const host = safeUrl(url)?.hostname.toLowerCase();
+  if (!host?.endsWith(`.${suffix}`)) return null;
+  const label = host.slice(0, -suffix.length - 1);
+  return /^[a-z0-9][a-z0-9-]*$/.test(label) && slugOk(label) && !reserved.includes(label) ? label : null;
+}
+
+/** The spec a parsed URL builds, or null when the URL named no board. */
+export function specOrNull<T>(parsed: T | null, build: (parsed: T) => SourceSpec): SourceSpec | null {
+  return parsed ? build(parsed) : null;
+}
+
+/** The slug an ATS spec is keyed by; a spec without one is a programming error, not a fetch failure. */
+export function requireSlug(spec: SourceSpec): string {
+  if (!spec.atsSlug) throw new Error(`${spec.type} spec missing slug`);
+  return spec.atsSlug;
+}
+
+/** Map a feed's items to postings, dropping the ones that are not roles, capped at `MAX_POSTINGS`. */
+export function mapPostings<T>(items: readonly T[], map: (item: T) => RawPosting | null): RawPosting[] {
+  return items.map((item) => map(item)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
+}
+
+/** Every location a role lists, primary first and without repeats; undefined unless there are several. */
+export function extraLocations(primary: string | undefined, others: readonly string[]): string[] | undefined {
+  const locations = [...new Set([...(primary ? [primary] : []), ...others])];
+  return locations.length > 1 ? locations : undefined;
 }
 
 export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, init?: { maxBodyBytes?: number; timeoutMs?: number; method?: "GET" | "POST"; body?: unknown; headers?: Record<string, string> }): Promise<{ data: T; res: FetchResponse }> {
@@ -151,9 +184,33 @@ export function verifyFromRead(read: () => Promise<ListingRead>, companyName?: (
   };
 }
 
-/** `verifyFromRead` for a feed that is a single request. */
-export function verifyFromFetch(fetchPostings: () => Promise<RawPosting[]>, companyName?: () => Promise<string | undefined>) {
-  return verifyFromRead(async () => ({ postings: await fetchPostings() }), companyName);
+/** Reads a listing, as far as `maxPages` pages when it pages at all (single-request feeds ignore it). */
+export type Reader = (spec: SourceSpec, ctx: FetchContext, maxPages?: number) => Promise<RawPosting[]>;
+
+/**
+ * An adapter for a feed. The scan reads the whole listing; verification reads one page, through
+ * `verifyRead` when the feed reports a total and otherwise through `read` with a one-page budget.
+ */
+export function feedAdapter(o: {
+  type: SourceType;
+  fromUrl: (url: string) => SourceSpec | null;
+  read: Reader;
+  verifyRead?: (spec: SourceSpec, ctx: FetchContext) => Promise<ListingRead>;
+  companyName?: (spec: SourceSpec, ctx: FetchContext) => Promise<string | undefined>;
+  descriptionsPerPosting?: boolean;
+}): Adapter {
+  const { read, verifyRead, companyName } = o;
+  return {
+    type: o.type,
+    ...(o.descriptionsPerPosting ? { descriptionsPerPosting: true } : {}),
+    specFromUrl: o.fromUrl,
+    fetchPostings: (spec, ctx) => read(spec, ctx),
+    verify: (spec, ctx) =>
+      verifyFromRead(
+        verifyRead ? () => verifyRead(spec, ctx) : async () => ({ postings: await read(spec, ctx, 1) }),
+        companyName ? () => companyName(spec, ctx) : undefined,
+      )(),
+  };
 }
 
 /**

@@ -1,7 +1,7 @@
 /** VERIFY: the /wday/cxs endpoint is undocumented but stable across tenants; shapes confirmed against fixtures. */
-import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
+import { IncompleteListingError, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseRelativePosted } from "../normalize";
-import { fetchJson, pathSegments, safeUrl, str, verifyFromRead, MAX_POSTINGS, type ListingRead } from "./common";
+import { feedAdapter, fetchJson, pathSegments, safeUrl, str, MAX_POSTINGS, type ListingRead } from "./common";
 
 const HOST_RE = /^([a-z0-9][a-z0-9-]*)\.(wd\d+)\.myworkdayjobs\.com$/;
 const LOCALE_RE = /^[a-z]{2}(-[A-Za-z]{2})?$/;
@@ -106,9 +106,4 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   return postings;
 }
 
-export const workday: Adapter = {
-  type: "workday",
-  specFromUrl: fromUrl,
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromRead(() => readPages(spec, ctx, 1))(),
-};
+export const workday = feedAdapter({ type: "workday", fromUrl, read: fetchPostings, verifyRead: (spec, ctx) => readPages(spec, ctx, 1) });

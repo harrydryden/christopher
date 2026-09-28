@@ -1,6 +1,6 @@
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, pathSegments, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
+import { extraLocations, feedAdapter, fetchJson, htmlToText, mapPostings, pathSegments, requireSlug, safeUrl, slugOk, specOrNull, str, INLINE_DESCRIPTIONS_FETCH } from "./common";
 
 export function leverSpec(slug: string, eu = false): SourceSpec {
   const api = eu ? "https://api.eu.lever.co/v0/postings" : "https://api.lever.co/v0/postings";
@@ -63,7 +63,6 @@ function mapPosting(p: LeverPosting): RawPosting | null {
   if (!title || !url) return null;
   const location = str(p.categories?.location);
   const all = (p.categories?.allLocations ?? []).map((l) => str(l)).filter((s): s is string => !!s);
-  const locations = [...new Set([...(location ? [location] : []), ...all])];
   const remote = p.workplaceType === "remote" ? true : /remote/i.test(location ?? "") ? true : undefined;
   const sr = p.salaryRange;
   const salaryText = sr && (sr.min || sr.max) ? `${sr.currency ?? ""} ${sr.min ?? ""}${sr.max ? ` - ${sr.max}` : ""}${sr.interval ? ` ${sr.interval}` : ""}`.trim() : undefined;
@@ -72,7 +71,7 @@ function mapPosting(p: LeverPosting): RawPosting | null {
     title,
     url,
     location,
-    locations: locations.length > 1 ? locations : undefined,
+    locations: extraLocations(location, all),
     department: [str(p.categories?.department), str(p.categories?.team)].filter(Boolean).join(" / ") || undefined,
     employmentType: str(p.categories?.commitment),
     remote,
@@ -84,19 +83,11 @@ function mapPosting(p: LeverPosting): RawPosting | null {
 }
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  if (!spec.atsSlug) throw new Error("lever spec missing slug");
-  const api = spec.apiUrl ?? leverSpec(spec.atsSlug, spec.atsSite === "eu").apiUrl!;
+  const slug = requireSlug(spec);
+  const api = spec.apiUrl ?? leverSpec(slug, spec.atsSite === "eu").apiUrl!;
   const { data } = await fetchJson<LeverPosting[] | { data?: LeverPosting[] }>(ctx, api, INLINE_DESCRIPTIONS_FETCH);
   const list = Array.isArray(data) ? data : Array.isArray((data as { data?: LeverPosting[] }).data) ? (data as { data: LeverPosting[] }).data : [];
-  return list.map(mapPosting).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
+  return mapPostings(list, mapPosting);
 }
 
-export const lever: Adapter = {
-  type: "lever",
-  specFromUrl(url) {
-    const r = parse(url);
-    return r ? leverSpec(r.slug, r.eu) : null;
-  },
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))(),
-};
+export const lever = feedAdapter({ type: "lever", fromUrl: (url) => specOrNull(parse(url), (r) => leverSpec(r.slug, r.eu)), read: fetchPostings });

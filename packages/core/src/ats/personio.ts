@@ -1,8 +1,8 @@
 import { XMLParser } from "fast-xml-parser";
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { SourceFetchError } from "../types";
 import { parseDate } from "../normalize";
-import { asArray, htmlToText, joinLocation, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
+import { asArray, feedAdapter, htmlToText, joinLocation, mapPostings, safeUrl, slugOk, str, INLINE_DESCRIPTIONS_FETCH } from "./common";
 
 /**
  * The feed answers in the tenant's default language unless asked otherwise, and for a Personio
@@ -80,12 +80,7 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   }
   const root = (parsed as { "workzag-jobs"?: { position?: PersonioPosition[] } })["workzag-jobs"];
   const positions = asArray(root?.position);
-  return positions.map((p) => mapPosition(p, host)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
+  return mapPostings(positions, (p) => mapPosition(p, host));
 }
 
-export const personio: Adapter = {
-  type: "personio",
-  specFromUrl: fromUrl,
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))(),
-};
+export const personio = feedAdapter({ type: "personio", fromUrl, read: fetchPostings });

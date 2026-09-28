@@ -1,7 +1,7 @@
 /** VERIFY: apply.workable.com/api/v3 is undocumented; www.workable.com/api/accounts is the legacy widget feed. */
-import { IncompleteListingError, SourceFetchError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
+import { IncompleteListingError, SourceFetchError, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
+import { extraLocations, feedAdapter, fetchJson, htmlToText, joinLocation, mapPostings, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
 
 export function workableSpec(slug: string): SourceSpec {
   return { type: "workable", url: `https://apply.workable.com/${slug}/`, apiUrl: `https://apply.workable.com/api/v3/accounts/${slug}/jobs`, atsSlug: slug };
@@ -21,9 +21,7 @@ function slugFromUrl(url: string): string | null {
     return slugOk(segs[0]) ? segs[0] : null;
   }
   if (host === "www.workable.com" && segs[0] === "api" && segs[1] === "accounts") return slugOk(segs[2]) ? segs[2] : null;
-  const m = host.match(/^([a-z0-9][a-z0-9-]*)\.workable\.com$/);
-  if (m && m[1] !== "www" && m[1] !== "apply" && slugOk(m[1])) return m[1]!;
-  return null;
+  return subdomainSlug(url, "workable.com", ["www", "apply"]);
 }
 
 interface WkJob {
@@ -61,14 +59,13 @@ function mapJob(j: WkJob, slug: string): RawPosting | null {
   if (!title || !url) return null;
   const primary = locOf(j.location) ?? joinLocation(j.city, j.state, j.country);
   const others = (j.locations ?? []).map(locOf).filter((s): s is string => !!s);
-  const locations = [...new Set([...(primary ? [primary] : []), ...others])];
   const department = Array.isArray(j.department) ? j.department.filter(Boolean).join(" / ") : str(j.department);
   return {
     externalId: shortcode ?? str(j.id) ?? str(j.code),
     title,
     url,
     location: primary ?? (j.remote || j.telecommuting ? "Remote" : undefined),
-    locations: locations.length > 1 ? locations : undefined,
+    locations: extraLocations(primary, others),
     department: department || undefined,
     employmentType: str(j.type) ?? str(j.employment_type),
     remote: j.remote === true || j.telecommuting === true || j.workplace === "remote" ? true : undefined,
@@ -92,8 +89,7 @@ function boardAbsent(err: unknown): boolean {
  * the same way and a role it spells differently would register a miss.
  */
 async function readListing(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { more?: string }> {
-  const slug = spec.atsSlug;
-  if (!slug) throw new Error("workable spec missing slug");
+  const slug = requireSlug(spec);
   const out: RawPosting[] = [];
   let token: string | undefined;
   let total: number | undefined;
@@ -129,7 +125,7 @@ async function readListing(spec: SourceSpec, ctx: FetchContext, maxPages: number
   const { data } = await fetchJson<unknown>(ctx, `https://www.workable.com/api/accounts/${slug}?details=true`, INLINE_DESCRIPTIONS_FETCH);
   const jobs = rec(data)?.jobs;
   const list = Array.isArray(jobs) ? (jobs as WkJob[]) : [];
-  return { postings: list.map((j) => mapJob(j, slug)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS) };
+  return { postings: mapPostings(list, (j) => mapJob(j, slug)) };
 }
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
@@ -143,12 +139,10 @@ async function companyName(spec: SourceSpec, ctx: FetchContext): Promise<string 
   return str(rec(data)?.name);
 }
 
-export const workable: Adapter = {
+export const workable = feedAdapter({
   type: "workable",
-  specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? workableSpec(slug) : null;
-  },
-  fetchPostings,
-  verify: (spec, ctx) => verifyFromRead(() => readListing(spec, ctx, 1), () => companyName(spec, ctx))(),
-};
+  fromUrl: (url) => specOrNull(slugFromUrl(url), workableSpec),
+  read: fetchPostings,
+  verifyRead: (spec, ctx) => readListing(spec, ctx, 1),
+  companyName,
+});

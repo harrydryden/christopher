@@ -1499,13 +1499,15 @@ export class AiEngine {
   async cleanDescription(
     input: { title: string; rawText: string },
     ref: Ref = {},
-  ): Promise<{ descriptionText: string; salaryText?: string; employmentType?: string; remote?: boolean } | null> {
+  ): Promise<{ startsWith: string; endsWith: string; salaryText?: string; employmentType?: string; remote?: boolean } | null> {
     const result = await this.run<S.DescriptionOutput>(PROMPTS.A4, {
       user: `Role: ${input.title}\n\n${P.wrap("page_content", P.truncate(input.rawText, 40_000))}`,
     }, ref);
     if (!result) return null;
+    // Anchors, not text: the caller slices the page between them (and keeps nothing it cannot find).
     return {
-      descriptionText: result.descriptionText.trim().slice(0, 30_000),
+      startsWith: result.startsWith.trim(),
+      endsWith: result.endsWith.trim(),
       salaryText: result.salaryText?.trim() || undefined,
       employmentType: result.employmentType?.trim() || undefined,
       remote: result.remote ?? undefined,

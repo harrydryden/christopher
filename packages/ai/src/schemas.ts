@@ -41,8 +41,13 @@ export const ExtractPostingsSchema = z.object({
   confidence: z.number(),
 });
 
+/**
+ * A4 answers with where the description starts and ends on the page, not the description itself:
+ * the worker slices the page between the two, so the model never re-types a text it may only cut.
+ */
 export const DescriptionSchema = z.object({
-  descriptionText: z.string(),
+  startsWith: z.string().max(1000),
+  endsWith: z.string().max(1000),
   salaryText: z.string().nullable().optional(),
   employmentType: z.string().nullable().optional(),
   remote: z.boolean().nullable().optional(),

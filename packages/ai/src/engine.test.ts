@@ -93,6 +93,17 @@ function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
   return { engine, calls, usage };
 }
 
+describe("A4 description anchors", () => {
+  it("answers with where the description starts and ends, not the description, and asks for nothing more", async () => {
+    const { engine, calls } = engineWith({ startsWith: " Run our London site. ", endsWith: "Hybrid, three days a week.", salaryText: " ", remote: true });
+    expect(await engine.cleanDescription({ title: "Operations Lead", rawText: "Home. Run our London site. Hybrid, three days a week. Footer" }))
+      .toEqual({ startsWith: "Run our London site.", endsWith: "Hybrid, three days a week.", salaryText: undefined, employmentType: undefined, remote: true });
+    const schema = JSON.stringify((calls[0]!.params.output_config as { format: unknown }).format);
+    expect(schema).toContain("startsWith");
+    expect(schema).not.toContain("descriptionText");
+  });
+});
+
 describe("engine plumbing", () => {
   it("rejects truncated responses even when a partial result parses, preserving billed usage", async () => {
     const { engine, usage } = engineWith({ score: 90, verdict: "strong", rationale: "Fits", flags: [] }, {

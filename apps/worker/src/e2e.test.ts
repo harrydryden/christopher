@@ -21,7 +21,7 @@ import { handlers } from "./handlers";
 import { _scanSourceForTests, handleScanCompany } from "./handlers/scan";
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { handleScoreJob, handleTagReason } from "./handlers/learning";
-import { anchoredInPage, handleFetchDescription } from "./handlers/description";
+import { handleFetchDescription, sliceBetweenAnchors } from "./handlers/description";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
@@ -2143,7 +2143,7 @@ describe("a description arriving", () => {
     expect(queued.map(t => t.payload)).toEqual([{ userId: user.id, jobId: manager!.id }]);
   }, 60_000);
 
-  it("keeps a cleaned description only when the page says what it says", async () => {
+  it("keeps the page's own text between the model's anchors, and nothing when an anchor is not on the page", async () => {
     const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
     const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing", status: "active" }).returning();
     const page = "<html><body><nav>Home Careers</nav><main><h1>Operations Lead</h1><p>Run our London site.</p><p>Hybrid, three days a week.</p></main><footer>Cookies</footer></body></html>";
@@ -2152,15 +2152,17 @@ describe("a description arriving", () => {
     const faithful = await insertJob("/jobs/lead");
     const invented = await insertJob("/jobs/other");
     const cleanDescription = vi.fn()
-      .mockResolvedValueOnce({ descriptionText: "Run our London site.\nHybrid, three days a week.", remote: false })
-      .mockResolvedValueOnce({ descriptionText: "Run our London site. Robotics experts wanted, salary 200k.", salaryText: "200k" });
+      .mockResolvedValueOnce({ startsWith: "Run our London site.", endsWith: "Hybrid, three days a week.", remote: false })
+      .mockResolvedValueOnce({ startsWith: "Run our London site.", endsWith: "Robotics experts wanted, salary 200k.", salaryText: "200k" });
     const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, cleanDescription } } as unknown as WorkerDeps;
 
     await handleFetchDescription({ payload: { jobId: faithful.id } } as never, modelDeps);
     await handleFetchDescription({ payload: { jobId: invented.id } } as never, modelDeps);
     expect(cleanDescription).toHaveBeenCalledTimes(2);
     const [kept] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, faithful.id));
-    expect(kept).toMatchObject({ descriptionSource: "model", descriptionText: "Run our London site.\nHybrid, three days a week." });
+    expect(kept).toMatchObject({ descriptionSource: "model", remote: false });
+    // The page's words between the anchors — the heading before and the footer after left out.
+    expect(kept!.descriptionText!.replace(/\s+/g, " ")).toBe("Run our London site. Hybrid, three days a week.");
     // Refused: what the page's own reading gave is kept (here nothing), and none of the claims.
     const [refused] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, invented.id));
     expect(refused!.descriptionSource).not.toBe("model");
@@ -2169,14 +2171,21 @@ describe("a description arriving", () => {
     expect(refused!.descriptionFetchedAt).not.toBeNull();
   }, 60_000);
 
-  it("anchors a cleaned description sentence by sentence, whatever the spacing and punctuation", () => {
+  it("slices the page between two anchors, whatever the spacing, case and punctuation", () => {
     const raw = "Home | Careers\nOperations Lead — Run our London site!  Hybrid, three days a week. Apply now";
-    expect(anchoredInPage("Run our London site. Hybrid, three days a week.", raw)).toBe(true);
-    expect(anchoredInPage("Run our London site.\n\nHybrid three days a week", raw)).toBe(true);
-    expect(anchoredInPage("Run our London site. Lead the robotics lab.", raw)).toBe(false);
-    // A sentence must be whole words of the page, not a fragment inside a longer word.
-    expect(anchoredInPage("Ondon site", raw)).toBe(false);
-    expect(anchoredInPage("", raw)).toBe(false);
+    expect(sliceBetweenAnchors(raw, "Run our London site.", "Hybrid, three days a week.")).toBe("Run our London site!  Hybrid, three days a week.");
+    // The anchors as the model may type them: other punctuation, other case, other spacing.
+    expect(sliceBetweenAnchors(raw, "run our  LONDON site", "Hybrid three days a week")).toBe("Run our London site!  Hybrid, three days a week.");
+    // One sentence is both ends.
+    expect(sliceBetweenAnchors(raw, "Run our London site.", "Run our London site.")).toBe("Run our London site!");
+    // An anchor the page does not carry, or an end before the start: nothing.
+    expect(sliceBetweenAnchors(raw, "Run our London site.", "Lead the robotics lab.")).toBeNull();
+    expect(sliceBetweenAnchors(raw, "Hybrid, three days a week.", "Run our London site.")).toBeNull();
+    // An anchor must be whole words of the page, not a fragment inside a longer word.
+    expect(sliceBetweenAnchors(raw, "Ondon site", "Apply now")).toBeNull();
+    expect(sliceBetweenAnchors(raw, "", "Apply now")).toBeNull();
+    // Positions survive a character whose lower case is longer than itself.
+    expect(sliceBetweenAnchors("İstanbul office. Great team! Footer", "istanbul office", "great team")).toBe("İstanbul office. Great team!");
   });
 });
 

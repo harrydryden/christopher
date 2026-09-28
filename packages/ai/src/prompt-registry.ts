@@ -195,7 +195,7 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   A3: define({ id: "A3", callSite: "A3", system: P.A3_EXTRACT_POSTINGS, schema: S.ExtractPostingsSchema,
     route: { model: "callSite", effort: "low" }, maxTokens: 32_000, timeoutMs: 60_000, expectedOutputTokens: 2_000 }),
   A4: define({ id: "A4", callSite: "A4", system: P.A4_CLEAN_DESCRIPTION, schema: S.DescriptionSchema,
-    route: { model: "callSite", effort: "low" }, expectedOutputTokens: 1_500 }),
+    route: { model: "callSite", effort: "low" }, expectedOutputTokens: 150 }),
   // The account's own context is the stable block, cached ahead of the role being scored.
   A5: define({ id: "A5", callSite: "A5", system: P.A5_SCORE_JOB, schema: S.FitScoreSchema,
     route: { model: "callSite", effort: "low" }, maxTokens: 1024, cacheLayout: { system: "5m", stable: ["5m"] }, expectedOutputTokens: 200 }),

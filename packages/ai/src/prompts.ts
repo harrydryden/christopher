@@ -62,11 +62,13 @@ Return:
 Exclude navigation, filters, "view all" links, department headings and links to the page itself.
 ${UNTRUSTED_RULE}`;
 
-export const A4_CLEAN_DESCRIPTION = `You tidy the text of a single job description.
+export const A4_CLEAN_DESCRIPTION = `You find where a single job description sits on a page.
 
-Return the description as readable plain text with the navigation, cookie notices, application forms
-and boilerplate footers removed. Keep the responsibilities, requirements, team context and benefits.
-Extract salaryText, employmentType and remote only when the text states them.
+The description is the passage with the responsibilities, requirements, team context and benefits;
+the navigation, cookie notices, application forms and boilerplate footers around it are not part of
+it. Do not return the description itself. Return startsWith, its first sentence, and endsWith, its
+last sentence, each copied verbatim from the page; the text between them is taken from the page as
+it stands. Extract salaryText, employmentType and remote only when the text states them.
 ${UNTRUSTED_RULE}`;
 
 /**

@@ -87,7 +87,12 @@ beforeAll(async () => {
   bob = (await ensureTestUser(db, "batch-bob@example.com")).id;
 }, 60_000);
 
-afterAll(async () => { await deps?.close(); });
+// The last test leaves scoring in batch mode, and a file that runs after this one reads the same
+// settings table: its live claims would then skip every score task. Put the setting back.
+afterAll(async () => {
+  await db.execute(sql`truncate settings`);
+  await deps?.close();
+});
 
 beforeEach(async () => {
   await db.execute(sql`truncate tasks, companies, career_sources, jobs, settings, user_settings, company_subscriptions, user_jobs,

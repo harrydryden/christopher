@@ -3,7 +3,8 @@ import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK
 import { and, eq, getTableColumns, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
-import { LeaseBusyError, LeaseLostError, type RunDeps } from "./lease";
+import { LeaseBusyError, LeaseLostError, withBoundedLocks, type RunDeps } from "./lease";
+import { settleWithin, startRenewal } from "./timers";
 import { log, withLogContext } from "./log";
 import { vitals } from "./vitals";
 
@@ -102,19 +103,6 @@ export const STOP_GRACE_MS = 15_000;
 
 /** The longest `stop()` waits on the database for each of the hand-back and the hold release. */
 export const HAND_BACK_TIMEOUT_MS = 4_000;
-
-/** Resolves once `work` settles or `ms` has passed, whichever is first; never rejects. */
-export async function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      work.then(() => undefined, () => undefined),
-      new Promise<void>(resolve => { timer = setTimeout(resolve, ms); timer.unref?.(); }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 export interface QueueOptions {
   /** The general slots: scans, discovery, imports, scoring. A memory budget (`WORKER_CONCURRENCY`). */
@@ -314,9 +302,7 @@ function isLockTimeout(err: unknown): boolean {
  */
 export async function renewTask(db: Db, task: Task): Promise<boolean | null> {
   try {
-    return await db.transaction(async tx => {
-      await tx.execute(sql`set local lock_timeout = '2s'`);
-      await tx.execute(sql`set local statement_timeout = '5s'`);
+    return await withBoundedLocks(db, async tx => {
       // Named, as the claim is: one Parse per connection for a statement every run sends each beat.
       const rows = await tx.update(schema.tasks).set({ lockedAt: sql`${sql.placeholder("lockedAt")}` })
         .where(and(eq(schema.tasks.id, sql.placeholder("id")), eq(schema.tasks.status, "running"),
@@ -1008,12 +994,11 @@ export class TaskQueue {
     this.controllers.set(task.id, stop);
     /** Stopped because this worker is shutting down: the task goes back, whatever the run did. */
     const handedBack = () => stop.signal.reason instanceof ShutdownError;
-    let renewing = false;
     const heartbeatMs = this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3));
-    const heartbeat = setInterval(() => {
-      if (renewing) return;
-      renewing = true;
-      const renewal = renewTask(this.deps.db, task).then(renewed => {
+    const heartbeat = startRenewal({
+      everyMs: heartbeatMs,
+      timeoutMs: Math.min(heartbeatMs, HEARTBEAT_TIMEOUT_MS),
+      renew: () => renewTask(this.deps.db, task).then(renewed => {
         // Blocked behind a write transaction on the row, most often this run's own: try again.
         if (renewed === null) { log.debug("task heartbeat waited on the row lock", { id: task.id, type: task.type }); return; }
         // The task is someone else's now: this run's writes are stale and it must not spend more.
@@ -1021,15 +1006,9 @@ export class TaskQueue {
           log.warn("task heartbeat lost the task", { id: task.id, type: task.type });
           stop.abort(new LeaseLostError("Task lease lost; another worker holds it"));
         }
-      }).catch(err => log.warn("task heartbeat failed", err));
-      // A renewal that never settles used to latch the heartbeat off for good, so the task went
-      // stale in five minutes and a second attempt ran alongside this one. One hung renewal now
-      // costs one beat: the latch clears on a timeout and the next beat issues a fresh renewal.
-      void Promise.race([renewal, heartbeatTimeout(Math.min(heartbeatMs, HEARTBEAT_TIMEOUT_MS), () =>
-        log.warn("task heartbeat timed out", { id: task.id, type: task.type }))])
-        .finally(() => { renewing = false; });
-    }, heartbeatMs);
-    heartbeat.unref();
+      }).catch(err => log.warn("task heartbeat failed", err)),
+      onTimeout: () => log.warn("task heartbeat timed out", { id: task.id, type: task.type }),
+    });
     const before = vitals();
     try {
       if (!handler) throw new Error(`no handler for task type ${task.type}`);
@@ -1109,7 +1088,7 @@ export class TaskQueue {
         await runAbandonHook(task, (err as Error).message, { deps: this.deps, onAbandon: this.opts.onAbandon });
       }
     } finally {
-      clearInterval(heartbeat);
+      heartbeat.stop();
       this.running.delete(task.id);
       this.controllers.delete(task.id);
       this.active--;
@@ -1134,11 +1113,3 @@ export function sleep(ms: number): Promise<void> {
 
 /** The longest one heartbeat renewal may take before the next beat is allowed to try again. */
 const HEARTBEAT_TIMEOUT_MS = 10_000;
-
-/** Resolves after `ms`, saying so once, without holding the process open. */
-function heartbeatTimeout(ms: number, onTimeout: () => void): Promise<void> {
-  return new Promise<void>(resolve => {
-    const timer = setTimeout(() => { onTimeout(); resolve(); }, ms);
-    timer.unref?.();
-  });
-}

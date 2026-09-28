@@ -4,6 +4,7 @@ import type { Db } from "@ava/db";
 import type { InterruptedError } from "@ava/core/cv-build-failure";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
+import { startRenewal } from "./timers";
 
 /**
  * Someone else is already doing this. The name reaches the task row, where `failTask` writes
@@ -58,9 +59,17 @@ export interface ResourceLeaseOptions {
  */
 export type RunDeps = WorkerDeps & { signal?: AbortSignal };
 
-/** Resolves after `ms` without holding the process open. */
-function after(ms: number): Promise<void> {
-  return new Promise(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
+/**
+ * A transaction that gives up rather than queue: a lock not granted in two seconds, or a statement
+ * not done in five, fails it and frees its pooled connection. For renewals, whose row a write
+ * transaction (often the run's own fence) can hold `for update` for as long as it runs.
+ */
+export function withBoundedLocks<T>(db: Db, work: (tx: Parameters<Parameters<Db["transaction"]>[0]>[0]) => Promise<T>): Promise<T> {
+  return db.transaction(async tx => {
+    await tx.execute(sql`set local lock_timeout = '2s'`);
+    await tx.execute(sql`set local statement_timeout = '5s'`);
+    return work(tx);
+  });
 }
 
 /**
@@ -86,36 +95,24 @@ export async function withResourceLease<T>(
     where resource_leases.expires_at < now() returning key`);
   if (!claimed.rows.length) throw new LeaseBusyError(options.busyMessage ?? `Operation already running: ${key}`);
   const renewEveryMs = options.renewEveryMs ?? deps.leaseRenewEveryMs ?? LEASE_RENEWAL_MS;
-  let renewal: Promise<unknown> = Promise.resolve();
-  let renewing = false;
-  // Bounded like the task heartbeat: the fence holds this row `for update` for the length of a
-  // write transaction, and a renewal queued behind it would hold a pooled connection all the while.
-  // One that gives up on the lock leaves the lease as it is, and the next tick tries again.
+  // Bounded like the task heartbeat: one renewal that gives up on the lock leaves the lease as it
+  // is, and the next tick tries again.
   const renewOnce = async () => {
-    const rows = await deps.db.transaction(async tx => {
-      await tx.execute(sql`set local lock_timeout = '2s'`);
-      await tx.execute(sql`set local statement_timeout = '5s'`);
-      return tx.execute(sql`update resource_leases set expires_at = now() + interval '5 minutes'
-        where key = ${key} and owner = ${owner} returning key`);
-    });
+    const rows = await withBoundedLocks(deps.db, tx => tx.execute(sql`update resource_leases set expires_at = now() + interval '5 minutes'
+      where key = ${key} and owner = ${owner} returning key`));
     if (rows.rows.length || signal?.aborted) return;
     log.warn("operation lease lost", { key });
     options.onLost?.(new LeaseLostError(`Operation lease lost; refusing stale writes: ${key}`));
   };
-  const timer = setInterval(() => {
+  const renewal = startRenewal({
+    everyMs: renewEveryMs,
+    timeoutMs: Math.min(renewEveryMs, LEASE_RENEWAL_TIMEOUT_MS),
     // Inside a transaction that is never committed the lease is this transaction's own, and ends
     // with it; a renewal there would only leave `set local` timeouts on the rest of it.
-    if (renewing || signal?.aborted || deps.inTransaction) return;
-    renewing = true;
-    // A renewal that never settles used to latch renewal off for good: the lease then expired
-    // under work that was still running, another worker claimed it, and two processes wrote for
-    // the same thing. The latch is timed, so one hung query costs one renewal rather than all of
-    // them, and the query itself is left to settle in its own time.
-    renewal = renewOnce().catch(error => log.warn("operation lease renewal failed", { key, error: (error as Error).message }));
-    void Promise.race([renewal, after(Math.min(renewEveryMs, LEASE_RENEWAL_TIMEOUT_MS))]).finally(() => { renewing = false; });
-  }, renewEveryMs);
-  timer.unref();
-  const stopRenewing = () => clearInterval(timer);
+    skip: () => !!signal?.aborted || !!deps.inTransaction,
+    renew: () => renewOnce().catch(error => log.warn("operation lease renewal failed", { key, error: (error as Error).message })),
+  });
+  const stopRenewing = () => renewal.stop();
   signal?.addEventListener("abort", stopRenewing, { once: true });
   try {
     return await work({ ...deps, assertOwnership: async (db: Db) => {
@@ -126,8 +123,8 @@ export async function withResourceLease<T>(
     } });
   } finally {
     signal?.removeEventListener("abort", stopRenewing);
-    clearInterval(timer);
-    await renewal.catch(() => undefined);
+    renewal.stop();
+    await renewal.settled();
     await deps.db.execute(sql`delete from resource_leases where key = ${key} and owner = ${owner}`);
   }
 }

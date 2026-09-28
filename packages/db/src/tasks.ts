@@ -106,8 +106,13 @@ async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean)
         // `tasks_dedupe_queued_uidx`: the one task per key that is queued and has never started.
         target: tasks.dedupeKey,
         targetWhere: sql`${tasks.status} = 'queued' and ${tasks.startedAt} is null and ${tasks.type} <> 'generate_cv' and ${tasks.dedupeKey} is not null`,
-        set: { priority: sql`least(${tasks.priority}, excluded.priority)`, runAfter: sql`least(${tasks.runAfter}, excluded.run_after)` },
-        setWhere: sql`${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after`,
+        // A promoted score is one somebody now waits on, so it stops being background work.
+        set: {
+          priority: sql`least(${tasks.priority}, excluded.priority)`, runAfter: sql`least(${tasks.runAfter}, excluded.run_after)`,
+          payload: sql`case when excluded.payload ? 'background' then ${tasks.payload} else ${tasks.payload} - 'background' end`,
+        },
+        setWhere: sql`${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after
+          or (${tasks.payload} ? 'background' and not excluded.payload ? 'background')`,
       })
       .returning({ id: tasks.id, inserted: sql<boolean>`(xmax = 0)` });
     ids.push(...upserted.filter(row => row.inserted).map(row => row.id));
@@ -166,20 +171,22 @@ export async function enqueueTasks(db: TaskWriter, rows: EnqueueRow[], chunkSize
  * Queue a score for each (account, role) and say so on the account's view, so the table reads
  * "scoring" rather than a blank it cannot tell from "not scored: budget spent". Through
  * `enqueueTasks`, so a listening worker is woken rather than left to its idle poll. A pair's
- * `priority` replaces the ordinary one; `promote` brings a waiting score up to it. Returns how
- * many tasks were inserted.
+ * `priority` replaces the ordinary one; `promote` brings a waiting score up to it. `background`
+ * marks the tasks for the batch collector (a rescore pass nobody waits on). Returns how many tasks
+ * were inserted.
  */
 export async function queueScoring(
   db: TaskWriter,
   pairs: ReadonlyArray<{ userId: string; jobId: string; priority?: number }>,
   now: Date,
-  opts: { promote?: boolean } = {},
+  opts: { promote?: boolean; background?: boolean } = {},
 ): Promise<number> {
   let queued = 0;
   for (let offset = 0; offset < pairs.length; offset += 250) {
     const batch = pairs.slice(offset, offset + 250);
     queued += await enqueueTasks(db, batch.map(({ userId, jobId, priority }) =>
-      taskRow("score_job", { userId, jobId }, priority === undefined ? {} : { priority })), 250, opts.promote);
+      taskRow("score_job", opts.background ? { userId, jobId, background: true } : { userId, jobId },
+        priority === undefined ? {} : { priority })), 250, opts.promote);
     await db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${now}
       from jsonb_to_recordset(${JSON.stringify(batch.map(({ userId, jobId }) => ({ userId, jobId })))}::jsonb) as v("userId" uuid, "jobId" uuid)
       where uj.user_id = v."userId" and uj.job_id = v."jobId"`);

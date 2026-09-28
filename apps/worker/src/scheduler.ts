@@ -101,13 +101,18 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
 
   // Batch scoring: every `scoringBatchMinutes`, one collection of the roles waiting to be scored,
   // claimed across the deployment so two workers and the cron fallback make one batch, not three.
+  // With scoring live the collection still runs for a rescore pass's roles (marked `background`),
+  // and only when one is waiting.
   if (stopped()) return;
-  if (settings.scoringMode === "batch") {
-    // A few seconds short of the interval, so a tick that lands just early does not skip a turn.
-    await claimPeriodic(deps, "lastScoreBatchCollect", Math.max(30, settings.scoringBatchMinutes * 60 - 5), async () => {
-      await enqueueStandard(deps.db, "collect_score_batch", { reason: "schedule" });
-    });
-  }
+  // A few seconds short of the interval, so a tick that lands just early does not skip a turn.
+  await claimPeriodic(deps, "lastScoreBatchCollect", Math.max(30, settings.scoringBatchMinutes * 60 - 5), async () => {
+    if (settings.scoringMode !== "batch") {
+      const waiting = await deps.db.execute(sql`select 1 from tasks where type = 'score_job' and status = 'queued'
+        and payload->>'background' = 'true' and coalesce(payload->>'live', '') <> 'true' limit 1`);
+      if (!waiting.rows.length) return;
+    }
+    await enqueueStandard(deps.db, "collect_score_batch", { reason: "schedule" });
+  });
 
   if (stopped()) return;
   await finaliseScanRuns(deps);

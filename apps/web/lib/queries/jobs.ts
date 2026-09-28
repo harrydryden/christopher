@@ -326,6 +326,9 @@ export function scoreStateText(
     // not worth a model call. Widening the gate or shortlisting it queues one.
     case "ineligible":
       return "not scored: outside your filters";
+    // Skipped or archived: no score has a reader. Undoing the skip queues one.
+    case "decided":
+      return "not scored: skipped or archived";
     default:
       return "not scored yet";
   }

@@ -201,6 +201,42 @@ it("marks a view queued in the statement that queues its score, from the gate an
   expect((await viewOf(job.id)).scoreState).toBe("queued");
 });
 
+it("leaves skipped and archived roles out of a rescore pass, and marks its roles background", async () => {
+  await setGate({});
+  const { company, source, job: undecided } = await seedRole();
+  const more = await db.insert(schema.jobs).values(["id:2", "id:3", "id:4"].map((externalKey, n) => ({
+    companyId: company.id, sourceId: source.id, externalKey, title: `Operations Lead ${n}`,
+    normalizedTitle: `operations lead ${n}`, url: `https://acme.test/jobs/${n + 2}`, location: "London", locations: ["London"],
+  }))).returning();
+  const [skipped, archived, shortlisted] = more as [typeof undecided, typeof undecided, typeof undecided];
+  await db.insert(schema.userJobs).values([skipped, archived, shortlisted].map(job => ({
+    userId, jobId: job.id, keywordMatched: true, keywordTerms: ["operations"], inTable: true, createdAt: now, updatedAt: now,
+    archivedAt: job.id === archived.id ? now : null,
+  })));
+  await db.insert(schema.decisions).values([
+    { userId, jobId: skipped.id, decision: "skip", reason: "", jobTitle: skipped.title, companyName: "Acme" },
+    // A skip since undone does not count.
+    { userId, jobId: shortlisted.id, decision: "skip", reason: "", jobTitle: shortlisted.title, companyName: "Acme", superseded: true },
+    { userId, jobId: shortlisted.id, decision: "apply", reason: "", jobTitle: shortlisted.title, companyName: "Acme" },
+  ]);
+
+  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toMatchObject({ queued: 2 });
+  const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+  expect(Object.fromEntries(queued.map(row => [(row.payload as { jobId: string }).jobId, row.payload]))).toEqual({
+    // Nobody waits on the undecided role's new score: the batch collector takes it.
+    [undecided.id]: { userId, jobId: undecided.id, background: true },
+    // A shortlisted role's score is one the person waits on: live.
+    [shortlisted.id]: { userId, jobId: shortlisted.id },
+  });
+
+  // A score already queued for a skipped role (from before the skip) is not asked for either.
+  const scoreJob = vi.fn();
+  expect(await handleScoreJob(task({ userId, jobId: skipped.id }), aiDeps({ scoreJob }))).toEqual({ skipped: "role is skipped or archived" });
+  expect(await handleScoreJob(task({ userId, jobId: archived.id }), aiDeps({ scoreJob }))).toEqual({ skipped: "role is skipped or archived" });
+  expect(scoreJob).not.toHaveBeenCalled();
+  expect(await viewOf(skipped.id)).toMatchObject({ scoreState: "decided" });
+});
+
 // --- 6.2: outcomes reach the preference profile --------------------------------------------
 
 it("gives the profile synthesis the outcomes its applications reached, apart from the decisions", async () => {

@@ -7,7 +7,7 @@
  * one that ended with every kind of result, and one that could not be sent are all reachable.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { aiUsageByAccount, costPerScoredRole, createDb, enqueueTask, schema, totalAiSpend, type Db, type Task } from "@ava/db";
+import { aiUsageByAccount, costPerScoredRole, createDb, enqueueTask, queueScoring, schema, totalAiSpend, type Db, type Task } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { parseScoreBatchCustomId, type ScoreBatchRecord } from "@ava/core";
 import {
@@ -238,7 +238,8 @@ describe("the mode switch", () => {
     await setMode("live");
     const role = await seedRole(alice);
     await queueScore(alice, role.id);
-    expect(await handleCollectScoreBatch(await collectorTask(), deps)).toEqual({ skipped: "scoring is live" });
+    // With nothing marked background there is nothing for it to take.
+    expect(await handleCollectScoreBatch(await collectorTask(), deps)).toEqual({ collected: 0 });
     await schedulerTick(deps);
     expect(await tasksOf("collect_score_batch")).toHaveLength(1); // only the one this test queued
     const queue = new TaskQueue(deps, { score_job: handleScoreJob }, { concurrency: 1, workerId: "live-test" });
@@ -258,6 +259,46 @@ describe("the mode switch", () => {
     expect((await viewOf(alice, handedBack.id)).fitScore).toBe(64);
     expect((await viewOf(alice, waiting.id)).fitScore).toBeNull();
     expect((await tasksOf("score_job")).find(task => (task.payload as { jobId: string }).jobId === waiting.id)!.status).toBe("queued");
+  });
+
+  it("in live mode batches only a rescore pass's roles, and the queue scores the rest at once", async () => {
+    await setMode("live");
+    const [fresh, rescored, handedBack] = [await seedRole(alice), await seedRole(alice), await seedRole(bob)];
+    await queueScore(alice, fresh.id);
+    await enqueueTask(db, "score_job", { userId: alice, jobId: rescored.id, background: true }, { dedupeKey: `score_job:${alice}:${rescored.id}`, priority: 4 });
+    await enqueueTask(db, "score_job", { userId: bob, jobId: handedBack.id, background: true, live: true }, { dedupeKey: `score_job:${bob}:${handedBack.id}`, priority: 4 });
+
+    // The scheduler queues a collection because a background role is waiting.
+    await schedulerTick(deps);
+    expect(await tasksOf("collect_score_batch")).toHaveLength(1);
+    // Claimed as a slot would, but by type: at the same priority the queue could take a score first.
+    const [collector] = await db.update(schema.tasks).set({ status: "running", lockedBy: "collector-test#0", lockedAt: new Date(), attempts: 1 })
+      .where(eq(schema.tasks.type, "collect_score_batch")).returning() as [Task];
+    expect(await handleCollectScoreBatch(collector, deps)).toMatchObject({ collected: 1, batched: 1 });
+    expect(provider.sent[0]!.params.requests.map(item => parseScoreBatchCustomId(item.custom_id)?.jobId)).toEqual([rescored.id]);
+
+    // The queue takes the new role and the handed-back one live, and leaves nothing else behind.
+    const queue = new TaskQueue(deps, { score_job: handleScoreJob }, { concurrency: 1, workerId: "live-mixed" });
+    expect(await queue.drain()).toBe(2);
+    expect(provider.live).toHaveLength(2);
+    expect((await viewOf(alice, fresh.id)).fitScore).toBe(64);
+    expect((await viewOf(bob, handedBack.id)).fitScore).toBe(64);
+  });
+
+  it("promotes a background score someone now waits on out of the collector's hands", async () => {
+    await setMode("live");
+    const role = await seedRole(alice);
+    await enqueueTask(db, "score_job", { userId: alice, jobId: role.id, background: true }, { dedupeKey: `score_job:${alice}:${role.id}`, priority: 4 });
+    await queueScoring(db, [{ userId: alice, jobId: role.id, priority: 1 }], now, { promote: true });
+    const [task] = await tasksOf("score_job");
+    expect(task).toMatchObject({ priority: 1, payload: { userId: alice, jobId: role.id } });
+  });
+
+  it("in live mode schedules no collection while no background role waits", async () => {
+    await setMode("live");
+    await queueScore(alice, (await seedRole(alice)).id);
+    await schedulerTick(deps);
+    expect(await tasksOf("collect_score_batch")).toHaveLength(0);
   });
 
   it("schedules one collection every interval, only in batch mode", async () => {

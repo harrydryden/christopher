@@ -7,12 +7,14 @@ import { aiProviderFailureSql } from "./ai-budget";
  * A queued task the queue would claim, as opposed to one it deliberately leaves waiting: in batch
  * scoring mode (`scoringMode: "batch"`) a queued `score_job` not marked `live` is the batch
  * collector's, gathered every `scoringBatchMinutes` (up to an hour), so it is not a backlog and must
- * not read as the "oldest ready task" the release gate fails on at fifteen minutes. The same
- * condition the claim adds in batch mode (apps/worker/src/queue.ts). For a statement over `tasks`
- * alone, whose columns it names unqualified.
+ * not read as the "oldest ready task" the release gate fails on at fifteen minutes. In live mode
+ * the same holds for a `score_job` marked `background` (a rescore pass). The same conditions the
+ * claim adds (apps/worker/src/queue.ts). For a statement over `tasks` alone, whose columns it
+ * names unqualified.
  */
 export const claimableTaskSql = sql`not (type = 'score_job' and coalesce(payload->>'live', '') <> 'true'
-  and exists (select 1 from settings where key = 'scoringMode' and value = '"batch"'::jsonb))`;
+  and (coalesce(payload->>'background', '') = 'true'
+    or exists (select 1 from settings where key = 'scoringMode' and value = '"batch"'::jsonb)))`;
 
 /**
  * The numbers behind `/status` and the Health panel, in one round trip.

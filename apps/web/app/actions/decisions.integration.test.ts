@@ -234,6 +234,17 @@ describe("what a decision revalidates", () => {
   });
 });
 
+describe("a reversed skip", () => {
+  it("queues the role's score again, since a skipped role is left out of scoring", async () => {
+    const job = await role(null);
+    const scores = async () => (await database.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).map(task => task.payload);
+    expect(await decide(job.id, "skip", "Too junior")).toEqual({ ok: true });
+    expect(await scores()).toEqual([]);
+    expect(await decide(job.id, null, "")).toEqual({ ok: true });
+    expect(await scores()).toEqual([{ userId: user.id, jobId: job.id }]);
+  });
+});
+
 describe("one decision writer", () => {
   /** What a decision left behind for one role, with its own ids written out of it. */
   async function leftBehind(jobId: string) {

@@ -9,7 +9,9 @@
  * needs. A row is scored against the type(s) the person tagged it with, using the checklist for
  * that type in `evidence-rubric.ts` — four marks worth a quarter each — so a Responsibilities row
  * is judged on what was owned, for whom, at what level and scale, and a Metrics moved row on the
- * figure, what it measures, how it moved and what moved it. A row with no type has no score.
+ * figure, what it measures, how it moved and what moved it. A row the person has not tagged is
+ * scored in its entry against the review's reading of it; one with no type either way has no
+ * score.
  *
  * Two things are deliberate. The score is computed here, from classifications, and never taken
  * from the model: `scoreLibraryRows` is the only place a number is produced, so a model cannot
@@ -73,8 +75,9 @@ export const LIBRARY_REVIEW_BATCH = 8;
  * can be one sentence and cover both.
  *
  * `tagged` is the person's own tags for the row when it was reviewed, and `marks` every mark in
- * the rubric the row's wording earns, for all six types. The row's own score is `marks` read
- * against `tagged` (`libraryRowScore`), so it follows the person's choice of type, not the model's.
+ * the rubric the row's wording earns, for all six types. The row's score is `marks` read against
+ * `tagged` (`libraryRowScore`), so it follows the person's choice of type, not the model's; only
+ * an untagged row is read against `facets` instead.
  */
 export interface LibraryRowReview {
   row: string;
@@ -142,12 +145,18 @@ const BY_WEIGHT = [...EVIDENCE_FACETS].sort(
 );
 
 /**
- * One row's own score: the marks it earns read against the types it is tagged with, a quarter a
- * mark and the mean across its types (`scoreRowAgainst`). Null when the row has no type, because a
- * row nobody has said the purpose of cannot be short of anything in particular. That holds even
- * when a model classified the row: the model's reading drives the entry's coverage and its
- * questions, but a row is scored against what the person says it is for. An unverified row — one
- * the review could not tie to the person's wording — earns no marks, so it scores 0 once typed.
+ * One row's score in its entry's aggregate: the marks it earns read against the types it is
+ * scored as, a quarter a mark and the mean across those types (`scoreRowAgainst`).
+ *
+ * The types are the person's tags when the row has any, and otherwise the review's own reading of
+ * the row (`facets`). The person's choice of type always wins; an untagged row the review
+ * classified is scored against that classification, so the entry's rating does not count as
+ * nothing a row whose types its coverage half already reads. For a rules review `facets` is the
+ * tags, so an untagged baseline row still has no types. Null when there are none either way,
+ * because a row nobody has said the purpose of cannot be short of anything in particular. The
+ * row's own cell on the page is not this: it scores against the tags only, and an untagged row
+ * there reads "Select type". An unverified row — one the review could not tie to the person's
+ * wording — earns no marks and serves no type, so it scores 0 once typed.
  *
  * `tagged` defaults to the tags the row carried when it was reviewed; pass the tags on screen to
  * re-score without another review. Like the entry's score it is computed here and gates nothing.
@@ -157,7 +166,8 @@ export function libraryRowScore(
   tagged: readonly EvidenceFacet[] = row.tagged,
 ): { score: number | null; facets: EvidenceFacet[]; byFacet: EvidenceFacetScore[]; marks: EvidenceMark[] } {
   const marks = row.verified ? row.marks : [];
-  const facets = EVIDENCE_FACETS.filter(facet => tagged.includes(facet));
+  const scoredFacets = tagged.length ? tagged : row.facets;
+  const facets = EVIDENCE_FACETS.filter(facet => scoredFacets.includes(facet));
   return { ...scoreRowAgainst(marks, facets), facets, marks };
 }
 
@@ -169,13 +179,16 @@ export function libraryRowScore(
  *     coverage     = Σ LIBRARY_FACET_WEIGHTS[facet] over facets a verified row carries, ÷ 8
  *                    (a row carrying two of them covers both)
  *     meanRowScore = Σ libraryRowScore(row) ÷ 100 over every row, ÷ the number of rows, 0 when
- *                    there are none; an untyped or unverified row counts 0
+ *                    there are none; a row is scored against its tags, or the review's reading
+ *                    when it has none, and a row with neither, or unverified, counts 0
  *
  * So half the score is breadth — all six types present — and half is how well the rows are
- * written for the types they are tagged with. All six types covered by rows that each earn every
- * mark of their types reads 100; an entry with no rows reads 0. An unverified row counts in the
+ * written for the types they serve. All six types covered by rows that each earn every mark of
+ * their types reads 100; an entry with no rows reads 0. An unverified row counts in the
  * denominator and adds nothing, so a model that cannot tie its classification to the row lowers
- * the score rather than raising it, and an untyped row does the same until the person types it.
+ * the score rather than raising it, and a row neither the person nor the review gave a type does
+ * the same. An untagged row the model classified counts against the model's reading, so both
+ * halves of the score read the row the same way.
  *
  * Bands: None < 25, Weak < 50, Good < 75, Strong at 75 and above.
  */
@@ -410,7 +423,8 @@ const StoredLibraryReviewSchema = z.object({
  *
  * A review written before marks existed carries none, so the wording rules stand in for that part
  * (`detectEvidenceMarks`), and one written before `tagged` existed reads as untagged — its rows
- * have no score of their own until the person's current tags are passed to `libraryRowScore`.
+ * are scored against the review's own reading of them until the person's current tags are passed
+ * to `libraryRowScore`.
  */
 export function normaliseLibraryReview(raw: unknown): LibraryEntryReview {
   const stored = StoredLibraryReviewSchema.parse(raw);

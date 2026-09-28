@@ -115,12 +115,17 @@ describe("scoreLibraryRows", () => {
     expect(scoreLibraryRows([row({ facets: ["outcome", "outcome"] })]).coverage.outcome).toBe(1);
   });
 
-  it("counts a row the person has not typed as 0, even when the model classified it", () => {
-    // Covers outcome in the model's reading (50 × 2/8 = 12.5 → 13) but has no score of its own.
+  it("scores a row the person has not typed against the model's reading of it", () => {
+    // Covers outcome in the model's reading (50 × 2/8 = 12.5) and, untagged, is scored against
+    // that reading too, so both halves read the row the same way: 12.5 + 50 → 63.
     const untyped = row({ facets: ["outcome"], tagged: [], marks: [...EVIDENCE_MARKS] });
-    expect(scoreLibraryRows([untyped]).score).toBe(13);
-    // Typed, the same marks read in full: 12.5 + 50.
-    expect(scoreLibraryRows([{ ...untyped, tagged: ["outcome"] }]).score).toBe(63);
+    expect(scoreLibraryRows([untyped]).score).toBe(63);
+    // Tagged, the person's choice wins: typed as a milestone it covers outcome (the model's
+    // reading drives coverage) and scores the milestone marks it earns, here all of them.
+    expect(scoreLibraryRows([{ ...untyped, tagged: ["milestone"] }]).score).toBe(63);
+    expect(scoreLibraryRows([{ ...untyped, marks: [...EVIDENCE_MARKS_BY_FACET.outcome], tagged: ["milestone"] }]).score).toBe(13);
+    // Untagged and unclassified — a rules review's untagged row — it counts 0: 50 × 0 + 50 × 0.
+    expect(scoreLibraryRows([row({ facets: [], tagged: [], marks: [...EVIDENCE_MARKS] })]).score).toBe(0);
     // A verified row the model could not name the types of covers nothing, and scores from its tags.
     expect(scoreLibraryRows([row({ facets: [], tagged: ["metric"], marks: firstMarks(2, ["metric"]) })]).score).toBe(25);
   });
@@ -129,9 +134,11 @@ describe("scoreLibraryRows", () => {
 describe("libraryRowScore", () => {
   const close: EvidenceMark[] = ["outcome.change", "outcome.cause", "outcome.magnitude", ...EVIDENCE_MARKS_BY_FACET.metric];
 
-  it("has no score for a row the person has not typed, whatever the model read it as", () => {
+  it("scores a row the person has not typed against the review's reading, and has none without one", () => {
     const untyped = libraryRowScore(row({ facets: ["outcome", "metric"], tagged: [], marks: close }));
-    expect(untyped).toEqual({ score: null, facets: [], byFacet: [], marks: close });
+    expect(untyped).toMatchObject({ score: 88, facets: ["outcome", "metric"], marks: close });
+    // A rules review's untagged row: its facets are its tags, so there is nothing to score against.
+    expect(libraryRowScore(row({ facets: [], tagged: [], marks: close }))).toEqual({ score: null, facets: [], byFacet: [], marks: close });
   });
 
   it("reads the row's marks against its tags, a quarter a mark", () => {
@@ -151,7 +158,9 @@ describe("libraryRowScore", () => {
     expect(libraryRowScore(reviewed).score).toBe(75);
     expect(libraryRowScore(reviewed, ["metric"]).score).toBe(100);
     expect(libraryRowScore(reviewed, ["style"]).score).toBe(0);
-    expect(libraryRowScore(reviewed, []).score).toBeNull();
+    // Every tag removed on screen: back to the review's own reading of the row.
+    expect(libraryRowScore(reviewed, []).score).toBe(75);
+    expect(libraryRowScore({ ...reviewed, facets: [] }, []).score).toBeNull();
   });
 
   it("gives a row the review could not tie to the wording no marks, so 0 once typed", () => {
@@ -276,6 +285,16 @@ describe("validateLibraryReview", () => {
     // nothing, 50 × 50/200 = 12.5: 37.5 → 38.
     expect(result).toMatchObject({ entryId: entry.id, score: 38, rating: "weak", prompts: ["What changed as a result?"] });
     expect(result.missing).toEqual(["responsibility", "problem", "milestone", "style"]);
+  });
+
+  it("scores an untagged row the model classified against that classification in the entry mean", () => {
+    const counted = plan([said(), said({ row: second, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: "by 40%" })]);
+    const result = validateLibraryReview(entry, counted);
+    expect(result.rows[1]).toMatchObject({ facets: ["metric"], tagged: [] });
+    expect(libraryRowScore(result.rows[1]!)).toMatchObject({ score: 50, facets: ["metric"] });
+    // Outcome and metric covered, 25; the milestone row and the untagged metric row both read 50,
+    // 50 × 100/200 = 25: 50, where scoring the untagged row as nothing read 38.
+    expect(result).toMatchObject({ score: 50, rating: "good" });
   });
 
   it("keeps only the marks the rubric knows, each once", () => {

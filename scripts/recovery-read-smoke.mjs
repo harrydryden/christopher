@@ -1,10 +1,8 @@
 /** Authenticated, read-only application smoke for a retained synthetic restore. */
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
-import { insertSession } from "./lib/web.mjs";
+import { insertSession, startWeb } from "./lib/web.mjs";
 
 const EXPECTED_DB = "christopher_recovery_drill";
 export function validateSmokeUrl(raw) {
@@ -25,20 +23,10 @@ async function main() {
   if (!user) throw new Error("restored synthetic database has no claimed account");
   const sessionId = randomUUID();
   const { cookie } = await insertSession(pool, user.id, { secret, ttlSeconds: 900, userAgent: "local recovery read smoke", id: sessionId, ipAddress: "127.0.0.1" });
-  const server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-p", String(port)], {
-    cwd: new URL("../apps/web", import.meta.url), detached: true,
-    env: { ...process.env, DATABASE_URL: url.href, SESSION_SECRET: secret, NODE_ENV: "production" }, stdio: ["ignore", "pipe", "pipe"],
-  });
-  let log = ""; server.stdout.on("data", b => { log = (log + b).slice(-8000); }); server.stderr.on("data", b => { log = (log + b).slice(-8000); });
   const failures = [], pages = [];
+  let web;
   try {
-    let ready = false;
-    for (let i = 0; i < 60; i++) {
-      try { ready = (await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1000) })).ok; } catch {}
-      if (ready) break;
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    if (!ready) throw new Error(`web application did not start: ${log}`);
+    web = await startWeb({ port, env: { DATABASE_URL: url.href, SESSION_SECRET: secret }, probeTimeoutMs: 1000, logLimit: 8000 });
     for (const path of ["/", "/companies", "/applications", "/library", "/api/work-status"]) {
       const started = performance.now();
       const response = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { cookie }, redirect: "manual", signal: AbortSignal.timeout(10_000) });
@@ -61,10 +49,7 @@ async function main() {
   } finally {
     await pool.query("delete from sessions where id=$1", [sessionId]).catch(() => undefined);
     await pool.end();
-    server.kill("SIGTERM");
-    await Promise.race([once(server, "exit"), new Promise(resolve => setTimeout(resolve, 5000))]);
-    if (server.exitCode === null && server.signalCode === null) server.kill("SIGKILL");
-    try { process.kill(-server.pid, "SIGKILL"); } catch {}
+    await web?.stop({ graceMs: 5000 });
   }
 }
 

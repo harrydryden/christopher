@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { coreIntegritySql } from './recovery-drill.mjs';
-import { insertSession } from './lib/web.mjs';
+import { insertSession, startWeb } from './lib/web.mjs';
 
 export function validateManagedRecoveryUrl(raw) {
   const url = new URL(raw.trim());
@@ -26,7 +26,7 @@ async function main() {
   const pool = new Pool({ connectionString: url.href, ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 10_000, statement_timeout: 30_000 });
   const secret = randomUUID(), sessionId = randomUUID();
   const port = 3142;
-  let server;
+  let web;
   const failures = [], pages = [];
   let before, after, migrationMs, gapColumn, revokedStatus, sessionRemoved = false;
   try {
@@ -46,19 +46,9 @@ async function main() {
     const { rows: [user] } = await pool.query('select id from users where claimed_at is not null order by created_at limit 1');
     if (!user) throw new Error('Recovery copy has no claimed account');
     const { cookie } = await insertSession(pool, user.id, { secret, ttlSeconds: 900, userAgent: 'isolated managed recovery smoke', id: sessionId, ipAddress: '127.0.0.1' });
-    server = spawn(process.execPath, [require.resolve('next/dist/bin/next'), 'start', '-H', '127.0.0.1', '-p', String(port)], {
-      cwd: new URL('../apps/web', import.meta.url), detached: true,
-      env: { ...process.env, DATABASE_URL: url.href, SESSION_SECRET: secret, NODE_ENV: 'production', AVA_SERVERLESS_FALLBACK: '0' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    server.stdout.resume(); server.stderr.resume();
-    let ready = false;
-    for (let i = 0; i < 60; i++) {
-      try { ready = (await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1000) })).ok; } catch {}
-      if (ready) break;
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    if (!ready) throw new Error('Recovery application did not start');
+    // The server's output is discarded, never kept: it could carry the recovery copy's credentials.
+    web = await startWeb({ port, host: '127.0.0.1', env: { DATABASE_URL: url.href, SESSION_SECRET: secret, AVA_SERVERLESS_FALLBACK: '0' },
+      probeTimeoutMs: 1000, logLimit: 0 });
     for (const path of ['/', '/companies', '/applications', '/library', '/api/work-status', '/admin/health']) {
       const at = performance.now();
       const response = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
@@ -76,11 +66,7 @@ async function main() {
   } finally {
     await pool.query('delete from sessions where id=$1', [sessionId]).then(() => { sessionRemoved = true; }).catch(() => {});
     await pool.end();
-    if (server?.pid) {
-      try { process.kill(-server.pid, 'SIGTERM'); } catch {}
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      try { process.kill(-server.pid, 'SIGKILL'); } catch {}
-    }
+    await web?.stop({ graceMs: 1000 });
   }
   const report = { at: new Date().toISOString(), passed: failures.length === 0, failures, recoveryDatabaseId: 'dpg-danq11ijnfac739fekdg-a',
     releaseCommit: process.env.RELEASE_SHA ?? null, elapsedSeconds: +((performance.now() - started) / 1000).toFixed(2), migrationMs, gapColumn,

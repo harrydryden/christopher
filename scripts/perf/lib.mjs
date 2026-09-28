@@ -8,10 +8,8 @@
  * `execute` or `statement` line in the audits. It needs no server setting and no preloaded library,
  * so it gives the same count on a laptop, in CI and on the audit host.
  */
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import net from "node:net";
-import { setTimeout as sleep } from "node:timers/promises";
+import { startWeb } from "../lib/web.mjs";
 
 export const BENCH_SECRET = "local-benchmark-only-0123456789abcdef0123456789abcdef";
 
@@ -122,20 +120,7 @@ export function viaRelay(databaseUrl, relayPort) {
  * `next start` of the built interface on `port`, in its own process group so the whole group goes
  * on stop. `WEB_DB_POOL_MAX` sets the pool: 6 is production's pooled default, 3 the direct one.
  */
-export async function startServer({ port, databaseUrl, pool }) {
-  const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
-  const nextBin = require.resolve("next/dist/bin/next");
-  const env = { ...process.env, DATABASE_URL: databaseUrl, SESSION_SECRET: BENCH_SECRET, NODE_ENV: "production", AVA_DISABLE_BROWSER: "1" };
-  if (pool) env.WEB_DB_POOL_MAX = String(pool);
-  let log = "";
-  const child = spawn(process.execPath, [nextBin, "start", "-p", String(port)], { cwd: new URL("../../apps/web", import.meta.url), env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-  child.stdout.on("data", chunk => { log = (log + chunk).slice(-20_000); });
-  child.stderr.on("data", chunk => { log = (log + chunk).slice(-20_000); });
-  const stop = async () => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* gone */ } await sleep(300); };
-  for (let i = 0; i < 90; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/api/health`)).ok) return { stop, log: () => log }; } catch { /* not up */ }
-    await sleep(500);
-  }
-  await stop();
-  throw new Error(`the server did not start on ${port}:\n${log}`);
+export function startServer({ port, databaseUrl, pool }) {
+  const env = { DATABASE_URL: databaseUrl, SESSION_SECRET: BENCH_SECRET, AVA_DISABLE_BROWSER: "1", ...(pool ? { WEB_DB_POOL_MAX: String(pool) } : {}) };
+  return startWeb({ port, env, attempts: 90 });
 }

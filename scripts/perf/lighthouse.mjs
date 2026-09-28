@@ -27,8 +27,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { setTimeout as sleep } from "node:timers/promises";
-import { disposableAdmin } from "../lib/web.mjs";
+import { disposableAdmin, startWeb } from "../lib/web.mjs";
 
 export const LHCI_EMAIL = "lhci@ava.invalid";
 export const LHCI_DOMAIN = "lhci.invalid";
@@ -140,7 +139,6 @@ async function main() {
   if (previewAt >= 0) return preview(process.argv[previewAt + 1] ?? "");
   const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
   const { Pool } = require("pg");
-  const nextBin = require.resolve("next/dist/bin/next");
   const lhci = createRequire(new URL("../../package.json", import.meta.url)).resolve("@lhci/cli/src/cli.js");
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -149,18 +147,12 @@ async function main() {
   const passes = process.argv.includes("--mobile-only") ? ["mobile"] : process.argv.includes("--desktop-only") ? ["desktop"] : ["desktop", "mobile"];
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const dir = mkdtempSync(join(tmpdir(), "ava-lhci-"));
-  let server;
+  let web;
   let exitCode = 0;
   try {
     const { draftId, cookie } = await seed(pool, secret);
     const env = { ...process.env, DATABASE_URL: databaseUrl, SESSION_SECRET: secret, NODE_ENV: "production", PORT: String(port) };
-    server = spawn(process.execPath, [nextBin, "start", "-p", String(port)], { cwd: new URL("../../apps/web", import.meta.url), env, stdio: ["ignore", "ignore", "inherit"], detached: true });
-    let ready = false;
-    for (let i = 0; i < 60 && !ready; i++) {
-      try { ready = (await fetch(`http://127.0.0.1:${port}/api/health`)).ok; } catch { /* not up yet */ }
-      if (!ready) await sleep(1_000);
-    }
-    if (!ready) throw new Error("the server never became ready");
+    web = await startWeb({ port, env, intervalMs: 1_000, stdio: ["ignore", "ignore", "inherit"] });
     const desktop = signedInConfig(JSON.parse(readFileSync(new URL("lighthouserc.json", ROOT), "utf8")), { draftId, cookie, port, chromeFlags: process.env.LHCI_CHROME_FLAGS });
     for (const pass of passes) {
       const path = join(dir, `lighthouserc.${pass}.json`);
@@ -170,7 +162,7 @@ async function main() {
       if (code !== 0 && pass === "desktop") exitCode = code;
     }
   } finally {
-    if (server?.pid) { try { process.kill(-server.pid, "SIGKILL"); } catch { /* gone */ } }
+    await web?.stop();
     await removeSeed(pool).catch(error => { console.error(`could not remove the Lighthouse account: ${error.message}`); exitCode ||= 1; });
     await pool.end();
     rmSync(dir, { recursive: true, force: true });

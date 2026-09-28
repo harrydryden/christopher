@@ -8,10 +8,8 @@
 import { verifyCvWorkspace } from "./smoke-cv.mjs";
 import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
 import { createRequire } from "node:module";
-import { once } from "node:events";
 import { spawn } from "node:child_process";
-import { setTimeout as sleep } from "node:timers/promises";
-import { disposableAdmin } from "./lib/web.mjs";
+import { disposableAdmin, startWeb } from "./lib/web.mjs";
 
 const nextBin = createRequire(new URL("../apps/web/package.json", import.meta.url)).resolve("next/dist/bin/next");
 
@@ -161,33 +159,10 @@ async function main() {
   }
 
   console.log(`starting on :${PORT}…`);
-  // `next start` forks a `next-server` child that outlives its parent, so the server gets its own
-  // process group and, whatever happens below, the whole group is killed on exit rather than left
-  // on the port for the next run to find.
-  const server = spawn(process.execPath, [nextBin, "start", "-p", String(PORT)], { cwd: "apps/web", env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-  process.on("exit", () => { try { process.kill(-server.pid, "SIGKILL"); } catch { /* already gone */ } });
-  let serverLog = "";
-  server.stdout.on("data", (d) => (serverLog += d.toString()));
-  server.stderr.on("data", (d) => (serverLog += d.toString()));
-
-  let ready = false;
-  for (let i = 0; i < 60; i++) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/api/health`);
-      if (res.ok) {
-        ready = true;
-        break;
-      }
-    } catch {
-      /* not up yet */
-    }
-    await sleep(1000);
-  }
-  if (!ready) {
-    console.error(serverLog);
-    server.kill("SIGTERM");
-    throw new Error("the server never became ready");
-  }
+  // Whatever happens below, the server's whole process group is killed on exit rather than left on
+  // the port for the next run to find.
+  const server = await startWeb({ port: PORT, env, intervalMs: 1000, logLimit: Infinity });
+  process.on("exit", server.kill);
 
   const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
   // A disposable administrator following a throwaway company, so the company page has something
@@ -328,19 +303,12 @@ async function main() {
   await pool.query("delete from companies where domain = $1", [SMOKE_DOMAIN]);
   await pool.end();
 
-  const exited = once(server, "exit");
-  server.kill("SIGTERM");
-  await Promise.race([exited, sleep(5000)]);
-  if (server.exitCode === null && server.signalCode === null) {
-    server.kill("SIGKILL");
-    await exited;
-  }
-  try { process.kill(-server.pid, "SIGKILL"); } catch { /* the group is already gone */ }
+  await server.stop({ graceMs: 5000 });
 
   if (failures.length) {
     console.error("\nFAILURES:");
     for (const f of failures) console.error(`  - ${f}`);
-    console.error("\nserver output:\n" + serverLog.slice(-4000));
+    console.error("\nserver output:\n" + server.log().slice(-4000));
     process.exit(1);
   }
   console.log("\nall pages rendered");

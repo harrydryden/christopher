@@ -5,12 +5,12 @@
  * USERS_BENCHMARK_FOLLOWS give the thousand-account shape (for example 1000, 1500 and 20).
  */
 import { createRequire } from 'node:module';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { writeFile, readFile } from 'node:fs/promises';
 import { cpus, freemem, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { sessionCookie } from './lib/web.mjs';
+import { sessionCookie, startWeb } from './lib/web.mjs';
 // The pollers' own rules, imported rather than copied, so the probe cannot drift from the app.
 import { BANNER_FIRST_MS, FIRST_POLL_MS, LONGEST_POLL_MS, nextPollDelay } from '../apps/web/lib/polling.ts';
 
@@ -130,8 +130,8 @@ async function main() {
   if (!Number.isSafeInteger(soakSeconds) || soakSeconds < 30 || soakSeconds > 300) throw new Error('USERS_SOAK_SECONDS must be 30..300');
   if (!Number.isSafeInteger(idleSeconds) || idleSeconds < 10 || idleSeconds > 120) throw new Error('USERS_IDLE_SECONDS must be 10..120');
   const secret = 'local-benchmark-only-0123456789abcdef0123456789abcdef';
-  let server, sampler;
-  let serverLog = '', resourcePhase = 'startup';
+  let web, sampler;
+  let resourcePhase = 'startup';
   const phases = [], resources = [];
   const deadline = async (work, label, seconds = TARGETS.maxPhaseSeconds) => {
     let timer;
@@ -188,20 +188,9 @@ async function main() {
     const draftByUser = new Map(drafts.map(row => [row.user_id, row.id]));
     await pool.query('analyze');
     const cookies = sessions.map(({ id }) => sessionCookie(secret, id, expires));
-    server = spawn(process.execPath, ['--inspect=127.0.0.1:0', require.resolve('next/dist/bin/next'), 'start', '-p', String(port)], {
-      cwd: new URL('../apps/web', import.meta.url), detached: true,
-      env: { ...process.env, SESSION_SECRET: secret, NODE_ENV: 'production', AVA_DISABLE_BROWSER: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    server.stdout.on('data', b => { serverLog = (serverLog + b).slice(-20_000); });
-    server.stderr.on('data', b => { serverLog = (serverLog + b).slice(-20_000); });
-    let ready = false;
-    for (let i = 0; i < 60; i++) {
-      try { if ((await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1_000) })).ok) { ready = true; break; } } catch {}
-      await new Promise(r => setTimeout(r, 500));
-    }
-    if (!ready) throw new Error(`Server did not start: ${serverLog}`);
+    web = await startWeb({ port, env: { SESSION_SECRET: secret, AVA_DISABLE_BROWSER: '1' }, nodeArgs: ['--inspect=127.0.0.1:0'], probeTimeoutMs: 1_000 });
     async function appHeapMiB() {
-      const inspectorUrl = serverLog.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
+      const inspectorUrl = web.log().match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
       if (!inspectorUrl) return null;
       return new Promise(resolveHeap => {
         const socket = new WebSocket(inspectorUrl);
@@ -218,10 +207,10 @@ async function main() {
     sampler = setInterval(async () => {
       try {
         const { rows: [db] } = await pool.query(`select count(*)::int connections,count(*) filter(where state='active')::int active from pg_stat_activity where datname=current_database()`);
-        const status = server?.pid ? await readFile(`/proc/${server.pid}/status`, 'utf8').catch(() => '') : '';
+        const status = web.child.pid ? await readFile(`/proc/${web.child.pid}/status`, 'utf8').catch(() => '') : '';
         let rssKiB = Number(status.match(/VmRSS:\s+(\d+)/)?.[1] ?? 0);
-        if (!rssKiB && server?.pid) rssKiB = await new Promise(resolveRss =>
-          execFile('ps', ['-o', 'rss=', '-p', String(server.pid)], (error, stdout) => resolveRss(error ? 0 : Number(stdout.trim()))));
+        if (!rssKiB && web.child.pid) rssKiB = await new Promise(resolveRss =>
+          execFile('ps', ['-o', 'rss=', '-p', String(web.child.pid)], (error, stdout) => resolveRss(error ? 0 : Number(stdout.trim()))));
         resources.push({ at: new Date().toISOString(), phase: resourcePhase, serverRssMiB: rssKiB ? Math.round(rssKiB / 1024) : null,
           serverHeapUsedMiB: await appHeapMiB(), benchmarkRssMiB: Math.round(process.memoryUsage().rss / 1048576),
           benchmarkHeapUsedMiB: Math.round(process.memoryUsage().heapUsed / 1048576), hostFreeMiB: Math.round(freemem() / 1048576), dbConnections: db.connections, dbActive: db.active });
@@ -237,7 +226,7 @@ async function main() {
         return { path, ms: performance.now() - start, status: response.status, bytes: body.length, ok: response.status === 200 && !/Application error|Internal Server Error/.test(visible) };
       } catch (error) { return { path, ms: performance.now() - start, status: 0, ok: false, error: String(error) }; }
     };
-    for (const path of paths) { const warm = await request(path, cookies[0]); if (!warm.ok) throw new Error(`Warm-up failed: ${JSON.stringify(warm)}\n${serverLog}`); }
+    for (const path of paths) { const warm = await request(path, cookies[0]); if (!warm.ok) throw new Error(`Warm-up failed: ${JSON.stringify(warm)}\n${web.log()}`); }
     async function reads(concurrency, total, label) {
       const results = []; let next = 0; const start = performance.now();
       await Promise.all(Array.from({ length: concurrency }, async () => {
@@ -451,7 +440,7 @@ async function main() {
     if (!report.passed) process.exitCode = 1;
   } finally {
     if (sampler) clearInterval(sampler);
-    if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch {} }
+    await web?.stop({ graceMs: 5_000 });
     await pool.end();
   }
 }

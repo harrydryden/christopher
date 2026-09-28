@@ -6,6 +6,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import type { EvidenceFacet } from "@ava/core/cv-helpers";
 import type { RowGuidance } from "@/lib/cv-library-evidence";
 import { RowScoreButton } from "./RowScoreButton";
 
@@ -33,6 +34,7 @@ const TYPED: RowGuidance = {
     asks: ["Say your part: led it, ran it, owned it, built it or supported it.", "Give the size: headcount, budget, revenue, sites, customers or how often."],
   }],
   footer: "From your own wording; Re-score for the full review.",
+  suggested: [],
 };
 
 const UNTYPED: RowGuidance = {
@@ -40,10 +42,17 @@ const UNTYPED: RowGuidance = {
   heading: "Select type",
   missing: [],
   footer: "Choose one or more types in the Type column; the row is scored against what each type needs.",
+  suggested: [],
 };
 
-function render(guidance: RowGuidance, index = 3) {
-  act(() => root.render(<RowScoreButton index={index} guidance={guidance} />));
+const SUGGESTED: RowGuidance = {
+  ...UNTYPED,
+  footer: `${UNTYPED.footer} The full review reads this row as Responsibilities and Metrics moved.`,
+  suggested: ["responsibility", "metric"],
+};
+
+function render(guidance: RowGuidance, index = 3, onAdopt?: (facets: EvidenceFacet[]) => void) {
+  act(() => root.render(<RowScoreButton index={index} guidance={guidance} onAdopt={onAdopt} />));
   return container.querySelector("button")!;
 }
 const dialog = () => document.querySelector<HTMLElement>("[role=dialog]");
@@ -126,4 +135,45 @@ it("asks for a type on a row that has none, and says why when opened", () => {
   expect(panel.getAttribute("aria-label")).toBe("Select type");
   expect(panel.querySelector("ul")).toBeNull();
   expect(panel.textContent).toContain(UNTYPED.footer);
+  expect(panel.querySelector("button")).toBeNull();
+});
+
+it("offers the review's types under the footer, and adopting them tags the row and closes the panel", () => {
+  const adopted: EvidenceFacet[][] = [];
+  const trigger = render(SUGGESTED, 2, facets => adopted.push(facets));
+  act(() => trigger.click());
+  const panel = dialog()!;
+  const use = panel.querySelector("button")!;
+  expect(use.textContent).toBe("Use these types");
+  expect(use.getAttribute("aria-label")).toBe("Tag row 2 as Responsibilities and Metrics moved");
+  expect(use.className).toContain("text-12");
+  expect(use.className).toContain("underline");
+  // Under the footer: the last thing in the panel.
+  expect(panel.lastElementChild).toBe(use);
+  expect(use.previousElementSibling!.textContent).toBe(SUGGESTED.footer);
+  act(() => use.click());
+  expect(adopted).toEqual([["responsibility", "metric"]]);
+  expect(dialog()).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+});
+
+it("keeps the panel open while Tab moves from it to the adopt button, and closes on Tab past it", () => {
+  const trigger = render(SUGGESTED, 2, () => undefined);
+  act(() => trigger.click());
+  const panel = dialog()!;
+  act(() => panel.focus());
+  press(panel, "Tab");
+  expect(dialog()).not.toBeNull();
+  press(panel.querySelector("button")!, "Tab");
+  expect(dialog()).toBeNull();
+});
+
+it("offers nothing to adopt without a handler, or when nothing is suggested", () => {
+  let trigger = render(SUGGESTED, 2);
+  act(() => trigger.click());
+  expect(dialog()!.querySelector("button")).toBeNull();
+  act(() => trigger.click());
+  trigger = render(TYPED, 2, () => undefined);
+  act(() => trigger.click());
+  expect(dialog()!.querySelector("button")).toBeNull();
 });

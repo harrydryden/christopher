@@ -10,9 +10,14 @@
  * facet tags and wording, so it costs nothing and cannot be wrong about what they wrote.
  *
  * Only entries whose wording changed are sent. `libraryEntryInputHash` covers the rubric version,
- * an entry's rows, their facets and the job it belongs to and nothing version-scoped, so fixing
- * one typo re-reviews one entry and every other entry carries its last review into the new
- * version.
+ * an entry's rows and the job it belongs to and nothing version-scoped — not the person's tags,
+ * which the page re-scores against itself — so fixing one typo re-reviews one entry, re-tagging a
+ * row re-reviews nothing, and every other entry carries its last review into the new version.
+ *
+ * Within an entry that did change, only the rows the model has not seen are asked about. The
+ * entry's newest model review, of whatever wording, already classified every row whose text is
+ * unchanged; those rows keep that classification and the batch names only the others, with the
+ * whole entry in view for its questions. A one-row edit to a twenty-row job pays for one row.
  *
  * The pass is admitted against the account's own monthly budget once, up front, exactly as a CV
  * build is, and a refusal finishes the task rather than failing it: work an exhausted account
@@ -23,17 +28,23 @@ import {
   aiBudgetWindowStart,
   aiFeatureLabel,
   isActiveStoredEvidence,
+  knownLibraryRows,
   libraryEntryInputHash,
+  normaliseLibraryReview,
+  retagLibraryReview,
   reviewableRows,
+  rowsToClassify,
   rulesLibraryReview,
   usd,
   type CvLibrary,
   type Employment,
+  type LibraryRowReview,
   type TaskPayloads,
 } from "@ava/core";
-import { createAiEngine, estimateLibraryReviewUsd } from "@ava/ai";
+import { createAiEngine, estimateLibraryReviewUsd, type LibraryReviewEntry } from "@ava/ai";
 import {
   latestLibraryReviews,
+  latestModelReviewsByEntry,
   pruneLibraryReviews,
   schema,
   upsertLibraryReviews,
@@ -47,10 +58,26 @@ import type { TaskRunContext } from "../queue";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
 
-/** Entry kinds an evidence review is about. An interests block is not evidence of anything. */
-const REVIEWABLE_KINDS = new Set(["experience", "education", "skill"]);
+/**
+ * Entry kinds an evidence review is about: experience only. The rubric's marks are job-shaped —
+ * who a row was for, the scale it ran at, the figure it moved — and "give the size: headcount,
+ * budget" is nonsense on a degree or a skill, so those blocks are neither reviewed nor scored.
+ * An interests block is not evidence of anything.
+ */
+const REVIEWABLE_KINDS = new Set(["experience"]);
 
 type CvEntry = CvLibrary["entries"][number];
+
+/**
+ * The rows a stored model review classified that the next review of the entry can keep. A row a
+ * review from before marks existed wrote carries none — reading it back would stand the wording
+ * rules in for the model's judgement — so such rows are asked about again.
+ */
+function reusableRows(raw: unknown): Map<string, LibraryRowReview> {
+  const stored = raw as { rows?: Array<{ marks?: unknown }> } | null;
+  if (!stored || !Array.isArray(stored.rows)) return new Map();
+  return knownLibraryRows(normaliseLibraryReview({ ...stored, rows: stored.rows.filter(row => Array.isArray(row?.marks)) }));
+}
 
 /** How long the pass may hold its share of the month: the task's deadline, with room to spare. */
 const HOLD_MINUTES = 10;
@@ -110,7 +137,10 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     const held = stored.get(entry.id);
     if (held?.source === "model" && held.libraryVersion === version) return [];
     if (held?.source === "model") {
-      return [{ entryId: entry.id, inputHash: hashes.get(entry.id)!, review: held.review, source: "model", model: held.model }];
+      // Carried with the tags as saved now: the hash leaves them out, so the person may have
+      // re-tagged a row since, and the stored score is read off the tags.
+      const review = retagLibraryReview(normaliseLibraryReview(held.review), entry);
+      return [{ entryId: entry.id, inputHash: hashes.get(entry.id)!, review, source: "model", model: held.model }];
     }
     return [{
       entryId: entry.id,
@@ -148,9 +178,26 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
   // Asked of the engine this pass will actually use, rather than of the shared one: a deployment
   // with no key still gets its rules baseline, written above, and finishes done.
   if (!ai.enabled) return { reviewed: 0, reused, ...newer, skipped: "ai unavailable", cost: 0 };
+
+  // What the model last said about each pending entry, of whatever wording: its rows whose text is
+  // unchanged keep that classification, and only the rest are asked about.
+  const previous = await latestModelReviewsByEntry(deps.db, userId, pending.map(entry => entry.id));
+  let reusedRows = 0;
+  let askedRows = 0;
+  const asked = pending.map((entry): LibraryReviewEntry => {
+    const held = previous.get(entry.id);
+    const known = held ? reusableRows(held.review) : new Map<string, LibraryRowReview>();
+    const toClassify = rowsToClassify(entry, known).length;
+    askedRows += toClassify;
+    reusedRows += reviewableRows(entry).length - toClassify;
+    return toClassify < reviewableRows(entry).length ? { ...entry, known } : entry;
+  });
+
   const expected = estimateLibraryReviewUsd(model, {
     libraryBytes: Buffer.byteLength(JSON.stringify(library.content)),
     entryCount: pending.length,
+    rowsToClassify: askedRows,
+    rowsTotal: askedRows + reusedRows,
   });
   const admitted = await tryReserveAi(deps.db, "A12", expected, {
     account: {
@@ -166,7 +213,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
   if ("refused" in admitted) {
     // Finished, never failed: the rules baseline is already on the page, and retrying a pass the
     // month cannot afford would only fill Health with work nothing can complete.
-    log.info("library review refused by budget", { userId, version, entries: pending.length, expected });
+    log.info("library review refused by budget", { userId, version, entries: pending.length, reusedRows, askedRows, expected });
     return {
       reviewed: 0,
       reused,
@@ -180,7 +227,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
 
   try {
     const reviews = await ai.reviewLibraryEntries(
-      { library: library.content, entries: pending, model },
+      { library: library.content, entries: asked, model },
       { userId, refType: "library", refId: `library:${userId}:${version}` },
     );
     // An entry the model left out of its answer keeps its baseline, and so is still pending: the
@@ -192,7 +239,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     }));
     const pruned = await pruneLibraryReviews(deps.db, userId);
     const unread = reviews.length - byEntry.size;
-    log.info("library reviewed", { userId, version, reviewed: byEntry.size, unread, reused, pruned, usd: usd(cost) });
+    log.info("library reviewed", { userId, version, reviewed: byEntry.size, unread, reused, reusedRows, askedRows, pruned, usd: usd(cost) });
     return { reviewed: byEntry.size, reused, ...(unread ? { unread } : {}), ...newer, cost: usd(cost) };
   } finally {
     // The calls' real costs are in `ai_calls`; the hold only covered the gap until they landed.

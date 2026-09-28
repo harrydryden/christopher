@@ -106,6 +106,34 @@ export async function latestLibraryReviews(
 }
 
 /**
+ * The newest model review of each entry, whatever wording it was of.
+ *
+ * `latestLibraryReviews` answers "is this wording already reviewed?"; this answers "what did the
+ * model last say about this entry?", which is what a re-review of an edited entry starts from: a
+ * row whose text that review already classified keeps its classification, and only the rows it
+ * has not seen are asked about. Newest by library version, then by when it was written; rules
+ * baselines are never returned, since they are not a model's reading of anything.
+ */
+export async function latestModelReviewsByEntry(
+  db: Db,
+  userId: string,
+  entryIds: readonly string[],
+): Promise<Map<string, CvLibraryReview>> {
+  const wanted = [...new Set(entryIds)];
+  if (!wanted.length) return new Map();
+  const rows = await db
+    .selectDistinctOn([cvLibraryReviews.entryId])
+    .from(cvLibraryReviews)
+    .where(and(
+      eq(cvLibraryReviews.userId, userId),
+      eq(cvLibraryReviews.source, "model"),
+      inArray(cvLibraryReviews.entryId, wanted),
+    ))
+    .orderBy(cvLibraryReviews.entryId, desc(cvLibraryReviews.libraryVersion), desc(cvLibraryReviews.createdAt));
+  return new Map(rows.map(row => [row.entryId, row]));
+}
+
+/**
  * A short fingerprint of one version's reviews, for a poll token: it moves when a review is added,
  * replaced, rescored or reclassified, and not otherwise. Empty until the first review lands, which
  * is what "evaluating…" is shown against.

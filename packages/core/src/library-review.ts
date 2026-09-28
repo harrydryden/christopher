@@ -9,7 +9,9 @@
  * needs. A row is scored against the type(s) the person tagged it with, using the checklist for
  * that type in `evidence-rubric.ts` — four marks worth a quarter each — so a Responsibilities row
  * is judged on what was owned, for whom, at what level and scale, and a Metrics moved row on the
- * figure, what it measures, how it moved and what moved it. A row with no type has no score.
+ * figure, what it measures, how it moved and what moved it. A row the person has not tagged is
+ * scored in its entry against the review's reading of it; one with no type either way has no
+ * score.
  *
  * Two things are deliberate. The score is computed here, from classifications, and never taken
  * from the model: `scoreLibraryRows` is the only place a number is produced, so a model cannot
@@ -73,8 +75,9 @@ export const LIBRARY_REVIEW_BATCH = 8;
  * can be one sentence and cover both.
  *
  * `tagged` is the person's own tags for the row when it was reviewed, and `marks` every mark in
- * the rubric the row's wording earns, for all six types. The row's own score is `marks` read
- * against `tagged` (`libraryRowScore`), so it follows the person's choice of type, not the model's.
+ * the rubric the row's wording earns, for all six types. The row's score is `marks` read against
+ * `tagged` (`libraryRowScore`), so it follows the person's choice of type, not the model's; only
+ * an untagged row is read against `facets` instead.
  */
 export interface LibraryRowReview {
   row: string;
@@ -142,12 +145,18 @@ const BY_WEIGHT = [...EVIDENCE_FACETS].sort(
 );
 
 /**
- * One row's own score: the marks it earns read against the types it is tagged with, a quarter a
- * mark and the mean across its types (`scoreRowAgainst`). Null when the row has no type, because a
- * row nobody has said the purpose of cannot be short of anything in particular. That holds even
- * when a model classified the row: the model's reading drives the entry's coverage and its
- * questions, but a row is scored against what the person says it is for. An unverified row — one
- * the review could not tie to the person's wording — earns no marks, so it scores 0 once typed.
+ * One row's score in its entry's aggregate: the marks it earns read against the types it is
+ * scored as, a quarter a mark and the mean across those types (`scoreRowAgainst`).
+ *
+ * The types are the person's tags when the row has any, and otherwise the review's own reading of
+ * the row (`facets`). The person's choice of type always wins; an untagged row the review
+ * classified is scored against that classification, so the entry's rating does not count as
+ * nothing a row whose types its coverage half already reads. For a rules review `facets` is the
+ * tags, so an untagged baseline row still has no types. Null when there are none either way,
+ * because a row nobody has said the purpose of cannot be short of anything in particular. The
+ * row's own cell on the page is not this: it scores against the tags only, and an untagged row
+ * there reads "Select type". An unverified row — one the review could not tie to the person's
+ * wording — earns no marks and serves no type, so it scores 0 once typed.
  *
  * `tagged` defaults to the tags the row carried when it was reviewed; pass the tags on screen to
  * re-score without another review. Like the entry's score it is computed here and gates nothing.
@@ -157,7 +166,8 @@ export function libraryRowScore(
   tagged: readonly EvidenceFacet[] = row.tagged,
 ): { score: number | null; facets: EvidenceFacet[]; byFacet: EvidenceFacetScore[]; marks: EvidenceMark[] } {
   const marks = row.verified ? row.marks : [];
-  const facets = EVIDENCE_FACETS.filter(facet => tagged.includes(facet));
+  const scoredFacets = tagged.length ? tagged : row.facets;
+  const facets = EVIDENCE_FACETS.filter(facet => scoredFacets.includes(facet));
   return { ...scoreRowAgainst(marks, facets), facets, marks };
 }
 
@@ -169,13 +179,16 @@ export function libraryRowScore(
  *     coverage     = Σ LIBRARY_FACET_WEIGHTS[facet] over facets a verified row carries, ÷ 8
  *                    (a row carrying two of them covers both)
  *     meanRowScore = Σ libraryRowScore(row) ÷ 100 over every row, ÷ the number of rows, 0 when
- *                    there are none; an untyped or unverified row counts 0
+ *                    there are none; a row is scored against its tags, or the review's reading
+ *                    when it has none, and a row with neither, or unverified, counts 0
  *
  * So half the score is breadth — all six types present — and half is how well the rows are
- * written for the types they are tagged with. All six types covered by rows that each earn every
- * mark of their types reads 100; an entry with no rows reads 0. An unverified row counts in the
+ * written for the types they serve. All six types covered by rows that each earn every mark of
+ * their types reads 100; an entry with no rows reads 0. An unverified row counts in the
  * denominator and adds nothing, so a model that cannot tie its classification to the row lowers
- * the score rather than raising it, and an untyped row does the same until the person types it.
+ * the score rather than raising it, and a row neither the person nor the review gave a type does
+ * the same. An untagged row the model classified counts against the model's reading, so both
+ * halves of the score read the row the same way.
  *
  * Bands: None < 25, Weak < 50, Good < 75, Strong at 75 and above.
  */
@@ -301,8 +314,20 @@ const knownFacets = (facets: readonly string[]): EvidenceFacet[] => EVIDENCE_FAC
  * them, rather than failing the row: the schema already holds the model to the rubric, and losing
  * a whole entry's classification over a repeated word would be a poor trade. `tagged` is always
  * the person's own tags, whatever the model classified the row as.
+ *
+ * `known` holds rows an earlier review of this entry already classified, keyed by their normalised
+ * text (`knownLibraryRows`). A row found there takes that classification as it was stored — its
+ * reading, marks, quote and verification — with only `tagged` replaced by the tags saved now, and
+ * whatever the plan says about it is ignored: the model was told not to classify it, so an answer
+ * for it is not one it was asked for. `unread` then means the entry had rows needing
+ * classification and the model returned none of them; an entry whose rows were all known is never
+ * unread.
  */
-export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEntry): LibraryEntryReview {
+export function validateLibraryReview(
+  entry: CvEntry,
+  plan: LibraryReviewPlanEntry,
+  known: ReadonlyMap<string, LibraryRowReview> = new Map(),
+): LibraryEntryReview {
   if (plan.entryId !== entry.id) throw new Error("The evidence review named an entry it was not given.");
   const covered = new Map<string, LibraryReviewPlanEntry["rows"][number]>();
   for (const row of plan.rows) {
@@ -310,10 +335,14 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
     if (!covered.has(key)) covered.set(key, row);
   }
   let classified = 0;
+  let needed = 0;
   const rows: LibraryRowReview[] = reviewableRows(entry).map(row => {
+    const tagged = rowFacets(entry, row);
+    const held = known.get(normaliseRow(row));
+    if (held) return { ...held, row, tagged };
+    needed++;
     const said = covered.get(normaliseRow(row));
     if (said) classified++;
-    const tagged = rowFacets(entry, row);
     const anchored = !!said && (said.quote === null || cvQuoteIsAnchored(said.quote, row));
     if (!said || !anchored) {
       return { row, facets: [], tagged, marks: [], quote: null, verified: false };
@@ -333,38 +362,77 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
   const scored = scoreLibraryRows(rows);
   return {
     entryId: entry.id, rows, ...scored, prompts: plan.prompts.slice(0, 3),
-    ...(rows.length && !classified ? { unread: true as const } : {}),
+    ...(needed && !classified ? { unread: true as const } : {}),
   };
 }
 
 /**
- * Which rubric a review was judged against. 1 was specific / quantified / outcome-linked; 2 is the
- * type-specific marks in `evidence-rubric.ts`. Move it when what a review records changes meaning.
+ * The rows a review already classified, for the next review of the same entry to keep: each
+ * verified row keyed by its normalised text. An unverified row is left out — it says nothing about
+ * the wording — so it is asked about again.
  */
-export const LIBRARY_RUBRIC_VERSION = 2;
+export function knownLibraryRows(review: LibraryEntryReview): Map<string, LibraryRowReview> {
+  const known = new Map<string, LibraryRowReview>();
+  for (const row of review.rows) {
+    const key = normaliseRow(row.row);
+    if (row.verified && !known.has(key)) known.set(key, row);
+  }
+  return known;
+}
+
+/** The rows of an entry a review has to classify, given the rows already known. */
+export function rowsToClassify(entry: CvEntry, known: ReadonlyMap<string, LibraryRowReview> = new Map()): string[] {
+  return reviewableRows(entry).filter(row => !known.has(normaliseRow(row)));
+}
 
 /**
- * Everything a review of this entry was computed from: its rows in order, the types on each, and
- * the job it belongs to. Nothing version-scoped, deliberately — an entry nobody touched keeps the
- * same hash across a save, so its review carries forward to the new library version and only the
- * entry whose typo was fixed is reviewed again.
+ * Whether an answer covers an entry: it names the entry and classifies every row that needed
+ * classifying. An entry whose rows were all known is covered by being answered for at all, which
+ * is where its prompts come from.
+ */
+export function libraryPlanCovers(
+  entry: CvEntry,
+  plan: LibraryReviewPlanEntry | undefined,
+  known: ReadonlyMap<string, LibraryRowReview> = new Map(),
+): boolean {
+  if (!plan || plan.entryId !== entry.id) return false;
+  const returned = new Set(plan.rows.map(row => normaliseRow(row.row)));
+  return rowsToClassify(entry, known).every(row => returned.has(normaliseRow(row)));
+}
+
+/**
+ * Which rubric a review was judged against. 1 was specific / quantified / outcome-linked; 2 is the
+ * type-specific marks in `evidence-rubric.ts`; 3 is the same marks with the person's tags out of
+ * the entry's hash. Move it when what a review records, or what its hash covers, changes meaning.
  *
- * The types are written in canonical order and joined, so a row's tags read as one string: adding
- * a second type to a row changes the hash and re-reviews that entry, and a row that was tagged
- * with exactly one type — every row stored before a row could carry several — hashes to what it
- * always did. Representing the same tags differently is not a reason to buy the same answer again.
+ * Moving it re-reviews every entry but not every row: a re-review keeps the rows an earlier model
+ * review of the entry classified (`knownLibraryRows`), whatever hash that review was filed under,
+ * which is right from 2 to 3 because the marks mean the same. A version that changes what the marks
+ * mean must also stop that reuse, or the old judgements are carried into the new rubric.
+ */
+export const LIBRARY_RUBRIC_VERSION = 3;
+
+/**
+ * Everything a review of this entry was computed from: its rows in order and the job it belongs
+ * to. Nothing version-scoped, deliberately — an entry nobody touched keeps the same hash across a
+ * save, so its review carries forward to the new library version and only the entry whose typo
+ * was fixed is reviewed again.
+ *
+ * The person's tags are not in it. A review's marks and its reading of each row's types are
+ * judgements about the wording, which a re-tag does not change, and the page re-scores a row
+ * against the tags on screen itself (`libraryRowScore`), so re-tagging a row must not re-review
+ * its entry and pay for the same answer again.
  *
  * The rubric's version leads the hashed list. A review written under an earlier rubric recorded
- * judgements the current score does not read (it has no marks), so moving the version makes every
- * stored review stop matching its entry: the Library falls back to the baseline and offers
- * Re-score once, and the old reviews are left where they are rather than deleted.
+ * judgements the current score does not read (it has no marks), or was filed under a hash that
+ * covered the tags, so moving the version makes every stored review stop matching its entry: the
+ * Library falls back to the baseline and offers Re-score once, and the old reviews are left where
+ * they are rather than deleted.
  */
 export function libraryEntryInputHash(entry: CvEntry, employment: Employment | null): string {
-  const rows = responsibilityRows(entry.details);
   return sha1(JSON.stringify([
     LIBRARY_RUBRIC_VERSION,
-    rows,
-    rows.map(row => rowFacets(entry, row).join(",")),
+    responsibilityRows(entry.details),
     employment?.company ?? "",
     employment?.jobTitle ?? "",
   ]));
@@ -410,7 +478,8 @@ const StoredLibraryReviewSchema = z.object({
  *
  * A review written before marks existed carries none, so the wording rules stand in for that part
  * (`detectEvidenceMarks`), and one written before `tagged` existed reads as untagged — its rows
- * have no score of their own until the person's current tags are passed to `libraryRowScore`.
+ * are scored against the review's own reading of them until the person's current tags are passed
+ * to `libraryRowScore`.
  */
 export function normaliseLibraryReview(raw: unknown): LibraryEntryReview {
   const stored = StoredLibraryReviewSchema.parse(raw);
@@ -423,4 +492,18 @@ export function normaliseLibraryReview(raw: unknown): LibraryEntryReview {
     verified: row.verified === true,
   }));
   return { entryId: stored.entryId, rows, ...scoreLibraryRows(rows), prompts: stored.prompts.slice(0, 3) };
+}
+
+/**
+ * A model review read against the tags the entry carries now, rescored.
+ *
+ * The entry's hash leaves the tags out, so a review of the same wording is still this entry's
+ * review after the person re-tags a row — but the `tagged` it recorded, and the score read off
+ * them, are the tags as they were. The marks and the review's own reading of each row are about
+ * the wording and stand; only the tags are replaced. A rules review is not re-read here: its
+ * `facets` are the tags too, so the baseline is simply computed again (`rulesLibraryReview`).
+ */
+export function retagLibraryReview(review: LibraryEntryReview, entry: CvEntry): LibraryEntryReview {
+  const rows = review.rows.map(row => ({ ...row, tagged: rowFacets(entry, row.row) }));
+  return { ...review, rows, ...scoreLibraryRows(rows) };
 }

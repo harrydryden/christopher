@@ -12,11 +12,12 @@ import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { EvidenceSummary } from "./EvidenceScore";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
 import { RowScoreButton } from "./RowScoreButton";
+import { EvidenceGuide } from "./EvidenceGuide";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 
 const input = inputClass;
-const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"]] as const;
+const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]] as const;
 type LibraryTab = typeof libraryTabs[number][0];
 const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
 
@@ -297,7 +298,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {/* How well evidenced the whole history is, and how many jobs are holding it back. */}
     {evidence.line && <p className="text-14" role="status">{evidence.line}</p>}
     <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} />
-    <div role="tablist" aria-label="Library sections" className="flex gap-2 border-b border-line-muted">
+    <div role="tablist" aria-label="Library sections" className="flex flex-wrap gap-x-2 border-b border-line-muted">
       {libraryTabs.map(([id, label]) => <button
         key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
         aria-selected={tab === id} tabIndex={tab === id ? 0 : -1}
@@ -372,6 +373,16 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
               // This row as the review of the saved library read it. Its marks stand only while the
               // row on the screen is the row that was saved; otherwise the wording is read live.
               const rowScore = key ? score?.rows.find(item => item.row === key) : undefined;
+              // One path for a row's types, whether they come from the Type menu or are the full
+              // review's reading adopted from the score panel.
+              const setFacets = (next: EvidenceFacet[]) => {
+                if (entry && key) setValue(tagRow(value, entry.id, key, next));
+                else setPendingFacets(current => {
+                  const rest = { ...current };
+                  if (next.length) rest[pendingRowKey(currentJob.id, index)] = next; else delete rest[pendingRowKey(currentJob.id, index)];
+                  return rest;
+                });
+              };
               return <tr key={index} className="border-t border-line-faint align-top">
               <th scope="row" className="px-3 py-2 pt-4 font-normal text-muted">{index + 1}</th>
               <td className="px-3 py-2 pt-4 text-center"><input type="checkbox" aria-label={`Confirm ${currentJob.company} ${currentJob.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(key) ?? false} onChange={event => {
@@ -388,18 +399,11 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
                 <LibraryRowTypeMenu
                   label={`Type of row ${index + 1}`}
                   value={facets}
-                  onChange={next => {
-                    if (entry && key) setValue(tagRow(value, entry.id, key, next));
-                    else setPendingFacets(current => {
-                      const rest = { ...current };
-                      if (next.length) rest[pendingRowKey(currentJob.id, index)] = next; else delete rest[pendingRowKey(currentJob.id, index)];
-                      return rest;
-                    });
-                  }}
+                  onChange={setFacets}
                 />
               </td>
               <td className="px-3 py-2">
-                <RowScoreButton index={index + 1} guidance={rowGuidance({ text: key, facets, view: rowScore, source: score?.source ?? "rules", evaluating: !!score?.evaluating })} />
+                <RowScoreButton index={index + 1} guidance={rowGuidance({ text: key, facets, view: rowScore, source: score?.source ?? "rules", evaluating: !!score?.evaluating })} onAdopt={setFacets} />
               </td>
               <td className="px-3 py-2">
                 {/* The row goes and its tags go with it. The last row leaves an empty one to write
@@ -451,6 +455,10 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       </div>
     </fieldset>)}
     <button type="button" className="mr-4 text-14 underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "active", heading: "", details: "" }] })}>Add education, skill or interest</button>
+    </div>
+    {/* How rows and jobs are scored. Read-only: no field in it, so nothing invalid to reveal. */}
+    <div role="tabpanel" id="library-panel-guide" aria-labelledby="library-tab-guide" hidden={tab !== 'guide'} className="space-y-4">
+      <EvidenceGuide />
     </div>
   </form>;
 }

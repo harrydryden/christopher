@@ -11,8 +11,12 @@ import {
   facetForPrompt,
   libraryEntryInputHash,
   libraryRowScore,
+  knownLibraryRows,
+  libraryPlanCovers,
   normaliseLibraryReview,
+  retagLibraryReview,
   reviewableRows,
+  rowsToClassify,
   rulesLibraryReview,
   scoreLibraryRows,
   validateLibraryReview,
@@ -115,12 +119,17 @@ describe("scoreLibraryRows", () => {
     expect(scoreLibraryRows([row({ facets: ["outcome", "outcome"] })]).coverage.outcome).toBe(1);
   });
 
-  it("counts a row the person has not typed as 0, even when the model classified it", () => {
-    // Covers outcome in the model's reading (50 × 2/8 = 12.5 → 13) but has no score of its own.
+  it("scores a row the person has not typed against the model's reading of it", () => {
+    // Covers outcome in the model's reading (50 × 2/8 = 12.5) and, untagged, is scored against
+    // that reading too, so both halves read the row the same way: 12.5 + 50 → 63.
     const untyped = row({ facets: ["outcome"], tagged: [], marks: [...EVIDENCE_MARKS] });
-    expect(scoreLibraryRows([untyped]).score).toBe(13);
-    // Typed, the same marks read in full: 12.5 + 50.
-    expect(scoreLibraryRows([{ ...untyped, tagged: ["outcome"] }]).score).toBe(63);
+    expect(scoreLibraryRows([untyped]).score).toBe(63);
+    // Tagged, the person's choice wins: typed as a milestone it covers outcome (the model's
+    // reading drives coverage) and scores the milestone marks it earns, here all of them.
+    expect(scoreLibraryRows([{ ...untyped, tagged: ["milestone"] }]).score).toBe(63);
+    expect(scoreLibraryRows([{ ...untyped, marks: [...EVIDENCE_MARKS_BY_FACET.outcome], tagged: ["milestone"] }]).score).toBe(13);
+    // Untagged and unclassified — a rules review's untagged row — it counts 0: 50 × 0 + 50 × 0.
+    expect(scoreLibraryRows([row({ facets: [], tagged: [], marks: [...EVIDENCE_MARKS] })]).score).toBe(0);
     // A verified row the model could not name the types of covers nothing, and scores from its tags.
     expect(scoreLibraryRows([row({ facets: [], tagged: ["metric"], marks: firstMarks(2, ["metric"]) })]).score).toBe(25);
   });
@@ -129,9 +138,11 @@ describe("scoreLibraryRows", () => {
 describe("libraryRowScore", () => {
   const close: EvidenceMark[] = ["outcome.change", "outcome.cause", "outcome.magnitude", ...EVIDENCE_MARKS_BY_FACET.metric];
 
-  it("has no score for a row the person has not typed, whatever the model read it as", () => {
+  it("scores a row the person has not typed against the review's reading, and has none without one", () => {
     const untyped = libraryRowScore(row({ facets: ["outcome", "metric"], tagged: [], marks: close }));
-    expect(untyped).toEqual({ score: null, facets: [], byFacet: [], marks: close });
+    expect(untyped).toMatchObject({ score: 88, facets: ["outcome", "metric"], marks: close });
+    // A rules review's untagged row: its facets are its tags, so there is nothing to score against.
+    expect(libraryRowScore(row({ facets: [], tagged: [], marks: close }))).toEqual({ score: null, facets: [], byFacet: [], marks: close });
   });
 
   it("reads the row's marks against its tags, a quarter a mark", () => {
@@ -151,7 +162,9 @@ describe("libraryRowScore", () => {
     expect(libraryRowScore(reviewed).score).toBe(75);
     expect(libraryRowScore(reviewed, ["metric"]).score).toBe(100);
     expect(libraryRowScore(reviewed, ["style"]).score).toBe(0);
-    expect(libraryRowScore(reviewed, []).score).toBeNull();
+    // Every tag removed on screen: back to the review's own reading of the row.
+    expect(libraryRowScore(reviewed, []).score).toBe(75);
+    expect(libraryRowScore({ ...reviewed, facets: [] }, []).score).toBeNull();
   });
 
   it("gives a row the review could not tie to the wording no marks, so 0 once typed", () => {
@@ -278,6 +291,69 @@ describe("validateLibraryReview", () => {
     expect(result.missing).toEqual(["responsibility", "problem", "milestone", "style"]);
   });
 
+  it("scores an untagged row the model classified against that classification in the entry mean", () => {
+    const counted = plan([said(), said({ row: second, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: "by 40%" })]);
+    const result = validateLibraryReview(entry, counted);
+    expect(result.rows[1]).toMatchObject({ facets: ["metric"], tagged: [] });
+    expect(libraryRowScore(result.rows[1]!)).toMatchObject({ score: 50, facets: ["metric"] });
+    // Outcome and metric covered, 25; the milestone row and the untagged metric row both read 50,
+    // 50 × 100/200 = 25: 50, where scoring the untagged row as nothing read 38.
+    expect(result).toMatchObject({ score: 50, rating: "good" });
+  });
+
+  describe("with rows an earlier review already classified", () => {
+    const earlier = validateLibraryReview(entry, plan([said(), said({ row: second, facets: ["metric"], marks: ["metric.figure"], quote: "by 40%" })]));
+    const known = knownLibraryRows(earlier);
+
+    it("keeps each known row as it was stored, with the tags saved now, and ignores the plan about it", () => {
+      expect([...known.keys()]).toEqual([first, second]);
+      // The person has since tagged the second row an outcome; the model is (wrongly) asked again about the first.
+      const retagged = library([first, second].join("\n"), { [first]: "milestone", [second]: "outcome" }).entries[0]!;
+      const result = validateLibraryReview(retagged, plan([said({ facets: ["style"], marks: ["style.effect"] })]), known);
+      expect(result.rows[0]).toMatchObject({ row: first, facets: ["outcome"], marks: earned, tagged: ["milestone"], verified: true });
+      expect(result.rows[1]).toMatchObject({ row: second, facets: ["metric"], marks: ["metric.figure"], tagged: ["outcome"], quote: "by 40%", verified: true });
+      expect(result).not.toHaveProperty("unread");
+    });
+
+    it("classifies only the rows it does not know, and is unread only when those all went unanswered", () => {
+      const edited = "Cut onboarding time by 40% in one quarter";
+      const changed = library([first, edited].join("\n"), { [first]: "milestone" }).entries[0]!;
+      expect(rowsToClassify(changed, known)).toEqual([edited]);
+      const answered = validateLibraryReview(changed, plan([said({ row: edited, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null })]), known);
+      expect(answered.rows.map(row => [row.row, row.facets, row.verified])).toEqual([[first, ["outcome"], true], [edited, ["metric"], true]]);
+      expect(answered).not.toHaveProperty("unread");
+      // Asked for the edited row and given nothing about it: unread, whatever the known rows say.
+      const silent = validateLibraryReview(changed, plan([]), known);
+      expect(silent.unread).toBe(true);
+      expect(silent.rows[0]).toMatchObject({ verified: true, facets: ["outcome"] });
+      expect(silent.rows[1]).toMatchObject({ verified: false, facets: [] });
+      // An answer about the known row alone is no answer about the one it was asked for.
+      expect(validateLibraryReview(changed, plan([said()]), known).unread).toBe(true);
+      // Every row known: nothing needed classifying, so never unread, and the plan's prompts stand.
+      const reordered = library([second, first].join("\n"), { [first]: "milestone" }).entries[0]!;
+      expect(rowsToClassify(reordered, known)).toEqual([]);
+      expect(validateLibraryReview(reordered, plan([], ["What changed as a result?"]), known)).toMatchObject({ prompts: ["What changed as a result?"] });
+      expect(validateLibraryReview(reordered, plan([]), known)).not.toHaveProperty("unread");
+    });
+
+    it("says an answer covers an entry only when every row it needed came back", () => {
+      const edited = "Cut onboarding time by 40% in one quarter";
+      const changed = library([first, edited].join("\n"), { [first]: "milestone" }).entries[0]!;
+      expect(libraryPlanCovers(changed, undefined, known)).toBe(false);
+      expect(libraryPlanCovers(changed, plan([said()]), known)).toBe(false);
+      expect(libraryPlanCovers(changed, plan([said({ row: ` ${edited} ` })]), known)).toBe(true);
+      // Without known rows, every row has to come back.
+      expect(libraryPlanCovers(changed, plan([said({ row: edited })]))).toBe(false);
+      expect(libraryPlanCovers(changed, plan([said(), said({ row: edited })]))).toBe(true);
+    });
+
+    it("leaves an unverified row out of what is known, so it is asked about again", () => {
+      const partial = validateLibraryReview(entry, plan([said()]));
+      expect(partial.rows[1]!.verified).toBe(false);
+      expect([...knownLibraryRows(partial).keys()]).toEqual([first]);
+    });
+  });
+
   it("keeps only the marks the rubric knows, each once", () => {
     const loose = said({ marks: ["style.effect", "vibes", "milestone.role", "milestone.role"] as never });
     expect(validateLibraryReview(entry, plan([loose])).rows[0]!.marks).toEqual(["milestone.role", "style.effect"]);
@@ -334,14 +410,10 @@ describe("libraryEntryInputHash", () => {
     expect(libraryEntryInputHash({ ...entry, confirmedResponsibilities: [first] }, job)).toBe(hash);
   });
 
-  it("changes when a row, its order, its types or the job it belongs to changes", () => {
+  it("changes when a row, its order or the job it belongs to changes", () => {
     const changed = [
       libraryEntryInputHash(library([first, "Cut onboarding time by 45%"].join("\n"), { [second]: "metric" }).entries[0]!, job),
       libraryEntryInputHash(library([second, first].join("\n"), { [second]: "metric" }).entries[0]!, job),
-      libraryEntryInputHash(library([first, second].join("\n"), { [second]: "outcome" }).entries[0]!, job),
-      // A second type on a row is a different classification, so that entry is reviewed again.
-      libraryEntryInputHash(library([first, second].join("\n"), { [second]: ["metric", "outcome"] }).entries[0]!, job),
-      libraryEntryInputHash(library([first, second].join("\n")).entries[0]!, job),
       libraryEntryInputHash(entry, { ...job, company: "Globex" }),
       libraryEntryInputHash(entry, { ...job, jobTitle: "Head of Operations" }),
       libraryEntryInputHash(entry, null),
@@ -351,6 +423,17 @@ describe("libraryEntryInputHash", () => {
     expect(libraryEntryInputHash(entry, { ...job, current: false, endDate: "2026-01" })).toBe(hash);
   });
 
+  it("does not change when a row is re-tagged: the review is about the wording, not the tags", () => {
+    // A different type, a second type, and every tag removed: the page re-scores each against the
+    // review's marks itself, so none of them is worth another review of the entry.
+    const retags: Array<Record<string, EvidenceFacet | EvidenceFacet[]>> = [{ [second]: "outcome" }, { [second]: ["metric", "outcome"] }, {}, { [first]: "milestone", [second]: "metric" }];
+    for (const facets of retags) {
+      expect(libraryEntryInputHash(library([first, second].join("\n"), facets).entries[0]!, job)).toBe(hash);
+    }
+    // Editing a row's wording does change it.
+    expect(libraryEntryInputHash(library([first, "Cut onboarding time by 40% in a quarter"].join("\n"), { [second]: "metric" }).entries[0]!, job)).not.toBe(hash);
+  });
+
   it("survives the consolidation the editor runs on every open and save", () => {
     const consolidated = consolidateExperience(subject);
     expect(consolidated.facetedRows).toBe(true);
@@ -358,22 +441,19 @@ describe("libraryEntryInputHash", () => {
   });
 
   it("leads with the rubric version, so a review under an earlier rubric no longer matches", () => {
-    expect(LIBRARY_RUBRIC_VERSION).toBe(2);
-    // What the first rubric's reviews were stored against: the same list with no version.
+    expect(LIBRARY_RUBRIC_VERSION).toBe(3);
+    // Rows in order, the company and the job title, after the version.
+    expect(hash).toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], job.company, job.jobTitle])));
+    // What the first rubric's reviews were stored against (no version), and what the second's were
+    // (its version, and each row's tags joined): neither matches any more.
     expect(hash).not.toBe(sha1(JSON.stringify([[first, second], ["", "metric"], job.company, job.jobTitle])));
     expect(hash).not.toBe(sha1(JSON.stringify([1, [first, second], ["", "metric"], job.company, job.jobTitle])));
+    expect(hash).not.toBe(sha1(JSON.stringify([2, [first, second], ["", "metric"], job.company, job.jobTitle])));
   });
 
-  it("hashes a row of one type exactly as a row stored as a string", () => {
-    // Rows in order, each row's types joined, the company and the job title: one type joins to
-    // itself and an untagged row to "", so nobody's Library is re-reviewed, and nothing is paid
-    // for again, over how tags are stored.
-    expect(libraryEntryInputHash(entry, job)).toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], ["", "metric"], job.company, job.jobTitle])));
-    expect(libraryEntryInputHash(library([first, second].join("\n"), { [second]: ["outcome", "metric"] }).entries[0]!, job))
-      .toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], ["", "outcome,metric"], job.company, job.jobTitle])));
-    // And the entry as that release actually stored it — the tag a bare string, not a one-item
-    // list — hashes to the same thing unparsed, which is the shape the worker's handler reads
-    // `cv_libraries.content` in.
+  it("reads an entry as stored, whatever shape its tags were written in", () => {
+    // The worker's handler hashes `cv_libraries.content` unparsed, where a release stored a tag as
+    // a bare string rather than a one-item list.
     const stored = { ...entry, rowFacets: { [second]: "metric" } } as unknown as typeof entry;
     expect(libraryEntryInputHash(stored, job)).toBe(libraryEntryInputHash(entry, job));
   });
@@ -432,5 +512,32 @@ describe("facetForPrompt", () => {
     expect(facetForPrompt("  what changed as a  result?  ")).toBe("outcome");
     expect(facetForPrompt("What did the board say about the migration?")).toBeNull();
     expect(facetForPrompt("")).toBeNull();
+  });
+});
+
+describe("retagLibraryReview", () => {
+  it("reads a model review against the tags saved now, keeping its marks and its reading", () => {
+    const first = "Rebuilt the Acme onboarding flow from scratch with the design group";
+    const second = "Cut onboarding time by 40%";
+    const before = library([first, second].join("\n"), { [first]: "milestone" });
+    const review = validateLibraryReview(before.entries[0]!, {
+      entryId: "acme-block",
+      rows: [
+        { row: first, facets: ["outcome"], marks: ["outcome.change", "milestone.deliverable", "milestone.role"], quote: null },
+        { row: second, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null },
+      ],
+      prompts: [],
+    });
+    // Re-tagged: the first row is now an outcome, the second a metric the person chose themselves.
+    const after = library([first, second].join("\n"), { [first]: "outcome", [second]: "metric" });
+    const retagged = retagLibraryReview(review, after.entries[0]!);
+    expect(retagged.rows.map(row => row.tagged)).toEqual([["outcome"], ["metric"]]);
+    expect(retagged.rows.map(row => [row.facets, row.marks])).toEqual(review.rows.map(row => [row.facets, row.marks]));
+    // Coverage 25 either way; the first row reads 25 as an outcome where it read 50 as a milestone:
+    // 25 + 50 × 75/200 = 43.75 → 44, where the review as stored read 50.
+    expect(review.score).toBe(50);
+    expect(retagged).toMatchObject({ score: 44, rating: "weak" });
+    // The same entry as far as its review is concerned.
+    expect(libraryEntryInputHash(after.entries[0]!, job)).toBe(libraryEntryInputHash(before.entries[0]!, job));
   });
 });

@@ -1,5 +1,7 @@
 "use client";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
+import type { EvidenceFacet } from "@ava/core/cv-helpers";
+import { scoredAsLine } from "@ava/core/evidence-rubric";
 import type { RowGuidance } from "@/lib/cv-library-evidence";
 import { FitBar } from "@/components/table";
 import { useAnchoredPanel } from "@/components/useAnchoredPanel";
@@ -17,18 +19,24 @@ import { useAnchoredPanel } from "@/components/useAnchoredPanel";
  * It is laid out against the viewport (`useAnchoredPanel`), like the Type menu, because the rows
  * table is a horizontal scroller that would clip a panel positioned inside it.
  *
- * An untyped row has no score, only the prompt to choose a type; opening it says why.
+ * An untyped row has no score, only the prompt to choose a type; opening it says why. When the
+ * full review read the row as something, the panel offers those types as one button: adopting them
+ * is the person's choice, made here, and goes through the same path as the Type menu. The review
+ * never tags a row itself.
  */
-export function RowScoreButton({ index, guidance }: {
+export function RowScoreButton({ index, guidance, onAdopt }: {
   /** The row's number as the # column shows it. */
   index: number;
   guidance: RowGuidance;
+  /** Tag the row with the review's reading of it; without it, nothing is offered. */
+  onAdopt?: (facets: EvidenceFacet[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const panelId = useId();
+  const adoptable = guidance.suggested.length > 0 && !!onAdopt;
 
   useAnchoredPanel({ open, setOpen, root, trigger, panel });
 
@@ -44,9 +52,16 @@ export function RowScoreButton({ index, guidance }: {
       trigger.current?.focus();
       return;
     }
-    // Tab out of the last thing in the panel (there is nothing focusable in it but the panel) goes
-    // on to the next control in the row, and the panel goes with it.
-    if (event.key === "Tab") setOpen(false);
+    // Tab out of the last thing in the panel goes on to the next control in the row, and the panel
+    // goes with it. The one thing that can be focusable inside it is the adopt button, which Tab
+    // from the panel itself reaches first.
+    if (event.key === "Tab" && !(adoptable && event.target === panel.current && !event.shiftKey)) setOpen(false);
+  }
+
+  function adopt() {
+    onAdopt?.([...guidance.suggested]);
+    setOpen(false);
+    trigger.current?.focus();
   }
 
   function onTriggerKey(event: KeyboardEvent<HTMLButtonElement>) {
@@ -92,6 +107,16 @@ export function RowScoreButton({ index, guidance }: {
             </div>
           ))}
           <p className="text-muted">{guidance.footer}</p>
+          {adoptable && (
+            <button
+              type="button"
+              aria-label={`Tag row ${index} as ${scoredAsLine(guidance.suggested)}`}
+              onClick={adopt}
+              className="justify-self-start text-12 underline"
+            >
+              Use these types
+            </button>
+          )}
         </div>
       )}
     </div>

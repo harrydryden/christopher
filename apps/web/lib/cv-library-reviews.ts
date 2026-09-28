@@ -2,7 +2,8 @@
  * Turning the reviews stored against a Library into what the page shows.
  *
  * The score is never computed here. `scoreLibraryRows` in `packages/core` is the only place an
- * entry's number is produced, so this either reads back the stored review of an entry's exact wording or,
+ * entry's number is produced, so this either reads back the stored review of an entry's exact wording
+ * (rescored in core against the tags saved now, `retagLibraryReview`) or,
  * when none describes it yet, falls back to `rulesLibraryReview` — the no-model baseline computed
  * from the types the person tagged the rows with. A baseline standing in for a review that has not run is marked
  * provisional, so the page can say so rather than pass it off as the whole answer.
@@ -25,6 +26,7 @@ import type { EvidenceMark } from "@ava/core/evidence-rubric";
 import {
   evidenceRatingFor,
   facetForPrompt,
+  retagLibraryReview,
   rulesLibraryReview,
   type LibraryEntryReview,
   type LibraryReviewSource,
@@ -41,8 +43,11 @@ import {
 
 type CvEntry = CvLibrary["entries"][number];
 
-/** Entry kinds an evidence review is about, as the worker's handler defines them. */
-const REVIEWABLE_KINDS = new Set(["experience", "education", "skill"]);
+/**
+ * Entry kinds an evidence review is about, as the worker's handler defines them: experience only,
+ * because the rubric's marks are job-shaped and mean nothing on a degree or a skill.
+ */
+const REVIEWABLE_KINDS = new Set(["experience"]);
 
 /** A stored review, as much of it as the page reads. */
 export interface StoredLibraryReview {
@@ -92,7 +97,10 @@ export function libraryEvidence(
     .filter(entry => REVIEWABLE_KINDS.has(entry.kind) && isActiveStoredEvidence(entry) && evidenceRows(entry).length > 0)
     .map<EvidenceEntryView>(entry => {
       const held = stored.get(entry.id);
-      const review = held?.review ?? rulesLibraryReview(entry, library);
+      // A stored review matches the entry's wording, not its tags (the hash leaves them out), so it
+      // is read against the tags saved now: a model review keeps its marks and its reading of each
+      // row and is rescored, and the rules baseline, whose types are the tags, is computed again.
+      const review = held?.source === "model" ? retagLibraryReview(held.review, entry) : rulesLibraryReview(entry, library);
       const source = held?.source ?? "rules";
       return {
         entryId: entry.id,
@@ -109,8 +117,7 @@ export function libraryEvidence(
         reviewedRows: review.rows.map(row => row.row),
         rows: review.rows.map<EvidenceRowView>(row => ({
           row: row.row,
-          // The tags as saved now. A stored review is only read under the entry's current hash,
-          // which covers the tags, so these are the tags it was reviewed against too.
+          // The tags as saved now, which the review above was rescored against.
           tagged: rowFacets(entry, row.row),
           marks: row.verified ? row.marks : ([] as EvidenceMark[]),
           reviewFacets: row.facets,

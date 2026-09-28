@@ -566,6 +566,12 @@ describe("helpers", () => {
     // Batches of eight: the ninth entry is what adds the second batch and its cache read.
     expect(estimateLibraryReviewUsd("claude-fable-5-1", { ...library, entryCount: 9 })).toBeGreaterThan(
       estimateLibraryReviewUsd("claude-fable-5-1", { ...library, entryCount: 8 }) + 400 * 50 / 1_000_000);
+    // A one-row edit to a twenty-row job is asked about one row: the answer shrinks to a twentieth,
+    // while the library in front of it does not. Leaving the pair out asks about every row.
+    const oneRow = { ...library, entryCount: 1, rowsToClassify: 1, rowsTotal: 20 };
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", oneRow)).toBeCloseTo(0.23825 - 380 * 50 / 1_000_000, 6);
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", { ...oneRow, rowsToClassify: 20 })).toBeCloseTo(0.23825, 6);
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", { ...oneRow, rowsTotal: 0 })).toBeCloseTo(0.23825, 6);
     // Nothing to review is nothing to hold: no call is made, so no budget is taken.
     expect(estimateLibraryReviewUsd("claude-fable-5-1", { ...library, entryCount: 0 })).toBe(0);
   });
@@ -1171,13 +1177,14 @@ describe("library evidence review (A12)", () => {
     expect(entryIdsIn(calls[0]!.params)).toHaveLength(8);
     expect(entryIdsIn(calls[1]!.params)).toHaveLength(2);
     expect(reviews.map(review => review.entryId)).toEqual(library.entries.map(entry => entry.id));
-    // The score is code's. Three facets' worth of coverage; the person has typed neither row, so
-    // neither has a score of its own however many marks it earns, and the row term reads 0.
+    // The score is code's. Three facets' worth of coverage, 50 × 3/8; the person has typed neither
+    // row, so each is scored against the model's reading of it — responsibility 75 and outcome 50,
+    // 50 × 125/200 — and the entry reads 18.75 + 31.25 = 50.
     expect(reviews[0]!.rows.every(row => row.verified)).toBe(true);
     expect(reviews[0]!.rows[0]!.marks).toEqual(["responsibility.scope", "responsibility.ownership", "responsibility.scale"]);
     expect(reviews[0]!.rows.every(row => row.tagged.length === 0)).toBe(true);
-    expect(reviews[0]!.score).toBe(Math.round(50 * 3 / 8));
-    expect(reviews[0]!.rating).toBe("none");
+    expect(reviews[0]!.score).toBe(50);
+    expect(reviews[0]!.rating).toBe("good");
     expect(reviews[0]!.missing).toEqual(["metric", "problem", "milestone", "style"]);
 
     // One library, written to the cache once: the first block is byte for byte the same in both
@@ -1226,8 +1233,9 @@ describe("library evidence review (A12)", () => {
     expect(review!.rows.map(row => row.row)).toEqual(ROWS);
     expect(review!.rows[0]).toMatchObject({ verified: false, facets: [], marks: [], quote: null });
     expect(review!.rows[1]).toMatchObject({ verified: true, facets: ["outcome"], marks: ["outcome.change"], quote: ROWS[1] });
-    // An unverified row covers nothing and earns no marks: only the verified outcome row's coverage.
-    expect(review!.score).toBe(Math.round(50 * 2 / 8));
+    // An unverified row covers nothing and earns no marks: the verified outcome row's coverage,
+    // 50 × 2/8, and its one outcome mark read against the model's reading, 50 × 25/200: 18.75 → 19.
+    expect(review!.score).toBe(19);
   });
 
   it("carries the person's own tags as a list and counts a row of two types under both", async () => {
@@ -1248,11 +1256,12 @@ describe("library evidence review (A12)", () => {
     expect(userBlocks(calls[0]!.params)[0]!.text).toContain("(they tagged this problem, metric)");
     expect(review!.rows.map(row => row.facets)).toEqual([["responsibility", "milestone"], ["outcome", "metric"]]);
     expect(review!.coverage).toEqual({ responsibility: 1, problem: 0, outcome: 1, metric: 1, milestone: 1, style: 0 });
-    // The rows are scored against the person's tags, not the model's reading: the second row is
-    // problem 50 and metric 25, 38; the untagged first row reads nothing.
+    // A tagged row is scored against the person's tags, not the model's reading: the second row is
+    // problem 50 and metric 25, 38. The untagged first row reads against the model's reading,
+    // responsibility 75 and milestone 0, 38.
     expect(review!.rows.map(row => row.tagged)).toEqual([[], ["problem", "metric"]]);
-    // Four facets between two rows, 50 × 6/8 = 37.5, and 50 × 38/200 = 9.5: 47.
-    expect(review!).toMatchObject({ score: 47, rating: "weak", missing: ["problem", "style"] });
+    // Four facets between two rows, 50 × 6/8 = 37.5, and 50 × 76/200 = 19: 56.5 → 57.
+    expect(review!).toMatchObject({ score: 57, rating: "good", missing: ["problem", "style"] });
   });
 
   it("leaves unread an entry whose answer asks about a demographic attribute, and keeps the others", async () => {
@@ -1294,6 +1303,65 @@ describe("library evidence review (A12)", () => {
     expect(reviews[1]!.rows.every(row => !row.verified)).toBe(true);
     expect(reviews[1]!.score).toBe(0);
     expect(reviews[1]!.prompts).toEqual([]);
+  });
+
+  it("shows the whole entry but asks only about the rows it has not classified, and keeps the rest", async () => {
+    const edited = "Cut handover time from two days to three hours";
+    const library = libraryOf(2);
+    library.entries[0] = { ...library.entries[0]!, details: [ROWS[0]!, edited].join("\n") };
+    // What the earlier review said about the first row, which is unchanged.
+    const known = new Map([[ROWS[0]!, {
+      row: ROWS[0]!, facets: ["responsibility" as const], tagged: [], marks: ["responsibility.scope" as const], quote: ROWS[0]!, verified: true,
+    }]]);
+    const calls: Captured[] = [];
+    const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
+      calls.push({ params });
+      return { parsed_output: { entries: [
+        // Returned anyway, and differently: it is not what the model was asked, so it is ignored.
+        { entryId: "entry0", rows: [
+          { row: ROWS[0]!, facets: ["style"], marks: ["style.effect"], quote: ROWS[0]! },
+          { row: edited, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: edited },
+        ], prompts: ["Who relied on the handover?"] },
+        answerFor(params).entries[1]!,
+      ] }, usage: { input_tokens: 10, output_tokens: 10 } };
+    } } } });
+
+    const [first, second] = await engine.reviewLibraryEntries({
+      library, entries: [{ ...library.entries[0]!, known }, library.entries[1]!],
+    }, ref);
+
+    expect(calls).toHaveLength(1);
+    const batch = userBlocks(calls[0]!.params)[1]!.text;
+    const block = batch.split("\n\n").find(chunk => chunk.includes("Entry [entry0]"))!;
+    // Every row is in view, in order, and then only the edited one is named to classify.
+    expect(block).toContain(`Rows:\n- ${ROWS[0]}\n- ${edited}\nClassify only these rows (the others are already classified; do not return them):\n- ${edited}`);
+    // An entry with nothing known is asked about as before.
+    expect(batch.split("\n\n").find(chunk => chunk.includes("Entry [entry1]"))).not.toContain("Classify only");
+    expect(first!.rows[0]).toMatchObject({ row: ROWS[0], facets: ["responsibility"], marks: ["responsibility.scope"], verified: true });
+    expect(first!.rows[1]).toMatchObject({ row: edited, facets: ["metric"], marks: ["metric.figure", "metric.movement"], verified: true });
+    expect(first!.prompts).toEqual(["Who relied on the handover?"]);
+    expect(first!.unread).toBeUndefined();
+    expect(second!.rows.every(row => row.verified)).toBe(true);
+  });
+
+  it("asks again when an answer leaves out a row it needed, and merges what comes back", async () => {
+    const library = libraryOf(1);
+    const calls: Captured[] = [];
+    const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
+      calls.push({ params });
+      const full = answerFor(params).entries[0]!;
+      // The first answer classifies only the first row; the second classifies only the second.
+      const rows = calls.length === 1 ? full.rows.slice(0, 1) : full.rows.slice(1);
+      return { parsed_output: { entries: [{ ...full, rows, prompts: calls.length === 1 ? full.prompts : [] }] }, usage: { input_tokens: 10, output_tokens: 10 } };
+    } } } });
+
+    const [review] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);
+
+    expect(calls).toHaveLength(2);
+    expect(userBlocks(calls[1]!.params)[1]!.text).toContain("left rows of them unclassified");
+    expect(review!.rows.every(row => row.verified)).toBe(true);
+    expect(review!.rows.map(row => row.facets)).toEqual([["responsibility"], ["outcome"]]);
+    expect(review!.prompts).toEqual(["What problem were you brought in to solve?"]);
   });
 
   it("fails the pass rather than scoring zero when a batch returns nothing usable", async () => {

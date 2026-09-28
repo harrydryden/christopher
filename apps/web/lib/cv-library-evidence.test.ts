@@ -135,6 +135,31 @@ it("shows a stored model review as it was computed and stops saying Evaluating",
   expect(evidence.line).toBe("Evidence: Weak · 1 job is Weak");
 });
 
+it("reads a stored model review against the tags saved now, since a re-tag is not re-reviewed", () => {
+  // Reviewed when the second row was untagged; the person has since tagged it an outcome. The
+  // entry's hash leaves tags out, so this is still its review, rescored against the new tags.
+  const value = library({ acme: ["Led a team", "Cut handovers by 40%"] }, { acme: { "Cut handovers by 40%": ["outcome"] } });
+  const review: LibraryEntryReview = {
+    entryId: "acme",
+    rows: [
+      { row: "Led a team", facets: ["responsibility"], tagged: [], marks: ["responsibility.ownership"], quote: null, verified: true },
+      { row: "Cut handovers by 40%", facets: ["metric"], tagged: [], marks: ["metric.figure", "metric.measure", "metric.movement", "outcome.change"], quote: null, verified: true },
+    ],
+    coverage: { responsibility: 1, problem: 0, outcome: 0, metric: 1, milestone: 0, style: 0 },
+    missing: ["outcome", "problem", "milestone", "style"],
+    prompts: [],
+    score: 44,
+    rating: "weak",
+  };
+  const stored = new Map<string, StoredLibraryReview>([["acme", { entryId: "acme", source: "model", review }]]);
+  const entry = libraryEvidence(value, stored).entries[0]!;
+  expect(entry.rows.map(row => [row.tagged, row.reviewFacets])).toEqual([[[], ["responsibility"]], [["outcome"], ["metric"]]]);
+  // Coverage is the review's reading (responsibility and metric, 50 × 3/8 = 18.75); the first row
+  // untagged reads against it (25), the second against its new tag, one outcome mark (25):
+  // 18.75 + 50 × 50/200 = 31.25 → 31, not the 44 stored when it read as a metric.
+  expect(entry).toMatchObject({ score: 31, rating: "weak", source: "model", provisional: false });
+});
+
 it("carries the worker's own refusal and stops evaluating when the pass is done", () => {
   const value = library({ acme: ["Led a team"] });
   const refusal = "Library evidence review needs about $0.12 of AI budget; your budget of $5 has $0.00 left this month (it resets on the 1st). Raise it on Settings, or ask an administrator.";
@@ -147,9 +172,14 @@ it("carries the worker's own refusal and stops evaluating when the pass is done"
 it("ignores blocks with nothing in them and a library that has not been written", () => {
   expect(libraryEvidence(null, new Map()).entries).toEqual([]);
   const value = library({ acme: ["Led a team"] });
-  value.entries.push({ id: "interest", kind: "interest", status: "active", heading: "Running", details: "Marathons" });
+  value.entries.push(
+    { id: "interest", kind: "interest", status: "active", heading: "Running", details: "Marathons" },
+    { id: "degree", kind: "education", status: "active", heading: "University of Leeds", details: "MSc Operations Management, 2014" },
+    { id: "skills", kind: "skill", status: "active", heading: "Skills", details: "Forecasting\nSQL" },
+  );
   const evidence = libraryEvidence(value, new Map());
-  // An interests block is not evidence of anything, and only jobs are counted in the line.
+  // An interests block is not evidence of anything, and the rubric's marks are job-shaped, so an
+  // education or skill block is neither scored nor listed: the page lists only jobs.
   expect(evidence.entries.map(entry => entry.entryId)).toEqual(["acme"]);
 });
 
@@ -204,6 +234,7 @@ it("asks for a type before it scores a row, and says what the full review read i
     heading: "Select type",
     missing: [],
     footer: "Choose one or more types in the Type column; the row is scored against what each type needs.",
+    suggested: [],
   });
   // The model classified the row, but the person has not tagged it: still no score, and the
   // model's reading is offered as a hint, never applied.
@@ -213,6 +244,20 @@ it("asks for a type before it scores a row, and says what the full review read i
   expect(model.score).toBeNull();
   expect(model.heading).toBe("Select type");
   expect(model.footer).toBe("Choose one or more types in the Type column; the row is scored against what each type needs. The full review reads this row as Responsibilities and Metrics moved.");
+  expect(model.suggested).toEqual(["responsibility", "metric"]);
+});
+
+it("offers the review's types only for an untyped row the review read as something", () => {
+  const read = view1({ tagged: [], reviewFacets: ["outcome"] });
+  expect(rowGuidance({ text: "Responsible for operations", facets: [], view: read, source: "model", evaluating: false }).suggested).toEqual(["outcome"]);
+  // Once the person has a type on the row, nothing is suggested, whatever the review read.
+  expect(rowGuidance({ text: "Responsible for operations", facets: ["metric"], view: read, source: "model", evaluating: false }).suggested).toEqual([]);
+  // The review read it as nothing, or there is no review of this row.
+  expect(rowGuidance({ text: "Responsible for operations", facets: [], view: view1({ tagged: [], reviewFacets: [] }), source: "model", evaluating: false }).suggested).toEqual([]);
+  expect(rowGuidance({ text: "Responsible for operations", facets: [], view: undefined, source: "model", evaluating: false }).suggested).toEqual([]);
+  // A copy, so adopting it cannot mutate the view.
+  const suggested = rowGuidance({ text: "Responsible for operations", facets: [], view: read, source: "model", evaluating: false }).suggested;
+  expect(suggested).not.toBe(read.reviewFacets);
 });
 
 it("scores a typed row from its own wording and lists only what is missing, as lines to act on", () => {
@@ -275,5 +320,6 @@ it("says nothing is missing when a row earns every mark its types need", () => {
     heading: "100/100 · Scored as Metrics moved",
     missing: [],
     footer: `Nothing missing for Metrics moved. ${OWN_WORDING}`,
+    suggested: [],
   });
 });

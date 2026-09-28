@@ -23,7 +23,7 @@ import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { completeCv, cvRoleKey, type AiCallRecord, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
-import { ASSESSMENT_COVERAGE_ERROR, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
+import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
@@ -531,7 +531,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       if (checkpoint.tailoringEnabled && !inputs.reusedContent) {
         const planStage: CvStage<{ rubric: CvRubric; library: typeof library }, CvTailoringPlan> = {
           name: "plan", admission: "plan", motion: "plan_evidence",
-          key: input => input,
+          // Keyed by what the planner reads — the rubric and the canonical evidence — not the whole
+          // Library, so a change that touches no evidence (the theme, the contact details, the
+          // name, the writing preferences, an archived block) reuses the plan. `validate` still
+          // checks a reused plan against the Library itself.
+          key: input => ({ rubric: input.rubric, evidence: canonicalEvidence(input.library) }),
           estimate: () => estimateCvStage("plan", sizes, models),
           run: (input, stageCtx) => journal.run("plan_evidence", {}, async step => {
             callSteps.set("planning", step);

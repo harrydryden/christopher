@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import type { AiClientLike, ParseResponse } from "@ava/ai";
-import { libraryEntryInputHash, type CvLibrary } from "@ava/core";
+import { libraryEntryInputHash, setRowFacets, type CvLibrary } from "@ava/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -28,6 +28,7 @@ const now = new Date("2026-09-19T09:00:00Z");
 const ROWS = {
   ran: "Ran the UK warehouse team of 30 through a move to a new site",
   cut: "Cut handover time from two days to four hours",
+  led: "Led the carrier tender across four regions for the retail business",
   msc: "MSc Operations Management, University of Leeds, 2014",
 };
 
@@ -36,11 +37,17 @@ function libraryOf(over: { first?: string } = {}): CvLibrary {
     name: "Test Candidate",
     contact: "London",
     profile: "Operations leader with delivery experience",
-    employment: [{ id: "job1", company: "Acme", jobTitle: "Director of Operations", startDate: "2020-01", endDate: "2022-01", current: false }],
+    employment: [
+      { id: "job1", company: "Acme", jobTitle: "Director of Operations", startDate: "2020-01", endDate: "2022-01", current: false },
+      { id: "job2", company: "Brisk", jobTitle: "Logistics Manager", startDate: "2016-01", endDate: "2019-12", current: false },
+    ],
     entries: [
       { id: "role", kind: "experience", heading: "Director of Operations · Acme", employmentId: "job1",
         details: [over.first ?? ROWS.ran, ROWS.cut].join("\n") },
+      { id: "later", kind: "experience", heading: "Logistics Manager · Brisk", employmentId: "job2", details: ROWS.led },
+      // Education and skills are not reviewed: the rubric's marks are job-shaped.
       { id: "degree", kind: "education", heading: "University of Leeds", details: ROWS.msc },
+      { id: "skills", kind: "skill", heading: "Skills", details: "Forecasting\nSQL" },
       // No rows at all: nothing to classify, so it is never sent and never scored.
       { id: "hobbies", kind: "interest", heading: "Interests", details: "Cycling" },
     ],
@@ -53,14 +60,19 @@ async function saveLibrary(version: number, content: CvLibrary) {
 
 const USAGE = { input_tokens: 900, output_tokens: 300, cache_read_input_tokens: 2000, cache_creation_input_tokens: 400 };
 
-/** One batch, as the engine laid it out: which entries it asked about and what rows it sent. */
+/**
+ * One batch, as the engine laid it out: which entries it asked about, every row it showed, and the
+ * rows it asked to have classified — all of them, unless it named only some.
+ */
 function batchOf(params: Record<string, unknown>) {
   const blocks = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
   return blocks[1]!.text.split("\n\n").flatMap(chunk => {
     const id = chunk.match(/^Entry \[([^\]]+)\]/mu)?.[1];
     if (!id) return [];
-    const rows = chunk.split("\n").filter(line => line.startsWith("- ")).map(line => line.slice(2));
-    return [{ id, rows }];
+    const [shown, only] = chunk.split(/^Classify only these rows.*$/mu);
+    const bullets = (text: string) => text.split("\n").filter(line => line.startsWith("- ")).map(line => line.slice(2));
+    const all = bullets(shown!);
+    return [{ id, all, rows: only === undefined ? all : bullets(only) }];
   });
 }
 
@@ -134,14 +146,15 @@ it("writes the rules baseline before it asks a model anything, then replaces it 
   expect((result as { cost: number }).cost).toBeGreaterThan(0);
   // The call saw a full baseline already stored: a Library opened while the task runs has a score.
   expect(scripted.calls).toHaveLength(1);
-  expect(scripted.calls[0]!.baseline.map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "rules"]]);
-  // An entry with no rows is not evidence of anything and is never sent.
-  expect(scripted.calls[0]!.entries).toEqual(["role", "degree"]);
-  expect(scripted.calls[0]!.rows).toEqual([ROWS.ran, ROWS.cut, ROWS.msc]);
+  expect(scripted.calls[0]!.baseline.map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "rules"]]);
+  // Only experience is sent: an education or skill block is neither reviewed nor scored, and an
+  // entry with no rows is not evidence of anything.
+  expect(scripted.calls[0]!.entries).toEqual(["role", "later"]);
+  expect(scripted.calls[0]!.rows).toEqual([ROWS.ran, ROWS.cut, ROWS.led]);
 
   const stored = await reviews();
   expect(stored.map(row => [row.entryId, row.source, row.model])).toEqual([
-    ["degree", "model", "claude-fable-5-1"],
+    ["later", "model", "claude-fable-5-1"],
     ["role", "model", "claude-fable-5-1"],
   ]);
   // One row per entry per version: the baseline was replaced in place, not accumulated beside.
@@ -164,7 +177,7 @@ it("reuses an unchanged entry's review across a save and sends only the entry wh
   deps.aiClient = first.client;
   await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps);
 
-  // A typo fixed in one row of one entry; the education block is untouched.
+  // A typo fixed in one row of one entry; the other job is untouched.
   const edited = libraryOf({ first: "Ran the UK warehouse team of 30 through a move to a new site in Leeds" });
   await saveLibrary(2, edited);
   const second = scriptedClient();
@@ -179,7 +192,7 @@ it("reuses an unchanged entry's review across a save and sends only the entry wh
   // Version 2 carries both: the edited entry reviewed again, the untouched one on its old answer,
   // copied forward so it lives as long as the version does.
   const v2 = stored.filter(row => row.libraryVersion === 2);
-  expect(v2.map(row => [row.entryId, row.source])).toEqual([["degree", "model"], ["role", "model"]]);
+  expect(v2.map(row => [row.entryId, row.source])).toEqual([["later", "model"], ["role", "model"]]);
   expect(v2.find(row => row.entryId === "role")!.inputHash)
     .toBe(libraryEntryInputHash(edited.entries[0]!, edited.employment![0]!));
 
@@ -190,29 +203,82 @@ it("reuses an unchanged entry's review across a save and sends only the entry wh
   expect(await handleReviewLibrary(task({ userId, libraryVersion: 2 }), deps)).toMatchObject({ reviewed: 0, reused: 2 });
   expect(third.calls).toHaveLength(0);
   expect((await reviews()).filter(row => row.libraryVersion === 2).map(row => [row.entryId, row.source]))
-    .toEqual([["degree", "model"], ["role", "model"]]);
+    .toEqual([["later", "model"], ["role", "model"]]);
+});
+
+it("asks only about the row that changed within an edited entry, and keeps the others' marks", async () => {
+  await saveLibrary(1, libraryOf());
+  deps.aiClient = scriptedClient().client;
+  await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps);
+  const before = (await reviews()).find(row => row.entryId === "role")!;
+
+  // The second row of the role is reworded; its first row, and the other job, are untouched.
+  const reworded = "Cut handover time from two days to three hours";
+  const library = libraryOf();
+  await saveLibrary(2, { ...library, entries: library.entries.map(entry => entry.id === "role" ? { ...entry, details: [ROWS.ran, reworded].join("\n") } : entry) });
+  let shown: string[] = [];
+  const second = scriptedClient();
+  deps.aiClient = { messages: { create: async params => {
+    shown = batchOf(params).flatMap(entry => entry.all);
+    return second.client.messages.create(params);
+  } } };
+
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 2 }), deps)).toMatchObject({ reviewed: 1, reused: 1 });
+  // One call, about one entry, asking for one row — with the whole entry shown for its questions.
+  expect(second.calls.map(call => [call.entries, call.rows])).toEqual([[["role"], [reworded]]]);
+  expect(shown).toEqual([ROWS.ran, reworded]);
+
+  const after = (await reviews()).find(row => row.entryId === "role" && row.libraryVersion === 2)!;
+  expect(after.source).toBe("model");
+  // The unchanged row keeps what the first review said about it; the reworded row is the new answer.
+  expect(after.review.rows[0]).toEqual({ ...before.review.rows[0]!, tagged: [] });
+  expect(after.review.rows[1]).toMatchObject({ row: reworded, verified: true, facets: ["responsibility"] });
+  expect(after.review.unread).toBeUndefined();
+});
+
+it("re-reviews nothing when a row is only re-tagged, and carries the review with the new tags", async () => {
+  await saveLibrary(1, libraryOf());
+  deps.aiClient = scriptedClient().client;
+  await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps);
+
+  const library = libraryOf();
+  const retagged = { ...library, entries: library.entries.map(entry => entry.id === "role" ? setRowFacets(entry, ROWS.cut, ["metric"]) : entry) };
+  await saveLibrary(2, retagged);
+  const second = scriptedClient();
+  deps.aiClient = second.client;
+
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 2 }), deps)).toMatchObject({ reviewed: 0, reused: 2 });
+  expect(second.calls).toHaveLength(0);
+  const role = (await reviews()).filter(row => row.entryId === "role");
+  expect(role.map(row => [row.libraryVersion, row.source])).toEqual([[1, "model"], [2, "model"]]);
+  const [before, after] = [role[0]!, role[1]!];
+  // The marks and the model's reading are about the wording and are carried as they were; the
+  // tags are the ones saved now, and the stored score is read off them.
+  expect(after.review.rows.map(row => row.tagged)).toEqual([[], ["metric"]]);
+  expect(after.review.rows.map(row => [row.facets, row.marks])).toEqual(before.review.rows.map(row => [row.facets, row.marks]));
+  expect(after.score).toBe(after.review.score);
 });
 
 it("carries an unchanged entry's model review into every newer version, so pruning never loses it", async () => {
   await saveLibrary(1, libraryOf());
   deps.aiClient = scriptedClient().client;
   await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps);
-  const original = (await reviews()).find(row => row.entryId === "degree")!;
+  const original = (await reviews()).find(row => row.entryId === "later")!;
 
-  // Twenty-five saves, each editing only the role: the degree is never touched again.
+  // Twenty-five saves, each editing only the role: the other job is never touched again.
   let paid = 0;
   for (let version = 2; version <= 26; version++) {
     await saveLibrary(version, libraryOf({ first: `Ran the UK warehouse team of 30 through site move number ${version}` }));
     const scripted = scriptedClient();
     deps.aiClient = scripted.client;
     await handleReviewLibrary(task({ userId, libraryVersion: version }), deps);
-    paid += scripted.calls.filter(call => call.entries.includes("degree")).length;
+    paid += scripted.calls.filter(call => call.entries.includes("later")).length;
   }
   // Never asked about again, and still held as the model's answer after versions 1–6 were pruned.
   expect(paid).toBe(0);
-  const degree = (await reviews()).filter(row => row.entryId === "degree");
-  expect(Math.min(...degree.map(row => row.libraryVersion))).toBeGreaterThan(1);
-  expect(degree.every(row => row.source === "model" && row.score === original.score && row.model === original.model)).toBe(true);
+  const later = (await reviews()).filter(row => row.entryId === "later");
+  expect(Math.min(...later.map(row => row.libraryVersion))).toBeGreaterThan(1);
+  expect(later.every(row => row.source === "model" && row.score === original.score && row.model === original.model)).toBe(true);
 });
 
 it("reviews the newest library when a burst of saves ran the task once, and says which it read", async () => {
@@ -249,12 +315,12 @@ it("finishes done with the budget sentence when the account cannot afford the pa
   expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
   // The page is not left blank: the rules baseline stands for every entry.
   const stored = await reviews();
-  expect(stored.map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "rules"]]);
+  expect(stored.map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "rules"]]);
   // Nothing here is tagged, so no row has a score of its own and the entries read 0, but each row
   // carries the marks its wording earns, ready for the moment the person types it.
   const { rulesLibraryReview } = await import("@ava/core");
   const library = libraryOf();
-  expect(stored.map(row => row.score)).toEqual(["degree", "role"].map(id => rulesLibraryReview(library.entries.find(entry => entry.id === id)!, library).score));
+  expect(stored.map(row => row.score)).toEqual(["later", "role"].map(id => rulesLibraryReview(library.entries.find(entry => entry.id === id)!, library).score));
   expect(stored.every(row => row.review.rows.every(item => item.marks.length > 0))).toBe(true);
 });
 
@@ -282,7 +348,7 @@ it("still scores a library for a deployment with no model configured", async () 
   } finally {
     deps.env.anthropicApiKey = key;
   }
-  expect((await reviews()).map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "rules"]]);
+  expect((await reviews()).map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "rules"]]);
 });
 
 it("does not classify the evidence of a job that was removed", async () => {
@@ -294,12 +360,12 @@ it("does not classify the evidence of a job that was removed", async () => {
     entries: [
       { ...library.entries[0]!, status: "inactive" },
       { ...library.entries[1]!, status: "draft" } as never,
-      library.entries[2]!,
+      ...library.entries.slice(2),
     ],
   });
   deps.aiClient = scriptedClient().client;
   const result = await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps) as { reviewed: number };
-  expect((await reviews()).map(row => row.entryId)).toEqual(["degree"]);
+  expect((await reviews()).map(row => row.entryId)).toEqual(["later"]);
   expect(result.reviewed).toBe(1);
 });
 
@@ -310,22 +376,34 @@ it("does nothing but say so for an account with no library", async () => {
 
 it("keeps an entry the model left out on its baseline, and asks about it again on the next pass", async () => {
   await saveLibrary(1, libraryOf());
-  const first = scriptedClient({ omit: ["degree"] });
+  const first = scriptedClient({ omit: ["later"] });
   deps.aiClient = first.client;
 
   expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({ reviewed: 1, unread: 1 });
   // Asked once more in the same pass, as the engine does, and still left out.
-  expect(first.calls.map(call => call.entries)).toEqual([["role", "degree"], ["role", "degree"]]);
+  expect(first.calls.map(call => call.entries)).toEqual([["role", "later"], ["role", "later"]]);
   const stored = await reviews();
-  expect(stored.map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "model"]]);
+  expect(stored.map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "model"]]);
   // Its own facet tags still score it; the silence is not a model's zero.
-  expect(stored.find(row => row.entryId === "degree")!.score).toBe(
+  expect(stored.find(row => row.entryId === "later")!.score).toBe(
     (await import("@ava/core")).rulesLibraryReview(libraryOf().entries[1]!, libraryOf()).score,
   );
 
   const second = scriptedClient();
   deps.aiClient = second.client;
   expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({ reviewed: 1, reused: 1 });
-  expect(second.calls.map(call => call.entries)).toEqual([["degree"]]);
-  expect((await reviews()).map(row => [row.entryId, row.source])).toEqual([["degree", "model"], ["role", "model"]]);
+  expect(second.calls.map(call => call.entries)).toEqual([["later"]]);
+  expect((await reviews()).map(row => [row.entryId, row.source])).toEqual([["later", "model"], ["role", "model"]]);
+});
+
+it("reviews only experience: an education and a skill block are neither sent nor scored", async () => {
+  const library = libraryOf();
+  await saveLibrary(1, { ...library, entries: library.entries.filter(entry => entry.id !== "later") });
+  const scripted = scriptedClient();
+  deps.aiClient = scripted.client;
+
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({ reviewed: 1, reused: 0 });
+  expect(scripted.calls.map(call => call.entries)).toEqual([["role"]]);
+  expect(scripted.calls[0]!.rows).not.toContain(ROWS.msc);
+  expect((await reviews()).map(row => [row.entryId, row.source])).toEqual([["role", "model"]]);
 });

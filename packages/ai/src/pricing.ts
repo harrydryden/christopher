@@ -274,6 +274,13 @@ export interface LibraryReviewSize {
   libraryBytes: number;
   /** Entries this pass will review — every entry on a first pass, one after a typo fix. */
   entryCount: number;
+  /**
+   * Of those entries' rows, how many the model is asked to classify and how many there are. Rows an
+   * earlier review already classified are shown but not returned, so the answer — the output term —
+   * shrinks with the share asked about. Omitted, every row is asked about.
+   */
+  rowsToClassify?: number;
+  rowsTotal?: number;
 }
 
 /**
@@ -296,12 +303,15 @@ export function estimateLibraryReviewUsd(model: string, size: LibraryReviewSize)
   const library = size.libraryBytes / 3;
   const batches = Math.ceil(size.entryCount / LIBRARY_REVIEW_BATCH);
   const cached = library + 1_500;
+  const rowShare = size.rowsTotal !== undefined && size.rowsToClassify !== undefined && size.rowsTotal > 0
+    ? Math.min(1, Math.max(0, size.rowsToClassify / size.rowsTotal))
+    : 1;
   return estimateCostUsd(model, {
     // Each batch names its entries and their rows; the library behind them is read from the cache.
     inputTokens: batches * 1_200,
     cacheWriteTokens: cached,
     cacheReadTokens: (batches - 1) * cached,
-    outputTokens: size.entryCount * 400,
+    outputTokens: size.entryCount * 400 * rowShare,
   });
 }
 

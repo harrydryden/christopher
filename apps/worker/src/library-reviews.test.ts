@@ -8,7 +8,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
-  createDb, latestLibraryReviews, libraryReviewsSignature, pruneLibraryReviews, schema,
+  createDb, latestLibraryReviews, latestModelReviewsByEntry, libraryReviewsSignature, pruneLibraryReviews, schema,
   upsertLibraryReviews, type Db, type LibraryReviewUpsert,
 } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
@@ -109,6 +109,22 @@ it("prefers the model's review over the rules baseline it replaced, and replaces
   expect(found.get("acme-block")).toMatchObject({ source: "model", libraryVersion: 4, model: "claude-fable-5-1" });
 });
 
+it("reads the newest model review of each entry, whatever wording it was of", async () => {
+  // Version 3: the model reviewed the first wording. Version 4: a new wording, reviewed again.
+  // Version 5: a third wording, only its rules baseline so far.
+  await upsertLibraryReviews(db, userId, 3, [entry("acme-block", "hash-a1", { source: "model", model: "claude-fable-5-1" })], now);
+  await upsertLibraryReviews(db, userId, 4, [entry("acme-block", "hash-a2", { source: "model", model: "claude-fable-5-1" }), entry("older-block", "hash-b")], now);
+  await upsertLibraryReviews(db, userId, 5, [entry("acme-block", "hash-a3")], later);
+  await upsertLibraryReviews(db, otherId, 9, [entry("acme-block", "hash-x", { source: "model", model: "claude-fable-5-1" })], later);
+
+  const found = await latestModelReviewsByEntry(db, userId, ["acme-block", "older-block", "missing"]);
+  // The newest model review wins over the newer rules baseline and the older model review; an
+  // entry with only a baseline, one never reviewed, and another account's review are all absent.
+  expect([...found.keys()]).toEqual(["acme-block"]);
+  expect(found.get("acme-block")).toMatchObject({ libraryVersion: 4, inputHash: "hash-a2", source: "model" });
+  expect((await latestModelReviewsByEntry(db, userId, [])).size).toBe(0);
+});
+
 it("moves the poll signature when a review lands or changes, and not otherwise", async () => {
   expect(await libraryReviewsSignature(db, userId, 4)).toBe("0:");
 
@@ -176,9 +192,10 @@ it("reads back a review a release before row types wrote, in today's shape", asy
   // The wording rules stand in for the marks it never recorded; it names no tags of its own.
   expect(review.rows.map(item => item.marks)).toEqual(review.rows.map(item => detectEvidenceMarks(item.row)));
   expect(review.rows.every(item => item.tagged.length === 0)).toBe(true);
-  // Recomputed under today's formula rather than read from the column: metric's coverage alone,
-  // 50 × 2/8, with no typed row to add to it. The column keeps what was stored.
+  // Recomputed under today's formula rather than read from the column: metric's coverage,
+  // 50 × 2/8, and the untagged metric row read against the review's own reading of it — three of
+  // the four marks, 75 — over two rows, 50 × 75/200: 31.25 → 31. The column keeps what was stored.
   expect(row.score).toBe(38);
-  expect(review).toMatchObject({ score: 13, rating: "none" });
+  expect(review).toMatchObject({ score: 31, rating: "weak" });
   expect(review.prompts).toEqual(["What changed as a result?"]);
 });

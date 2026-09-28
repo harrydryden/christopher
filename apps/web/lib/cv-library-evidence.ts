@@ -162,6 +162,11 @@ export interface RowGuidance {
   /** Only what is missing, grouped by type; nothing about what the row already has. */
   missing: RowGuidanceGroup[];
   footer: string;
+  /**
+   * The types the review read an untyped row as, for the person to adopt in one click. Empty once
+   * the row carries a type of its own, or when the review read it as nothing.
+   */
+  suggested: EvidenceFacet[];
 }
 
 const SELECT_TYPE_FOOTER = "Choose one or more types in the Type column; the row is scored against what each type needs.";
@@ -185,7 +190,8 @@ export function rowGuidance({ text, facets, view, source, evaluating }: {
 }): RowGuidance {
   if (!facets.length) {
     const read = view?.reviewFacets.length && source === "model" ? ` The full review reads this row as ${scoredAsLine(view.reviewFacets)}.` : "";
-    return { score: null, heading: "Select type", missing: [], footer: SELECT_TYPE_FOOTER + read };
+    const suggested = view?.reviewFacets.length ? [...view.reviewFacets] : [];
+    return { score: null, heading: "Select type", missing: [], footer: SELECT_TYPE_FOOTER + read, suggested };
   }
   // The review's marks stand only for the wording they were read from, and only when the review
   // could tie them to it; otherwise the baseline reads the row as it is on the screen.
@@ -208,6 +214,7 @@ export function rowGuidance({ text, facets, view, source, evaluating }: {
     heading: `${score}/100 · Scored as ${scoredAs}`,
     missing,
     footer: missing.length ? by : `Nothing missing for ${scoredAs}. ${by}`,
+    suggested: [],
   };
 }
 

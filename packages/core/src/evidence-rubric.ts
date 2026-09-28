@@ -24,7 +24,7 @@
  * Nothing here gates anything.
  */
 import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "./cv-helpers";
-import { normaliseText } from "./normalize";
+import { normaliseText } from "./text";
 
 export interface EvidenceMarkSpec {
   facet: EvidenceFacet;

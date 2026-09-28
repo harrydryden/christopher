@@ -71,18 +71,9 @@ export function normalisePostingUrl(url: string): string {
   return u.toString();
 }
 
-/**
- * Text compared as a person reads it: compatibility forms folded (NFKC), every run of whitespace
- * one space, trimmed. What quote anchoring, row matching and facet matching all compare.
- */
-export function normaliseText(value: string): string {
-  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
-}
-
-/** `value` as a literal inside a regular expression. */
-export function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+// The two text helpers live in `text.ts`, which reaches no Node module, so the browser-safe
+// modules (the evidence rubric) can share them; they are re-exported here for every other caller.
+export { escapeRegex, normaliseText } from "./text";
 
 export function normalizeTitle(title: string): string {
   return title

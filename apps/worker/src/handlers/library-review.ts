@@ -24,8 +24,6 @@
  * cannot pay for must not fill Health with retries nothing can complete.
  */
 import {
-  aiBudgetRefusalMessage,
-  aiFeatureLabel,
   isActiveStoredEvidence,
   knownLibraryRows,
   libraryEntryInputHash,
@@ -40,7 +38,7 @@ import {
   type LibraryRowReview,
   type TaskPayloads,
 } from "@ava/core";
-import { createAiEngine, estimateLibraryReviewUsd, type LibraryReviewEntry } from "@ava/ai";
+import { estimateLibraryReviewUsd, type LibraryReviewEntry } from "@ava/ai";
 import {
   latestCvLibrary,
   latestLibraryReviews,
@@ -51,7 +49,7 @@ import {
   type LibraryReviewUpsert,
   type Task,
 } from "@ava/db";
-import { budgetLimits, recordAiUsage, tryReserveAi, type AiHold } from "../budget";
+import { openAccountAiPass } from "../account-ai-pass";
 import type { TaskRunContext } from "../queue";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
@@ -76,9 +74,6 @@ function reusableRows(raw: unknown): Map<string, LibraryRowReview> {
   if (!stored || !Array.isArray(stored.rows)) return new Map();
   return knownLibraryRows(normaliseLibraryReview({ ...stored, rows: stored.rows.filter(row => Array.isArray(row?.marks)) }));
 }
-
-/** How long the pass may hold its share of the month: the task's deadline, with room to spare. */
-const HOLD_MINUTES = 10;
 
 export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: TaskRunContext): Promise<unknown> {
   const { userId, libraryVersion } = (task.payload ?? {}) as TaskPayloads["review_library"];
@@ -151,26 +146,10 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
   // The model the account chose for its own CV work: a library review is the same judgement about
   // the same evidence, made earlier and far more cheaply.
   const model = settings.cvModel;
-  let cost = 0;
-  /** The hold this pass is admitted against, once it is; each call's record reduces it in the same transaction. */
-  let hold: AiHold | undefined;
-  const ai = createAiEngine({
-    apiKey: deps.env.anthropicApiKey,
-    client: deps.aiClient,
-    getModel: () => model,
-    getStageRoutes: async () => (await deps.settings()).stageRoutes,
-    // The pass stops when the task does: a deadline or a reclaimed task cuts off the calls in
-    // flight instead of paying for answers nobody will read.
-    ...(ctx?.signal ? { signal: ctx.signal } : {}),
-    onUsage: async usage => {
-      cost += usage.costUsd;
-      await recordAiUsage(deps.db, userId, usage, { hold });
-    },
-    logger: (msg, data) => log.debug(`ai ${msg}`, data),
-  });
+  const pass = openAccountAiPass(deps, { userId, settings, callSite: "A12", model, refId: `library:${userId}:${version}`, signal: ctx?.signal });
   // Asked of the engine this pass will actually use, rather than of the shared one: a deployment
   // with no key still gets its rules baseline, written above, and finishes done.
-  if (!ai.enabled) return { reviewed: 0, reused, ...newer, skipped: "ai unavailable", cost: 0 };
+  if (!pass.ai.enabled) return { reviewed: 0, reused, ...newer, skipped: "ai unavailable", cost: 0 };
 
   // What the model last said about each pending entry, of whatever wording: its rows whose text is
   // unchanged keep that classification, and only the rest are asked about.
@@ -192,8 +171,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     rowsToClassify: askedRows,
     rowsTotal: askedRows + reusedRows,
   });
-  const admitted = await tryReserveAi(deps.db, "A12", expected,
-    budgetLimits(deps.env, deps.now(), { userId, settings }, { refId: `library:${userId}:${version}` }), deps.now(), HOLD_MINUTES);
+  const admitted = await pass.admit(expected);
   if ("refused" in admitted) {
     // Finished, never failed: the rules baseline is already on the page, and retrying a pass the
     // month cannot afford would only fill Health with work nothing can complete.
@@ -203,14 +181,12 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
       reused,
       ...newer,
       skipped: "budget",
-      message: aiBudgetRefusalMessage(aiFeatureLabel("A12"), expected, admitted.refused),
+      message: admitted.refused,
       cost: 0,
     };
   }
-  hold = admitted;
-
   try {
-    const reviews = await ai.reviewLibraryEntries(
+    const reviews = await pass.ai.reviewLibraryEntries(
       { library: library.content, entries: asked, model },
       { userId, refType: "library", refId: `library:${userId}:${version}` },
     );
@@ -223,10 +199,9 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     }));
     const pruned = await pruneLibraryReviews(deps.db, userId);
     const unread = reviews.length - byEntry.size;
-    log.info("library reviewed", { userId, version, reviewed: byEntry.size, unread, reused, reusedRows, askedRows, pruned, usd: usd(cost) });
-    return { reviewed: byEntry.size, reused, ...(unread ? { unread } : {}), ...newer, cost: usd(cost) };
+    log.info("library reviewed", { userId, version, reviewed: byEntry.size, unread, reused, reusedRows, askedRows, pruned, usd: usd(pass.cost()) });
+    return { reviewed: byEntry.size, reused, ...(unread ? { unread } : {}), ...newer, cost: usd(pass.cost()) };
   } finally {
-    // The calls' real costs are in `ai_calls`; the hold only covered the gap until they landed.
     await admitted.release();
   }
 }

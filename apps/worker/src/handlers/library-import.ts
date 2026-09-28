@@ -28,8 +28,6 @@
  * career a model found plausible.
  */
 import {
-  aiBudgetRefusalMessage,
-  aiFeatureLabel,
   countProposedItems,
   JS_SHELL_TEXT,
   libraryImportUrl,
@@ -38,7 +36,7 @@ import {
   validateLibraryProposal,
   type TaskPayloads,
 } from "@ava/core";
-import { createAiEngine, estimateLibraryImportUsd, type AiFailure } from "@ava/ai";
+import { estimateLibraryImportUsd, type AiFailure } from "@ava/ai";
 import {
   completeLibraryImport,
   enqueueTask,
@@ -46,7 +44,7 @@ import {
   type Db,
   type Task,
 } from "@ava/db";
-import { budgetLimits, recordAiUsage, tryReserveAi, type AiHold } from "../budget";
+import { openAccountAiPass } from "../account-ai-pass";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { capDocumentText, DocumentReadError, documentToText, tidyDocumentText } from "../document-text";
 import { HostBusyError, PrivateAddressError } from "../fetcher";
@@ -55,9 +53,6 @@ import { log } from "../log";
 
 /** Less than this is not a document: the model would be reading a sentence for a career. */
 const SHORTEST_DOCUMENT = 40;
-
-/** How long the extraction may hold its share of the month: the task's deadline, with room to spare. */
-const HOLD_MINUTES = 10;
 
 /** How many times one import waits for its host's turn before the queue's own retries take over. */
 const MAX_HOST_WAITS = 10;
@@ -156,49 +151,29 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
   const settings = await deps.userSettings(userId);
   // The model the account chose for its own CV work: reading a CV is the same document, read once.
   const model = settings.cvModel;
-  let cost = 0;
-  /** Why the call produced nothing, as the engine classified it; the engine returns null either way. */
-  let failure: AiFailure | undefined;
-  /** The hold this call is admitted against, once it is; its record reduces the hold in the same transaction. */
-  let hold: AiHold | undefined;
-  const ai = createAiEngine({
-    apiKey: deps.env.anthropicApiKey,
-    client: deps.aiClient,
-    getModel: () => model,
-    getStageRoutes: async () => (await deps.settings()).stageRoutes,
-    // A deadline or a reclaimed task cuts the call off rather than paying for an answer nobody reads.
-    ...(ctx?.signal ? { signal: ctx.signal } : {}),
-    onUsage: async ({ failure: failed, ...usage }) => {
-      cost += usage.costUsd;
-      failure = failed;
-      await recordAiUsage(deps.db, userId, usage, { hold });
-    },
-    logger: (msg, data) => log.debug(`ai ${msg}`, data),
-  });
-  if (!ai.enabled) {
+  const pass = openAccountAiPass(deps, { userId, settings, callSite: "A11", model, refId: `library_import:${importId}`, signal: ctx?.signal });
+  if (!pass.ai.enabled) {
     return refuse("AVA cannot read documents at the moment: no model is configured. Your document is kept — try this import again once one is.", text);
   }
   const expected = estimateLibraryImportUsd(model, { documentBytes: Buffer.byteLength(text) });
-  const admitted = await tryReserveAi(deps.db, "A11", expected,
-    budgetLimits(deps.env, deps.now(), { userId, settings }, { refId: `library_import:${importId}` }), deps.now(), HOLD_MINUTES);
+  const admitted = await pass.admit(expected);
   if ("refused" in admitted) {
     // Finished, never failed, and the text is kept: raising the budget and asking again reads the
     // document that is already here rather than another upload of it.
-    const message = aiBudgetRefusalMessage(aiFeatureLabel("A11"), expected, admitted.refused);
+    const message = admitted.refused;
     log.info("library import refused by budget", { userId, importId, expected });
     await complete({ error: message, content: text });
     return { skipped: "budget", message, cost: 0 };
   }
-  hold = admitted;
 
   // ---- One call, then the post-check ----------------------------------------------------------
   try {
-    const plan = await ai.extractLibrary({ document: text, model },
+    const plan = await pass.ai.extractLibrary({ document: text, model },
       { userId, refType: "library_import", refId: importId });
     if (!plan) {
       // A task that was given up on writes nothing: whatever replaces it reads the document.
       if (ctx?.signal.aborted) throw new Error("The import was stopped before the model answered.");
-      return refuse(unansweredMessage(failure), text);
+      return refuse(unansweredMessage(pass.failure()), text);
     }
     let validated: ReturnType<typeof validateLibraryProposal>;
     try {
@@ -217,10 +192,9 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
       return refuse("Nothing in that document could be matched to what it says. Check that it is the right file, or paste the text instead.", text);
     }
     await complete({ proposal, content: text });
-    log.info("library import read", { userId, importId, kind: row.kind, ...counts, dropped, truncated, usd: usd(cost) });
-    return { proposed: counts, dropped, truncated, cost: usd(cost) };
+    log.info("library import read", { userId, importId, kind: row.kind, ...counts, dropped, truncated, usd: usd(pass.cost()) });
+    return { proposed: counts, dropped, truncated, cost: usd(pass.cost()) };
   } finally {
-    // The call's real cost is in `ai_calls`; the hold only covered the gap until it landed.
     await admitted.release();
   }
 }

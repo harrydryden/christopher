@@ -1,8 +1,8 @@
 {
   "kind": "cv-replay",
-  "at": "2026-09-28T10:43:05.771Z",
-  "draftId": "94270362-4ec8-4dbe-abc4-531564a0d88d",
-  "promptSetVersion": "ac4d09210809",
+  "at": "2026-09-28T20:00:38.399Z",
+  "draftId": "6ce445c8-52c3-4e6d-9700-dea6b66edbd1",
+  "promptSetVersion": "e06dce7dc560",
   "unverified": true,
   "source": "recording",
   "recording": "docs/evaluations/recordings/cv-replay-fixture.jsonl",
@@ -42,8 +42,8 @@
   "outcome": "published",
   "error": null,
   "misses": [],
-  "costUsd": 0.7806,
-  "calls": 6,
+  "costUsd": 0.4676,
+  "calls": 4,
   "byStage": {
     "author": {
       "calls": 1,
@@ -52,17 +52,9 @@
     "review": {
       "calls": 3,
       "costUsd": 0.2956
-    },
-    "improvement": {
-      "calls": 1,
-      "costUsd": 0.172
-    },
-    "review_candidate": {
-      "calls": 1,
-      "costUsd": 0.141
     }
   },
-  "wallMs": 509,
+  "wallMs": 333,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",
@@ -108,6 +100,7 @@
       "evidencedOpportunityGap": {
         "count": 1,
         "weightedPoints": 1,
+        "essential": 0,
         "requirementIds": [
           "r6"
         ]

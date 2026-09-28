@@ -411,11 +411,11 @@ The CV builder's entries, generated from the registry (a test fails when this ta
 | Prompt | Stage | Version | Model | Effort | Max tokens | Cache layout |
 |---|---|---|---|---|---|---|
 | `cv.rubric` | `rubric` | `d554a4c77e` | account's CV model | high | 12,000 | system 5m · tail uncached |
-| `cv.planning` | `planning` | `0373967d09` | account's CV model | high | 16,000 | system 5m · tail uncached |
-| `cv.author` | `author` | `fdb543b246` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
-| `cv.improvement` | `improvement` | `fdb543b246` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
-| `cv.review` | `review` | `bb2889d96e` | account's CV model | high | 24,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
-| `cv.review_candidate` | `review_candidate` | `bb2889d96e` | account's CV model | high | 24,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
+| `cv.planning` | `planning` | `ee0bfc8e9f` | account's CV model | high | 16,000 | system 5m · tail uncached |
+| `cv.author` | `author` | `4a097230db` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
+| `cv.improvement` | `improvement` | `4a097230db` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
+| `cv.review` | `review` | `6245b51f5e` | account's CV model | high | 24,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
+| `cv.review_candidate` | `review_candidate` | `6245b51f5e` | account's CV model | high | 24,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
 <!-- cv-call-sites:end -->
 
 Guardrails common to all call sites:

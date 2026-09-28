@@ -17,7 +17,7 @@ import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
 import { hostNeedsAttention } from "@/lib/outbound-traffic";
-import { governorSummary, heapSummary, waitSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
+import { governorSummary, heapSummary, modelAccessSummary, waitSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
 import {
   getAiUsage,
   getCvBuildCosts,
@@ -55,6 +55,7 @@ const WORKER_EVENT_TONE: Partial<Record<string, "green" | "blue" | "amber" | "re
   task_deadline: "amber",
   holds_released: "neutral",
   vitals: "neutral",
+  model_access: "red",
 };
 
 export default async function AdminOperationsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -153,6 +154,12 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
           {heartbeat.governor && <>{governorSummary(heartbeat.governor, now)} </>}
           Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access.
         </p>}
+        {(() => {
+          // Whether this key can reach the configured models: the breaker, the last failure, and
+          // any stored model id reading the settings had to replace.
+          const access = modelAccessSummary(heartbeat?.breaker, activity.modelAccess.event, activity.modelAccess.warnings, now);
+          return <p className={`mt-2 text-14 ${access.warn ? "text-warn" : "text-muted"}`}>{access.text}</p>;
+        })()}
         <p className="mt-2 text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
         <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
         <p className="mt-2 text-14">{formatUsd(metrics.reservedUsd)} is held by calls in flight, against the budgets of the accounts that asked for them.</p>

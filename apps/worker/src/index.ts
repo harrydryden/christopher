@@ -3,10 +3,10 @@
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
 import { recordWorkerEvent, type Db } from "@ava/db";
-import { aiGovernorStats } from "@ava/ai";
+import { aiBreakerStats, aiGovernorStats, defaultBreaker } from "@ava/ai";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
-import { enqueueBootGateReevaluation, seedTagVocabularies } from "./boot";
+import { enqueueBootGateReevaluation, probeConfiguredModels, seedTagVocabularies } from "./boot";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
 import { startHealthServer } from "./health";
@@ -41,6 +41,14 @@ async function main() {
   // Gate semantics can change between releases; when they have, every account's gate is re-run
   // once. A boot on the same semantics queues nothing.
   await enqueueBootGateReevaluation(deps.db);
+  // A model call refused because this key cannot reach the model opens the engine's breaker; each
+  // trip is one worker event, so Health can say which model and why.
+  defaultBreaker().onTrip(trip => {
+    void recordWorkerEvent(deps.db, { workerId: env.workerId, kind: "model_access", detail: { model: trip.model, message: trip.message, ...(trip.status !== undefined ? { status: trip.status } : {}), source: "call" } })
+      .catch(err => log.error("model access event not recorded", err));
+  });
+  // Not awaited: a slow provider must not hold up the queue, and a failure only reports.
+  void probeConfiguredModels(deps, env.workerId);
 
   // CV builds hold a slot for many minutes while they mostly wait on the model, so they have slots
   // of their own (CV_CONCURRENCY) beside the memory-bound general ones (WORKER_CONCURRENCY): a run
@@ -69,6 +77,8 @@ async function main() {
         active: queue.activeCount,
         // The model streams this process has open and waiting, per model, for Health.
         governor: aiGovernorStats(),
+        // The models this process is refusing after a model-access failure, and its last trip.
+        breaker: aiBreakerStats(),
       });
     } catch (err) { log.error("worker heartbeat failed", err); }
   };

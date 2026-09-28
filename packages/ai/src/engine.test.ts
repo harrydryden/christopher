@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { STREAM_IDLE_MS } from "./engine";
+import { MODEL_ACCESS_BREAKER_ERROR_PREFIX, STREAM_IDLE_MS } from "./engine";
+import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, isModelAccessFailure } from "./breaker";
 import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, SDK_MAX_RETRIES, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
@@ -92,6 +93,17 @@ function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
   });
   return { engine, calls, usage };
 }
+
+describe("A4 description anchors", () => {
+  it("answers with where the description starts and ends, not the description, and asks for nothing more", async () => {
+    const { engine, calls } = engineWith({ startsWith: " Run our London site. ", endsWith: "Hybrid, three days a week.", salaryText: " ", remote: true });
+    expect(await engine.cleanDescription({ title: "Operations Lead", rawText: "Home. Run our London site. Hybrid, three days a week. Footer" }))
+      .toEqual({ startsWith: "Run our London site.", endsWith: "Hybrid, three days a week.", salaryText: undefined, employmentType: undefined, remote: true });
+    const schema = JSON.stringify((calls[0]!.params.output_config as { format: unknown }).format);
+    expect(schema).toContain("startsWith");
+    expect(schema).not.toContain("descriptionText");
+  });
+});
 
 describe("engine plumbing", () => {
   it("rejects truncated responses even when a partial result parses, preserving billed usage", async () => {
@@ -519,7 +531,7 @@ describe("call-site post-validation", () => {
     });
     const result = await engine.suggestCompanies({ portfolio: [{ name: "Acme", domain: "acme.example" }], excludeDomains: ["acme.example"], rejected: [], limit: 10 });
     expect(result!.map((c) => c.name)).toEqual(["Good Co"]);
-    expect(calls[0]!.params.tools).toEqual([{ type: "web_search_20260209", name: "web_search", max_uses: 15 }]);
+    expect(calls[0]!.params.tools).toEqual([{ type: "web_search_20260209", name: "web_search", max_uses: 8 }]);
   });
 });
 
@@ -533,11 +545,11 @@ describe("helpers", () => {
     expect(estimateCostUsd("who-knows", { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })).toBeCloseTo(5, 6);
     // A build is held for the fitter's worst case — three author calls at the calibrated most one
     // writes — which is still well below the sum of its calls' ceilings.
-    // The audit's evidence is an hour-long cache entry, written at twice input rather than 1.25x.
-    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(5.4225, 3);
+    // The audit's evidence is a five-minute cache entry, written at 1.25x input.
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(5.31, 3);
     // An attempt resuming with its wording already written pays for the audit alone, derived from
     // the same figures.
-    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.2275, 3);
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.115, 3);
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeLessThan(
       estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }));
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeLessThan(
@@ -930,6 +942,71 @@ describe("named failures", () => {
     expect(usage[0]!.failure).toEqual({ kind: "unknown" });
   });
 
+  describe("the model-access breaker", () => {
+    const tripped = (error: unknown, now: { t: number }) => {
+      const usage: AiUsageRecord[] = [];
+      const logs: string[] = [];
+      let sent = 0;
+      let holds = 0;
+      const breaker = new ModelAccessBreaker(MODEL_ACCESS_BREAKER_MS, () => now.t);
+      const engine = createAiEngine({
+        getModel: () => "claude-opus-5",
+        onUsage: record => { usage.push(record); },
+        logger: msg => { logs.push(msg); },
+        breaker,
+        reserve: async () => { holds++; return async () => {}; },
+        client: { messages: { create: () => { sent++; return Promise.reject(error); } } },
+      });
+      return { engine, usage, logs, breaker, counts: () => ({ sent, holds }) };
+    };
+
+    it("refuses a model for ten minutes after the key could not reach it, without a slot or a hold, and logs once", async () => {
+      const now = { t: 1_000_000 };
+      const { engine, usage, logs, counts } = tripped(new NotFoundError(404, body("not_found_error"), undefined, headers()), now);
+      const failures: string[] = [];
+      expect(await engine.analyseCvJob("Must lead operations", { onFailure: failure => failures.push(failure.kind) })).toBeNull();
+      expect(await engine.analyseCvJob("Must lead operations", { onFailure: failure => failures.push(failure.kind) })).toBeNull();
+      expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
+      expect(counts()).toEqual({ sent: 1, holds: 1 });
+      expect(failures).toEqual(["model_access", "model_access"]);
+      expect(usage.map(record => record.failure)).toEqual([{ kind: "model_access", status: 404 }, { kind: "model_access", status: 404 }, { kind: "model_access", status: 404 }]);
+      expect(usage[1]).toMatchObject({ ok: false, costUsd: 0, inputTokens: 0, promptId: "cv.rubric" });
+      expect(usage[1]!.error!.startsWith(MODEL_ACCESS_BREAKER_ERROR_PREFIX)).toBe(true);
+      expect(logs.filter(msg => msg.startsWith("model access breaker open"))).toHaveLength(1);
+      expect(engine.breakerStats().open).toMatchObject([{ model: "claude-opus-5", status: 404, refused: 2 }]);
+
+      // When the window ends the next call is sent, and trips it again.
+      now.t += MODEL_ACCESS_BREAKER_MS;
+      expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
+      expect(counts()).toEqual({ sent: 2, holds: 2 });
+      expect(logs.filter(msg => msg.startsWith("model access breaker open"))).toHaveLength(2);
+    });
+
+    it("does not open for a request that was wrong on its own, or for a throttle", async () => {
+      for (const error of [
+        new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 250000 tokens > 200000 maximum" } }, undefined, headers()),
+        new RateLimitError(429, body("rate_limit_error"), undefined, headers()),
+      ]) {
+        const { engine, counts } = tripped(error, { t: 0 });
+        await engine.analyseCvJob("Must lead operations");
+        await engine.analyseCvJob("Must lead operations");
+        expect(counts().sent).toBe(2);
+        expect(engine.breakerStats()).toEqual({ open: [], last: null });
+      }
+    });
+
+    it("tells a key or model failure from a request's own", () => {
+      expect(isModelAccessFailure(401, "invalid x-api-key")).toBe(true);
+      expect(isModelAccessFailure(403, "forbidden")).toBe(true);
+      expect(isModelAccessFailure(404, "model: claude-opus-5")).toBe(true);
+      expect(isModelAccessFailure(400, "This workspace does not have access to the model")).toBe(true);
+      expect(isModelAccessFailure(400, "Unexpected value(s) for the `anthropic-beta` header")).toBe(true);
+      expect(isModelAccessFailure(400, "max_tokens: 64000 > 32000, which is the maximum for this model")).toBe(false);
+      expect(isModelAccessFailure(400, "messages: at least one message is required")).toBe(false);
+      expect(isModelAccessFailure(429, "model overloaded")).toBe(false);
+    });
+  });
+
   it("keeps the class through a stream that was cut off part-way", async () => {
     const { client } = streamingClient(() => Promise.reject(new RateLimitError(429, body("rate_limit_error"), undefined, headers())));
     const usage: AiUsageRecord[] = [];
@@ -1141,15 +1218,15 @@ describe("library evidence review (A12)", () => {
   /** What the model was asked about, read back out of the batch block the engine built. */
   const entryIdsIn = (params: Record<string, unknown>) =>
     [...userBlocks(params)[1]!.text.matchAll(/^Entry \[([^\]]+)\]/gmu)].map(match => match[1]!);
-  /** A clean answer: every row quoted verbatim, with the types it serves. */
+  /** A clean answer: every row named by its number and quoted verbatim, with the types it serves. */
   const answerFor = (params: Record<string, unknown>, over: (entryId: string) => Partial<{
-    rows: Array<{ row: string; facets: string[]; marks: string[]; quote: string | null }>;
+    rows: Array<{ row: number; facets: string[]; marks: string[]; quote: string | null }>;
     prompts: string[];
   }> = () => ({})) => ({
     entries: entryIdsIn(params).map(entryId => ({
       entryId,
       rows: ROWS.map((row, index) => ({
-        row, facets: index === 0 ? ["responsibility"] : ["outcome"],
+        row: index + 1, facets: index === 0 ? ["responsibility"] : ["outcome"],
         marks: index === 0 ? ["responsibility.scope", "responsibility.ownership", "responsibility.scale"] : ["outcome.change", "outcome.magnitude"],
         quote: row,
       })),
@@ -1217,11 +1294,11 @@ describe("library evidence review (A12)", () => {
           entryId: "entry0",
           rows: [
             // Tidied on the way back: the quote is no longer anything the person wrote.
-            { row: ROWS[0]!, facets: ["responsibility"], marks: ["responsibility.scope", "responsibility.scale"],
+            { row: 1, facets: ["responsibility"], marks: ["responsibility.scope", "responsibility.scale"],
               quote: "Ran the UK warehouse team of thirty through a relocation" },
-            { row: ROWS[1]!, facets: ["outcome"], marks: ["outcome.change"], quote: ROWS[1]! },
-            // Never written by anybody: it is not one of the entry's rows.
-            { row: "Grew revenue by 40%", facets: ["metric"], marks: ["metric.figure"], quote: "Grew revenue by 40%" },
+            { row: 2, facets: ["outcome"], marks: ["outcome.change"], quote: ROWS[1]! },
+            // A number the entry does not list: it names none of the entry's rows.
+            { row: 3, facets: ["metric"], marks: ["metric.figure"], quote: "Grew revenue by 40%" },
           ],
           prompts: ["What changed as a result?"],
         }],
@@ -1245,8 +1322,8 @@ describe("library evidence review (A12)", () => {
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
       calls.push({ params });
       return { parsed_output: { entries: [{ entryId: "entry0", rows: [
-        { row: ROWS[0]!, facets: ["responsibility", "milestone"], marks: ["responsibility.scope", "responsibility.ownership", "responsibility.scale"], quote: ROWS[0]! },
-        { row: ROWS[1]!, facets: ["outcome", "metric"], marks: ["problem.approach", "problem.resolution", "metric.movement", "outcome.change"], quote: ROWS[1]! },
+        { row: 1, facets: ["responsibility", "milestone"], marks: ["responsibility.scope", "responsibility.ownership", "responsibility.scale"], quote: ROWS[0]! },
+        { row: 2, facets: ["outcome", "metric"], marks: ["problem.approach", "problem.resolution", "metric.movement", "outcome.change"], quote: ROWS[1]! },
       ], prompts: [] }] }, usage: { input_tokens: 10, output_tokens: 10 } };
     } } } });
 
@@ -1268,7 +1345,7 @@ describe("library evidence review (A12)", () => {
     const library = libraryOf(2);
     const { client } = fakeClient({ entries: [
       { entryId: "entry0", rows: [], prompts: ["What is your date of birth?"] },
-      { entryId: "entry1", rows: ROWS.map(row => ({ row, facets: ["outcome"], marks: ["outcome.change"], quote: row })), prompts: [] },
+      { entryId: "entry1", rows: ROWS.map((row, index) => ({ row: index + 1, facets: ["outcome"], marks: ["outcome.change"], quote: row })), prompts: [] },
     ] });
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client });
     const [refused, kept] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);
@@ -1298,6 +1375,10 @@ describe("library evidence review (A12)", () => {
 
     expect(calls).toHaveLength(2);
     expect(userBlocks(calls[1]!.params)[1]!.text).toContain("left these entries out");
+    // The retry asks only for the entry still owed; the one answered in full is not sent again.
+    expect(userBlocks(calls[1]!.params)[1]!.text).toContain("Entry [entry1]");
+    expect(userBlocks(calls[1]!.params)[1]!.text).not.toContain("Entry [entry0]");
+    expect(userBlocks(calls[1]!.params)[0]!.text).toBe(userBlocks(calls[0]!.params)[0]!.text);
     expect(events).toEqual([{ phase: "start", uncovered: undefined }, { phase: "retry", uncovered: 1 }, { phase: "done", uncovered: 1 }]);
     expect(reviews[0]!.rows.every(row => row.verified)).toBe(true);
     expect(reviews[1]!.rows.every(row => !row.verified)).toBe(true);
@@ -1319,8 +1400,8 @@ describe("library evidence review (A12)", () => {
       return { parsed_output: { entries: [
         // Returned anyway, and differently: it is not what the model was asked, so it is ignored.
         { entryId: "entry0", rows: [
-          { row: ROWS[0]!, facets: ["style"], marks: ["style.effect"], quote: ROWS[0]! },
-          { row: edited, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: edited },
+          { row: 1, facets: ["style"], marks: ["style.effect"], quote: ROWS[0]! },
+          { row: 2, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: edited },
         ], prompts: ["Who relied on the handover?"] },
         answerFor(params).entries[1]!,
       ] }, usage: { input_tokens: 10, output_tokens: 10 } };
@@ -1333,8 +1414,9 @@ describe("library evidence review (A12)", () => {
     expect(calls).toHaveLength(1);
     const batch = userBlocks(calls[0]!.params)[1]!.text;
     const block = batch.split("\n\n").find(chunk => chunk.includes("Entry [entry0]"))!;
-    // Every row is in view, in order, and then only the edited one is named to classify.
-    expect(block).toContain(`Rows:\n- ${ROWS[0]}\n- ${edited}\nClassify only these rows (the others are already classified; do not return them):\n- ${edited}`);
+    // Every row is in view, numbered in order, and then only the edited one is named, by number, to classify.
+    expect(block).toContain(`Rows:\n1. ${ROWS[0]}\n2. ${edited}\nClassify only rows 2 (the others are already classified; do not return them).`);
+    expect(block.split(edited).length - 1).toBe(1);
     // An entry with nothing known is asked about as before.
     expect(batch.split("\n\n").find(chunk => chunk.includes("Entry [entry1]"))).not.toContain("Classify only");
     expect(first!.rows[0]).toMatchObject({ row: ROWS[0], facets: ["responsibility"], marks: ["responsibility.scope"], verified: true });
@@ -1350,8 +1432,9 @@ describe("library evidence review (A12)", () => {
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
       calls.push({ params });
       const full = answerFor(params).entries[0]!;
-      // The first answer classifies only the first row; the second classifies only the second.
-      const rows = calls.length === 1 ? full.rows.slice(0, 1) : full.rows.slice(1);
+      // The first answer classifies only the first row; the second classifies both, differently for
+      // the first, which the first answer's reading keeps rather than reading as named twice.
+      const rows = calls.length === 1 ? full.rows.slice(0, 1) : [{ ...full.rows[0]!, facets: ["style"] }, full.rows[1]!];
       return { parsed_output: { entries: [{ ...full, rows, prompts: calls.length === 1 ? full.prompts : [] }] }, usage: { input_tokens: 10, output_tokens: 10 } };
     } } } });
 
@@ -1512,13 +1595,28 @@ describe("paused server-tool turns", () => {
     expect((await suggest(client, usage))!.map(c => c.name)).toEqual(["Good Co"]);
     expect(sent).toHaveLength(2);
     const resumed = sent[1]!.messages as Array<{ role: string; content: unknown }>;
-    // The user turn, then the paused assistant turn as it came back; nothing added after it.
+    // The user turn, then the paused assistant turn as it came back; nothing added after it but a
+    // cache marker on its last block, so the continuation reads the searches from the cache.
     expect(resumed.map(message => message.role)).toEqual(["user", "assistant"]);
-    expect(resumed[1]!.content).toEqual(paused(6).content);
+    expect(resumed[1]!.content).toEqual((paused(6).content as object[]).map(block => ({ ...block, cache_control: { type: "ephemeral" } })));
     expect(usage).toHaveLength(1);
     expect(usage[0]).toMatchObject({ ok: true, inputTokens: 4000, outputTokens: 500 });
     const tokens = estimateCostUsd("claude-opus-5", { inputTokens: 4000, outputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 0 });
     expect(usage[0]!.costUsd).toBeCloseTo(tokens + 10 * SERVER_TOOL_USD.web_search_requests!, 6);
+  });
+
+  it("marks only the newest paused turn for the cache, and never a thinking block", async () => {
+    const thinkingLast: ParseResponse = { ...paused(3), content: [...(paused(3).content as object[]), { type: "thinking", thinking: "…", signature: "sig" }] as never };
+    const { client, sent } = scripted([paused(4), thinkingLast, { stop_reason: "end_turn", parsed_output: { candidates: [candidate] },
+      usage: { input_tokens: 3000, output_tokens: 400 } }]);
+    expect(await suggest(client, [])).not.toBeNull();
+    const last = sent[2]!.messages as Array<{ role: string; content: Array<{ type: string; cache_control?: unknown }> }>;
+    expect(last.map(message => message.role)).toEqual(["user", "assistant", "assistant"]);
+    // The first paused turn lost its marker when the second was sent back.
+    expect(last[1]!.content.some(block => "cache_control" in block)).toBe(false);
+    expect(last[2]!.content.map(block => [block.type, block.cache_control ?? null])).toEqual([
+      ["server_tool_use", { type: "ephemeral" }], ["thinking", null],
+    ]);
   });
 
   it("gives up on a turn still paused after its continuations, naming it and charging all of it", async () => {

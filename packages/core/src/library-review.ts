@@ -280,7 +280,12 @@ export const LibraryReviewPlanSchema = z.object({
   entries: z.array(z.object({
     entryId: z.string().min(1).max(100),
     rows: z.array(z.object({
-      row: z.string().min(1).max(40000),
+      /**
+       * The row's number within its entry as the batch lists it (1-based, `reviewableRows` order).
+       * A number rather than the row's text: echoing every row back only to identify it was most
+       * of what the review wrote. `validateLibraryReview` maps it back to the row.
+       */
+      row: z.number().int().min(1).max(1000),
       /** Every type the row serves, and empty when it serves none clearly. */
       facets: z.array(z.enum(EVIDENCE_FACETS)).max(EVIDENCE_FACETS.length),
       /** Every mark in the rubric the row's wording earns, whatever it was tagged with. */
@@ -301,10 +306,13 @@ const knownFacets = (facets: readonly string[]): EvidenceFacet[] => EVIDENCE_FAC
  * as the unit and the person's wording as the truth.
  *
  * The rules are the assessment's, for the same reason: the model classifies and asks, it never
- * rewrites. A row it invented is dropped. A row it did not cover, and a row whose quote is not
- * anchored in that row, is kept as `verified: false` and earns no marks — marked, never silently deleted, so the Library can say which rows went unread. A row it
- * covered without quoting is verified: the row text itself was matched exactly, so there is
- * nothing unanchored about it. When it covered none of them, the review is marked `unread`.
+ * rewrites. It names each row by its number in the batch (`rowNumbers`), and the number is mapped
+ * back to the entry's own row here, so the stored review still carries the row's text. A number
+ * outside the entry's rows names no row and is dropped. A row it did not cover, a row it named
+ * more than once (which reading is meant cannot be told), and a row whose quote is not anchored
+ * in that row (a mis-numbered answer, most likely), is kept as `verified: false` and earns no
+ * marks — marked, never silently deleted, so the Library can say which rows went unread. A row it
+ * covered without quoting is verified. When it covered none of them, the review is marked `unread`.
  * Demographic attributes in a prompt are refused outright, as `validateCvRubric` refuses them in a
  * requirement.
  *
@@ -327,20 +335,18 @@ export function validateLibraryReview(
   known: ReadonlyMap<string, LibraryRowReview> = new Map(),
 ): LibraryEntryReview {
   if (plan.entryId !== entry.id) throw new Error("The evidence review named an entry it was not given.");
-  const covered = new Map<string, LibraryReviewPlanEntry["rows"][number]>();
-  for (const row of plan.rows) {
-    const key = normaliseText(row.row);
-    if (!covered.has(key)) covered.set(key, row);
-  }
+  const entryRows = reviewableRows(entry);
+  const { said: covered, repeated } = answeredRows(entryRows.length, plan);
   let classified = 0;
   let needed = 0;
-  const rows: LibraryRowReview[] = reviewableRows(entry).map(row => {
+  const rows: LibraryRowReview[] = entryRows.map((row, index) => {
     const tagged = rowFacets(entry, row);
     const held = known.get(normaliseText(row));
     if (held) return { ...held, row, tagged };
     needed++;
-    const said = covered.get(normaliseText(row));
-    if (said) classified++;
+    const number = index + 1;
+    const said = repeated.has(number) ? undefined : covered.get(number);
+    if (covered.has(number)) classified++;
     const anchored = !!said && (said.quote === null || cvQuoteIsAnchored(said.quote, row));
     if (!said || !anchored) {
       return { row, facets: [], tagged, marks: [], quote: null, verified: false };
@@ -384,6 +390,28 @@ export function rowsToClassify(entry: CvEntry, known: ReadonlyMap<string, Librar
 }
 
 /**
+ * The numbers the review names an entry's rows by, 1-based in `reviewableRows` order, and of those
+ * the ones still to classify given the rows already known.
+ */
+export function rowNumbers(entry: CvEntry, known: ReadonlyMap<string, LibraryRowReview> = new Map()): { all: number[]; toClassify: number[] } {
+  const rows = reviewableRows(entry);
+  const all = rows.map((_, index) => index + 1);
+  return { all, toClassify: all.filter(number => !known.has(normaliseText(rows[number - 1]!))) };
+}
+
+/** An answer's rows by the number they name, inside the entry's range, with the numbers named more than once. */
+function answeredRows(count: number, plan: LibraryReviewPlanEntry) {
+  const said = new Map<number, LibraryReviewPlanEntry["rows"][number]>();
+  const repeated = new Set<number>();
+  for (const row of plan.rows) {
+    if (!Number.isInteger(row.row) || row.row < 1 || row.row > count) continue;
+    if (said.has(row.row)) repeated.add(row.row);
+    else said.set(row.row, row);
+  }
+  return { said, repeated };
+}
+
+/**
  * Whether an answer covers an entry: it names the entry and classifies every row that needed
  * classifying. An entry whose rows were all known is covered by being answered for at all, which
  * is where its prompts come from.
@@ -394,8 +422,9 @@ export function libraryPlanCovers(
   known: ReadonlyMap<string, LibraryRowReview> = new Map(),
 ): boolean {
   if (!plan || plan.entryId !== entry.id) return false;
-  const returned = new Set(plan.rows.map(row => normaliseText(row.row)));
-  return rowsToClassify(entry, known).every(row => returned.has(normaliseText(row)));
+  const { toClassify } = rowNumbers(entry, known);
+  const { said } = answeredRows(reviewableRows(entry).length, plan);
+  return toClassify.every(number => said.has(number));
 }
 
 /**

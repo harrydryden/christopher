@@ -4,8 +4,10 @@ import type { CvLibrary, CvPlan } from "./cv";
 import { evidenceRows } from "./cv-helpers";
 import type { CvGapQuestion } from "./cv-gap-quiz";
 import { mentionsDemographicAttribute } from "./cv-demographics";
+// A function declaration, read only when a plan is validated: safe across the cv-budget cycle.
+import { cvRelevance } from "./cv-budget";
 
-// The same shape as `CvPlanSourceRefSchema`, written out rather than imported: ./cv re-exports
+// The evidence plan's citation. Written here rather than built from ./cv: ./cv re-exports
 // ./cv-budget, which imports this module, so a value read from ./cv here is not yet initialised.
 export const CvTailoringSourceRefSchema = z.object({ sourceId: z.string().min(1).max(220), quote: z.string().trim().min(1).max(1600) });
 export type CvTailoringSourceRef = z.infer<typeof CvTailoringSourceRefSchema>;
@@ -31,6 +33,35 @@ export const CvTailoringPlanSchema = z.object({
   }) satisfies z.ZodType<CvGapQuestion>).max(4),
 });
 export type CvTailoringPlan = z.infer<typeof CvTailoringPlanSchema>;
+
+/**
+ * The planner's answer. Its reasons are read by nobody downstream — the writer gets the plan
+ * without them (`cvTailoringPlanForWriter`) — so the prompt asks for one clause of at most 160
+ * characters. The schema's ceiling is 300, not 160: the length is only a hint in the output
+ * grammar, and a reason a few characters over it should not discard a paid plan. A stored plan
+ * is read with `CvTailoringPlanSchema`, which still accepts the longer reasons older plans carry.
+ */
+export const CvTailoringPlanOutputSchema = CvTailoringPlanSchema.extend({
+  requirements: z.array(CvTailoringPlanSchema.shape.requirements.element.extend({
+    reason: z.string().trim().min(1).max(300),
+  })).min(1).max(30),
+});
+
+/** What the writer is given of the plan: the verdict and the rows it rests on, by id. */
+export type CvTailoringPlanForWriter = {
+  requirements: Array<{ requirementId: string; status: CvTailoringPlan["requirements"][number]["status"]; evidence: string[] }>;
+};
+
+/**
+ * The plan as the writer's role block embeds it: each requirement's status and the ids of the rows
+ * that evidence it. The reasons and the quotes are left out — the writer has every row, by id, in
+ * the library block, and nothing it writes depends on why the planner judged as it did.
+ */
+export function cvTailoringPlanForWriter(plan: CvTailoringPlan): CvTailoringPlanForWriter {
+  return { requirements: plan.requirements.map(item => ({
+    requirementId: item.requirementId, status: item.status, evidence: item.evidence.map(reference => reference.sourceId),
+  })) };
+}
 export type CvTailoringEvidenceItem = { id: string; text: string; entryId?: string; row?: number };
 
 /** Give the planner addressable rows, rather than forcing it to cite an entire role block. */
@@ -125,22 +156,39 @@ export function cvTailoringCoverage(plan: CvTailoringPlan): Map<string, Set<stri
   return coverage;
 }
 
+/**
+ * How many content words a bullet must share with the rows it cites, at most: two, or all of the
+ * bullet's own when it has fewer (a one-word skill label). Words are `cvRelevance`'s: lower-cased,
+ * de-duplicated, with the fitter's stop words (articles, "team", "experience" and the like) left out.
+ * Two catches a bullet citing the wrong row — which shares at most incidental words with it —
+ * while a faithful rephrasing keeps the row's nouns: "Coached six managers" becomes "Helped six
+ * managers grow as leaders". Whether each clause is supported is the audit's question, not this one.
+ */
+export const CV_PROVENANCE_MIN_SHARED_WORDS = 2;
+
 /** Validate provenance from a newly planned author call; legacy plans deliberately skip this gate. */
 export function validateCvPlanProvenance(plan: CvPlan, library: CvLibrary): CvPlan {
   const sources = cvTailoringEvidence(library);
   const sourceById = new Map(sources.map(source => [source.id, source]));
-  const check = (reference: CvTailoringSourceRef, entryId?: string) => {
-    const source = sourceById.get(reference.sourceId);
-    if (!source) throw new Error(`Unknown CV source: ${reference.sourceId}`);
+  const cited = (sourceIds: readonly string[], entryId?: string) => sourceIds.map(sourceId => {
+    const source = sourceById.get(sourceId);
+    if (!source) throw new Error(`Unknown CV source: ${sourceId}`);
     if (entryId && source.entryId !== entryId) throw new Error(`A bullet for ${entryId} cites evidence from another entry.`);
-    if (!quoteExists(reference.quote, source.text)) throw new Error(`CV source quote is not present in ${reference.sourceId}.`);
+    return source;
+  });
+  const overlaps = (text: string, rows: readonly CvTailoringEvidenceItem[], where: string) => {
+    const own = cvRelevance(text, text);
+    const shared = cvRelevance(text, rows.map(row => row.text).join("\n"));
+    if (shared < Math.min(CV_PROVENANCE_MIN_SHARED_WORDS, own))
+      throw new Error(`${where} shares too few words with the source rows it cites (${rows.map(row => row.id).join(", ")}); cite the rows it rests on.`);
   };
   if (!plan.summarySources?.length) throw new Error("The tailored profile has no source provenance.");
-  plan.summarySources.forEach(reference => check(reference));
+  overlaps(plan.summary, cited(plan.summarySources), "The profile");
   for (const section of plan.sections) {
     if (!section.bulletSources || section.bulletSources.length !== section.bullets.length)
       throw new Error(`Every bullet for ${section.entryId} needs source provenance.`);
-    section.bulletSources.flat().forEach(reference => check(reference, section.entryId));
+    section.bulletSources.forEach((sourceIds, index) =>
+      overlaps(section.bullets[index]!, cited(sourceIds, section.entryId), `Bullet ${index + 1} for ${section.entryId}`));
   }
   return plan;
 }

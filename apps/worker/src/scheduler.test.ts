@@ -36,11 +36,18 @@ beforeEach(async () => {
   now = new Date("2026-09-05T06:05:00Z");
 });
 
-/** Each named account's own switch; `undefined` leaves no row, which is the default. */
+/**
+ * Each named account's own switch; `undefined` leaves no row, which is the default. Each signed in
+ * the day before the weekly run, with no suggestions waiting, so the weekly A10 run is theirs.
+ */
 async function accounts(switches: Array<unknown>) {
   const users = [];
   for (const [index, value] of switches.entries()) {
     const user = await ensureTestUser(db, `fan-out-${index}@example.com`, "member");
+    await db.update(schema.users).set({ lastLoginAt: new Date("2026-09-05T08:00:00Z") }).where(eq(schema.users.id, user.id));
+    await db.delete(schema.companySuggestions).where(eq(schema.companySuggestions.userId, user.id));
+    await db.delete(schema.decisions).where(eq(schema.decisions.userId, user.id));
+    await db.delete(schema.sessions).where(eq(schema.sessions.userId, user.id));
     await db.delete(schema.userSettings).where(and(eq(schema.userSettings.userId, user.id), eq(schema.userSettings.key, "suggestionsEnabled")));
     if (value !== undefined) await db.insert(schema.userSettings).values({ userId: user.id, key: "suggestionsEnabled", value: value as object });
     users.push(user);
@@ -89,6 +96,32 @@ describe("weekly jobs", () => {
     } finally {
       reads.mockRestore();
     }
+  });
+
+  it("skips the company suggestions of an account with ten waiting, or with no decision and no sign-in in three weeks", async () => {
+    const [backlogged, dormant, decided, seen, nine] = await accounts([true, true, true, true, true]);
+    const longAgo = new Date("2026-08-10T08:00:00Z"); // 27 days before the run
+    await db.update(schema.users).set({ lastLoginAt: longAgo })
+      .where(sql`${schema.users.id} in (${dormant!.id}, ${decided!.id}, ${seen!.id})`);
+    const pending = (userId: string, count: number) => db.insert(schema.companySuggestions).values(Array.from({ length: count }, (_, n) => ({
+      userId, name: `Co ${n}`, homepageUrl: `https://co${n}.example`, domain: `co${n}.example`,
+    })));
+    await pending(backlogged!.id, 10);
+    // Nine waiting, and answered ones that no longer count.
+    await pending(nine!.id, 12);
+    await db.update(schema.companySuggestions).set({ status: "rejected" })
+      .where(and(eq(schema.companySuggestions.userId, nine!.id), sql`${schema.companySuggestions.domain} in ('co0.example', 'co1.example', 'co2.example')`));
+    // A decision, or a session seen, within three weeks keeps an account active.
+    await db.insert(schema.decisions).values({ userId: decided!.id, decision: "skip", jobTitle: "Ops", companyName: "Acme", createdAt: new Date("2026-09-01T08:00:00Z") });
+    await db.insert(schema.sessions).values({ userId: seen!.id, expiresAt: new Date("2026-10-01T00:00:00Z"), lastSeenAt: new Date("2026-09-02T08:00:00Z") });
+    await weekly();
+    const suggesting = (await tasksOf("suggest_companies")).map(t => (t.payload as { userId: string }).userId);
+    expect(suggesting).not.toContain(backlogged!.id);
+    expect(suggesting).not.toContain(dormant!.id);
+    for (const user of [decided, seen, nine]) expect(suggesting).toContain(user!.id);
+    // The rest of the week still runs for everyone.
+    const filters = (await tasksOf("suggest_filters")).map(t => (t.payload as { userId: string }).userId);
+    for (const user of [backlogged, dormant]) expect(filters).toContain(user!.id);
   });
 
   it("skips a job already queued for one account and still schedules everyone else's", async () => {

@@ -29,9 +29,11 @@ export interface TaskPayloads {
   /**
    * One account's fit score for one role. `live` marks a role that batch scoring handed back —
    * its batch request expired or errored, or the batch could not be sent — so the queue runs it
-   * as an ordinary call even while scoring is in batch mode.
+   * as an ordinary call even while scoring is in batch mode. `background` marks a rescore pass's
+   * role, which nobody is waiting on: the batch collector takes it even while scoring is live, and
+   * the queue leaves it alone unless it is also marked `live`.
    */
-  score_job: { userId: string; jobId: string; live?: boolean };
+  score_job: { userId: string; jobId: string; live?: boolean; background?: boolean };
   /**
    * Batch scoring's collector: gathers the queued `score_job` work into one Message Batches
    * request. Shared work — it serves every account with roles waiting — so it names none.

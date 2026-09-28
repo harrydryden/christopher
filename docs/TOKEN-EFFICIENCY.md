@@ -98,3 +98,23 @@ account; A10 by 45 % a run; A11 imports by a third.
    columns, fixed-judge replay. These make every later measurement trustworthy.
 2. Tier 1, items 1–5 (CV build), then 6–8. Each ships with its gate's before/after in the PR.
 3. Record two or three live builds (docs/DEPLOY.md), then Tier 2 in the order listed.
+
+## 6. Status
+
+Shipped (September 2026):
+
+- §2 breaker, settings validation on read, boot probe, A5 unscored on a model-access failure, and a
+  Health row (spec: "Model access"). Enum and const restored to the output grammar.
+- Tier 1, items 1–8, with these readings: the improvement gate uses the diagnostics and the write
+  scale (`improvementWorthwhile`), since production holds no `cv_build_steps` rows to calibrate a
+  threshold from; the audit's requirement `improvement` is empty when demonstrated and claim reasons
+  are optional and capped, and the planner's reasons and quotes are stripped before the writer;
+  writer provenance is id-only, checked by shared words; corrective re-runs carry only the flagged
+  requirements and claims, and the A12 re-ask only the uncovered entries; writer and audit cache for
+  five minutes; rescore passes skip skipped and archived views and run as background work the
+  collector takes while scoring is live; A11 derives the quote, A4 returns anchors, A12 numbers rows;
+  A10 allows eight searches, caches the paused turn on continuation, and skips dormant accounts.
+
+Open: the fixed-judge replay and the `output_chars` and cache-split columns from §2; Tier 2, which
+waits on those and on recorded live builds. A12's `expectedOutputTokens` (4,800) is not yet
+re-measured after the row numbering.

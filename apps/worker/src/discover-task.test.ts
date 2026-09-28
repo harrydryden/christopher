@@ -10,7 +10,8 @@ import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { DiscoveryRetryError, handleDiscover, onDiscoverAbandoned } from "./handlers/discover";
-import { verifyCandidate } from "./handlers/companies";
+import { SourceFetchError } from "@ava/core";
+import { transientFailure, verifyCandidate } from "./handlers/companies";
 import { LeaseLostError } from "./lease";
 import { ensureTestUser } from "./test-users";
 
@@ -188,4 +189,18 @@ it("caches a permanent verification failure and never a transient one", async ()
   expect(await verifyCandidate(deps(), user.id, "https://busy.test/", true)).toMatchObject({ homepageOk: false, transient: true });
   const cached = await db.select().from(schema.verificationCache);
   expect(cached.map((row) => row.result)).toEqual([{ homepageOk: false, error: "HTTP 404" }]);
+});
+
+it("treats a blocked verdict as the host's answer whatever its status, and a plain 5xx or a timeout as worth retrying", () => {
+  // A bot challenge served as a 503, and a robots refusal (999): facts about the host.
+  expect(transientFailure(new SourceFetchError("challenge", "blocked", 503))).toBe(false);
+  expect(transientFailure(new SourceFetchError("robots.txt disallows", "blocked", 999))).toBe(false);
+  // "Come back later", a server error and a timeout say nothing final.
+  expect(transientFailure(new SourceFetchError("HTTP 503", "rate_limited", 503))).toBe(true);
+  expect(transientFailure(new SourceFetchError("HTTP 502", "http", 502))).toBe(true);
+  expect(transientFailure(new SourceFetchError("timed out", "timeout"))).toBe(true);
+  // A DNS failure is what an invented domain does, and a 404 is the answer.
+  expect(transientFailure(new SourceFetchError("getaddrinfo ENOTFOUND", "network"))).toBe(false);
+  expect(transientFailure(new SourceFetchError("HTTP 404", "http", 404))).toBe(false);
+  expect(transientFailure(Object.assign(new Error("busy"), { name: "HostBusyError" }))).toBe(true);
 });

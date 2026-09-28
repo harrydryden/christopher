@@ -199,6 +199,15 @@ it("reads the governor's pause as the epoch milliseconds the engine reports, and
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, pausedUntil: "2026-09-18T12:05:00.000Z" } })!.governor!.pausedUntil).toEqual(new Date(pausedUntil));
 });
 
+it("reads the model-access breaker the heartbeat reports, and none from an older worker", () => {
+  const trippedAt = Date.parse("2026-09-18T11:58:00.000Z");
+  const trip = { model: "claude-opus-5", message: "404 model: claude-opus-5", status: 404, trippedAt, openUntil: trippedAt + 600_000, refused: 3 };
+  const heartbeat = readHeartbeat({ at: "2026-09-18T12:00:00.000Z", breaker: { open: [trip, { junk: true }], last: trip } });
+  const read = { ...trip, trippedAt: new Date(trippedAt), openUntil: new Date(trippedAt + 600_000) };
+  expect(heartbeat!.breaker).toEqual({ open: [read], last: read });
+  expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z" })!.breaker).toBeNull();
+});
+
 it("reads each route's p75 per vital from the beacon's histograms, busiest route first, inside the window", async () => {
   await database.execute(sql`truncate web_vitals`);
   const add = (daysAgo: number, route: string, metric: string, value: number, count: number) =>

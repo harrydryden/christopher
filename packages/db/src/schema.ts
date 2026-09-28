@@ -60,9 +60,11 @@ export const JOB_ORIGINS = ["scan", "user"] as const;
  * A blank score covered five different situations and the table could not tell them apart:
  * waiting, scored, never scored because the posting closed first, skipped because the account had
  * nothing left to spend, and not eligible (neither in the table nor shortlisted) when the task
- * ran. The score handler already decides all five; this records which one it decided.
+ * ran. The score handler already decides all five; this records which one it decided. `decided`
+ * is a sixth: the account skipped or archived the role, so no score has a reader and none is asked
+ * for (a reversed skip queues one).
  */
-export const SCORE_STATES = ["queued", "scored", "closed", "budget", "ineligible"] as const;
+export const SCORE_STATES = ["queued", "scored", "closed", "budget", "ineligible", "decided"] as const;
 export type ScoreState = (typeof SCORE_STATES)[number];
 /**
  * Column enums whose values core decides are core's own lists, re-exported: where captured logo
@@ -996,7 +998,7 @@ export const aiReservations = pgTable("ai_reservations", {
   index("ai_reservations_ref_idx").on(t.refId), index("ai_reservations_expires_idx").on(t.expiresAt)]);
 
 export const WORKER_EVENT_KINDS = [
-  "boot", "shutdown", "crash_recovery", "task_abandoned", "task_deadline", "holds_released", "vitals",
+  "boot", "shutdown", "crash_recovery", "task_abandoned", "task_deadline", "holds_released", "vitals", "model_access",
 ] as const;
 export type WorkerEventKind = (typeof WORKER_EVENT_KINDS)[number];
 

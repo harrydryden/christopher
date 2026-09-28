@@ -35,6 +35,8 @@ export type CvQualityDiagnostics = {
   evidencedOpportunityGap: {
     count: number;
     weightedPoints: number;
+    /** How many of the gap's requirements the rubric marks essential. */
+    essential: number;
     requirementIds: string[];
   };
   /** Logistics are reported separately; they do not reduce capability coverage. */
@@ -177,6 +179,7 @@ export function diagnoseCvQuality(
         const match = matches.get(item.id)!;
         return sum + cvRequirementWeight(item) * (cvMatchPoints(match.libraryStatus) - groundedMatchPoints(assessment, item.id));
       }, 0),
+      essential: opportunities.filter((item) => item.importance === "essential").length,
       requirementIds: opportunities.map((item) => item.id),
     },
     unverifiedLogistics: { count: logistics.length, requirementIds: logistics.map((item) => item.id) },
@@ -188,6 +191,47 @@ export function diagnoseCvQuality(
     },
   };
 }
+
+/**
+ * The thresholds of the optional improvement's gate. They are the token audit's, not a calibration:
+ * no build has recorded its improvement steps yet, so they are to be revisited once enough
+ * `improve_content` rows (adopted or skipped, with the gap weight each carries) exist to measure
+ * adoption by gap weight.
+ */
+export const IMPROVEMENT_GATE = {
+  /** A gap worth this many weighted points (an essential requirement missed outright is 2). */
+  minWeightedPoints: 2,
+  /** Or a gap this large a share of the rubric's available priority weight. */
+  minShareOfWeight: 0.15,
+} as const;
+
+export type ImprovementDecision = { worthwhile: boolean; reason: string };
+
+/**
+ * Whether the optional improvement is worth its rewrite and re-audit. It runs only when the gap
+ * the Library could close is large enough — at least `minWeightedPoints`, or `minShareOfWeight` of
+ * the available weight, or any essential requirement — and the page has room for it: the baseline
+ * fitted at its full writing budget (`writeScale === 1`), or the gap includes an essential, which
+ * is worth displacing lesser wording for. The reason names the gap weight and the headroom either
+ * way, so the journal can later show how adoption varies with them.
+ */
+export function improvementWorthwhile(diagnostics: CvQualityDiagnostics, writeScale: number): ImprovementDecision {
+  const gap = diagnostics.evidencedOpportunityGap;
+  const available = diagnostics.priorityCoverage.availableWeight;
+  const share = available ? gap.weightedPoints / available : 0;
+  const essential = gap.essential > 0;
+  const described = `The Library could add ${formatPoints(gap.weightedPoints)} of ${formatPoints(available)} weighted priority points` +
+    `${essential ? `, including ${gap.essential} essential requirement${gap.essential === 1 ? "" : "s"}` : ""}` +
+    `; the baseline fitted at ${Math.round(writeScale * 100)}% of its writing budget.`;
+  if (!gap.count) return { worthwhile: false, reason: "No important evidence available in the Library was omitted." };
+  const large = gap.weightedPoints >= IMPROVEMENT_GATE.minWeightedPoints || share >= IMPROVEMENT_GATE.minShareOfWeight || essential;
+  const room = writeScale >= 1 || essential;
+  if (!large) return { worthwhile: false, reason: `${described} The gap is too small to justify a rewrite.` };
+  if (!room) return { worthwhile: false, reason: `${described} The page has no headroom for a non-essential addition.` };
+  return { worthwhile: true, reason: described };
+}
+
+const formatPoints = (value: number) => String(Math.round(value * 100) / 100);
 
 /**
  * Gate one proposed, bounded rewrite. The caller remains responsible for allowing only one rewrite;

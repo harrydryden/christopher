@@ -1,18 +1,19 @@
 import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import { mentionsDemographicAttribute } from "@ava/core/cv-review";
-import { cvReviewBatches, libraryVerdictLines, reviewBatchIssues, markUnverifiedFindings, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
+import { cvReviewBatches, libraryVerdictLines, mergeRetry, reviewBatchIssues, markUnverifiedFindings, retryScope, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
 import {
   CV_PAGE_LIMITS,
   LIBRARY_REVIEW_BATCH,
   employmentHeading,
   responsibilityRows,
   cvTailoringEvidence,
+  cvTailoringPlanForWriter,
   validateCvTailoringPlan,
   libraryPlanCovers,
   reviewableRows,
   rowFacets,
-  rowsToClassify,
+  rowNumbers,
   validateLibraryReview,
   type CvWritingBudget,
   type CvPlan,
@@ -34,17 +35,17 @@ import Anthropic, {
   PermissionDeniedError,
   RateLimitError,
 } from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { BATCH_PRICE_MULTIPLIER, estimateBatchCostUsd, estimateCostUsd, estimateStage, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
 import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import type * as S from "./schemas";
-import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
+import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, outputFormat, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
 import { canonicalEvidence, evidenceBlockId } from "./evidence";
 import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./claim-memo";
 import { AiGovernor, abortableSleep, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
+import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, type BreakerStats } from "./breaker";
 
 export type { Effort } from "./prompt-registry";
 
@@ -140,6 +141,12 @@ export interface Ref {
    * answer nobody will read. It is never recorded; the rest of the ref is.
    */
   signal?: AbortSignal;
+  /**
+   * Told why the call produced nothing, when it failed as a call (not recorded). A method returns
+   * null for every failure, and some callers must act differently on some: scoring leaves a role
+   * unscored and retries after a `model_access` failure instead of marking it scored.
+   */
+  onFailure?: (failure: AiFailure) => void;
 }
 
 /**
@@ -173,7 +180,12 @@ export interface AiClientLike {
    * (`useServerFallback`). A client without it — a fake, say — is called without the fallback.
    */
   beta?: { messages: Omit<AiClientLike["messages"], "batches"> };
+  /** The SDK's models resource, for proving at boot that this key can reach a model. Free: no tokens. */
+  models?: { retrieve(modelId: string, params?: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown> };
 }
+
+/** What asking the provider about one model found: reachable, or why not. */
+export type ModelProbe = { ok: true } | { ok: false; message: string; status?: number; failure: AiFailure | null };
 
 /**
  * The slice of the SDK's Message Batches resource the engine uses (`client.messages.batches`).
@@ -306,6 +318,11 @@ export interface AiEngineOptions {
    */
   governor?: AiGovernor;
   /**
+   * The model-access breaker. Engines that build their own client share the process's
+   * (`defaultBreaker`); an engine given a client shares one per client unless given this.
+   */
+  breaker?: ModelAccessBreaker;
+  /**
    * How many times the engine itself re-sends a request that failed before its response began
    * (a throttle, an overload, a dropped connection), waiting out the governor's shared pause.
    * Default: `SDK_MAX_RETRIES` for an engine that built its own client — whose SDK retries are then
@@ -378,6 +395,17 @@ interface StreamStats {
   requestId?: string;
 }
 
+/** An engine given a client shares one breaker with every engine given the same client. */
+const clientBreakers = new WeakMap<object, ModelAccessBreaker>();
+function breakerFor(client: AiClientLike): ModelAccessBreaker {
+  let breaker = clientBreakers.get(client);
+  if (!breaker) clientBreakers.set(client, breaker = new ModelAccessBreaker());
+  return breaker;
+}
+
+/** The error a call refused by an open model-access breaker records, ahead of the provider's message. */
+export const MODEL_ACCESS_BREAKER_ERROR_PREFIX = "Model unreachable with this key; not sent:";
+
 /** An engine given a client shares one governor with every engine given the same client. */
 const clientGovernors = new WeakMap<object, AiGovernor>();
 function governorFor(client: AiClientLike): AiGovernor {
@@ -447,6 +475,35 @@ export const SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 export const MAX_PAUSE_CONTINUATIONS = 2;
 /** The label of a server-tool turn still paused after every continuation it was allowed. */
 export const PAUSED_ERROR = `Server tool turn still paused after ${MAX_PAUSE_CONTINUATIONS} continuations.`;
+
+type ContentBlock = { type?: string; cache_control?: unknown } & Record<string, unknown>;
+
+/**
+ * A paused turn as it is sent back: its blocks unchanged, except that the last one a cache marker
+ * may sit on carries one, so the continuation reads the searches already run from the cache (a
+ * tenth of the input price) instead of paying for the whole transcript again. Only the newest
+ * paused turn is marked: the markers an earlier continuation put on turns already in `messages`
+ * are taken off, so a call never holds more cache breakpoints than the request allows.
+ */
+export function pausedTurnForResume(content: unknown[], messages: unknown): unknown[] {
+  for (const message of (Array.isArray(messages) ? messages : []) as Array<{ role?: string; content?: unknown }>) {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    message.content = (message.content as ContentBlock[]).map(block => {
+      if (!block || typeof block !== "object" || !("cache_control" in block)) return block;
+      const { cache_control: _dropped, ...rest } = block;
+      return rest;
+    });
+  }
+  const blocks = (content as ContentBlock[]).map(block => ({ ...block }));
+  // Thinking blocks cannot carry a marker; the last block that can is the end of the prefix.
+  for (let at = blocks.length - 1; at >= 0; at--) {
+    const type = blocks[at]!.type;
+    if (type === "thinking" || type === "redacted_thinking") continue;
+    blocks[at] = { ...blocks[at]!, cache_control: { type: "ephemeral" } };
+    break;
+  }
+  return blocks;
+}
 
 type Usage = NonNullable<ParseResponse["usage"]>;
 
@@ -807,6 +864,7 @@ export class AiEngine {
   private readonly client: AiClientLike | null;
 
   private readonly governor: AiGovernor;
+  private readonly breaker: ModelAccessBreaker;
   private readonly retries: number;
   private readonly idleMs: number;
 
@@ -824,6 +882,7 @@ export class AiEngine {
     this.enabled = this.client !== null;
     this.retries = Math.max(0, Math.floor(options.retries ?? (options.client ? 0 : SDK_MAX_RETRIES)));
     this.governor = options.governor ?? (options.client ? governorFor(options.client) : defaultGovernor());
+    this.breaker = options.breaker ?? (options.client ? breakerFor(options.client) : defaultBreaker());
     this.idleMs = options.streamIdleMs ?? streamIdleMsFromEnv();
   }
 
@@ -832,13 +891,35 @@ export class AiEngine {
     return this.governor.stats();
   }
 
+  /** The models this engine is refusing after a model-access failure, and its last trip, for Health. */
+  breakerStats(): BreakerStats {
+    return this.breaker.stats();
+  }
+
+  /**
+   * Ask the provider whether this key can use `model`, without a message and so without a token.
+   * Null when there is no client, or the client cannot ask (a fake). It reports and nothing more:
+   * the breaker opens only on a real call's failure.
+   */
+  async probeModel(model: string, signal?: AbortSignal): Promise<ModelProbe | null> {
+    if (!this.client?.models?.retrieve) return null;
+    try {
+      await this.client.models.retrieve(model, {}, { timeout: 15_000, ...(signal ? { signal } : {}) });
+      return { ok: true };
+    } catch (err) {
+      const status = err instanceof APIError ? err.status : undefined;
+      const message = (err as Error).message ?? String(err);
+      return { ok: false, message: message.slice(0, 500), ...(status !== undefined ? { status } : {}), failure: classifyAiFailure(err) };
+    }
+  }
+
   /**
    * This engine for one run: every call it makes also stops when `signal` aborts. The client, and
    * its connection pool, is shared rather than built again from the key, and so are the budget
    * and the ledger, so a run's engine spends and records exactly as the shared one does.
    */
   withSignal(signal: AbortSignal): AiEngine {
-    return new AiEngine({ ...this.options, client: this.client ?? undefined, governor: this.governor, retries: this.retries,
+    return new AiEngine({ ...this.options, client: this.client ?? undefined, governor: this.governor, breaker: this.breaker, retries: this.retries,
       streamIdleMs: this.idleMs, signal: anySignal(this.options.signal, signal) });
   }
 
@@ -1018,7 +1099,7 @@ export class AiEngine {
     // the whole answer when the text is not valid JSON — which a truncated answer and a prose
     // refusal always are — so it arrived here as an unnamed error instead of as a refusal, an
     // output limit or a schema failure. Validation is `validate` below, on both paths.
-    const { parse: _parse, ...format } = zodOutputFormat(entry.schema);
+    const format = outputFormat(entry.schema);
     const request: Record<string, unknown> = {
       model,
       max_tokens: maxTokens,
@@ -1066,13 +1147,28 @@ export class AiEngine {
 
   private async run<T>(entry: PromptEntry, call: CallInput, ref: Ref = {}): Promise<T | null> {
     // The signal stops the call, and is not part of what is recorded about it.
-    const { signal: callerSignal, priority, ...recorded } = ref;
+    const { signal: callerSignal, priority, onFailure, ...recorded } = ref;
     // A call's own signal when it has one (an assessment batch's, which already listens to the
     // run's and the caller's), otherwise the caller's and the run's together.
     const signal = call.signal ?? anySignal(callerSignal, this.options.signal);
     if (!this.client || signal?.aborted) return null;
     const started = Date.now();
     const { callSite, model, request, texts, maxTokens, tools, identity, meta } = await this.buildRequest(entry, call, recorded);
+    // A model this key could not reach a moment ago is refused here, before the governor and the
+    // budget: the call would fail the same way, instantly, and hold both for nothing. The row it
+    // leaves costs nothing and names the failure, so a caller can tell it from a model that answered badly.
+    const open = this.breaker.refuse(model);
+    if (open) {
+      const failure: AiFailure = { kind: "model_access", ...(open.status !== undefined ? { status: open.status } : {}) };
+      const record: AiUsageRecord = {
+        callSite, model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, durationMs: 0,
+        ok: false, error: `${MODEL_ACCESS_BREAKER_ERROR_PREFIX} ${open.message}`.slice(0, 500), failure, ...identity,
+      };
+      await this.record(record);
+      call.onRecord?.(record);
+      onFailure?.(failure);
+      return null;
+    }
     // A refusal is re-run server-side on the provider's recommended fallback, inside this call.
     const fallback = this.options.useServerFallback !== false && modelSupportsServerFallback(model) && !!this.client.beta?.messages;
     if (fallback) {
@@ -1150,7 +1246,7 @@ export class AiEngine {
         // it stands, lets it carry on from there. No extra user turn: the assistant's is resumed.
         for (let resumed = 0; response.stop_reason === "pause_turn" && resumed < MAX_PAUSE_CONTINUATIONS && !signal?.aborted; resumed++) {
           prior = addUsage(prior, response.usage ?? {});
-          request.messages = [...(request.messages as unknown[]), { role: "assistant", content: response.content ?? [] }];
+          request.messages = [...(request.messages as unknown[]), { role: "assistant", content: pausedTurnForResume(response.content ?? [], request.messages) }];
           response = await this.complete(request, sending);
         }
         const { validated, error, failure, refused } = this.judge<T>(entry, response);
@@ -1167,9 +1263,14 @@ export class AiEngine {
         record = usageRecord(snapshot?.model ?? model, addUsage(prior, snapshot?.usage ?? {}),
           { ok: false, error: (err as Error).message.slice(0, 500), failure: classifyAiFailure(err) ?? undefined });
         note = [`${callSite} failed`, err];
+        const cause = err instanceof CallCutOff ? err.reason : err;
+        if (record.failure?.kind === "model_access" && cause instanceof APIError && isModelAccessFailure(cause.status, cause.message)
+          && this.breaker.trip(model, cause.message, cause.status))
+          this.log(`model access breaker open for ${model} for ${MODEL_ACCESS_BREAKER_MS / 60_000} minutes`, { status: cause.status, message: cause.message });
       }
       landed = await this.record(record);
       call.onRecord?.(record);
+      if (record.failure) onFailure?.(record.failure);
       if (note) this.log(...note);
       return result;
     } finally {
@@ -1312,17 +1413,23 @@ export class AiEngine {
       await say("start");
       const first = settled(sourcedByBlock(await runBatch(batch, undefined, onStart, onRecord), entryIds));
       if (!first) return ended();
-      const corrections = reviewBatchIssues(first, context).map(issue => issue.correction);
+      const issues = reviewBatchIssues(first, context);
+      const corrections = issues.map(issue => issue.correction);
       // With no issues every match carries its library side: fixed by the plan, or returned and checked.
       let result = markUnverifiedFindings(first, []);
       if (corrections.length) {
-        // The first call is finished and paid for; what follows is a second charge for this batch.
+        // The first call is finished and paid for; what follows is a second charge for this batch,
+        // so it asks again only about what was wrong: the flagged requirements and claims, and any
+        // the first answer left out, with the same corrections and the same cached context.
+        const flagged = retryScope(first, issues, batch);
         await say("retry", { corrections: corrections.length });
-        const second = settled(sourcedByBlock(await runBatch(batch, corrections, undefined, onRecord), entryIds));
+        const second = settled(sourcedByBlock(await runBatch(flagged, corrections, undefined, onRecord), entryIds));
         if (!second) return ended(corrections.length);
-        // A repeated attribution mistake earns no credit and remains visible for review.
-        // The final strict source validator still checks all accepted evidence quotes.
-        result = markUnverifiedFindings(second, reviewBatchIssues(second, context));
+        // The second answer replaces the first only for what it was asked about, by id. What is
+        // still wrong earns no credit and remains visible for review; the final strict source
+        // validator still checks all accepted evidence quotes.
+        const merged = mergeRetry(first, second, flagged);
+        result = markUnverifiedFindings(merged, reviewBatchIssues(merged, context));
       }
       const extra = corrections.length ? { corrections: corrections.length } : {};
       const complete = (expected: string[], actual: string[]) =>
@@ -1402,7 +1509,7 @@ export class AiEngine {
       ...(stylePreferences ? { stylePreferences } : {}), ...(preferredWording ? { preferredWording } : {}) } });
     const role = JSON.stringify({ jobTitle: input.jobTitle, company: input.company, description: input.description,
       maxPages: input.maxPages ?? CV_PAGE_LIMITS.default,
-      ...(input.rubric ? { rubric: input.rubric } : {}), ...(input.tailoringPlan ? { tailoringPlan: input.tailoringPlan } : {}) });
+      ...(input.rubric ? { rubric: input.rubric } : {}), ...(input.tailoringPlan ? { tailoringPlan: cvTailoringPlanForWriter(input.tailoringPlan) } : {}) });
     const volatile = {
       ...(input.writingBudget ? { writingBudget: input.writingBudget } : {}),
       ...(input.improvements?.length ? { improvements: input.improvements } : {}),
@@ -1498,13 +1605,15 @@ export class AiEngine {
   async cleanDescription(
     input: { title: string; rawText: string },
     ref: Ref = {},
-  ): Promise<{ descriptionText: string; salaryText?: string; employmentType?: string; remote?: boolean } | null> {
+  ): Promise<{ startsWith: string; endsWith: string; salaryText?: string; employmentType?: string; remote?: boolean } | null> {
     const result = await this.run<S.DescriptionOutput>(PROMPTS.A4, {
       user: `Role: ${input.title}\n\n${P.wrap("page_content", P.truncate(input.rawText, 40_000))}`,
     }, ref);
     if (!result) return null;
+    // Anchors, not text: the caller slices the page between them (and keeps nothing it cannot find).
     return {
-      descriptionText: result.descriptionText.trim().slice(0, 30_000),
+      startsWith: result.startsWith.trim(),
+      endsWith: result.endsWith.trim(),
       salaryText: result.salaryText?.trim() || undefined,
       employmentType: result.employmentType?.trim() || undefined,
       remote: result.remote ?? undefined,
@@ -1972,7 +2081,9 @@ export class AiEngine {
       let uncovered = uncoveredBy(plan);
       if (uncovered.length) {
         await say("retry", { usage, uncovered: uncovered.length });
-        const again = await ask(entries, uncovered.map(entry => entry.id), undefined, record => { usage = record; });
+        // Only the entries still owed: the ones answered in full stand, and asking for them again
+        // paid for a second copy of every row the first answer had already classified.
+        const again = await ask(uncovered, uncovered.map(entry => entry.id), undefined, record => { usage = record; });
         if (!plan && !again) {
           await say("failed", { usage, uncovered: uncovered.length });
           return null;
@@ -1983,8 +2094,11 @@ export class AiEngine {
           const merged = new Map((plan?.entries ?? []).map(said => [said.entryId, said]));
           for (const said of again.entries) {
             const before = merged.get(said.entryId);
+            // A row the first answer already named keeps that reading: taken twice, the number
+            // would read as named more than once and the row would lose its classification.
+            const named = new Set(before?.rows.map(row => row.row));
             merged.set(said.entryId, before
-              ? { ...before, rows: [...before.rows, ...said.rows], prompts: before.prompts.length ? before.prompts : said.prompts }
+              ? { ...before, rows: [...before.rows, ...said.rows.filter(row => !named.has(row.row))], prompts: before.prompts.length ? before.prompts : said.prompts }
               : said);
           }
           plan = { entries: [...merged.values()] };
@@ -2064,19 +2178,20 @@ function entriesUnderReview(library: CvLibrary, entries: LibraryReviewEntry[]): 
   return entries.map(entry => {
     const job = library.employment?.find(item => item.id === entry.employmentId);
     const rows = reviewableRows(entry);
-    const ask = rowsToClassify(entry, entry.known);
+    // Numbered, so the answer names a row by its number instead of copying it back; the rows still
+    // to classify are named by number too, rather than listed a second time.
+    const { toClassify } = rowNumbers(entry, entry.known);
     return [
       `Entry [${entry.id}] (${entry.kind})`,
       job ? `Company: ${job.company}` : null,
       job ? `Title: ${job.jobTitle}` : null,
       `Heading: ${entry.heading}`,
       "Rows:",
-      ...rows.map(row => `- ${row}`),
-      ...(ask.length < rows.length
-        ? [
-          "Classify only these rows (the others are already classified; do not return them):",
-          ...(ask.length ? ask.map(row => `- ${row}`) : ["(none: return this entry with no rows, and its prompts)"]),
-        ]
+      ...rows.map((row, index) => `${index + 1}. ${row}`),
+      ...(toClassify.length < rows.length
+        ? [toClassify.length
+          ? `Classify only rows ${toClassify.join(", ")} (the others are already classified; do not return them).`
+          : "Classify no rows (all are already classified): return this entry with no rows, and its prompts."]
         : []),
     ].filter(Boolean).join("\n");
   }).join("\n\n");

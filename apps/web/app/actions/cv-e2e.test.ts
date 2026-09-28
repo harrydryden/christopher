@@ -81,7 +81,8 @@ const DESCRIPTION = [
   "What we are looking for",
   "Candidates must have at least five years of experience leading operations in a regulated environment.",
   "You must be able to build and interpret reporting in SQL or a comparable analytics tool.",
-  "Experience of supplier negotiation is preferred.",
+  // Required, so the gap the Library can close includes an essential and the optional improvement runs.
+  "Experience of supplier negotiation is required.",
   "A degree or equivalent professional qualification is required.",
   "Familiarity with NetSuite or a similar ERP is desirable.",
   "This role is hybrid, with two days a week in our Manchester office.",

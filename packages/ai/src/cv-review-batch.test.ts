@@ -60,3 +60,18 @@ it("spreads an audit's requirements and claims evenly over as few batches as the
     .map(batch => [batch.requirements.length, batch.claims.length])).toEqual([[3, 8], [3, 8], [3, 6]]);
   expect(cvReviewBatches({ rubric: { ...rubric, requirements: requirements.slice(0, 2) }, claims: Array.from({ length: 17 }, (_, i) => ({ id: `c${i}`, text: "x" })), evidence }, 8)).toHaveLength(3);
 });
+
+it("lets a supported claim and a demonstrated requirement go without prose, but not a claim it doubts", () => {
+  const review = reviewFixture(context);
+  for (const claim of review.claims) claim.reason = "";
+  for (const match of review.matches) if (match.status === "demonstrated") match.improvement = "";
+  expect(reviewBatchIssues(review, context)).toEqual([]);
+  expect(() => validateCvReview(rubric, content, library, review)).not.toThrow();
+
+  review.claims[1] = { ...review.claims[1]!, status: "uncertain", evidence: [], reason: " " };
+  const issues = reviewBatchIssues(review, context);
+  expect(issues).toEqual([{ kind: "claim", index: 1, correction: expect.stringContaining("needs a reason") }]);
+  expect(() => validateCvReview(rubric, content, library, review)).toThrow("needs a reason");
+  // Uncorrected, the claim keeps no verdict and says why in the application's words.
+  expect(markUnverifiedFindings(review, issues).claims[1]).toMatchObject({ status: "uncertain", reason: expect.stringContaining("automated review") });
+});

@@ -46,9 +46,10 @@ const holdRef = (collectorTaskId: string) => `score_batch:${collectorTaskId}`;
  * Claim up to `limit` queued roles for this collection, in the order the queue would have run
  * them. The rows are this collector's while it prepares them: running, locked under the
  * collector's own slot, so a crash hands them back through the ordinary stale-task recovery. A
- * role marked `live`, and one whose key already has a task running, is left for the queue.
+ * role marked `live`, and one whose key already has a task running, is left for the queue. With
+ * `backgroundOnly` (scoring is live) only a rescore pass's roles, marked `background`, are taken.
  */
-async function claimQueuedScores(deps: WorkerDeps, lockedBy: string, limit: number): Promise<Task[]> {
+async function claimQueuedScores(deps: WorkerDeps, lockedBy: string, limit: number, backgroundOnly: boolean): Promise<Task[]> {
   const rows = await deps.db
     .update(schema.tasks)
     .set({ status: "running", lockedAt: sql`now()`, lockedBy, attempts: sql`${schema.tasks.attempts} + 1`, startedAt: sql`now()` })
@@ -56,6 +57,7 @@ async function claimQueuedScores(deps: WorkerDeps, lockedBy: string, limit: numb
       select id from tasks t
       where t.type = 'score_job' and t.status = 'queued' and t.run_after <= now() and t.attempts < t.max_attempts
         and coalesce(t.payload->>'live', '') <> 'true'
+        and (${!backgroundOnly} or t.payload->>'background' = 'true')
         and (t.dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = t.dedupe_key and r.status = 'running'))
       order by t.priority asc, t.run_after asc, t.created_at asc
       limit ${limit}
@@ -109,9 +111,10 @@ interface Collected {
 }
 
 export async function handleCollectScoreBatch(task: Task, deps: WorkerDeps): Promise<unknown> {
-  if ((await deps.settings()).scoringMode !== "batch") return { skipped: "scoring is live" };
+  // Live scoring still batches a rescore pass's roles: nobody is waiting on them.
+  const backgroundOnly = (await deps.settings()).scoringMode !== "batch";
   const lockedBy = task.lockedBy ?? `collector:${task.id}`;
-  const claimed = await claimQueuedScores(deps, lockedBy, SCORE_BATCH_MAX_ITEMS);
+  const claimed = await claimQueuedScores(deps, lockedBy, SCORE_BATCH_MAX_ITEMS, backgroundOnly);
   if (!claimed.length) return { collected: 0 };
   // Every claimed role is finished, batched or handed back before this returns; whatever is still
   // here when it throws goes back on the queue as it came, its attempt returned.

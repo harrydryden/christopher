@@ -2,9 +2,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, enqueueTask, listUserIds, schema, SEED_TAGS, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
-import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, GATE_REEVALUATION_VERSION, priorityFor } from "@ava/core";
+import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, DEFAULT_SYSTEM_SETTINGS, GATE_REEVALUATION_VERSION, priorityFor } from "@ava/core";
 import { and, eq, sql } from "drizzle-orm";
-import { enqueueBootGateReevaluation, GATE_REEVALUATION_KEY, seedTagVocabularies } from "./boot";
+import { configuredModels, enqueueBootGateReevaluation, GATE_REEVALUATION_KEY, probeConfiguredModels, seedTagVocabularies } from "./boot";
 import { agePriorities, claimTask } from "./queue";
 import { getInternal } from "./settings";
 import { ensureTestUser } from "./test-users";
@@ -96,5 +96,31 @@ describe("seed vocabulary on boot", () => {
     expect(tags.find(t => t.tag === "timing")).toMatchObject({ description: "My own words", createdBy: "user" });
 
     expect(await seedTagVocabularies(db)).toBe(0);
+  });
+});
+
+describe("model probe on boot", () => {
+  it("asks about every configured model once, records a model_access event for each it cannot reach, and never throws", async () => {
+    const [user] = await listUserIds(db);
+    await db.execute(sql`truncate worker_events, user_settings`);
+    await db.insert(schema.userSettings).values({ userId: user!, key: "cvModel", value: "claude-opus-5" })
+      .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value: "claude-opus-5" } });
+    const settings = { ...DEFAULT_SYSTEM_SETTINGS, modelOverrides: { A3: "claude-haiku-4-5" }, stageRoutes: { "cv.review": { model: "claude-sonnet-5" } } };
+    expect(await configuredModels(db as Db, settings)).toEqual(["claude-fable-5-1", "claude-haiku-4-5", "claude-opus-5", "claude-sonnet-5"]);
+
+    const asked: string[] = [];
+    const ai = { probeModel: async (model: string) => {
+      asked.push(model);
+      return model === "claude-opus-5" ? { ok: false as const, message: "404 model: claude-opus-5", status: 404, failure: null } : { ok: true as const };
+    } };
+    expect(await probeConfiguredModels({ db: db as Db, ai, settings: async () => settings }, "boot-test")).toEqual(["claude-opus-5"]);
+    expect(asked).toHaveLength(4);
+    const events = await db.select().from(schema.workerEvents).where(eq(schema.workerEvents.kind, "model_access"));
+    expect(events).toHaveLength(1);
+    expect(events[0]!.detail).toMatchObject({ model: "claude-opus-5", status: 404, message: "404 model: claude-opus-5", source: "boot" });
+
+    // A probe that cannot run at all reports nothing and does not stop the boot.
+    const broken = { probeModel: async () => { throw new Error("offline"); } };
+    expect(await probeConfiguredModels({ db: db as Db, ai: broken, settings: async () => settings }, "boot-test")).toEqual([]);
   });
 });

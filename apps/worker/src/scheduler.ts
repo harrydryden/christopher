@@ -11,6 +11,14 @@ import { runMonitorSample } from "./handlers/monitor-sample";
 import { agePriorities, failSpentTasks, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
 
+/**
+ * The weekly company suggestions (A10) are skipped for an account that has this many still waiting
+ * for an answer: more would only lengthen a list nobody is reading.
+ */
+export const SUGGESTIONS_PENDING_CAP = 10;
+/** …or that has neither decided on a role nor signed in (or been seen signed in) for this long. */
+export const SUGGESTIONS_DORMANT_DAYS = 21;
+
 /** Past this many due discovery sources, one tick leaves the rest for the next. */
 const DISCOVERY_SWEEP_LIMIT = 200;
 
@@ -62,16 +70,29 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
       // One read of every account's suggestions switch and one batched insert, inside the lock
       // with the marker, so the week is scheduled whole or not at all. It used to be a settings
       // read and three inserts per account, one after another, all under the lock.
-      const accounts = await writer.execute<{ id: string; suggestions: unknown }>(sql`select u.id, us.value as suggestions
+      // A weekly A10 run searches the web at about $0.5 a run, so it is spent only on an account
+      // that is reading the suggestions: fewer than ten still waiting, and a decision or a sign-in
+      // within three weeks.
+      const dormantSince = new Date(now.getTime() - SUGGESTIONS_DORMANT_DAYS * 86_400_000);
+      const accounts = await writer.execute<{ id: string; suggestions: unknown; pending: number; active: boolean }>(sql`select u.id, us.value as suggestions,
+          (select count(*)::int from company_suggestions cs where cs.user_id = u.id and cs.status = 'pending') as pending,
+          (u.last_login_at >= ${dormantSince}
+            or exists (select 1 from sessions s where s.user_id = u.id and s.last_seen_at >= ${dormantSince})
+            or exists (select 1 from decisions d where d.user_id = u.id and d.created_at >= ${dormantSince})) as active
         from users u left join user_settings us on us.user_id = u.id and us.key = 'suggestionsEnabled'
         where u.claimed_at is not null`);
-      const rows = accounts.rows.flatMap(({ id: userId, suggestions }) => [
-        taskRow("suggest_filters", { userId }),
-        taskRow("synthesize_profile", { userId, force: false }),
-        ...(suggestionsEnabled(suggestions) ? [taskRow("suggest_companies", { userId })] : []),
-      ]);
+      let skipped = 0;
+      const rows = accounts.rows.flatMap(({ id: userId, suggestions, pending, active }) => {
+        const suggest = suggestionsEnabled(suggestions) && pending < SUGGESTIONS_PENDING_CAP && active === true;
+        if (suggestionsEnabled(suggestions) && !suggest) skipped++;
+        return [
+          taskRow("suggest_filters", { userId }),
+          taskRow("synthesize_profile", { userId, force: false }),
+          ...(suggest ? [taskRow("suggest_companies", { userId })] : []),
+        ];
+      });
       const queued = await enqueueTasks(writer, rows);
-      log.info("scheduled weekly jobs", { ymd, accounts: accounts.rows.length, queued });
+      log.info("scheduled weekly jobs", { ymd, accounts: accounts.rows.length, queued, suggestionsSkipped: skipped });
     });
   }
 
@@ -101,13 +122,18 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
 
   // Batch scoring: every `scoringBatchMinutes`, one collection of the roles waiting to be scored,
   // claimed across the deployment so two workers and the cron fallback make one batch, not three.
+  // With scoring live the collection still runs for a rescore pass's roles (marked `background`),
+  // and only when one is waiting.
   if (stopped()) return;
-  if (settings.scoringMode === "batch") {
-    // A few seconds short of the interval, so a tick that lands just early does not skip a turn.
-    await claimPeriodic(deps, "lastScoreBatchCollect", Math.max(30, settings.scoringBatchMinutes * 60 - 5), async () => {
-      await enqueueStandard(deps.db, "collect_score_batch", { reason: "schedule" });
-    });
-  }
+  // A few seconds short of the interval, so a tick that lands just early does not skip a turn.
+  await claimPeriodic(deps, "lastScoreBatchCollect", Math.max(30, settings.scoringBatchMinutes * 60 - 5), async () => {
+    if (settings.scoringMode !== "batch") {
+      const waiting = await deps.db.execute(sql`select 1 from tasks where type = 'score_job' and status = 'queued'
+        and payload->>'background' = 'true' and coalesce(payload->>'live', '') <> 'true' limit 1`);
+      if (!waiting.rows.length) return;
+    }
+    await enqueueStandard(deps.db, "collect_score_batch", { reason: "schedule" });
+  });
 
   if (stopped()) return;
   await finaliseScanRuns(deps);

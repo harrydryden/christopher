@@ -11,12 +11,14 @@ import { createDb, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { gzipSync } from "node:zlib";
+import { NotFoundError } from "@ava/ai";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import {
   handleReevaluateGate,
   handleRescoreAll,
   handleScoreJob,
+  ModelAccessError,
   handleTagReason,
   handleSuggestFilters,
   handleSynthesizeProfile,
@@ -182,6 +184,28 @@ it("skips a score whose own hold the account's budget refuses, and finishes rath
   }
 });
 
+it("leaves a role unscored, and the task to retry, when the key cannot reach the scoring model", async () => {
+  const create = vi.fn().mockRejectedValue(new NotFoundError(404, { type: "error", error: { type: "not_found_error", message: "model: claude-sonnet-5" } }, undefined, new Headers()));
+  const engine = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0, aiClient: { messages: { create } } });
+  try {
+    const { job } = await seedRole();
+    const withRealEngine = { ...engine, assertOwnership: undefined } as WorkerDeps;
+    await expect(handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).rejects.toBeInstanceOf(ModelAccessError);
+    expect(await viewOf(job.id)).toMatchObject({ scoreState: null, scoredAt: null, fitScore: null });
+    // The breaker is open now: the retry is refused without a request, and still leaves it unscored.
+    await expect(handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).rejects.toBeInstanceOf(ModelAccessError);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect((await viewOf(job.id)).scoredAt).toBeNull();
+
+    // Any other empty answer still records that the model was asked and gave nothing.
+    const empty = aiDeps({ scoreJob: vi.fn().mockResolvedValue(null) });
+    expect(await handleScoreJob(task({ userId, jobId: job.id }), empty)).toEqual({ skipped: "no ai result" });
+    expect(await viewOf(job.id)).toMatchObject({ scoreState: "scored" });
+  } finally {
+    await engine.close();
+  }
+});
+
 it("marks a view queued in the statement that queues its score, from the gate and from a rescore", async () => {
   await setGate({});
   const { job } = await seedRole({ view: false });
@@ -199,6 +223,42 @@ it("marks a view queued in the statement that queues its score, from the gate an
   await db.execute(sql`truncate tasks`);
   expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toMatchObject({ queued: 1 });
   expect((await viewOf(job.id)).scoreState).toBe("queued");
+});
+
+it("leaves skipped and archived roles out of a rescore pass, and marks its roles background", async () => {
+  await setGate({});
+  const { company, source, job: undecided } = await seedRole();
+  const more = await db.insert(schema.jobs).values(["id:2", "id:3", "id:4"].map((externalKey, n) => ({
+    companyId: company.id, sourceId: source.id, externalKey, title: `Operations Lead ${n}`,
+    normalizedTitle: `operations lead ${n}`, url: `https://acme.test/jobs/${n + 2}`, location: "London", locations: ["London"],
+  }))).returning();
+  const [skipped, archived, shortlisted] = more as [typeof undecided, typeof undecided, typeof undecided];
+  await db.insert(schema.userJobs).values([skipped, archived, shortlisted].map(job => ({
+    userId, jobId: job.id, keywordMatched: true, keywordTerms: ["operations"], inTable: true, createdAt: now, updatedAt: now,
+    archivedAt: job.id === archived.id ? now : null,
+  })));
+  await db.insert(schema.decisions).values([
+    { userId, jobId: skipped.id, decision: "skip", reason: "", jobTitle: skipped.title, companyName: "Acme" },
+    // A skip since undone does not count.
+    { userId, jobId: shortlisted.id, decision: "skip", reason: "", jobTitle: shortlisted.title, companyName: "Acme", superseded: true },
+    { userId, jobId: shortlisted.id, decision: "apply", reason: "", jobTitle: shortlisted.title, companyName: "Acme" },
+  ]);
+
+  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toMatchObject({ queued: 2 });
+  const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+  expect(Object.fromEntries(queued.map(row => [(row.payload as { jobId: string }).jobId, row.payload]))).toEqual({
+    // Nobody waits on the undecided role's new score: the batch collector takes it.
+    [undecided.id]: { userId, jobId: undecided.id, background: true },
+    // A shortlisted role's score is one the person waits on: live.
+    [shortlisted.id]: { userId, jobId: shortlisted.id },
+  });
+
+  // A score already queued for a skipped role (from before the skip) is not asked for either.
+  const scoreJob = vi.fn();
+  expect(await handleScoreJob(task({ userId, jobId: skipped.id }), aiDeps({ scoreJob }))).toEqual({ skipped: "role is skipped or archived" });
+  expect(await handleScoreJob(task({ userId, jobId: archived.id }), aiDeps({ scoreJob }))).toEqual({ skipped: "role is skipped or archived" });
+  expect(scoreJob).not.toHaveBeenCalled();
+  expect(await viewOf(skipped.id)).toMatchObject({ scoreState: "decided" });
 });
 
 // --- 6.2: outcomes reach the preference profile --------------------------------------------

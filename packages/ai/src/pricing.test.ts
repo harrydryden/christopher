@@ -59,9 +59,9 @@ it("estimates one stage from its layout: cached blocks written once at their lif
   const review = PROMPTS["cv.review"];
   const system = Buffer.byteLength(review.system) / 3;
   const usd = estimateStage(review, { stableBytes: [30_000, 9_000], tailBytes: 6_000, calls: 5 }, { cvModel: "claude-fable-5-1" });
-  // The evidence block (and the system prompt before it) is an hour-long entry; the CV a five-minute one.
+  // The evidence block (and the system prompt before it) and the CV are five-minute entries.
   expect(usd).toBeCloseTo(estimateCostUsd("claude-fable-5-1", {
-    inputTokens: 5 * 2_000, cacheWriteTokens: system + 10_000 + 3_000, cacheWrite1hTokens: system + 10_000,
+    inputTokens: 5 * 2_000, cacheWriteTokens: system + 10_000 + 3_000,
     cacheReadTokens: 4 * (system + 13_000), outputTokens: 5 * review.expectedOutputTokens,
   }), 6);
   // Routed to another model, the same stage is priced there.

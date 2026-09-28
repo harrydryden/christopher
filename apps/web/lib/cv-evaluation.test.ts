@@ -72,6 +72,30 @@ describe("unified CV evaluation", () => {
       expect(JSON.stringify(assessment)).toBe(before);
     },
   );
+  it("renders the same rows when the audit leaves a demonstrated improvement and a supported claim's reason empty", () => {
+    const prose = fixture();
+    Object.assign(prose.review.matches[0]!, { status: "demonstrated", libraryStatus: "demonstrated", improvement: "Keep leading with the team." });
+    prose.review.claims = prose.review.claims.map((claim) => ({ ...claim, status: "supported" as const, reason: "The source says so verbatim." }));
+    // A doubted claim the requirement does not cite still carries its reason; its row is unchanged too.
+    const cited = new Set(prose.review.matches[0]!.cvEvidence.map((ref) => ref.id));
+    prose.review.claims = prose.review.claims.map((claim) => cited.has(claim.claimId) ? claim
+      : { ...claim, status: "uncertain" as const, evidence: [], reason: "Scope unclear." });
+    expect(prose.review.claims.some((claim) => claim.status === "uncertain")).toBe(true);
+    const terse = structuredClone(prose);
+    terse.review.matches[0]!.improvement = "";
+    terse.review.claims = terse.review.claims.map((claim) => claim.status === "supported" ? { ...claim, reason: "" } : claim);
+    expect(cvEvaluationRows(terse, content)).toEqual(cvEvaluationRows(prose, content));
+  });
+  it("falls back to its own advice for a demonstrated requirement whose cited wording is doubted", () => {
+    // The one place a demonstrated requirement's improvement was ever shown: the audit no longer
+    // writes one, so the row gives the application's advice instead of the model's.
+    const assessment = fixture();
+    Object.assign(assessment.review.matches[0]!, { status: "demonstrated", libraryStatus: "demonstrated", improvement: "" });
+    const cited = new Set(assessment.review.matches[0]!.cvEvidence.map((ref) => ref.id));
+    assessment.review.claims = assessment.review.claims.map((claim) => cited.has(claim.claimId)
+      ? { ...claim, status: "uncertain" as const, evidence: [], reason: "Scope unclear." } : claim);
+    expect(cvEvaluationRows(assessment, content)[0]!.suggestion).toMatch(/^Resolve the factual concern in item \d+\. Confirm the evidence or revise the wording, then reassess\.$/);
+  });
   it("does not give Strong to uncertain or unsupported wording, even if the model calls it demonstrated", () => {
     for (const [status, change, experience] of [
       ["unsupported", "Fact", "None"],

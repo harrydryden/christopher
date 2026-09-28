@@ -80,6 +80,8 @@ export function reviewBatchIssues(review: CvReviewBatchAnswer, context: Context)
     if (!valid(claim.evidence, context.evidence) || (claim.status === "supported" &&
         (!claim.evidence.length || (sourceId && !claim.evidence.some(ref => ref.id === sourceId)))))
       issues.push({ kind: "claim", index, correction: `${claim.claimId}: supported requires an exact source quote${sourceId ? ` from ${sourceId}` : " from the supplied library"}. Recheck claimSources; otherwise use uncertain or unsupported. Never substitute unrelated evidence.` });
+    else if (claim.status !== "supported" && !claim.reason.trim())
+      issues.push({ kind: "claim", index, correction: `${claim.claimId}: an ${claim.status} claim needs a reason saying what the evidence does not support.` });
   });
   return issues;
 }
@@ -111,4 +113,41 @@ export function markUnverifiedFindings(review: CvReviewBatchAnswer, issues: Issu
     match.libraryEvidence ??= [];
   }
   return result;
+}
+
+/**
+ * What a corrective re-run asks about: the requirements and claims an issue names, and any the first
+ * answer left out, each with the sources its claims must cite. Everything else in the batch was
+ * answered correctly and stands; asking again rewrote the whole batch to fix one or two findings.
+ */
+export function retryScope(first: CvReviewBatchAnswer, issues: ReadonlyArray<{ kind: "cv" | "library" | "claim"; index: number }>, batch: CvReviewBatch): CvReviewBatch {
+  const requirementIds = new Set(issues.filter(issue => issue.kind !== "claim").map(issue => first.matches[issue.index]?.requirementId));
+  const claimIds = new Set(issues.filter(issue => issue.kind === "claim").map(issue => first.claims[issue.index]?.claimId));
+  for (const requirement of batch.requirements) if (!first.matches.some(match => match.requirementId === requirement.id)) requirementIds.add(requirement.id);
+  for (const claim of batch.claims) if (!first.claims.some(said => said.claimId === claim.id)) claimIds.add(claim.id);
+  const claims = batch.claims.filter(claim => claimIds.has(claim.id));
+  return {
+    requirements: batch.requirements.filter(requirement => requirementIds.has(requirement.id)),
+    claims,
+    claimSources: batch.claimSources.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
+  };
+}
+
+/**
+ * The first answer with the re-run's findings written over it by id, for what the re-run was asked
+ * about alone, in the first answer's order; a finding the first left out is appended. A finding the
+ * re-run did not return keeps the first answer's, which the issues check then marks unverified.
+ */
+export function mergeRetry(first: CvReviewBatchAnswer, second: CvReviewBatchAnswer, asked: CvReviewBatch): CvReviewBatchAnswer {
+  const askedRequirements = new Set(asked.requirements.map(requirement => requirement.id));
+  const askedClaims = new Set(asked.claims.map(claim => claim.id));
+  const matches = new Map<string, CvReviewBatchAnswer["matches"][number]>();
+  for (const match of second.matches) if (askedRequirements.has(match.requirementId) && !matches.has(match.requirementId)) matches.set(match.requirementId, match);
+  const claims = new Map<string, CvReviewBatchAnswer["claims"][number]>();
+  for (const claim of second.claims) if (askedClaims.has(claim.claimId) && !claims.has(claim.claimId)) claims.set(claim.claimId, claim);
+  const mergedMatches = first.matches.map(match => matches.get(match.requirementId) ?? match);
+  const mergedClaims = first.claims.map(claim => claims.get(claim.claimId) ?? claim);
+  for (const [id, match] of matches) if (!first.matches.some(said => said.requirementId === id)) mergedMatches.push(match);
+  for (const [id, claim] of claims) if (!first.claims.some(said => said.claimId === id)) mergedClaims.push(claim);
+  return structuredClone({ ...first, matches: mergedMatches, claims: mergedClaims });
 }

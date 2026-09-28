@@ -47,14 +47,17 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
         if ((!text || text.length < 200) && deps.ai.enabled) {
           const rawText = stripHtml(res.body).slice(0, 20_000);
           const cleaned = await deps.ai.cleanDescription({ title: job.title, rawText }, { refType: "job", refId: job.id });
-          // The model may cut and tidy the page, never write it: its text is shared with every
-          // follower and read by their gates, so it is kept only when the page says it.
-          if (cleaned?.descriptionText && anchoredInPage(cleaned.descriptionText, rawText)) {
-            text = cleaned.descriptionText;
+          // The model chooses where the description starts and ends, and the text is the page's own
+          // between the two: it is shared with every follower and read by their gates, so the model
+          // may cut the page, never write it. An anchor the page does not carry keeps the page's own
+          // reading, and none of the model's claims.
+          const sliced = cleaned ? sliceBetweenAnchors(rawText, cleaned.startsWith, cleaned.endsWith) : null;
+          if (cleaned && sliced) {
+            text = sliced;
             descriptionSource = "model";
             extra = { salaryText: cleaned.salaryText ?? job.salaryText, employmentType: cleaned.employmentType ?? job.employmentType, remote: cleaned.remote ?? job.remote };
-          } else if (cleaned?.descriptionText) {
-            log.warn("model description not found on the page; kept the page's own text", { jobId, url: job.url });
+          } else if (cleaned) {
+            log.warn("model description anchors not found on the page; kept the page's own text", { jobId, url: job.url });
           }
         }
       }
@@ -161,16 +164,55 @@ async function refreshFollowers(
 }
 
 /**
- * Whether every sentence of the model's cleaned text is in the page it was given, compared with
- * case, punctuation and spacing set aside. A4 is asked to tidy a description, not to write one:
- * text that is not on the page is not the posting's, and it would reach every follower's gate.
+ * `value` with case, punctuation and spacing set aside — lower case, every run of anything but
+ * letters and digits one space, trimmed — with, for each character of the result, where it came
+ * from in `value` (`from`) and where that source character ends (`to`).
  */
-export function anchoredInPage(cleaned: string, rawText: string): boolean {
-  const normalise = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  const page = ` ${normalise(rawText)} `;
-  const sentences = cleaned.split(/(?<=[.!?])\s+|\n+/).map(normalise).filter(Boolean);
-  if (!sentences.length) return false;
-  return sentences.every(sentence => page.includes(` ${sentence} `));
+function normaliseWithMap(value: string): { text: string; from: number[]; to: number[] } {
+  let text = "";
+  const from: number[] = [];
+  const to: number[] = [];
+  let gap = false;
+  for (let i = 0; i < value.length;) {
+    const ch = String.fromCodePoint(value.codePointAt(i)!);
+    if (/[\p{L}\p{N}]/u.test(ch)) {
+      if (gap && text) { text += " "; from.push(i); to.push(i); }
+      gap = false;
+      // A lower case can be longer than its capital, with a mark that is not a letter ("İ"): only
+      // its letters and digits count, each mapped back to the one source character.
+      const lower = [...ch.toLowerCase()].filter(part => /[\p{L}\p{N}]/u.test(part)).join("");
+      for (let unit = 0; unit < lower.length; unit++) { from.push(i); to.push(i + ch.length); }
+      text += lower;
+    } else {
+      gap = true;
+    }
+    i += ch.length;
+  }
+  return { text, from, to };
+}
+
+/**
+ * The page's own text from the sentence A4 says the description starts with to the one it says it
+ * ends with, both matched as whole words with case, punctuation and spacing set aside (as
+ * `normaliseWithMap` reads them), the end at or after the start, and the end sentence's closing
+ * punctuation kept. Null when either is not on the page, so the caller keeps the page's own reading.
+ */
+export function sliceBetweenAnchors(rawText: string, startsWith: string, endsWith: string): string | null {
+  const page = normaliseWithMap(rawText);
+  const start = normaliseWithMap(startsWith).text;
+  const end = normaliseWithMap(endsWith).text;
+  if (!start || !end) return null;
+  // Padded, so a match is whole words: index `p` in the padded page is index `p` of the anchor's
+  // first character in `page.text`.
+  const padded = ` ${page.text} `;
+  const first = padded.indexOf(` ${start} `);
+  if (first < 0) return null;
+  const last = padded.indexOf(` ${end} `, first);
+  if (last < 0) return null;
+  let stop = page.to[last + end.length - 1]!;
+  while (stop < rawText.length && /[^\s\p{L}\p{N}]/u.test(rawText[stop]!)) stop++;
+  const sliced = rawText.slice(page.from[first]!, stop).trim();
+  return sliced || null;
 }
 
 /**

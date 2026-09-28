@@ -123,7 +123,11 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
 
   if (decision === null) {
     // What undoing each dismissal puts back.
-    await restoreDismissedApplications(tx, userId, superseded.filter(row => row.decision === "skip" && row.jobId).map(row => row.jobId!));
+    const unskipped = superseded.filter(row => row.decision === "skip" && row.jobId).map(row => row.jobId!);
+    await restoreDismissedApplications(tx, userId, unskipped);
+    // A skipped role is left out of scoring (its score has no reader); undone, it needs one again.
+    // The handler decides whether it is still in the table.
+    await enqueueMany("score_job", unskipped.map(jobId => ({ userId, jobId })), tx);
     // A role the gate no longer admits was only in the table because a decision held it: the
     // gate's archive, stamped as such, so the view comes back by itself once the gate admits it.
     const drops = rows.filter(row => !row.inTable && !row.archivedAt).map(row => row.jobId);

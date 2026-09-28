@@ -1,9 +1,9 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
 import { schema, queueScoring, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
-import { decisionDigest, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
+import { decisionDigest, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
 import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
@@ -101,6 +101,13 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   const settings = await deps.userSettings(userId);
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
+  // A skipped or archived role's score has no reader: the table's order is for undecided roles,
+  // and the score a decision is judged against was frozen when it was made. Undoing the skip
+  // queues a score again (apps/web/lib/decisions.ts).
+  if (view.archivedAt || choice?.decision === "skip") {
+    await markScoreState(deps, userId, jobId, "decided");
+    return { done: { skipped: "role is skipped or archived" } };
+  }
   if (!view.inTable && choice?.decision !== "apply") {
     await markScoreState(deps, userId, jobId, "ineligible");
     return { done: { skipped: "role does not match and is not shortlisted" } };
@@ -198,18 +205,30 @@ export async function writeScore(
   return true;
 }
 
+/** A score that could not be asked for because this key cannot reach the model; the task retries. */
+export class ModelAccessError extends Error {
+  constructor(readonly failure: AiFailure) {
+    super(`A5 model unreachable with this key${failure.status ? ` (HTTP ${failure.status})` : ""}; the role stays unscored and the task retries`);
+    this.name = "ModelAccessError";
+  }
+}
+
 export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, jobId } = task.payload as unknown as TaskPayloads["score_job"];
   const prep = await prepareScoreJob(deps, userId, jobId);
   if ("done" in prep) return prep.done;
   const { input } = prep.prepared;
+  let failure: AiFailure | undefined;
   const result = await withinAccountBudget(deps.ai.scoreJob(input,
-    { refType: "job", refId: jobId, userId, signal: deps.signal },
+    { refType: "job", refId: jobId, userId, signal: deps.signal, onFailure: failed => { failure = failed; } },
   ));
   if (result === ACCOUNT_BUDGET_REFUSED) {
     await markScoreState(deps, userId, jobId, "budget");
     return BUDGET_SKIP;
   }
+  // The key could not reach the model: nothing was asked, so the role is not "scored without a
+  // result", which a scan would never queue again. It stays unscored and the task retries.
+  if (!result && failure?.kind === "model_access") throw new ModelAccessError(failure);
   if (!result) {
     await markScoredWithoutResult(deps.db, deps.now(), userId, jobId);
     return { skipped: "no ai result" };
@@ -555,13 +574,18 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
     return { skipped: "rescored within the hour", retryAt: retryAt.toISOString() };
   }
   const shortlisted = sql<boolean>`exists (select 1 from decisions d where d.user_id = ${schema.userJobs.userId} and d.job_id = ${schema.userJobs.jobId} and d.superseded = false and d.decision = 'apply')`;
+  // Skipped and archived roles are left out: their score has no reader (see `prepareScoreJob`).
+  const skipped = sql<boolean>`exists (select 1 from decisions d where d.user_id = ${schema.userJobs.userId} and d.job_id = ${schema.userJobs.jobId} and d.superseded = false and d.decision = 'skip')`;
   const rows = await deps.db.select({ id: schema.userJobs.jobId, shortlisted }).from(schema.userJobs)
     .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
-    .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), sql`(${schema.userJobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
+    .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), isNull(schema.userJobs.archivedAt),
+      sql`not ${skipped}`, sql`(${schema.userJobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
   // A shortlisted role's score is the one the person is waiting on: a background score already
-  // queued for it is brought up to that priority rather than left where it was. Every role a new
+  // queued for it is brought up to that priority rather than left where it was, and scored live.
+  // The rest only reorder a table the person has already seen, so they are marked background and
+  // go through the batch collector at half price even while scoring is live. Every role a new
   // profile version will re-score reads "scoring" until its turn comes.
   const queued = await queueScoring(deps.db, rows.filter(row => row.shortlisted).map(row => ({ userId, jobId: row.id, priority: 1 })), deps.now(), { promote: true })
-    + await queueScoring(deps.db, rows.filter(row => !row.shortlisted).map(row => ({ userId, jobId: row.id })), deps.now());
+    + await queueScoring(deps.db, rows.filter(row => !row.shortlisted).map(row => ({ userId, jobId: row.id })), deps.now(), { background: true });
   return { queued, inputsHash };
 }

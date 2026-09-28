@@ -46,6 +46,51 @@ export interface WorkerHeartbeat {
   concurrency: number | null;
   /** The model engine's stream cap and the streams open under it, when the worker reports them. */
   governor?: WorkerGovernor | null;
+  /** The engine's model-access breaker: models refused after the key could not reach them. */
+  breaker?: WorkerBreaker | null;
+}
+
+/** One model the worker's breaker refused, or last refused. */
+export interface WorkerBreakerTrip {
+  model: string;
+  message: string;
+  status: number | null;
+  trippedAt: Date | null;
+  openUntil: Date | null;
+  refused: number;
+}
+
+export interface WorkerBreaker {
+  open: WorkerBreakerTrip[];
+  last: WorkerBreakerTrip | null;
+}
+
+/** The last `model_access` worker event: a boot probe or a call that found a model unreachable. */
+export interface ModelAccessEvent {
+  at: Date;
+  model: string | null;
+  message: string | null;
+  status: number | null;
+  source: string | null;
+}
+
+/**
+ * Operations' one line on model access: which models the worker is refusing right now and until
+ * when, the last model the key could not reach, and any stored model id that reading settings
+ * replaced. `warn` is set while something needs the administrator: an open breaker, an event in
+ * the last day, or a replaced setting.
+ */
+export function modelAccessSummary(breaker: WorkerBreaker | null | undefined, event: ModelAccessEvent | null, warnings: readonly string[], now: Date): { text: string; warn: boolean } {
+  const parts: string[] = [];
+  const open = (breaker?.open ?? []).filter((trip) => !trip.openUntil || trip.openUntil.getTime() > now.getTime());
+  if (open.length)
+    parts.push(`Refusing ${open.map((trip) => `${trip.model}${trip.openUntil ? ` until ${trip.openUntil.toISOString().slice(11, 16)} UTC` : ""}${trip.refused ? ` (${trip.refused} calls not sent)` : ""}`).join(", ")}: this key could not reach ${open.length === 1 ? "it" : "them"}`);
+  const recent = event && now.getTime() - event.at.getTime() < 86_400_000;
+  if (event)
+    parts.push(`Last model access failure ${event.at.toISOString().slice(0, 16).replace("T", " ")} UTC${event.source === "boot" ? " at boot" : ""}: ${event.model ?? "unknown model"}${event.status ? ` (HTTP ${event.status})` : ""}${event.message ? `, ${event.message}` : ""}`);
+  else parts.push("No model access failure recorded");
+  if (warnings.length) parts.push(`Settings: ${warnings.join(" ")}`);
+  return { text: `${parts.join(". ")}.`.replace(/\.\./g, "."), warn: open.length > 0 || !!recent || warnings.length > 0 };
 }
 
 /**

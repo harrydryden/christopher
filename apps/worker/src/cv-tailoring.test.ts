@@ -4,7 +4,7 @@ import { enqueueTask, listCvBuildSteps, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
 import type { CvAssessment, CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
-import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
+import { cvTailoringPlanForWriter, type CvTailoringPlan } from "@ava/core/cv-tailoring";
 import { dedupeKeyFor } from "@ava/core";
 import { DEFAULT_CV_THEME } from "@ava/core/cv";
 import { eq, sql } from "drizzle-orm";
@@ -79,7 +79,7 @@ function scriptedClient(options: ScriptOptions = {}) {
         : stable.evidence.find(item => item.id === "source:profile");
       const review: CvReviewPlan = {
         matches: batch.requirements.map(requirement => {
-          const demonstrated = requirement.id === "lead" || improved;
+          const demonstrated = requirement.id !== "change" || improved;
           const claim = printed.cv.find(item => requirement.id === "change" ? item.text.includes("Delivered transformation") : item.id === "profile")!;
           return { requirementId: requirement.id, status: demonstrated ? "demonstrated" : "missing", libraryStatus: "demonstrated",
             cvEvidence: demonstrated ? [{ id: claim.id, quote: claim.text }] : [],
@@ -106,21 +106,21 @@ function scriptedClient(options: ScriptOptions = {}) {
     if (options.failImprovement && improving) throw new Error("optional writer unavailable");
     const improved = improving;
     return answered({
-      summary: "Operations leader", summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+      summary: "Operations leader", summarySources: ["source:profile"],
       sections: [{ entryId: "one", bullets: improved ? ["Led a team", "Delivered transformation"] : ["Led a team"],
         bulletSources: improved
-          ? [[{ sourceId: "entry:one:row:0", quote: "Led a team" }], [{ sourceId: "entry:one:row:1", quote: "Delivered transformation" }]]
-          : [[{ sourceId: "entry:one:row:0", quote: "Led a team" }]] },
+          ? [["entry:one:row:0"], ["entry:one:row:1"]]
+          : [["entry:one:row:0"]] },
       ...(!improved || !options.omitRequiredEntryOnImprovement ? [{ entryId: "degree", bullets: ["University of Example"],
-        bulletSources: [[{ sourceId: "entry:degree:row:0", quote: "University of Example" }]] }] : [])], gaps: [],
+        bulletSources: [["entry:degree:row:0"]] }] : [])], gaps: [],
     });
   } } };
   return { client, calls, authorInputs };
 }
 
-async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }) {
+async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }, jobDescription = "Lead a team. Deliver transformation.") {
   const [draft] = await db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme",
-    jobDescription: "Lead a team. Deliver transformation.", libraryVersion: 1, librarySnapshot: library,
+    jobDescription, libraryVersion: 1, librarySnapshot: library,
     model: "claude-sonnet-5", buildCheckpoint: checkpoint }).returning();
   const payload = { draftId: draft!.id, userId };
   await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
@@ -149,7 +149,7 @@ it("a completed quiz reuses its semantic plan, skips another pause and passes pr
   expect((await draftAfter(draft.id)).status).toBe("ready");
   expect(scripted.calls).not.toContain("planner");
   expect(scripted.calls.filter(call => call === "author")).toHaveLength(1);
-  expect(scripted.authorInputs[0]).toMatchObject({ tailoringPlan: noGapPlan });
+  expect(scripted.authorInputs[0]).toMatchObject({ tailoringPlan: cvTailoringPlanForWriter(noGapPlan) });
   expect(JSON.stringify((await draftAfter(draft.id)).content)).toContain("summarySources");
 });
 
@@ -193,6 +193,27 @@ it("publishes the baseline first, then adopts one verified improvement as a new 
   const publishedAt = steps.find(step => step.motion === "publish")!.finishedAt!;
   expect(baseline.progressAt!.getTime()).toBeLessThanOrEqual(publishedAt.getTime());
   expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
+});
+
+it("skips the optional improvement when the gap is a small share of the rubric, and records its weight", async () => {
+  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  // Seven more demonstrated desirables: the missing one is 1 of 10 weighted points, under the gate.
+  const extras = Array.from({ length: 7 }, (_, index) => ({ id: `extra${index}`, label: `Extra skill ${index}`, quote: `Extra skill ${index}`,
+    importance: "desirable" as const, category: "experience" as const }));
+  const wide: CvRubric = { caveats: [], requirements: [...rubric.requirements, ...extras] };
+  const plan: CvTailoringPlan = { ...noGapPlan, requirements: [...noGapPlan.requirements, ...extras.map(item =>
+    ({ requirementId: item.id, status: "demonstrated" as const, evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }))] };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: plan, quizCompleted: true, rubric: wide },
+    `Lead a team. Deliver transformation. ${extras.map(item => item.quote).join(". ")}.`);
+  await queue().drain();
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  expect(scripted.calls).not.toContain("improvement");
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  const improve = steps.find(step => step.motion === "improve_content")!;
+  expect(improve).toMatchObject({ status: "skipped", detail: { opportunities: 1, skipped: true, weightedPoints: 1, availableWeight: 10, essential: 0, writeScale: 1 } });
+  expect(improve.detail.reason).toContain("1 of 10 weighted priority points");
+  expect(improve.detail.reason).toContain("too small");
+  expect(steps.filter(step => step.motion === "admit_budget").map(step => step.detail.stage)).toEqual(["write", "audit"]);
 });
 
 it("re-checks the revision's changed claims only, beside every requirement, and reuses the baseline's other verdicts", async () => {
@@ -275,9 +296,9 @@ it("keeps the checked baseline when an improved candidate drops a required educa
 it("a content checkpoint reserves the audit plus one improvement, reuses the author and can still improve", async () => {
   const scripted = scriptedClient(); deps.aiClient = scripted.client;
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led a team"],
-      bulletSources: [[{ sourceId: "entry:one:row:0", quote: "Led a team" }]] }], gaps: [] };
+      bulletSources: [["entry:one:row:0"]] }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString() });
   await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
@@ -304,9 +325,9 @@ it("a content checkpoint reserves the audit plus one improvement, reuses the aut
 it("the persisted one-shot fence prevents a retry buying a second improvement", async () => {
   const scripted = scriptedClient(); deps.aiClient = scripted.client;
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led a team"],
-      bulletSources: [[{ sourceId: "entry:one:row:0", quote: "Led a team" }]] }], gaps: [] };
+      bulletSources: [["entry:one:row:0"]] }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString(), improvementAttempted: true });
   await db.update(schema.cvDrafts).set({ content: baseline, assessment: { score: 0 } as unknown as CvAssessment }).where(eq(schema.cvDrafts.id, draft.id));
@@ -321,8 +342,8 @@ it("corrects a writer answer citing a source the Library does not hold inside th
   const create = scripted.client.messages.create;
   let authors = 0;
   scripted.client.messages.create = async (params, options, call) => {
-    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ bulletSources: Array<Array<{ sourceId: string }>> }> } };
-    if (call?.promptId === "cv.author" && ++authors === 1) response.parsed_output.sections[0]!.bulletSources[0]![0]!.sourceId = "entry:one:row:99";
+    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ bulletSources: string[][] }> } };
+    if (call?.promptId === "cv.author" && ++authors === 1) response.parsed_output.sections[0]!.bulletSources[0]![0] = "entry:one:row:99";
     return response;
   };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
@@ -382,11 +403,11 @@ it("an audit stopped by its stage allowance is a stalled stage, with the batches
   const bullets = Array.from({ length: 5 }, () => "Led a team");
   const degree = Array.from({ length: 4 }, () => "University of Example");
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
-      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+      bulletSources: bullets.map(() => ["entry:one:row:0"]) },
     { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
-      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+      bulletSources: degree.map(() => ["entry:degree:row:0"]) }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString() });
   await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
@@ -428,7 +449,7 @@ it("admits the revision's re-check at the price of the batches it sends, not the
       // The revision keeps the five bullets the baseline had and adds one: one changed claim of many.
       const bullets = [...Array.from({ length: 5 }, () => "Led a team"), "Delivered transformation"];
       response.parsed_output.sections[0] = { entryId: "one", bullets,
-        bulletSources: bullets.map((text, index) => [{ sourceId: `entry:one:row:${index === 5 ? 1 : 0}`, quote: text }]) };
+        bulletSources: bullets.map((text, index) => [`entry:one:row:${index === 5 ? 1 : 0}`]) };
     }
     if (call?.promptId === "cv.review_candidate") {
       const content = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
@@ -442,11 +463,11 @@ it("admits the revision's re-check at the price of the batches it sends, not the
   const bullets = Array.from({ length: 5 }, () => "Led a team");
   const degree = Array.from({ length: 4 }, () => "University of Example");
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
-      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+      bulletSources: bullets.map(() => ["entry:one:row:0"]) },
     { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
-      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+      bulletSources: degree.map(() => ["entry:degree:row:0"]) }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString() });
   await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));

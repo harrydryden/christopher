@@ -47,13 +47,15 @@ function plan(over: Record<string, unknown> = {}) {
         current: false,
         quote: "Director of Operations, Acme Logistics, Mar 2020 – Jun 2022",
         responsibilities: [
-          { text: "Ran the UK warehouse team of 30 through a move to a new site", quote: "Ran the UK warehouse team of 30" },
+          // The answer's shape: the row is its own quote.
+          { text: "Ran the UK warehouse team of 30 through a move to a new site" },
+          // An answer from before that, with the quote typed twice, still reads.
           { text: "Cut handover time from two days to four hours", quote: "Cut handover time from two days to four hours" },
         ],
       },
     ],
     education: [
-      { heading: "University of Leeds", detail: "MSc Operations Management, University of Leeds, 2014", quote: "MSc Operations Management" },
+      { heading: "University of Leeds", detail: "MSc Operations Management, University of Leeds, 2014" },
     ],
     skills: [{ text: "Kanban" }, { text: "S&OP" }],
     ...over,
@@ -110,9 +112,9 @@ describe("validateLibraryProposal", () => {
         ...plan().employment[0],
         responsibilities: [
           ...plan().employment[0]!.responsibilities,
-          { text: "Saved £2.4m a year across the network", quote: "Saved £2.4m a year" },
-          // Read from the document, but the quote behind it was not.
-          { text: "Reduced stockouts by 18% in one quarter", quote: "Reduced stockouts by 40% in one quarter" },
+          { text: "Saved £2.4m a year across the network" },
+          // Not the document's words: the row itself is what is anchored.
+          { text: "Reduced stockouts by 40% in one quarter" },
         ],
       }],
     }));
@@ -120,6 +122,28 @@ describe("validateLibraryProposal", () => {
     expect(proposal.employment[0]!.responsibilities.map(row => row.text))
       .toEqual(["Ran the UK warehouse team of 30 through a move to a new site", "Cut handover time from two days to four hours"]);
     expect(dropped).toBe(2);
+  });
+
+  it("stores each row and each qualification's line as its own quote, whatever quote an older answer typed", () => {
+    const { proposal, dropped } = validateLibraryProposal(DOCUMENT, plan({
+      employment: [{
+        ...plan().employment[0],
+        responsibilities: [
+          { text: "Reduced stockouts by 18% in one quarter", quote: "a quote from nowhere" },
+          { text: "Cut handover time from two days to four hours", quote: null },
+        ],
+      }],
+      education: [{ heading: "University of Leeds", detail: "MSc Operations Management, University of Leeds, 2014", quote: "MSc" }],
+    }));
+
+    expect(dropped).toBe(0);
+    expect(proposal.employment[0]!.responsibilities.map(row => [row.text, row.quote])).toEqual([
+      ["Reduced stockouts by 18% in one quarter", "Reduced stockouts by 18% in one quarter"],
+      ["Cut handover time from two days to four hours", "Cut handover time from two days to four hours"],
+    ]);
+    expect(proposal.education.map(item => item.quote)).toEqual(["MSc Operations Management, University of Leeds, 2014"]);
+    // The employment heading keeps its own quote: it is what locates the job's passage.
+    expect(proposal.employment[0]!.quote).toBe("Director of Operations, Acme Logistics, Mar 2020 – Jun 2022");
   });
 
   it("anchors through line breaks, punctuation width and repeated spaces", () => {

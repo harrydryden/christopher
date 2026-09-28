@@ -22,13 +22,13 @@ import {
 } from "@ava/core/cv-assessment";
 import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "@ava/core/cv-tailoring";
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
-import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
+import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { completeCv, cvRoleKey, type AiCallRecord, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
 import {
   CvContentSchema,
-  CvPlanSchema,
+  CvStoredPlanSchema,
   CvLibrarySchema,
   CV_BUILD_MOTIONS,
   CV_BUILD_STAGES,
@@ -618,7 +618,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         const fitted = await runner.paid("write", "write", writeStage.estimate({ draftId, libraryVersion: draft.libraryVersion }), async stageCtx => {
           try {
             // Saved wording that no longer fits is refitted; a rebuild starts from the Library.
-            const initial = inputs.saved ? CvPlanSchema.parse(inputs.saved) : undefined;
+            // A checkpoint saved before citations were ids reads its legacy refs as ids.
+            const initial = inputs.saved ? CvStoredPlanSchema.parse(inputs.saved) : undefined;
             const writingLibrary = inputs.saved
               ? { ...library, theme: inputs.saved.theme ?? library.theme }
               : library;
@@ -1012,7 +1013,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               throw new CvBuildStop("output_invalid", "The optional revision omitted employment or education.");
             // The optional pass strengthens role evidence. Preserve the already checked qualification
             // wording, so retaining an education block cannot conceal the loss of one qualification.
-            const baselineQualifications = new Map(CvPlanSchema.parse(args.baselineContent).sections
+            const baselineQualifications = new Map(CvStoredPlanSchema.parse(args.baselineContent).sections
               .filter(section => library.entries.some(entry => entry.id === section.entryId && entry.kind === "education"))
               .map(section => [section.entryId, section]));
             plan.sections = plan.sections.map(section => baselineQualifications.get(section.entryId) ?? section);
@@ -1067,12 +1068,22 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           label: adopted.name, name: adopted.name,
         });
       };
-      const opportunityIds = new Set(diagnoseCvQuality(assessment, content!).evidencedOpportunityGap.requirementIds);
+      const diagnostics = diagnoseCvQuality(assessment, content!);
+      const opportunityIds = new Set(diagnostics.evidencedOpportunityGap.requirementIds);
       const opportunities = assessment.review.matches.filter(match => opportunityIds.has(match.requirementId));
-      if (semantic && mode !== "assess" && !legacyFenced && opportunities.length > 0)
+      // The rewrite and its re-audit are about a third of a build: run them only for a gap worth
+      // closing on a page with room for it (`improvementWorthwhile`), and record why otherwise, with
+      // the gap's weight and the headroom, so adoption by gap weight can be measured later.
+      const gate = improvementWorthwhile(diagnostics, writeScale);
+      if (semantic && mode !== "assess" && !legacyFenced && opportunities.length > 0 && gate.worthwhile)
         await improve({ baselineContent: content!, baselineAssessment: assessment, opportunities, semanticTarget: semantic });
       else if (semantic && !legacyFenced && mode !== "assess")
-        await journal.record("improve_content", { opportunities: 0, skipped: true, reason: "No important evidence available in the Library was omitted." }, "skipped");
+        await journal.record("improve_content", {
+          opportunities: opportunities.length, skipped: true, reason: gate.reason,
+          weightedPoints: diagnostics.evidencedOpportunityGap.weightedPoints,
+          availableWeight: diagnostics.priorityCoverage.availableWeight,
+          essential: diagnostics.evidencedOpportunityGap.essential, writeScale,
+        }, "skipped");
       return { draftId, ready: true };
     } catch (error) {
       // Something outside the work told this build to stop, and whatever the work then threw is a

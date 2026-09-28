@@ -281,7 +281,7 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
         bullets: chosen.slice(0, CV_LIMITS.bulletsPerSection),
         bulletSources: chosen.slice(0, CV_LIMITS.bulletsPerSection).map(label => {
           const source = entry.skillItems!.find(item => item.text === label)!;
-          return [{ sourceId: source.id, quote: label }];
+          return [source.id];
         }),
       });
       continue;
@@ -297,7 +297,7 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
       bullets,
       bulletSources: bullets.map(bullet => {
         const source = entry.rows.find(row => clean(row.text).includes(clean(bullet)))!;
-        return [{ sourceId: source.id, quote: bullet }];
+        return [source.id];
       }),
       ...(industries.length ? { industryDescriptions: industries } : {}),
     });
@@ -309,7 +309,7 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
   const summary = clip(layoutFeedback?.previousPlan.summary || library.profile?.text || "", summaryLimit) || "Operations leader.";
   return {
     summary,
-    summarySources: [{ sourceId: "source:profile", quote: summary }],
+    summarySources: ["source:profile"],
     sections,
     gaps: [],
   };

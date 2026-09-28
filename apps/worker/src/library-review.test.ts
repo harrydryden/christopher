@@ -69,10 +69,12 @@ function batchOf(params: Record<string, unknown>) {
   return blocks[1]!.text.split("\n\n").flatMap(chunk => {
     const id = chunk.match(/^Entry \[([^\]]+)\]/mu)?.[1];
     if (!id) return [];
-    const [shown, only] = chunk.split(/^Classify only these rows.*$/mu);
-    const bullets = (text: string) => text.split("\n").filter(line => line.startsWith("- ")).map(line => line.slice(2));
-    const all = bullets(shown!);
-    return [{ id, all, rows: only === undefined ? all : bullets(only) }];
+    // Rows are numbered; the rows to classify, when only some, are named by number after them.
+    const all = [...chunk.matchAll(/^(\d+)\. (.*)$/gmu)].map(match => ({ number: Number(match[1]), text: match[2]! }));
+    const only = chunk.match(/^Classify only rows ([\d, ]+) \(/mu)?.[1]?.split(", ").map(Number);
+    const none = /^Classify no rows/mu.test(chunk);
+    const asked = none ? [] : only ? all.filter(row => only.includes(row.number)) : all;
+    return [{ id, all: all.map(row => row.text), rows: asked.map(row => row.text), numbers: asked.map(row => row.number) }];
   });
 }
 
@@ -95,7 +97,7 @@ function scriptedClient({ omit = [] }: { omit?: string[] } = {}) {
             entries: batch.filter(entry => !omit.includes(entry.id)).map(entry => ({
               entryId: entry.id,
               rows: entry.rows.map((row, index) => ({
-                row, facets: index === 0 ? ["responsibility"] : ["outcome", "metric"],
+                row: entry.numbers[index]!, facets: index === 0 ? ["responsibility"] : ["outcome", "metric"],
                 marks: index === 0 ? ["responsibility.scope", "responsibility.ownership"] : ["outcome.change", "metric.figure"], quote: row,
               })),
               prompts: ["What problem were you brought in to solve?"],
@@ -380,8 +382,8 @@ it("keeps an entry the model left out on its baseline, and asks about it again o
   deps.aiClient = first.client;
 
   expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({ reviewed: 1, unread: 1 });
-  // Asked once more in the same pass, as the engine does, and still left out.
-  expect(first.calls.map(call => call.entries)).toEqual([["role", "later"], ["role", "later"]]);
+  // Asked once more in the same pass, for that entry alone, as the engine does, and still left out.
+  expect(first.calls.map(call => call.entries)).toEqual([["role", "later"], ["later"]]);
   const stored = await reviews();
   expect(stored.map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "model"]]);
   // Its own facet tags still score it; the silence is not a model's zero.

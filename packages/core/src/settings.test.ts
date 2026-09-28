@@ -112,6 +112,26 @@ describe("resolveSettings", () => {
     resolveSettings([], [{ key: "gate", value: { locationTerms: ["London"] } }]);
     expect(DEFAULT_SETTINGS.gate.locationTerms).toEqual([]);
   });
+
+  it("replaces a stored model id outside the supported list with the default, and says so", () => {
+    const system = resolveSystemSettings([
+      { key: "defaultModel", value: "claude-fable-5.1" },
+      { key: "modelOverrides", value: { A2: "claude-sonnet-3", A3: "claude-haiku-4-5" } },
+    ]);
+    expect(system.defaultModel).toBe(DEFAULT_SYSTEM_SETTINGS.defaultModel);
+    expect(system.modelOverrides).toEqual({ A3: "claude-haiku-4-5" });
+    expect(modelForCallSite(system, "A2")).toBe(DEFAULT_SYSTEM_SETTINGS.defaultModel);
+    expect(system.warnings).toEqual([
+      'defaultModel "claude-fable-5.1" is not a supported model; using claude-sonnet-5.',
+      'modelOverrides.A2 "claude-sonnet-3" is not a supported model; using the default model.',
+    ]);
+    const user = resolveUserSettings([{ key: "cvModel", value: "claude-nope" }]);
+    expect(user.cvModel).toBe(DEFAULT_SETTINGS.cvModel);
+    expect(user.warnings).toHaveLength(1);
+    const merged = resolveSettings([{ key: "defaultModel", value: "claude-opus-5-5" }], [{ key: "cvModel", value: "claude-opus-5-5" }]);
+    expect(merged).toMatchObject({ defaultModel: "claude-opus-5-5", cvModel: "claude-opus-5-5" });
+    expect(merged).not.toHaveProperty("warnings");
+  });
 });
 
 describe("settings helpers", () => {

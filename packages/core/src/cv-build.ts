@@ -109,7 +109,11 @@ export type CvBuildStepDetails = {
    * to close. Closed `skipped` with `kept: true` and a neutral `reason` when the call failed or
    * its answer was unusable: the published original stands, and that is not a failure.
    */
-  improve_content: CvStepCost & { opportunities?: number; skipped?: boolean; reason?: string; kept?: boolean };
+  improve_content: CvStepCost & {
+    opportunities?: number; skipped?: boolean; reason?: string; kept?: boolean;
+    /** Recorded when the gate skips the pass: the gap's weight, the rubric's, its essentials and the baseline's writing scale. */
+    weightedPoints?: number; availableWeight?: number; essential?: number; writeScale?: number;
+  };
   compare_content: { accepted?: boolean; reasons?: string[] };
   /**
    * Done: the stronger revision was saved as a new revision of the same chain - its id, revision

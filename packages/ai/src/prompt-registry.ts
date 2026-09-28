@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CvRubricSchema, CvReviewPlanSchema } from "@ava/core/cv-assessment";
-import { CvPlanSchema, CvTailoringPlanSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@ava/core";
+import { CvPlanSchema, CvTailoringPlanOutputSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@ava/core";
 import { CV_AUTHOR_PROMPT, CV_REVIEW_PROMPT, CV_RUBRIC_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import * as P from "./prompts";
 import * as S from "./schemas";
@@ -103,7 +103,7 @@ export function expectedOutputTokens(entry: PromptEntry, effort: Effort = entry.
 /** Assessment batches hold at most this many requirements and this many claims. */
 export const CV_REVIEW_BATCH_SIZE = 8;
 
-const CV_REVIEW_BATCH_PROMPT = CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.\nWhen the batch carries libraryVerdicts, the library side of each of its requirements is already settled by the evidence plan, which judged the confirmed evidence by the same rules: assess only the printed CV for status and cvEvidence, and do not return libraryStatus or libraryEvidence. Write each reason and improvement knowing what the library holds for that requirement, so an improvement points to the library evidence the CV leaves out, or asks for evidence the library lacks.";
+const CV_REVIEW_BATCH_PROMPT = CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Leave improvement empty for a demonstrated requirement and reason empty for a supported claim: nothing reads them. Every other reason and improvement is one or two sentences, and an unsupported or uncertain claim must say why in at most 300 characters. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.\nWhen the batch carries libraryVerdicts, the library side of each of its requirements is already settled by the evidence plan, which judged the confirmed evidence by the same rules: assess only the printed CV for status and cvEvidence, and do not return libraryStatus or libraryEvidence. Write each reason and improvement knowing what the library holds for that requirement, so an improvement points to the library evidence the CV leaves out, or asks for evidence the library lacks.";
 
 /**
  * One batch's answer. The library side of a match is optional: a batch whose library side the
@@ -115,30 +115,34 @@ export const CvReviewBatchSchema = CvReviewPlanSchema.extend({
     libraryStatus: CvReviewPlanSchema.shape.matches.element.shape.libraryStatus.optional(),
     libraryEvidence: CvReviewPlanSchema.shape.matches.element.shape.libraryEvidence.optional(),
   })).max(CV_REVIEW_BATCH_SIZE),
-  claims: z.array(CvReviewPlanSchema.shape.claims.element).max(CV_REVIEW_BATCH_SIZE),
+  // A supported claim's reason may be empty; any other claim's is required (`reviewBatchIssues`).
+  claims: z.array(CvReviewPlanSchema.shape.claims.element.extend({ reason: z.string().max(300) })).max(CV_REVIEW_BATCH_SIZE),
 });
 
 const SINGLE: CacheLayout = { system: "5m", stable: [] };
 /**
  * The writer: the canonical library, then the role, then the volatile tail (the allocation, the
- * layout feedback, the improvements). The library and the role outlive every call of one build —
- * each of the fitter's rewrites starts after the previous answer has finished, and the improvement
- * after a whole audit, both well past five minutes — so both are cached for an hour. The library
- * block is also the same for the next build from the same library. The system prompt has no
- * marker of its own: the library's breakpoint already covers it, and a five-minute marker may not
- * precede an hour-long one.
+ * layout feedback, the improvements). Both stable blocks are cached for five minutes. An hour-long
+ * write costs twice input against 1.25x, and pays back only when the next reader starts more than
+ * five minutes after the last: measured, a build makes 1.14 author calls on average, and about 10 %
+ * of consecutive CV calls are more than five minutes apart. The fitter's rewrites start as soon as
+ * the previous answer ends, well inside five minutes of its start, and a cache read refreshes the
+ * entry; only a late improvement misses, and it breaks even only if more than about 60 % did. The
+ * system prompt has no marker of its own: the library's breakpoint already covers it.
  */
-const WRITER_LAYOUT: CacheLayout = { system: null, stable: ["1h", "1h"] };
+const WRITER_LAYOUT: CacheLayout = { system: null, stable: ["5m", "5m"] };
 /**
- * The audit: the evidence and the rubric's caveats, then the printed CV, then the batch. The
- * evidence outlives a revision, and the re-audit of an improved CV comes after the writer, more
- * than five minutes after the first audit, so it is cached for an hour. The CV changes with each
- * revision and is cached for five minutes, which covers the batches of one audit: the first batch
- * alone writes it, and the rest go out once its response has begun. No system marker, for the
- * same reason as the writer's.
+ * The audit: the evidence and the rubric's caveats, then the printed CV, then the batch. Both are
+ * cached for five minutes, which covers the batches of one audit: the first batch alone writes
+ * them, and the rest go out once its response has begun. The re-audit of an improved CV usually
+ * starts within five minutes of the last draft batch (the same measured call pattern as the
+ * writer's), so the evidence is no longer written for an hour on the chance it does not. No system
+ * marker, for the same reason as the writer's.
  */
-const AUDIT_LAYOUT: CacheLayout = { system: null, stable: ["1h", "5m"] };
+const AUDIT_LAYOUT: CacheLayout = { system: null, stable: ["5m", "5m"] };
 const WEB_SEARCH = (maxUses: number) => [{ type: "web_search_20260209", name: "web_search", max_uses: maxUses }];
+/** A10's search allowance; its prompt names the same number. */
+export const A10_MAX_SEARCHES = 8;
 
 type Draft = Omit<PromptEntry, "version" | "effort" | "route" | "priority" | "timeoutMs" | "maxTokens" | "cacheLayout" | "expectedOutputTokens"> & {
   route: PromptRoute;
@@ -149,9 +153,105 @@ type Draft = Omit<PromptEntry, "version" | "effort" | "route" | "priority" | "ti
   expectedOutputTokens?: number;
 };
 
+// --- the output format --------------------------------------------------------------------------
+
+type JsonSchemaNode = Record<string, unknown>;
+
+/** Keywords the SDK folds into a description that the provider's output grammar does enforce. */
+const RESTORED_KEYWORDS = new Set(["enum", "const"]);
+
+/**
+ * Read the `{key: json, key: json}` text the SDK appends to a description for every keyword its
+ * strict transform does not keep. Values are JSON, so a comma inside a string or an array is not a
+ * separator; the scan tracks strings and brackets. Anything it cannot read returns null, and the
+ * description is left as it was.
+ */
+function parseFoldedKeywords(text: string): Array<[string, unknown]> | null {
+  if (!text.startsWith("{") || !text.endsWith("}")) return null;
+  const body = text.slice(1, -1);
+  const entries: Array<[string, unknown]> = [];
+  let i = 0;
+  while (i < body.length) {
+    const key = /^([A-Za-z_$][\w$]*): /.exec(body.slice(i));
+    if (!key) return null;
+    i += key[0].length;
+    const start = i;
+    let depth = 0;
+    let inString = false;
+    for (; i < body.length; i++) {
+      const ch = body[i]!;
+      if (inString) {
+        if (ch === "\\") i++;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') inString = true;
+      else if (ch === "[" || ch === "{") depth++;
+      else if (ch === "]" || ch === "}") depth--;
+      else if (depth === 0 && ch === "," && body[i + 1] === " ") break;
+    }
+    try {
+      entries.push([key[1]!, JSON.parse(body.slice(start, i))]);
+    } catch {
+      return null;
+    }
+    if (i < body.length) i += 2;
+  }
+  return entries.length ? entries : null;
+}
+
+/** Move `enum` and `const` out of a node's description, where the SDK folded them, back onto the node. */
+function restoreNode(node: JsonSchemaNode): void {
+  const description = node.description;
+  if (typeof description !== "string") return;
+  const split = description.lastIndexOf("\n\n{");
+  const prefix = split >= 0 ? description.slice(0, split) : "";
+  const folded = split >= 0 ? description.slice(split + 2) : description;
+  const entries = parseFoldedKeywords(folded);
+  if (!entries || !entries.some(([key]) => RESTORED_KEYWORDS.has(key))) return;
+  for (const [key, value] of entries) if (RESTORED_KEYWORDS.has(key)) node[key] = value;
+  const kept = entries.filter(([key]) => !RESTORED_KEYWORDS.has(key));
+  const rest = kept.length ? `{${kept.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(", ")}}` : "";
+  const text = [prefix, rest].filter(Boolean).join("\n\n");
+  if (text) node.description = text;
+  else delete node.description;
+}
+
+function restoreKeywords(node: unknown): void {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) restoreKeywords(item);
+    return;
+  }
+  const record = node as JsonSchemaNode;
+  restoreNode(record);
+  for (const key of ["properties", "$defs"]) {
+    const children = record[key];
+    if (children && typeof children === "object") for (const child of Object.values(children)) restoreKeywords(child);
+  }
+  for (const key of ["items", "anyOf", "allOf"]) restoreKeywords(record[key]);
+}
+
+export interface OutputFormat {
+  type: "json_schema";
+  schema: Record<string, unknown>;
+}
+
+/**
+ * The output format a call sends, without the SDK's parser. The SDK's strict transform keeps only a
+ * few keywords and folds the rest into the description as text, which drops `enum` and `const` from
+ * the grammar although the provider enforces both: a `z.enum` field would otherwise be a free
+ * string the model is only asked, in prose, to keep to. They are restored here, recursively; every
+ * other folded keyword (lengths, bounds) stays description text, since the grammar does not take
+ * it. This is the one place a format is built, for the request and for the prompt's version.
+ */
+export function outputFormat(schema: z.ZodType): OutputFormat {
+  const { parse: _parse, ...format } = zodOutputFormat(schema);
+  restoreKeywords(format.schema);
+  return format as OutputFormat;
+}
+
 /** The prompt text and output contract as one short hash. */
 export function promptVersion(system: string, schema: z.ZodType): string {
-  const { parse: _parse, ...format } = zodOutputFormat(schema);
+  const format = outputFormat(schema);
   return createHash("sha256").update(system).update("\0").update(JSON.stringify(format)).digest("hex").slice(0, 10);
 }
 
@@ -194,7 +294,7 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   A3: define({ id: "A3", callSite: "A3", system: P.A3_EXTRACT_POSTINGS, schema: S.ExtractPostingsSchema,
     route: { model: "callSite", effort: "low" }, maxTokens: 32_000, timeoutMs: 60_000, expectedOutputTokens: 2_000 }),
   A4: define({ id: "A4", callSite: "A4", system: P.A4_CLEAN_DESCRIPTION, schema: S.DescriptionSchema,
-    route: { model: "callSite", effort: "low" }, expectedOutputTokens: 1_500 }),
+    route: { model: "callSite", effort: "low" }, expectedOutputTokens: 150 }),
   // The account's own context is the stable block, cached ahead of the role being scored.
   A5: define({ id: "A5", callSite: "A5", system: P.A5_SCORE_JOB, schema: S.FitScoreSchema,
     route: { model: "callSite", effort: "low" }, maxTokens: 1024, cacheLayout: { system: "5m", stable: ["5m"] }, expectedOutputTokens: 200 }),
@@ -206,8 +306,10 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
     route: { model: "callSite", effort: "high" }, maxTokens: 4000, expectedOutputTokens: 500 }),
   A9: define({ id: "A9", callSite: "A9", system: P.A9_PROFILE_COMPANY, schema: S.CompanyProfileSchema,
     route: { model: "callSite", effort: "low" }, maxTokens: 2000, expectedOutputTokens: 300 }),
+  // Eight searches, not fifteen: one search usually turns up several candidates, and each search's
+  // results are re-sent as input on every later step of the turn (about 45 % of a run's cost).
   A10: define({ id: "A10", callSite: "A10", system: P.A10_SUGGEST_COMPANIES, schema: S.CompanySuggestionsSchema,
-    route: { model: "callSite", effort: "high" }, maxTokens: 8000, timeoutMs: 60_000, tools: WEB_SEARCH(15), expectedOutputTokens: 2_000 }),
+    route: { model: "callSite", effort: "high" }, maxTokens: 8000, timeoutMs: 60_000, tools: WEB_SEARCH(A10_MAX_SEARCHES), expectedOutputTokens: 2_000 }),
   "A10.sources": define({ id: "A10.sources", callSite: "A10", system: P.A10_EXTRACT_SOURCE_COMPANIES, schema: S.SourceCompaniesSchema,
     route: { model: "callSite", effort: "high" }, maxTokens: 8000, timeoutMs: 60_000, tools: WEB_SEARCH(5), expectedOutputTokens: 2_000 }),
   // A document is read once, so nothing of it is cached.
@@ -220,7 +322,7 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   "cv.rubric": define({ id: "cv.rubric", callSite: "CV", stage: "rubric", system: CV_RUBRIC_PROMPT, schema: CvRubricSchema,
     // Thinking counts towards the ceiling; recorded rubrics reach 5.2k of the old 8k.
     route: { model: "cvModel", effort: "high" }, maxTokens: 12_000, timeoutMs: 120_000, priority: "interactive", expectedOutputTokens: 4_500 }),
-  "cv.planning": define({ id: "cv.planning", callSite: "CV", stage: "planning", system: CV_TAILORING_PROMPT, schema: CvTailoringPlanSchema,
+  "cv.planning": define({ id: "cv.planning", callSite: "CV", stage: "planning", system: CV_TAILORING_PROMPT, schema: CvTailoringPlanOutputSchema,
     route: { model: "cvModel", effort: "high" }, maxTokens: 16_000, timeoutMs: 240_000, priority: "interactive", expectedOutputTokens: 6_000 }),
   "cv.author": define({ id: "cv.author", callSite: "CV", stage: "author", system: CV_AUTHOR_PROMPT, schema: CvPlanSchema,
     // Thinking counts towards the output ceiling, and recorded two-page builds have reached 15.6k

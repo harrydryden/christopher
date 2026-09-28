@@ -166,7 +166,8 @@ export interface ClaimOptions {
   /**
    * Scoring is in batch mode (`scoringMode: "batch"`): a queued `score_job` is left for the batch
    * collector, which gathers them into one Message Batches request, unless it is marked `live` —
-   * a role a batch handed back, which is scored as an ordinary call. Off, the claim is unchanged.
+   * a role a batch handed back, which is scored as an ordinary call. Off, only a `score_job` marked
+   * `background` (a rescore pass nobody waits on) is left for the collector, again unless `live`.
    */
   batchScoring?: boolean;
 }
@@ -198,7 +199,9 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
   const typeFilter = include.length
     ? sql`type = any(${sql.placeholder("include")}::text[]) and type <> all(${sql.placeholder("exclude")}::text[])`
     : sql`type <> all(${sql.placeholder("exclude")}::text[])`;
-  const laneFilter = options.batchScoring ? sql`${typeFilter} and (type <> 'score_job' or payload->>'live' = 'true')` : typeFilter;
+  const laneFilter = options.batchScoring
+    ? sql`${typeFilter} and (type <> 'score_job' or payload->>'live' = 'true')`
+    : sql`${typeFilter} and (type <> 'score_job' or coalesce(payload->>'background', '') <> 'true' or payload->>'live' = 'true')`;
   // One statement, two reads. `head` is the task the queue would claim by the columns the
   // ready-lane indexes carry, so it is read from the index instead of by sorting every queued task.
   // Ageing is a periodic sweep that lowers `priority` itself (see `agePriorities`), which keeps

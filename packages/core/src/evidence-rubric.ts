@@ -13,6 +13,10 @@
  * re-reading it, and an untyped row has no score at all rather than a low one — the cell reads
  * "Select type".
  *
+ * The reviewer's own line for each mark — when a row earns it and when it does not — lives in
+ * `evidence-rubric-text.ts`, which only the model prompt reads, so the text never ships to the
+ * browser.
+ *
  * Browser-safe on purpose: the Library editor scores live from the person's own wording and tags
  * (`detectEvidenceMarks` is the rules baseline), and the model review (A12) replaces the detected
  * marks with its own judgement of the same twenty-four. Nothing here produces a number the model
@@ -27,8 +31,6 @@ export interface EvidenceMarkSpec {
   label: string;
   /** What to add when it does not, as one imperative line the person can act on. */
   ask: string;
-  /** The judgement, for the reviewer: when a row earns this and when it does not. */
-  rubric: string;
 }
 
 /**
@@ -40,127 +42,103 @@ export const EVIDENCE_MARK_SPECS = {
   "responsibility.scope": {
     facet: "responsibility", label: "what was owned",
     ask: "Name what you owned: the function, process, product, market, budget or system.",
-    rubric: "Names the thing they were accountable for — a function, process, product, market, budget, system or portfolio — rather than a job title or a generic duty (\"various tasks\", \"day-to-day operations\").",
   },
   "responsibility.audience": {
     facet: "responsibility", label: "who it was for",
     ask: "Say who relied on it: a team, leaders, clients, a region or another function.",
-    rubric: "Says who the work served or answered to: a named team, leadership role, client group, region, business unit or function.",
   },
   "responsibility.ownership": {
     facet: "responsibility", label: "your part in it",
     ask: "Say your part: led it, ran it, owned it, built it or supported it.",
-    rubric: "States the level of accountability with a verb of ownership — led, ran, owned, managed, headed, built, set up, was accountable for, reported to — not a passive \"involved in\" or \"helped with\".",
   },
   "responsibility.scale": {
     facet: "responsibility", label: "the size of it",
     ask: "Give the size: headcount, budget, revenue, sites, customers or how often.",
-    rubric: "Gives a size or cadence: headcount, budget or revenue figure, number of sites, markets, entities, customers or products, or the frequency of the work.",
   },
   // Problems solved: the problem or constraint they were there to solve.
   "problem.situation": {
     facet: "problem", label: "the problem named",
     ask: "Name the problem: what was broken, late, manual, costly or at risk.",
-    rubric: "Names a concrete problem or state that needed fixing — a backlog, failing process, manual work, overspend, missed deadlines, a risk, gap or complaint — rather than just the task.",
   },
   "problem.constraint": {
     facet: "problem", label: "what made it hard",
     ask: "Say what made it hard: the cause, the deadline, the budget or what you had to work around.",
-    rubric: "Says why it was hard or what caused it: a root cause, deadline, budget or headcount limit, legacy system, regulation, or a constraint that had to be worked around.",
   },
   "problem.approach": {
     facet: "problem", label: "what you did about it",
     ask: "Say what you did about it: the change you made or the approach you took.",
-    rubric: "Describes the action taken — rebuilt, redesigned, introduced, automated, negotiated, restructured, replaced — specifically enough that a reader knows what changed.",
   },
   "problem.resolution": {
     facet: "problem", label: "how it ended",
     ask: "Say how it ended: what was fixed, avoided, unblocked or recovered.",
-    rubric: "Says how the problem ended — fixed, eliminated, avoided, recovered, unblocked, brought within target — so the reader knows the problem was solved, not just worked on.",
   },
   // Outcomes: what changed as a result of their work.
   "outcome.change": {
     facet: "outcome", label: "the change stated",
     ask: "State the change: what was different afterwards from before.",
-    rubric: "States a change in state — reduced, grew, restored, launched, eliminated, from X to Y — not an activity (\"worked on improving\").",
   },
   "outcome.cause": {
     facet: "outcome", label: "what produced it",
     ask: "Tie it to what you did: the action that produced the change.",
-    rubric: "Connects the change to the person's own action — by, through, after, using — so it reads as their result rather than something that happened around them.",
   },
   "outcome.beneficiary": {
     facet: "outcome", label: "who or what gained",
     ask: "Say who or what gained: the team, customers, the business, or a risk removed.",
-    rubric: "Says who or what benefited: customers, a team, the business, revenue, cash, compliance, a risk that went away.",
   },
   "outcome.magnitude": {
     facet: "outcome", label: "the size of the change",
     ask: "Give the size of the change: a figure, a percentage, a time saved or a comparison.",
-    rubric: "Gives the magnitude of the change as a figure, percentage, time, currency amount, multiple, or an explicit comparison (from X to Y, halved, first ever, every site).",
   },
   // Metrics moved: how much or how many.
   "metric.figure": {
     facet: "metric", label: "the figure",
     ask: "Give the figure: a number, a percentage, a currency amount or a time.",
-    rubric: "Carries a number, percentage, currency amount or measured duration.",
   },
   "metric.measure": {
     facet: "metric", label: "what it measures",
     ask: "Name what the figure measures: revenue, cost, time, customers, errors, retention.",
-    rubric: "Names the measure the figure belongs to — revenue, margin, cost, cash, churn, retention, NPS, cycle time, error rate, headcount, volume — so the number means something.",
   },
   "metric.movement": {
     facet: "metric", label: "how it moved",
     ask: "Show the movement: from what to what, or up or down by how much against what.",
-    rubric: "Shows direction and a comparison point — from X to Y, up or down by N, versus target, prior year or baseline — not a bare level.",
   },
   "metric.driver": {
     facet: "metric", label: "what moved it, and when",
     ask: "Say what you did to move it, and over what period.",
-    rubric: "Says what the person did that moved the number and, ideally, over what period — a quarter, a year, a programme — so the figure is attributable to them.",
   },
   // Milestones reached: what they shipped or completed, and when.
   "milestone.deliverable": {
     facet: "milestone", label: "what was delivered",
     ask: "Name what you shipped or completed: the launch, migration, deal, audit or release.",
-    rubric: "Names a concrete thing completed — a launch, release, migration, go-live, signed deal, passed audit, certification, opened site, closed round — rather than ongoing work.",
   },
   "milestone.timing": {
     facet: "milestone", label: "when it landed",
     ask: "Say when: the date or quarter, or how it landed against the deadline.",
-    rubric: "Gives the timing: a date, month, quarter or year, a duration, or how it landed against a deadline (on time, ahead of schedule, in six weeks).",
   },
   "milestone.role": {
     facet: "milestone", label: "your part in it",
     ask: "Say your part: led it, delivered it, or which piece was yours.",
-    rubric: "States the person's part — led, delivered, owned, co-ordinated, or which piece was theirs — rather than an unattributed \"was launched\".",
   },
   "milestone.significance": {
     facet: "milestone", label: "why it mattered",
     ask: "Say why it mattered: what it enabled, its scale, or what was at stake.",
-    rubric: "Says why the milestone mattered: what it enabled or unblocked, its scale or value, that it was a first or the largest, or what was at stake if it slipped.",
   },
   // Working style: how they work with other people to get something done.
   "style.behaviour": {
     facet: "style", label: "the behaviour named",
     ask: "Name the behaviour: how you actually worked, not a trait word.",
-    rubric: "Names an observable behaviour — coached, facilitated, negotiated, pushed back, wrote it up, ran weekly one-to-ones — rather than a trait word (\"collaborative\", \"strong communicator\").",
   },
   "style.counterpart": {
     facet: "style", label: "who with",
     ask: "Say who with: your team, peers, senior stakeholders, clients or another function.",
-    rubric: "Says who the behaviour was with: a team, peers, direct reports, senior stakeholders, clients, suppliers or another function.",
   },
   "style.instance": {
     facet: "style", label: "one real instance",
     ask: "Give one real instance: a situation where you worked this way.",
-    rubric: "Anchors the behaviour in a real, checkable situation — a named project, moment, system or time — rather than a general claim about how they always are.",
   },
   "style.effect": {
     facet: "style", label: "what it led to",
     ask: "Say what it led to: the decision, the delivery or the relationship it produced.",
-    rubric: "Says what the behaviour led to: a decision reached, a delivery kept on track, a relationship repaired, a team retained.",
   },
 } as const satisfies Record<string, EvidenceMarkSpec>;
 

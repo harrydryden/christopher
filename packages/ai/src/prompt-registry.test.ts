@@ -6,7 +6,8 @@ import {
   CV_PROMPT_IDS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, layoutFor, promptSetVersion, promptVersion, resolveRoute, routedModel,
 } from "./prompt-registry";
 import { createAiEngine, type AiCallMeta, type AiUsageRecord } from "./engine";
-import { EVIDENCE_MARKS, EVIDENCE_MARK_SPECS, LibraryReviewPlanSchema } from "@ava/core";
+import { EVIDENCE_MARKS, LibraryReviewPlanSchema } from "@ava/core";
+import { EVIDENCE_MARK_RUBRICS } from "@ava/core/evidence-rubric-text";
 import { A12_REVIEW_LIBRARY, evidenceMarksBlock } from "./prompts";
 
 describe("the prompt registry", () => {
@@ -59,7 +60,7 @@ describe("the prompt registry", () => {
 
   it("writes the evidence review's marks out of the rubric the score is computed against", () => {
     const system = PROMPTS.A12.system;
-    for (const mark of EVIDENCE_MARKS) expect(system).toContain(`- ${mark}: ${EVIDENCE_MARK_SPECS[mark].rubric}`);
+    for (const mark of EVIDENCE_MARKS) expect(system).toContain(`- ${mark}: ${EVIDENCE_MARK_RUBRICS[mark]}`);
     // The first rubric's three judgements are gone from the instructions and from the answer.
     for (const retired of ["specific:", "quantified:", "outcomeLinked"]) expect(system).not.toContain(retired);
     expect(system).toContain("all twenty-four marks");

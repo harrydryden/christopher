@@ -14,7 +14,7 @@ import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@ava/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@ava/core";
 import { runMigrations } from "@ava/db/migrate";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { cvBuildState } from "@/lib/cv-build-state";
 import { ensureTestUser, signInTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
@@ -1671,11 +1671,15 @@ it("assesses, improves with current evidence, finalises and exports through the 
     await expect(saveCvDraft(child.id, { ok: true }, edit)).rejects.toThrow(
       "redirect:/cv/",
     );
+    // The child has two children by now: the adopted improvement and this direct edit. The edit
+    // is the newest, so it is asked for by name rather than left to whichever row comes first.
     const revised = (
       await database
         .select()
         .from(schema.cvDrafts)
         .where(eq(schema.cvDrafts.parentId, child.id))
+        .orderBy(desc(schema.cvDrafts.revision), desc(schema.cvDrafts.createdAt))
+        .limit(1)
     )[0]!;
     expect(revised.assessment).toBeNull();
     expect(revised.finalisedAt).toBeNull();

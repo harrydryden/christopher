@@ -9,8 +9,10 @@ import {
   responsibilityRows,
   cvTailoringEvidence,
   validateCvTailoringPlan,
+  libraryPlanCovers,
   reviewableRows,
   rowFacets,
+  rowsToClassify,
   validateLibraryReview,
   type CvWritingBudget,
   type CvPlan,
@@ -19,6 +21,8 @@ import {
   type LibraryEntryReview,
   type LibraryProposalPlan,
   type LibraryReviewPlan,
+  type LibraryReviewPlanEntry,
+  type LibraryRowReview,
 } from "@ava/core";
 import Anthropic, {
   APIConnectionError,
@@ -1881,15 +1885,22 @@ export class AiEngine {
    * The model classifies and asks; it never writes evidence, and it never returns a score. Every
    * entry is put through `validateLibraryReview`, which keeps the person's rows as the unit, drops
    * rows the model invented, marks a row whose quote is not anchored in it as unverified, and
-   * computes the score in code. An entry the model left out is asked for once more, and what is
-   * still uncovered comes back with every row unverified: marked as unread, never guessed at.
+   * computes the score in code. An entry the model left out, or whose rows it did not all
+   * classify, is asked for once more, and what is still uncovered comes back unverified: marked as
+   * unread, never guessed at.
+   *
+   * An entry may carry `known`: rows an earlier review of it already classified, keyed by their
+   * normalised text (`knownLibraryRows`). The batch still shows every row of the entry, so the
+   * questions are asked with the whole entry in view, but names only the others as the rows to
+   * classify, and `validateLibraryReview` keeps the known rows as they were. A one-row edit to a
+   * twenty-row job pays for one row.
    *
    * A batch that produces nothing usable at all fails the pass rather than returning zeros,
    * because a caller writing those zeros over the rules baseline would report a transport fault
    * as a judgement about the person's writing.
    */
   async reviewLibraryEntries(
-    input: { library: CvLibrary; entries: CvEntry[]; model?: string },
+    input: { library: CvLibrary; entries: LibraryReviewEntry[]; model?: string },
     ref: { userId: string; refType: "library"; refId: string; signal?: AbortSignal },
     hooks: LibraryReviewHooks = {},
   ): Promise<LibraryEntryReview[]> {
@@ -1897,7 +1908,7 @@ export class AiEngine {
     // The whole library, as written, including the entries this pass is not reviewing: an entry is
     // judged for what it adds to the record, which needs the rest of the record in view.
     const evidence = P.wrap("library", P.truncate(libraryEvidenceText(input.library), 120_000));
-    const batches: CvEntry[][] = [];
+    const batches: LibraryReviewEntry[][] = [];
     for (let offset = 0; offset < input.entries.length; offset += LIBRARY_REVIEW_BATCH)
       batches.push(input.entries.slice(offset, offset + LIBRARY_REVIEW_BATCH));
 
@@ -1905,12 +1916,12 @@ export class AiEngine {
     // signal or the caller's, so a task that has been given up on stops paying for the rest.
     const controller = batchController([this.options.signal, hooks.signal, ref.signal]);
 
-    const ask = (entries: CvEntry[], missing: string[] | undefined, onStart: (() => void) | undefined,
+    const ask = (entries: LibraryReviewEntry[], missing: string[] | undefined, onStart: (() => void) | undefined,
       onRecord: (record: AiUsageRecord) => void) => this.run<LibraryReviewPlan>(PROMPTS.A12, {
       user: {
         stable: [evidence],
         tail: P.wrap("entries_under_review", entriesUnderReview(input.library, entries)) + (missing?.length
-          ? `\n\nYour previous answer left these entries out. Return each of them exactly once, with every row classified: ${missing.join(", ")}.`
+          ? `\n\nYour previous answer left these entries out, or left rows of them unclassified. Return each of them exactly once, with every row you were asked to classify: ${missing.join(", ")}.`
           : ""),
       },
       ...(input.model ? { model: input.model } : {}),
@@ -1921,7 +1932,7 @@ export class AiEngine {
       // twice and one that simply had many batches. Name it separately.
     }, { ...ref, stage: missing ? "review_retry" : "review" });
 
-    const reviewBatch = async (entries: CvEntry[], index: number, onStart?: () => void): Promise<LibraryEntryReview[]> => {
+    const reviewBatch = async (entries: LibraryReviewEntry[], index: number, onStart?: () => void): Promise<LibraryEntryReview[]> => {
       const say = async (phase: LibraryReviewBatchEvent["phase"], extra: Partial<LibraryReviewBatchEvent> = {}) => {
         try {
           await hooks.onBatch?.({ index, total: batches.length, phase, entries: entries.length, ...extra });
@@ -1932,7 +1943,10 @@ export class AiEngine {
       await say("start");
       let usage: AiUsageRecord | undefined;
       let plan = await ask(entries, undefined, onStart, record => { usage = record; });
-      let uncovered = plan ? entries.filter(entry => !plan!.entries.some(said => said.entryId === entry.id)) : entries;
+      // Covered means answered for, with every row that needed classifying classified.
+      const uncoveredBy = (answer: LibraryReviewPlan | null) => entries.filter(entry =>
+        !libraryPlanCovers(entry, answer?.entries.find(said => said.entryId === entry.id), entry.known));
+      let uncovered = uncoveredBy(plan);
       if (uncovered.length) {
         await say("retry", { usage, uncovered: uncovered.length });
         const again = await ask(entries, uncovered.map(entry => entry.id), undefined, record => { usage = record; });
@@ -1941,9 +1955,17 @@ export class AiEngine {
           throw new BatchFailed();
         }
         if (again) {
-          const already = new Set(plan?.entries.map(said => said.entryId) ?? []);
-          plan = { entries: [...(plan?.entries ?? []), ...again.entries.filter(said => !already.has(said.entryId))] };
-          uncovered = entries.filter(entry => !plan!.entries.some(said => said.entryId === entry.id));
+          // The first answer's rows and prompts stand; the second fills in what the first lacked —
+          // an entry it left out, or rows of an entry it answered for only in part.
+          const merged = new Map((plan?.entries ?? []).map(said => [said.entryId, said]));
+          for (const said of again.entries) {
+            const before = merged.get(said.entryId);
+            merged.set(said.entryId, before
+              ? { ...before, rows: [...before.rows, ...said.rows], prompts: before.prompts.length ? before.prompts : said.prompts }
+              : said);
+          }
+          plan = { entries: [...merged.values()] };
+          uncovered = uncoveredBy(plan);
         }
       }
       const said = new Map(plan!.entries.map(entry => [entry.entryId, entry]));
@@ -1952,15 +1974,17 @@ export class AiEngine {
       // So does one whose answer asked the person about a demographic attribute: that answer is
       // refused for that entry alone, which keeps its rules baseline and asks about it again next
       // pass, instead of throwing away every other entry the pass read.
-      const unread = (entry: CvEntry) => validateLibraryReview(entry, { entryId: entry.id, rows: [], prompts: [] });
+      const nothing = (entry: CvEntry): LibraryReviewPlanEntry => ({ entryId: entry.id, rows: [], prompts: [] });
       const reviews = entries.map(entry => {
         const answer = said.get(entry.id);
-        if (!answer) return unread(entry);
+        // Left out: the known rows stand and the rest go unverified, which is unread when any
+        // row needed classifying.
+        if (!answer) return validateLibraryReview(entry, nothing(entry), entry.known);
         if (answer.prompts.some(prompt => mentionsDemographicAttribute(prompt))) {
           this.log("library review asked about a demographic attribute; entry left unread", { entryId: entry.id });
-          return unread(entry);
+          return validateLibraryReview(entry, nothing(entry));
         }
-        return validateLibraryReview(entry, answer);
+        return validateLibraryReview(entry, answer, entry.known);
       });
       await say("done", { usage, ...(uncovered.length ? { uncovered: uncovered.length } : {}) });
       return reviews;
@@ -1999,6 +2023,12 @@ export class AiEngine {
 type CvEntry = CvLibrary["entries"][number];
 
 /**
+ * One entry for the evidence review, with the rows an earlier review of it already classified,
+ * keyed by normalised text (`knownLibraryRows`), when there are any.
+ */
+export type LibraryReviewEntry = CvEntry & { known?: ReadonlyMap<string, LibraryRowReview> };
+
+/**
  * The library as evidence context: the jobs it records and every entry's rows exactly as written,
  * including the entries this pass is not reviewing and the types the person tagged them with.
  *
@@ -2024,17 +2054,29 @@ function libraryEvidenceText(library: CvLibrary): string {
   return lines.join("\n").trimEnd();
 }
 
-/** The batch: which entries to classify now, whose they are, and their rows verbatim. */
-function entriesUnderReview(library: CvLibrary, entries: CvEntry[]): string {
+/**
+ * The batch: which entries to classify now, whose they are, and their rows verbatim. Every row of
+ * an entry is listed, so its questions are asked with the whole entry in view; when an earlier
+ * review already classified some of them, the rows still to classify are named after it.
+ */
+function entriesUnderReview(library: CvLibrary, entries: LibraryReviewEntry[]): string {
   return entries.map(entry => {
     const job = library.employment?.find(item => item.id === entry.employmentId);
+    const rows = reviewableRows(entry);
+    const ask = rowsToClassify(entry, entry.known);
     return [
       `Entry [${entry.id}] (${entry.kind})`,
       job ? `Company: ${job.company}` : null,
       job ? `Title: ${job.jobTitle}` : null,
       `Heading: ${entry.heading}`,
       "Rows:",
-      ...reviewableRows(entry).map(row => `- ${row}`),
+      ...rows.map(row => `- ${row}`),
+      ...(ask.length < rows.length
+        ? [
+          "Classify only these rows (the others are already classified; do not return them):",
+          ...(ask.length ? ask.map(row => `- ${row}`) : ["(none: return this entry with no rows, and its prompts)"]),
+        ]
+        : []),
     ].filter(Boolean).join("\n");
   }).join("\n\n");
 }

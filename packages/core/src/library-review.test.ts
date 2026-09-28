@@ -11,9 +11,12 @@ import {
   facetForPrompt,
   libraryEntryInputHash,
   libraryRowScore,
+  knownLibraryRows,
+  libraryPlanCovers,
   normaliseLibraryReview,
   retagLibraryReview,
   reviewableRows,
+  rowsToClassify,
   rulesLibraryReview,
   scoreLibraryRows,
   validateLibraryReview,
@@ -296,6 +299,59 @@ describe("validateLibraryReview", () => {
     // Outcome and metric covered, 25; the milestone row and the untagged metric row both read 50,
     // 50 × 100/200 = 25: 50, where scoring the untagged row as nothing read 38.
     expect(result).toMatchObject({ score: 50, rating: "good" });
+  });
+
+  describe("with rows an earlier review already classified", () => {
+    const earlier = validateLibraryReview(entry, plan([said(), said({ row: second, facets: ["metric"], marks: ["metric.figure"], quote: "by 40%" })]));
+    const known = knownLibraryRows(earlier);
+
+    it("keeps each known row as it was stored, with the tags saved now, and ignores the plan about it", () => {
+      expect([...known.keys()]).toEqual([first, second]);
+      // The person has since tagged the second row an outcome; the model is (wrongly) asked again about the first.
+      const retagged = library([first, second].join("\n"), { [first]: "milestone", [second]: "outcome" }).entries[0]!;
+      const result = validateLibraryReview(retagged, plan([said({ facets: ["style"], marks: ["style.effect"] })]), known);
+      expect(result.rows[0]).toMatchObject({ row: first, facets: ["outcome"], marks: earned, tagged: ["milestone"], verified: true });
+      expect(result.rows[1]).toMatchObject({ row: second, facets: ["metric"], marks: ["metric.figure"], tagged: ["outcome"], quote: "by 40%", verified: true });
+      expect(result).not.toHaveProperty("unread");
+    });
+
+    it("classifies only the rows it does not know, and is unread only when those all went unanswered", () => {
+      const edited = "Cut onboarding time by 40% in one quarter";
+      const changed = library([first, edited].join("\n"), { [first]: "milestone" }).entries[0]!;
+      expect(rowsToClassify(changed, known)).toEqual([edited]);
+      const answered = validateLibraryReview(changed, plan([said({ row: edited, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null })]), known);
+      expect(answered.rows.map(row => [row.row, row.facets, row.verified])).toEqual([[first, ["outcome"], true], [edited, ["metric"], true]]);
+      expect(answered).not.toHaveProperty("unread");
+      // Asked for the edited row and given nothing about it: unread, whatever the known rows say.
+      const silent = validateLibraryReview(changed, plan([]), known);
+      expect(silent.unread).toBe(true);
+      expect(silent.rows[0]).toMatchObject({ verified: true, facets: ["outcome"] });
+      expect(silent.rows[1]).toMatchObject({ verified: false, facets: [] });
+      // An answer about the known row alone is no answer about the one it was asked for.
+      expect(validateLibraryReview(changed, plan([said()]), known).unread).toBe(true);
+      // Every row known: nothing needed classifying, so never unread, and the plan's prompts stand.
+      const reordered = library([second, first].join("\n"), { [first]: "milestone" }).entries[0]!;
+      expect(rowsToClassify(reordered, known)).toEqual([]);
+      expect(validateLibraryReview(reordered, plan([], ["What changed as a result?"]), known)).toMatchObject({ prompts: ["What changed as a result?"] });
+      expect(validateLibraryReview(reordered, plan([]), known)).not.toHaveProperty("unread");
+    });
+
+    it("says an answer covers an entry only when every row it needed came back", () => {
+      const edited = "Cut onboarding time by 40% in one quarter";
+      const changed = library([first, edited].join("\n"), { [first]: "milestone" }).entries[0]!;
+      expect(libraryPlanCovers(changed, undefined, known)).toBe(false);
+      expect(libraryPlanCovers(changed, plan([said()]), known)).toBe(false);
+      expect(libraryPlanCovers(changed, plan([said({ row: ` ${edited} ` })]), known)).toBe(true);
+      // Without known rows, every row has to come back.
+      expect(libraryPlanCovers(changed, plan([said({ row: edited })]))).toBe(false);
+      expect(libraryPlanCovers(changed, plan([said(), said({ row: edited })]))).toBe(true);
+    });
+
+    it("leaves an unverified row out of what is known, so it is asked about again", () => {
+      const partial = validateLibraryReview(entry, plan([said()]));
+      expect(partial.rows[1]!.verified).toBe(false);
+      expect([...knownLibraryRows(partial).keys()]).toEqual([first]);
+    });
   });
 
   it("keeps only the marks the rubric knows, each once", () => {

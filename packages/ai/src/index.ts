@@ -7,7 +7,7 @@ export type { CvAssessBatchResult, CvAssessInput, CvAssessOptions, CvAssessPass,
 export { cvClaimMemoFrom, cvClaimMemoKey, cvClaimMemoKeys, cvRubricHash } from "./claim-memo";
 export type { CvClaimMemo, CvClaimMemoRoute, CvClaimVerdict } from "./claim-memo";
 export { UNVERIFIED_CLAIM_REASON } from "./cv-review-batch";
-export type { AiBatchesLike, AiBatchLike, AiBatchMeta, AiBatchResultLike, BatchErrorBody, BatchResultContext, BatchScoreRequest, ScoreJobInput, ScoreJobResult, AiCallMeta, AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, ReserveHint } from "./engine";
+export type { AiBatchesLike, AiBatchLike, AiBatchMeta, AiBatchResultLike, BatchErrorBody, BatchResultContext, BatchScoreRequest, ScoreJobInput, ScoreJobResult, AiCallMeta, AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, LibraryReviewBatchEvent, LibraryReviewEntry, LibraryReviewHooks, ParseResponse, Ref, ReserveHint } from "./engine";
 export {
   CV_PROMPT_IDS, CV_REVIEW_BATCH_SIZE, EFFORT_OUTPUT_SCALE, EFFORTS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, expectedOutputTokens, isPromptId, layoutFor, promptEntry,
   promptSetVersion, promptVersion, resolveRoute, routedModel,

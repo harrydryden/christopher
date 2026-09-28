@@ -314,8 +314,20 @@ const knownFacets = (facets: readonly string[]): EvidenceFacet[] => EVIDENCE_FAC
  * them, rather than failing the row: the schema already holds the model to the rubric, and losing
  * a whole entry's classification over a repeated word would be a poor trade. `tagged` is always
  * the person's own tags, whatever the model classified the row as.
+ *
+ * `known` holds rows an earlier review of this entry already classified, keyed by their normalised
+ * text (`knownLibraryRows`). A row found there takes that classification as it was stored — its
+ * reading, marks, quote and verification — with only `tagged` replaced by the tags saved now, and
+ * whatever the plan says about it is ignored: the model was told not to classify it, so an answer
+ * for it is not one it was asked for. `unread` then means the entry had rows needing
+ * classification and the model returned none of them; an entry whose rows were all known is never
+ * unread.
  */
-export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEntry): LibraryEntryReview {
+export function validateLibraryReview(
+  entry: CvEntry,
+  plan: LibraryReviewPlanEntry,
+  known: ReadonlyMap<string, LibraryRowReview> = new Map(),
+): LibraryEntryReview {
   if (plan.entryId !== entry.id) throw new Error("The evidence review named an entry it was not given.");
   const covered = new Map<string, LibraryReviewPlanEntry["rows"][number]>();
   for (const row of plan.rows) {
@@ -323,10 +335,14 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
     if (!covered.has(key)) covered.set(key, row);
   }
   let classified = 0;
+  let needed = 0;
   const rows: LibraryRowReview[] = reviewableRows(entry).map(row => {
+    const tagged = rowFacets(entry, row);
+    const held = known.get(normaliseRow(row));
+    if (held) return { ...held, row, tagged };
+    needed++;
     const said = covered.get(normaliseRow(row));
     if (said) classified++;
-    const tagged = rowFacets(entry, row);
     const anchored = !!said && (said.quote === null || cvQuoteIsAnchored(said.quote, row));
     if (!said || !anchored) {
       return { row, facets: [], tagged, marks: [], quote: null, verified: false };
@@ -346,8 +362,42 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
   const scored = scoreLibraryRows(rows);
   return {
     entryId: entry.id, rows, ...scored, prompts: plan.prompts.slice(0, 3),
-    ...(rows.length && !classified ? { unread: true as const } : {}),
+    ...(needed && !classified ? { unread: true as const } : {}),
   };
+}
+
+/**
+ * The rows a review already classified, for the next review of the same entry to keep: each
+ * verified row keyed by its normalised text. An unverified row is left out — it says nothing about
+ * the wording — so it is asked about again.
+ */
+export function knownLibraryRows(review: LibraryEntryReview): Map<string, LibraryRowReview> {
+  const known = new Map<string, LibraryRowReview>();
+  for (const row of review.rows) {
+    const key = normaliseRow(row.row);
+    if (row.verified && !known.has(key)) known.set(key, row);
+  }
+  return known;
+}
+
+/** The rows of an entry a review has to classify, given the rows already known. */
+export function rowsToClassify(entry: CvEntry, known: ReadonlyMap<string, LibraryRowReview> = new Map()): string[] {
+  return reviewableRows(entry).filter(row => !known.has(normaliseRow(row)));
+}
+
+/**
+ * Whether an answer covers an entry: it names the entry and classifies every row that needed
+ * classifying. An entry whose rows were all known is covered by being answered for at all, which
+ * is where its prompts come from.
+ */
+export function libraryPlanCovers(
+  entry: CvEntry,
+  plan: LibraryReviewPlanEntry | undefined,
+  known: ReadonlyMap<string, LibraryRowReview> = new Map(),
+): boolean {
+  if (!plan || plan.entryId !== entry.id) return false;
+  const returned = new Set(plan.rows.map(row => normaliseRow(row.row)));
+  return rowsToClassify(entry, known).every(row => returned.has(normaliseRow(row)));
 }
 
 /**

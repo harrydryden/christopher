@@ -60,14 +60,19 @@ async function saveLibrary(version: number, content: CvLibrary) {
 
 const USAGE = { input_tokens: 900, output_tokens: 300, cache_read_input_tokens: 2000, cache_creation_input_tokens: 400 };
 
-/** One batch, as the engine laid it out: which entries it asked about and what rows it sent. */
+/**
+ * One batch, as the engine laid it out: which entries it asked about, every row it showed, and the
+ * rows it asked to have classified — all of them, unless it named only some.
+ */
 function batchOf(params: Record<string, unknown>) {
   const blocks = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
   return blocks[1]!.text.split("\n\n").flatMap(chunk => {
     const id = chunk.match(/^Entry \[([^\]]+)\]/mu)?.[1];
     if (!id) return [];
-    const rows = chunk.split("\n").filter(line => line.startsWith("- ")).map(line => line.slice(2));
-    return [{ id, rows }];
+    const [shown, only] = chunk.split(/^Classify only these rows.*$/mu);
+    const bullets = (text: string) => text.split("\n").filter(line => line.startsWith("- ")).map(line => line.slice(2));
+    const all = bullets(shown!);
+    return [{ id, all, rows: only === undefined ? all : bullets(only) }];
   });
 }
 
@@ -199,6 +204,36 @@ it("reuses an unchanged entry's review across a save and sends only the entry wh
   expect(third.calls).toHaveLength(0);
   expect((await reviews()).filter(row => row.libraryVersion === 2).map(row => [row.entryId, row.source]))
     .toEqual([["later", "model"], ["role", "model"]]);
+});
+
+it("asks only about the row that changed within an edited entry, and keeps the others' marks", async () => {
+  await saveLibrary(1, libraryOf());
+  deps.aiClient = scriptedClient().client;
+  await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps);
+  const before = (await reviews()).find(row => row.entryId === "role")!;
+
+  // The second row of the role is reworded; its first row, and the other job, are untouched.
+  const reworded = "Cut handover time from two days to three hours";
+  const library = libraryOf();
+  await saveLibrary(2, { ...library, entries: library.entries.map(entry => entry.id === "role" ? { ...entry, details: [ROWS.ran, reworded].join("\n") } : entry) });
+  let shown: string[] = [];
+  const second = scriptedClient();
+  deps.aiClient = { messages: { create: async params => {
+    shown = batchOf(params).flatMap(entry => entry.all);
+    return second.client.messages.create(params);
+  } } };
+
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 2 }), deps)).toMatchObject({ reviewed: 1, reused: 1 });
+  // One call, about one entry, asking for one row — with the whole entry shown for its questions.
+  expect(second.calls.map(call => [call.entries, call.rows])).toEqual([[["role"], [reworded]]]);
+  expect(shown).toEqual([ROWS.ran, reworded]);
+
+  const after = (await reviews()).find(row => row.entryId === "role" && row.libraryVersion === 2)!;
+  expect(after.source).toBe("model");
+  // The unchanged row keeps what the first review said about it; the reworded row is the new answer.
+  expect(after.review.rows[0]).toEqual({ ...before.review.rows[0]!, tagged: [] });
+  expect(after.review.rows[1]).toMatchObject({ row: reworded, verified: true, facets: ["responsibility"] });
+  expect(after.review.unread).toBeUndefined();
 });
 
 it("re-reviews nothing when a row is only re-tagged, and carries the review with the new tags", async () => {

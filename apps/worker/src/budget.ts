@@ -37,6 +37,24 @@ export function isAccountBudgetRefusal(err: unknown): err is BudgetRefusedError 
   return err instanceof BudgetRefusedError && err.refusal.limit === "account";
 }
 
+/** What `withinAccountBudget` returns in place of a result when the account's own budget refused the call. */
+export const ACCOUNT_BUDGET_REFUSED = Symbol("refused by the account's budget");
+
+/**
+ * A model call whose hold the account's own budget may refuse. The pre-check (`aiBudgetStop`)
+ * catches an account with nothing left; this catches one with too little left for this call, so
+ * the task finishes done and skipped instead of failing, retrying and failing again. Any other
+ * refusal — a deployment cap — is still thrown, and backs off as a failure does.
+ */
+export async function withinAccountBudget<T>(call: Promise<T>): Promise<T | typeof ACCOUNT_BUDGET_REFUSED> {
+  try {
+    return await call;
+  } catch (err) {
+    if (isAccountBudgetRefusal(err)) return ACCOUNT_BUDGET_REFUSED;
+    throw err;
+  }
+}
+
 /**
  * What an account has spent in its window, and what its calls in flight are holding: the two
  * figures every admission reads. One statement, so the pre-check a handler makes before it starts

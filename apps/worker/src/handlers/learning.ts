@@ -7,27 +7,11 @@ import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidenc
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
-import { isAccountBudgetRefusal } from "../budget";
+import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
 import { log } from "../log";
 
 /** What a handler finishes with when its account has no room left for the call it was about to make. */
 const BUDGET_SKIP = { skipped: "account ai budget exceeded" } as const;
-const REFUSED = Symbol("refused by the account's budget");
-
-/**
- * A model call whose hold the account's own budget may refuse. The pre-check (`aiBudgetStop`)
- * catches an account with nothing left; this catches one with too little left for this call, so
- * the task finishes done and skipped instead of failing, retrying and failing again. Any other
- * refusal — a deployment cap — is still thrown, and backs off as a failure does.
- */
-async function withinBudget<T>(call: Promise<T>): Promise<T | typeof REFUSED> {
-  try {
-    return await call;
-  } catch (err) {
-    if (isAccountBudgetRefusal(err)) return REFUSED;
-    throw err;
-  }
-}
 
 /** Every account carries the seed vocabulary; new accounts get it at creation, this covers older ones. */
 export async function ensureSeedTags(deps: WorkerDeps): Promise<void> {
@@ -46,7 +30,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   await seedTagVocabulary(deps.db, decision.userId);
   const vocab = await deps.db.select({ tag: schema.tagVocabulary.tag }).from(schema.tagVocabulary)
     .where(and(eq(schema.tagVocabulary.userId, decision.userId), eq(schema.tagVocabulary.accepted, true)));
-  const result = await withinBudget(deps.ai.tagReason(
+  const result = await withinAccountBudget(deps.ai.tagReason(
     {
       reason: decision.reason,
       decision: decision.decision,
@@ -55,7 +39,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
     },
     { refType: "decision", refId: decision.id, userId: decision.userId, signal: deps.signal },
   ));
-  if (result === REFUSED) return BUDGET_SKIP;
+  if (result === ACCOUNT_BUDGET_REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
   // Behind the task's fence, so a run the queue has given up on writes nothing after its retry began.
@@ -221,10 +205,10 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   const prep = await prepareScoreJob(deps, userId, jobId);
   if ("done" in prep) return prep.done;
   const { input } = prep.prepared;
-  const result = await withinBudget(deps.ai.scoreJob(input,
+  const result = await withinAccountBudget(deps.ai.scoreJob(input,
     { refType: "job", refId: jobId, userId, signal: deps.signal },
   ));
-  if (result === REFUSED) {
+  if (result === ACCOUNT_BUDGET_REFUSED) {
     await markScoreState(deps, userId, jobId, "budget");
     return BUDGET_SKIP;
   }
@@ -349,7 +333,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
 
   const outcomes = await accountOutcomes(deps, userId);
 
-  const result = await withinBudget(deps.ai.synthesizeProfile({
+  const result = await withinAccountBudget(deps.ai.synthesizeProfile({
     seedProfile: settings.seedProfile,
     pinnedStatements: current?.pinnedStatements ?? [],
     currentProfile: current?.markdown,
@@ -369,7 +353,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
     rejectedCompanySuggestions: rejected.filter((r) => r.reason).map((r) => ({ name: r.name, reason: r.reason ?? "" })),
     outcomes,
   }, { refType: "profile", refId: userId, userId, signal: deps.signal }));
-  if (result === REFUSED) return BUDGET_SKIP;
+  if (result === ACCOUNT_BUDGET_REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
   const version = (current?.version ?? 0) + 1;
@@ -463,7 +447,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     .where(and(eq(schema.companySubscriptions.userId, userId), eq(schema.companySubscriptions.status, "active")))
     .orderBy(schema.companies.name);
 
-  const result = await withinBudget(deps.ai.suggestFilters({
+  const result = await withinAccountBudget(deps.ai.suggestFilters({
     includeKeywords: settings.gate.includeKeywords,
     excludeKeywords: settings.gate.excludeKeywords,
     locationTerms: settings.gate.locationTerms,
@@ -471,7 +455,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     previouslyRejected: previouslyRejected.map((r) => ({ type: r.type, value: r.value })),
     companies,
   }, { refType: "filters", refId: userId, userId, signal: deps.signal }));
-  if (result === REFUSED) return BUDGET_SKIP;
+  if (result === ACCOUNT_BUDGET_REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
   // Behind the task's fence, so a run the queue has given up on files nothing after its retry began.

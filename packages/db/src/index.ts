@@ -27,7 +27,7 @@ export { startCvBuildStep, finishCvBuildStep, failOpenCvBuildSteps, skipOpenCvBu
 
 export { cvRoleKey } from "./cv-role-key";
 
-export { upsertLibraryReviews, latestLibraryReviews, libraryReviewsSignature, pruneLibraryReviews, type LibraryReviewUpsert } from "./library-reviews";
+export { upsertLibraryReviews, latestLibraryReviews, latestModelReviewsByEntry, libraryReviewsSignature, pruneLibraryReviews, type LibraryReviewUpsert } from "./library-reviews";
 
 export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds, retireSourceRoles, SOURCE_RETIRED_REASON } from "./subscriptions";
 export { storeCompanyLogo, noteLogoFailure, readCompanyLogo, companyLogoVersion, companiesDueLogoCapture, LOGO_REFRESH_AFTER_MS, type StoredLogo } from "./company-logos";

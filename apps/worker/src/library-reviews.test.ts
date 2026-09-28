@@ -8,7 +8,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
-  createDb, latestLibraryReviews, libraryReviewsSignature, pruneLibraryReviews, schema,
+  createDb, latestLibraryReviews, latestModelReviewsByEntry, libraryReviewsSignature, pruneLibraryReviews, schema,
   upsertLibraryReviews, type Db, type LibraryReviewUpsert,
 } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
@@ -107,6 +107,22 @@ it("prefers the model's review over the rules baseline it replaced, and replaces
   await upsertLibraryReviews(db, userId, 5, [entry("acme-block", "hash-a")], new Date(later.getTime() + 60_000));
   const found = await latestLibraryReviews(db, userId, [{ entryId: "acme-block", inputHash: "hash-a" }]);
   expect(found.get("acme-block")).toMatchObject({ source: "model", libraryVersion: 4, model: "claude-fable-5-1" });
+});
+
+it("reads the newest model review of each entry, whatever wording it was of", async () => {
+  // Version 3: the model reviewed the first wording. Version 4: a new wording, reviewed again.
+  // Version 5: a third wording, only its rules baseline so far.
+  await upsertLibraryReviews(db, userId, 3, [entry("acme-block", "hash-a1", { source: "model", model: "claude-fable-5-1" })], now);
+  await upsertLibraryReviews(db, userId, 4, [entry("acme-block", "hash-a2", { source: "model", model: "claude-fable-5-1" }), entry("older-block", "hash-b")], now);
+  await upsertLibraryReviews(db, userId, 5, [entry("acme-block", "hash-a3")], later);
+  await upsertLibraryReviews(db, otherId, 9, [entry("acme-block", "hash-x", { source: "model", model: "claude-fable-5-1" })], later);
+
+  const found = await latestModelReviewsByEntry(db, userId, ["acme-block", "older-block", "missing"]);
+  // The newest model review wins over the newer rules baseline and the older model review; an
+  // entry with only a baseline, one never reviewed, and another account's review are all absent.
+  expect([...found.keys()]).toEqual(["acme-block"]);
+  expect(found.get("acme-block")).toMatchObject({ libraryVersion: 4, inputHash: "hash-a2", source: "model" });
+  expect((await latestModelReviewsByEntry(db, userId, [])).size).toBe(0);
 });
 
 it("moves the poll signature when a review lands or changes, and not otherwise", async () => {

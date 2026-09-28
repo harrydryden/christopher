@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertDedicatedDatabase, backoffDelays, benchmarkShape, calibrated, needsRender, POLL_MODEL, quietSchedule, refreshPathFor, REFRESH_PATHS, SCAN_STATUS_PATH, summarise, TARGETS, WORK_STATUS_PATH } from './benchmark-users.mjs';
+import { createRequire } from 'node:module';
+import { assertDedicatedDatabase, backoffDelays, benchmarkShape, calibrated, needsRender, POLL_MODEL, quietSchedule, refreshPathFor, REFRESH_PATHS, SCAN_STATUS_PATH, seedAccounts, summarise, TARGETS, WORK_STATUS_PATH } from './benchmark-users.mjs';
 test('database guard accepts only the exact dedicated local database', () => {
   assert.equal(assertDedicatedDatabase('postgres://u:p@127.0.0.1:55439/christopher_users_benchmark').pathname, '/christopher_users_benchmark');
   for (const unsafe of ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@localhost/ava_test','postgres://u:p@localhost/postgres'])
@@ -52,4 +53,29 @@ test('a tab renders again only for a version it has not shown, and never for its
   assert.equal(needsRender('a', { ok: true, version: 'a' }), false);
   assert.equal(needsRender('a', { ok: true, version: 'b' }), true);
   assert.equal(needsRender('a', { ok: false }), false);
+});
+
+test('the shared account seed leaves the rows the shape expects, when an empty database is at hand', async t => {
+  const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!url) return t.skip('no database');
+  const { Client } = createRequire(new URL('../apps/web/package.json', import.meta.url))('pg');
+  const client = new Client({ connectionString: url });
+  try { await client.connect(); } catch (error) { if (error?.code === 'ECONNREFUSED') return t.skip('database not reachable'); throw error; }
+  try {
+    // Inside a transaction that is rolled back, so the seed leaves nothing behind.
+    await client.query('begin');
+    const { rows: [state] } = await client.query('select (select count(*)::int from companies) + (select count(*)::int from cv_drafts) as n');
+    if (state.n) return t.skip('the database already has companies or CVs');
+    const shape = benchmarkShape({ USERS_BENCHMARK_ACCOUNTS: '10', USERS_BENCHMARK_COMPANIES: '2', USERS_BENCHMARK_FOLLOWS: '2', USERS_BENCHMARK_JOBS_PER_COMPANY: '3' });
+    const sessions = await seedAccounts(client, shape, Math.floor(Date.now() / 1000) + 60);
+    const { rows: [counts] } = await client.query(`select
+      (select count(*)::int from users where email like '%@benchmark.invalid') users,
+      (select count(*)::int from user_jobs uj join users u on u.id = uj.user_id where u.email like '%@benchmark.invalid') "userJobs",
+      (select count(*)::int from cv_drafts) cvs, (select count(*)::int from applications) applications`);
+    assert.deepEqual(counts, { users: shape.expected.users, userJobs: shape.expected.userJobs, cvs: shape.expected.cvs, applications: shape.expected.applications });
+    assert.equal(sessions.length, shape.accounts);
+  } finally {
+    await client.query('rollback').catch(() => {});
+    await client.end();
+  }
 });

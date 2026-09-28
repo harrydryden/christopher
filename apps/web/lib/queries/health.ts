@@ -35,6 +35,7 @@ import { accountAiBudget, budgetFromRow, budgetSelect, defaultAccountAiBudget, t
 import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
+import { ifMigrated } from "@/lib/schema-skew";
 import { deriveWorkerStatus, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
 import { histogramP75, VITAL_METRICS, type VitalMetric } from "@/lib/web-vitals";
 
@@ -585,15 +586,11 @@ export function readHeartbeat(stored: unknown): WorkerHeartbeat | null {
 
 /**
  * The interface deploys independently of the worker, which is what runs the migrations, so a
- * release can be serving before `worker_events` exists. A missing ledger is "nothing recorded",
- * not an error page over the whole of Operations.
+ * release can be serving before a ledger table exists. A missing ledger is "nothing recorded",
+ * not an error page over the whole of Operations; any other failure is an error.
  */
-async function ifLedger<T>(read: () => Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await read();
-  } catch {
-    return fallback;
-  }
+function ifLedger<T>(read: () => Promise<T>, fallback: T): Promise<T> {
+  return ifMigrated(read, () => fallback);
 }
 
 /**
@@ -652,7 +649,7 @@ function ledgerEvent(raw: unknown): WorkerEvent | null {
 async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerState> {
   const hour = new Date(now.getTime() - 3_600_000);
   const day = new Date(now.getTime() - 86_400_000);
-  try {
+  return ifMigrated(async () => {
     const result = await db().execute(sql`select
       (select value from settings where key = 'internal:workerHeartbeat') as heartbeat,
       (select value from settings where key = 'internal:monitor') as monitor,
@@ -672,11 +669,11 @@ async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerSta
       events: (Array.isArray(row?.events) ? row.events : []).flatMap((raw) => ledgerEvent(raw) ?? []),
       monitor: readMonitorSample(row?.monitor),
     };
-  } catch {
+  }, async () => {
     // The interface can be serving before the worker has run the migration that creates the
     // ledger. The heartbeat is still read; the ledger is "nothing recorded".
     return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [], monitor: await getMonitorSample() };
-  }
+  });
 }
 
 /* ---------------------------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import { cvDrafts, tasks } from '@ava/db/schema';
 import { CV_PROGRESS_STALE_MS } from './cv-build-state';
 import { cache } from 'react';
 import { db } from './db';
+import { ifMigrated } from './schema-skew';
 
 /**
  * Only work that can change this account's view counts: the daily run's fan-out task is not itself
@@ -109,7 +110,7 @@ export const getCvWorkStatus = cache(async function getCvWorkStatus(userId: stri
   // Payload is the stable relationship: a quiz continuation deliberately has a distinct dedupe
   // key so it cannot collide with the task whose worker just paused.
   const task = and(eq(tasks.type, 'generate_cv'), sql`${tasks.payload}->>'draftId' = ${cvDrafts.id}::text`);
-  try {
+  return ifMigrated(async () => {
     const [row] = await db()
       .select({
         n: sql<number>`count(distinct ${cvDrafts.id})::int`,
@@ -125,7 +126,7 @@ export const getCvWorkStatus = cache(async function getCvWorkStatus(userId: stri
       .leftJoin(tasks, task)
       .where(inFlight);
     return { active: (row?.n ?? 0) > 0, version: row?.version ?? "", improving: row?.improving ?? [] };
-  } catch {
+  }, async () => {
     // Before the ledger's migration: the draft and the queue alone.
     const [row] = await db()
       .select({
@@ -137,7 +138,7 @@ export const getCvWorkStatus = cache(async function getCvWorkStatus(userId: stri
       .leftJoin(tasks, task)
       .where(inFlightBehind);
     return { active: (row?.n ?? 0) > 0, version: row?.version ?? "", improving: row?.improving ?? [] };
-  }
+  });
 });
 
 /**

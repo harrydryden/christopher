@@ -29,6 +29,7 @@ import { cvAuditBatchOutputTokens, estimateCvBuildUsd, estimateStage, type CvBui
 import { CV_REVIEW_BATCH_SIZE, PROMPTS } from "../../../packages/ai/src/prompt-registry";
 import type { CvBuildStageName } from "@ava/core";
 import { db } from "@/lib/db";
+import { ifMigrated } from "@/lib/schema-skew";
 import { formatUsd } from "@/lib/format";
 import { getSettingsFor } from "@/lib/settings";
 
@@ -116,28 +117,18 @@ export function queuedDraftParts(draft: Pick<QueuedCvDraft, "hasContent" | "chec
 
 /** The expected cost of every build this account has waiting in the queue. */
 async function queuedBuildsUsd(userId: string): Promise<number> {
-  const rows = await db()
-    .select({
-      model: cvDrafts.model,
-      libraryBytes: sql<number>`octet_length(${cvDrafts.librarySnapshot}::text)::int`,
-      descriptionBytes: sql<number>`octet_length(${cvDrafts.jobDescription})::int`,
-      hasContent: sql<boolean>`${cvDrafts.content} is not null`,
-      checkpoint: sql<QueuedCvDraft["checkpoint"]>`${cvDrafts.buildCheckpoint}`,
-    })
-    .from(cvDrafts)
-    .where(and(eq(cvDrafts.userId, userId), eq(cvDrafts.status, "queued"), isNull(cvDrafts.archivedAt)))
+  const priced = {
+    model: cvDrafts.model,
+    libraryBytes: sql<number>`octet_length(${cvDrafts.librarySnapshot}::text)::int`,
+    descriptionBytes: sql<number>`octet_length(${cvDrafts.jobDescription})::int`,
+    hasContent: sql<boolean>`${cvDrafts.content} is not null`,
+  };
+  const queued = and(eq(cvDrafts.userId, userId), eq(cvDrafts.status, "queued"), isNull(cvDrafts.archivedAt));
+  const rows = await ifMigrated(
+    () => db().select({ ...priced, checkpoint: sql<QueuedCvDraft["checkpoint"]>`${cvDrafts.buildCheckpoint}` }).from(cvDrafts).where(queued),
     // Guarded: a database without the checkpoint column prices every queued build as a whole one.
-    .catch(async () =>
-      (await db()
-        .select({
-          model: cvDrafts.model,
-          libraryBytes: sql<number>`octet_length(${cvDrafts.librarySnapshot}::text)::int`,
-          descriptionBytes: sql<number>`octet_length(${cvDrafts.jobDescription})::int`,
-          hasContent: sql<boolean>`${cvDrafts.content} is not null`,
-        })
-        .from(cvDrafts)
-        .where(and(eq(cvDrafts.userId, userId), eq(cvDrafts.status, "queued"), isNull(cvDrafts.archivedAt)))).map((row) => ({ ...row, checkpoint: null })),
-    );
+    async () => (await db().select(priced).from(cvDrafts).where(queued)).map((row) => ({ ...row, checkpoint: null })),
+  );
   return rows.reduce(
     (sum, row) =>
       sum + estimateCvBuildUsd(row.model, { libraryBytes: Number(row.libraryBytes ?? 0), descriptionBytes: Number(row.descriptionBytes ?? 0) }, queuedDraftParts(row)),

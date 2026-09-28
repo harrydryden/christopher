@@ -28,7 +28,7 @@ import { completeCv, cvRoleKey, type AiCallRecord, releaseAiHolds, saveCvTailori
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
 import {
   CvContentSchema,
-  CvPlanSchema,
+  CvStoredPlanSchema,
   CvLibrarySchema,
   CV_BUILD_MOTIONS,
   CV_BUILD_STAGES,
@@ -618,7 +618,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         const fitted = await runner.paid("write", "write", writeStage.estimate({ draftId, libraryVersion: draft.libraryVersion }), async stageCtx => {
           try {
             // Saved wording that no longer fits is refitted; a rebuild starts from the Library.
-            const initial = inputs.saved ? CvPlanSchema.parse(inputs.saved) : undefined;
+            // A checkpoint saved before citations were ids reads its legacy refs as ids.
+            const initial = inputs.saved ? CvStoredPlanSchema.parse(inputs.saved) : undefined;
             const writingLibrary = inputs.saved
               ? { ...library, theme: inputs.saved.theme ?? library.theme }
               : library;
@@ -1012,7 +1013,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               throw new CvBuildStop("output_invalid", "The optional revision omitted employment or education.");
             // The optional pass strengthens role evidence. Preserve the already checked qualification
             // wording, so retaining an education block cannot conceal the loss of one qualification.
-            const baselineQualifications = new Map(CvPlanSchema.parse(args.baselineContent).sections
+            const baselineQualifications = new Map(CvStoredPlanSchema.parse(args.baselineContent).sections
               .filter(section => library.entries.some(entry => entry.id === section.entryId && entry.kind === "education"))
               .map(section => [section.entryId, section]));
             plan.sections = plan.sections.map(section => baselineQualifications.get(section.entryId) ?? section);

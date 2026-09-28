@@ -25,7 +25,22 @@ export {
 
 const SkillItemsSchema = z.array(z.string().trim().min(1).max(80).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.")).min(1).max(20)
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
-export const CvPlanSourceRefSchema = z.object({ sourceId: z.string().min(1).max(220), quote: z.string().trim().min(1).max(1600) });
+/**
+ * A writer's citation: the id of the source row a bullet or the profile rests on. It used to be
+ * `{sourceId, quote}`, with the row copied out in full; nothing but a substring check read the
+ * quote, and it was half of every author answer.
+ */
+export const CvPlanSourceIdSchema = z.string().min(1).max(220);
+/**
+ * A citation as stored: an id, or the legacy `{sourceId, quote}` a CV written before ids carries,
+ * read as its id. For reading saved content and checkpoints only; the writer's own schema takes
+ * ids alone, so the output grammar stays a plain string.
+ */
+export const CvStoredSourceIdSchema = z.preprocess(
+  (value: unknown) => value && typeof value === "object" && "sourceId" in value ? (value as { sourceId: unknown }).sourceId : value,
+  CvPlanSourceIdSchema,
+);
+type SourceIdSchema = typeof CvPlanSourceIdSchema | typeof CvStoredSourceIdSchema;
 
 const LinkedInSchema = z.string().max(300).refine(value => {
   if (!value) return true;
@@ -163,20 +178,24 @@ export const CvLibrarySchema = z.object({
   }
 }).refine(l => new Set(l.entries.map(e => e.id)).size === l.entries.length, "Library entry IDs must be unique");
 export type CvLibrary = z.infer<typeof CvLibrarySchema>;
-export const CvPlanSchema = z.object({
+const cvPlanSchema = <T extends SourceIdSchema>(sourceId: T) => z.object({
   summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
-  summarySources: z.array(CvPlanSourceRefSchema).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvPlanSourceRefSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(20),
+  summarySources: z.array(sourceId).max(8).optional(),
+  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(sourceId).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
+/** The writer's answer. Citations are source ids (`summarySources`, one `bulletSources` item per bullet). */
+export const CvPlanSchema = cvPlanSchema(CvPlanSourceIdSchema);
+/** A saved plan or checkpoint, whose citations may still be legacy `{sourceId, quote}` refs. */
+export const CvStoredPlanSchema = cvPlanSchema(CvStoredSourceIdSchema);
 export type CvPlan = z.infer<typeof CvPlanSchema>;
 export const CvContentSchema = z.object({
   fitNotes: z.array(z.string().max(500)).max(50).optional(),
   theme: CvThemeSchema.optional(),
   linkedinUrl: LinkedInSchema,
   websiteUrl: WebsiteSchema,
-  name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters), summarySources: z.array(CvPlanSourceRefSchema).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvPlanSourceRefSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(20),
+  name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters), summarySources: z.array(CvStoredSourceIdSchema).max(8).optional(),
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvStoredSourceIdSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvContent = z.infer<typeof CvContentSchema>;

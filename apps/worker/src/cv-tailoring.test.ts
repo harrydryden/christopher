@@ -106,13 +106,13 @@ function scriptedClient(options: ScriptOptions = {}) {
     if (options.failImprovement && improving) throw new Error("optional writer unavailable");
     const improved = improving;
     return answered({
-      summary: "Operations leader", summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+      summary: "Operations leader", summarySources: ["source:profile"],
       sections: [{ entryId: "one", bullets: improved ? ["Led a team", "Delivered transformation"] : ["Led a team"],
         bulletSources: improved
-          ? [[{ sourceId: "entry:one:row:0", quote: "Led a team" }], [{ sourceId: "entry:one:row:1", quote: "Delivered transformation" }]]
-          : [[{ sourceId: "entry:one:row:0", quote: "Led a team" }]] },
+          ? [["entry:one:row:0"], ["entry:one:row:1"]]
+          : [["entry:one:row:0"]] },
       ...(!improved || !options.omitRequiredEntryOnImprovement ? [{ entryId: "degree", bullets: ["University of Example"],
-        bulletSources: [[{ sourceId: "entry:degree:row:0", quote: "University of Example" }]] }] : [])], gaps: [],
+        bulletSources: [["entry:degree:row:0"]] }] : [])], gaps: [],
     });
   } } };
   return { client, calls, authorInputs };
@@ -296,9 +296,9 @@ it("keeps the checked baseline when an improved candidate drops a required educa
 it("a content checkpoint reserves the audit plus one improvement, reuses the author and can still improve", async () => {
   const scripted = scriptedClient(); deps.aiClient = scripted.client;
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led a team"],
-      bulletSources: [[{ sourceId: "entry:one:row:0", quote: "Led a team" }]] }], gaps: [] };
+      bulletSources: [["entry:one:row:0"]] }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString() });
   await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
@@ -325,9 +325,9 @@ it("a content checkpoint reserves the audit plus one improvement, reuses the aut
 it("the persisted one-shot fence prevents a retry buying a second improvement", async () => {
   const scripted = scriptedClient(); deps.aiClient = scripted.client;
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led a team"],
-      bulletSources: [[{ sourceId: "entry:one:row:0", quote: "Led a team" }]] }], gaps: [] };
+      bulletSources: [["entry:one:row:0"]] }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString(), improvementAttempted: true });
   await db.update(schema.cvDrafts).set({ content: baseline, assessment: { score: 0 } as unknown as CvAssessment }).where(eq(schema.cvDrafts.id, draft.id));
@@ -342,8 +342,8 @@ it("corrects a writer answer citing a source the Library does not hold inside th
   const create = scripted.client.messages.create;
   let authors = 0;
   scripted.client.messages.create = async (params, options, call) => {
-    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ bulletSources: Array<Array<{ sourceId: string }>> }> } };
-    if (call?.promptId === "cv.author" && ++authors === 1) response.parsed_output.sections[0]!.bulletSources[0]![0]!.sourceId = "entry:one:row:99";
+    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ bulletSources: string[][] }> } };
+    if (call?.promptId === "cv.author" && ++authors === 1) response.parsed_output.sections[0]!.bulletSources[0]![0] = "entry:one:row:99";
     return response;
   };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
@@ -403,11 +403,11 @@ it("an audit stopped by its stage allowance is a stalled stage, with the batches
   const bullets = Array.from({ length: 5 }, () => "Led a team");
   const degree = Array.from({ length: 4 }, () => "University of Example");
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
-      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+      bulletSources: bullets.map(() => ["entry:one:row:0"]) },
     { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
-      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+      bulletSources: degree.map(() => ["entry:degree:row:0"]) }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString() });
   await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
@@ -449,7 +449,7 @@ it("admits the revision's re-check at the price of the batches it sends, not the
       // The revision keeps the five bullets the baseline had and adds one: one changed claim of many.
       const bullets = [...Array.from({ length: 5 }, () => "Led a team"), "Delivered transformation"];
       response.parsed_output.sections[0] = { entryId: "one", bullets,
-        bulletSources: bullets.map((text, index) => [{ sourceId: `entry:one:row:${index === 5 ? 1 : 0}`, quote: text }]) };
+        bulletSources: bullets.map((text, index) => [`entry:one:row:${index === 5 ? 1 : 0}`]) };
     }
     if (call?.promptId === "cv.review_candidate") {
       const content = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
@@ -463,11 +463,11 @@ it("admits the revision's re-check at the price of the batches it sends, not the
   const bullets = Array.from({ length: 5 }, () => "Led a team");
   const degree = Array.from({ length: 4 }, () => "University of Example");
   const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
-    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    summarySources: ["source:profile"],
     sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
-      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+      bulletSources: bullets.map(() => ["entry:one:row:0"]) },
     { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
-      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+      bulletSources: degree.map(() => ["entry:degree:row:0"]) }], gaps: [] };
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
     contentAt: new Date().toISOString() });
   await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));

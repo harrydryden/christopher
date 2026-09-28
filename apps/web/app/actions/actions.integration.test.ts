@@ -692,7 +692,7 @@ describe("priority workflows", () => {
     // like) does not fail a test about what the snapshot carries.
     expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: DEFAULT_CV_THEME, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
-    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: [{ sourceId: "entry:one:row:0", quote: "Led an operations team" }], sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [[{ sourceId: "entry:one:row:0", quote: "Led an operations team" }]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: ["entry:one:row:0"], sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
     await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
@@ -1293,21 +1293,21 @@ it("carries library styling through generation, revision, matching preview/downl
     .where(eq(schema.tasks.type, "generate_cv"));
   const model = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({
     summary: "Operations leader with experience in planning and reporting.",
-    summarySources: [{ sourceId: "entry:role:row:0", quote: "Led a team" }],
+    summarySources: ["source:profile"],
     sections: [
       {
         entryId: "role",
         industryDescriptions: ["Healthcare", "Software & SaaS"],
         bullets: ["Led a team."],
-        bulletSources: [[{ sourceId: "entry:role:row:0", quote: "Led a team" }]],
+        bulletSources: [["entry:role:row:0"]],
       },
       {
         entryId: "skills",
         bullets: ["SQL and reporting"],
         skillItems: ["SQL", "Financial planning"],
-        bulletSources: [[{ sourceId: "entry:skills:row:0", quote: "SQL and reporting" }]],
+        bulletSources: [["entry:skills:row:0"]],
       },
-      { entryId: "degree", bullets: ["BSc Economics, Example University."], bulletSources: [[{ sourceId: "entry:degree:row:0", quote: "BSc Economics, Example University." }]] },
+      { entryId: "degree", bullets: ["BSc Economics, Example University."], bulletSources: [["entry:degree:row:0"]] },
     ],
     gaps: ["Review-only evidence gap"],
   });
@@ -1527,11 +1527,11 @@ it("assesses, improves with current evidence, finalises and exports through the 
       if (input.improvements?.length) improvedWritten = true;
       return ({
       summary: "Operations leader",
-      summarySources: [{ sourceId: "entry:role:row:0", quote: "Led operations" }],
+      summarySources: ["source:profile"],
       sections: [
-        { entryId: "role", bullets: ["Led operations"], bulletSources: [[{ sourceId: "entry:role:row:0", quote: "Led operations" }]] },
+        { entryId: "role", bullets: ["Led operations"], bulletSources: [["entry:role:row:0"]] },
         ...(input.improvements?.length
-          ? [{ entryId: "skills", bullets: ["SQL"], skillItems: ["SQL"], bulletSources: [[{ sourceId: "entry:skills:row:0", quote: "SQL" }]] }]
+          ? [{ entryId: "skills", bullets: ["SQL"], skillItems: ["SQL"], bulletSources: [["entry:skills:row:0"]] }]
           : []),
       ],
       gaps: [],

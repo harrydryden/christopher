@@ -165,11 +165,11 @@ async function main() {
       const claimsSupported = assessment.review.claims.every(claim => claim.status === "supported");
       const plannedSources = new Set(plan.requirements.flatMap(requirement => requirement.evidence.map(item => item.sourceId)));
       const selectedEvidenceIds = [...new Set([...plannedSources].map(id => sourceToFixture[id]).filter((id): id is string => !!id))];
-      const orderedRefs = refs(content).map(ref => ref.sourceId);
+      const orderedRefs = refs(content);
       const leadingSource = orderedRefs.find(id => plannedSources.has(id) && !!sourceToFixture[id]);
       const leadingEvidenceId = leadingSource ? sourceToFixture[leadingSource] : undefined;
       const emphasisText = [content.summary, ...content.sections.flatMap(section => section.bullets.filter((_, bullet) =>
-        section.bulletSources?.[bullet]?.some(source => plannedSources.has(source.sourceId))))].join("\n");
+        section.bulletSources?.[bullet]?.some(sourceId => plannedSources.has(sourceId))))].join("\n");
       outputs[role.id] = { text: emphasisText, selectedEvidenceIds, ...(leadingEvidenceId ? { leadingEvidenceId } : {}) };
       pairs.push({ id: role.id, role: role.title, baseline: contentText(baseline), candidate: contentText(content) });
       key.push({ pairId: role.id, versionA: index % 2 ? "tailored" : "baseline", versionB: index % 2 ? "baseline" : "tailored" });

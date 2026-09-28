@@ -250,9 +250,9 @@ it('hands a page limit that only removing sole essential evidence could meet to 
   ...roles, { id: 'i', kind: 'interest', heading: 'Interests', details: 'Chaired a national charity board' }] };
  const rubric = { caveats: [], requirements: [{ id: 'r1', label: 'Board governance', quote: 'board', importance: 'essential' as const, category: 'experience' as const }] };
  const tailoring = { requirements: [{ requirementId: 'r1', status: 'demonstrated' as const, evidence: [{ sourceId: 'entry:i:row:0', quote: 'Chaired a national charity board' }], reason: 'Direct.' }], gapQuestions: [] };
- const written: CvPlan = { summary: 'Leader', summarySources: [{ sourceId: 'source:profile', quote: 'Leader' }], sections: [
-  ...roles.map(role => ({ entryId: role.id, bullets: [role.details], bulletSources: [[{ sourceId: `entry:${role.id}:row:0`, quote: role.details }]] })),
-  { entryId: 'i', bullets: ['Chaired a national charity board'], bulletSources: [[{ sourceId: 'entry:i:row:0', quote: 'Chaired a national charity board' }]] }], gaps: [] };
+ const written: CvPlan = { summary: 'Leader', summarySources: ['source:profile'], sections: [
+  ...roles.map(role => ({ entryId: role.id, bullets: [role.details], bulletSources: [[`entry:${role.id}:row:0`]] })),
+  { entryId: 'i', bullets: ['Chaired a national charity board'], bulletSources: [['entry:i:row:0']] }], gaps: [] };
  const write = vi.fn().mockResolvedValue(written);
  const attempt = buildFittedCv(crowded, 'board', write, undefined, undefined, { plan: tailoring, rubric });
  // The person's page limit, with the reason: the essential evidence is why it cannot shrink.
@@ -265,12 +265,12 @@ const sourcedTarget = {
  rubric: { caveats: [], requirements: [{ id: 'fin', label: 'Financial planning', quote: 'planning', importance: 'essential' as const, category: 'experience' as const }] },
  plan: { requirements: [{ requirementId: 'fin', status: 'demonstrated' as const, evidence: [{ sourceId: 'entry:r0:row:0', quote: 'Financial planning budget reporting' }], reason: 'Direct.' }], gapQuestions: [] },
 };
-const sourced: CvPlan = { summary: 'Finance leader', summarySources: [{ sourceId: 'source:profile', quote: 'Finance leader' }], gaps: [], sections: [
+const sourced: CvPlan = { summary: 'Finance leader', summarySources: ['source:profile'], gaps: [], sections: [
  ...library.entries.slice(0, 6).map(entry => ({ entryId: entry.id, bullets: [entry.confirmedResponsibilities![0]!],
-  bulletSources: [[{ sourceId: `entry:${entry.id}:row:0`, quote: entry.confirmedResponsibilities![0]! }]] })),
- { entryId: 'e', bullets: ['BSc Economics, University.'], bulletSources: [[{ sourceId: 'entry:e:row:0', quote: 'BSc Economics, University.' }]] }] };
+  bulletSources: [[`entry:${entry.id}:row:0`]] })),
+ { entryId: 'e', bullets: ['BSc Economics, University.'], bulletSources: [['entry:e:row:0']] }] };
 const citing = (sourceId: string): CvPlan => ({ ...sourced, sections: sourced.sections.map((section, index) => index === 0
- ? { ...section, bulletSources: [[{ sourceId, quote: section.bullets[0]! }]] } : section) });
+ ? { ...section, bulletSources: [[sourceId]] } : section) });
 it('corrects a citation of a source the Library does not hold inside the build, with the problem quoted as bounded data', async () => {
  const write = vi.fn().mockResolvedValueOnce(citing('entry:r0:row:99')).mockResolvedValueOnce(sourced);
  const fitted = await buildFittedCv(library, 'Financial planning', write, undefined, undefined, sourcedTarget);

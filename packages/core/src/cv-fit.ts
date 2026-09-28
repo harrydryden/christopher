@@ -104,11 +104,11 @@ export type CvFitEvent =
  */
 export type CvFitSignal = CvFitEvent;
 
-function sourceRequirements(sources: { sourceId: string }[] | undefined, semantic?: CvSemanticTarget): Set<string> {
+function sourceRequirements(sources: readonly string[] | undefined, semantic?: CvSemanticTarget): Set<string> {
   const found = new Set<string>();
   if (!semantic) return found;
   const coverage = cvTailoringCoverage(semantic.plan);
-  for (const source of sources ?? []) coverage.get(source.sourceId)?.forEach(id => found.add(id));
+  for (const sourceId of sources ?? []) coverage.get(sourceId)?.forEach(id => found.add(id));
   return found;
 }
 
@@ -116,7 +116,7 @@ function valueRequirements(section: CvPlan["sections"][number], index: number, s
   if (!section.skillItems) return sourceRequirements(section.bulletSources?.[index], semantic);
   const entry = library.entries.find(item => item.id === section.entryId);
   const sourceIndex = entry?.skillItems?.findIndex(item => item === section.skillItems?.[index]) ?? -1;
-  return sourceIndex < 0 ? new Set() : sourceRequirements([{ sourceId: `entry:${section.entryId}:skill:${sourceIndex}` }], semantic);
+  return sourceIndex < 0 ? new Set() : sourceRequirements([`entry:${section.entryId}:skill:${sourceIndex}`], semantic);
 }
 
 const essentialIds = (semantic?: CvSemanticTarget) => new Set(semantic?.rubric.requirements

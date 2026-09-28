@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import { absoluteUrl, sameDomain, scanWindow } from "../normalize";
 import type { HarvestedLink } from "./types";
 import type { SourceSpec } from "../types";
+import { isAtsHost } from "../ats/common";
 
 export const CAREERS_VOCABULARY: readonly string[] = [
   "careers", "career", "jobs", "job openings", "open roles", "open positions", "open jobs", "openings", "opportunities",
@@ -21,13 +22,9 @@ export const WELL_KNOWN_PATHS: readonly string[] = [
   "/hiring", "/team/careers", "/life", "/en/jobs",
 ];
 
-/** Kept local so discovery has no dependency on the adapter registry. */
-const ATS_HOST_RE =
-  /(?:^|\.)(greenhouse\.io|grnh\.se|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|recruitee\.com|personio\.(?:de|com)|bamboohr\.com|myworkdayjobs\.com|pinpointhq\.com|breezy\.hr|teamtailor\.com|icims\.com|jobvite\.com|applytojob\.com|rippling\.com|successfactors\.(?:com|eu)|eightfold\.ai)$/i;
-
 function isAtsUrl(url: string): boolean {
   try {
-    return ATS_HOST_RE.test(new URL(url).hostname);
+    return isAtsHost(new URL(url).hostname);
   } catch {
     return false;
   }

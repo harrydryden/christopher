@@ -39,6 +39,21 @@ export function specOrNull<T>(parsed: T | null, build: (parsed: T) => SourceSpec
   return parsed ? build(parsed) : null;
 }
 
+/**
+ * Every host an adapter reads from, as a suffix: discovery, the HTML job-link heuristic and the
+ * registry all read this one list, so an adapter added here is recognised everywhere at once.
+ */
+export const ATS_HOST_SUFFIXES: readonly string[] = [
+  "greenhouse.io", "grnh.se", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com", "recruitee.com",
+  "personio.de", "personio.com", "bamboohr.com", "myworkdayjobs.com", "pinpointhq.com", "breezy.hr",
+  "teamtailor.com", "icims.com", "jobvite.com", "applytojob.com", "rippling.com", "successfactors.com", "successfactors.eu", "eightfold.ai",
+];
+
+export function isAtsHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return ATS_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
 /** The slug an ATS spec is keyed by; a spec without one is a programming error, not a fetch failure. */
 export function requireSlug(spec: SourceSpec): string {
   if (!spec.atsSlug) throw new Error(`${spec.type} spec missing slug`);

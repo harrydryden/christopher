@@ -2,11 +2,10 @@ import * as cheerio from "cheerio";
 import type { HtmlRecipe, RawPosting } from "../types";
 import { absoluteUrl, normalizeUrl } from "../normalize";
 import { extractJsonLdPostings } from "./jsonld";
+import { isAtsHost } from "./common";
 
 const JOB_PATH_RE =
   /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-details?|joblisting)\/|[?&](?:gh_jid|jobId|job_id|reqId|requisitionId)=/i;
-const ATS_HOST_RE =
-  /(?:^|\.)(?:greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|recruitee\.com|personio\.(?:de|com)|bamboohr\.com|myworkdayjobs\.com|pinpointhq\.com|breezy\.hr|teamtailor\.com|icims\.com|jobvite\.com|applytojob\.com|rippling\.com|grnh\.se)$/i;
 
 // These are listing, subscription or careers-content destinations, never posting-detail slugs.
 // Exact segment matching preserves genuine titles such as `/jobs/benefits-lead`.
@@ -84,7 +83,7 @@ function looksLikeTitle(text: string): boolean {
 
 function isJobHref(url: string, pageUrl: string): boolean {
   try {
-    if (ATS_HOST_RE.test(new URL(url).hostname)) return true;
+    if (isAtsHost(new URL(url).hostname)) return true;
   } catch {
     return false;
   }

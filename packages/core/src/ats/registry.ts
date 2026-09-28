@@ -16,6 +16,7 @@ import { teamtailor, icims, jobvite, jazzhr, rippling, successfactors, eightfold
 import { extractPostingsFromHtml } from "./html";
 import { extractJsonLdPostings } from "./jsonld";
 import { sample, slugOk, str } from "./common";
+export { isAtsHost } from "./common";
 import type { HtmlRecipe } from "../types";
 
 const structured: Adapter[] = [greenhouse, lever, ashby, workable, smartrecruiters, recruitee, personio, bamboohr, workday, pinpoint, breezy,
@@ -96,17 +97,6 @@ export function specFromAnyUrl(url: string): SourceSpec | null {
     if (spec) return spec;
   }
   return null;
-}
-
-const ATS_HOST_SUFFIXES = [
-  "greenhouse.io", "grnh.se", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com", "recruitee.com",
-  "personio.de", "personio.com", "bamboohr.com", "myworkdayjobs.com", "pinpointhq.com", "breezy.hr",
-  "teamtailor.com", "icims.com", "jobvite.com", "applytojob.com", "rippling.com", "successfactors.com", "successfactors.eu", "eightfold.ai",
-];
-
-export function isAtsHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return ATS_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
 // Matches URLs in HTML and in JavaScript sources, where slashes are often escaped as \/.

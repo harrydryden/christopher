@@ -574,6 +574,13 @@ describe("HTML extraction", () => {
     </main>`;
     expect(findJobLinks(html, "https://example.com/about").map(link => link.text)).toEqual(["Platform Engineer"]);
   });
+  it("counts links to every ATS host as job links, SuccessFactors and Eightfold included", () => {
+    const html = `<main>
+      <a href="https://career5.successfactors.eu/sfcareer/jobreqcareer?jobId=1">Data Analyst</a>
+      <a href="https://acme.eightfold.ai/careers?pid=42">Platform Engineer</a>
+    </main>`;
+    expect(findJobLinks(html, "https://acme.example/about").map(link => link.text)).toEqual(["Data Analyst", "Platform Engineer"]);
+  });
   it("prefers JSON-LD when present", () => {
     const postings = extractPostingsFromHtml(fx.JSONLD_LISTING_HTML, "https://acmefoods.example.com/careers");
     expect(postings).toHaveLength(4);

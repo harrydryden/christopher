@@ -96,7 +96,7 @@ import {
 
 /** Every role on this account's live tabs, or in its archive: the table before any display filter. */
 const tableCount = (userId: string, archived = false) => countRoles(userId, parseRolesFilters({ decision: "all" }), archived);
-import { saveAiBudget, saveAiSettings, saveKeywords } from "./settings";
+import { saveAiBudget, saveAiSettings, saveGate } from "./settings";
 import {
   addCompanies,
   useDiscoveryCandidate,
@@ -337,7 +337,7 @@ describe("authenticated mutations", () => {
     const { job } = await fixture();
     const form = new FormData();
     form.set("includeKeywords", "engineering");
-    await saveKeywords({ ok: true }, form);
+    await saveGate({ ok: true }, form);
     const [updated] = await database
       .select()
       .from(schema.userJobs)
@@ -457,7 +457,7 @@ describe("priority workflows", () => {
     const form = new FormData();
     form.set("includeKeywords", "operations");
     form.set("seniorityKeywords", "director");
-    await saveKeywords({ ok: true }, form);
+    await saveGate({ ok: true }, form);
     expect(await tableCount(user.id, true)).toBe(1);
     await archiveRoles([job.id], false);
     expect(await tableCount(user.id)).toBe(0);

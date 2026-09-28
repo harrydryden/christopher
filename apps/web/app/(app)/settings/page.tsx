@@ -2,7 +2,7 @@ import { MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD } from "@ava/core";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
 import { saveCvModel, saveCvAppearance } from "@/app/actions/cv";
-import { saveAiBudget, saveKeywords, saveLocationFilter, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
+import { saveAiBudget, saveGate, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles, saveSeedProfileSetting } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -45,7 +45,8 @@ export default async function SettingsPage() {
         {/* Filters first: an account that has never saved its gate is shown the example, not the
             word the defaults happen to carry, so nothing is ever scanned against a choice nobody made. */}
         <p className="mb-3 text-14 text-muted">{GATE_SENTENCE}</p>
-        <SettingsForm action={saveKeywords}>
+        {/* The Keywords and Location cards both save the gate. */}
+        <SettingsForm action={saveGate}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Seniority keywords (title only)</span>
             <textarea name="seniorityKeywords" rows={2} defaultValue={(settings.gate.seniorityKeywords ?? []).join("\n")} placeholder="Head, Director, VP, Chief" className={inputClass} />
@@ -79,7 +80,7 @@ export default async function SettingsPage() {
 
       <div id="location">
       <Card title="Location filter">
-        <SettingsForm action={saveLocationFilter}>
+        <SettingsForm action={saveGate}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Allowed locations</span>
             <textarea name="locationTerms" rows={2} defaultValue={gateChosen ? settings.gate.locationTerms.join("\n") : ""} placeholder="London, UK" className={inputClass} />

@@ -130,7 +130,7 @@ const GATES: Record<string, Record<string, Gate>> = {
     importLibraryDocument: "verified", acceptLibraryImport: "user", dismissLibraryImport: "user", retryLibraryImport: "verified",
   },
   "actions/settings.ts": {
-    saveGate: "user", saveKeywords: "user", saveMatchFields: "user", saveLocationFilter: "user", saveTableSettings: "user",
+    saveGate: "user", saveMatchFields: "user", saveTableSettings: "user",
     saveSuggestionSettings: "user", saveRegistrationSettings: "admin", saveSchedule: "admin", saveAiSettings: "admin",
     saveAiBudget: "user", runDailyScanNow: "admin", saveStageRoutes: "admin", saveScoringSettings: "admin",
   },

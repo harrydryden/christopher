@@ -53,11 +53,6 @@ export async function saveGate(_prev: ActionResult, formData: FormData): Promise
   return ok();
 }
 
-/** The Keywords card: the same save, with only the keyword fields on the form. */
-export async function saveKeywords(prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  return saveGate(prev, formData);
-}
-
 export async function saveMatchFields(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const settings = await getSettings();
@@ -66,11 +61,6 @@ export async function saveMatchFields(_prev: ActionResult, formData: FormData): 
   await saveSettingsAndGate(user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } }, { rescore: !needsEmailConfirmation(user) });
   revalidate("/settings", "/");
   return ok();
-}
-
-/** The Location filter card: the same save, with only the location fields on the form. */
-export async function saveLocationFilter(prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  return saveGate(prev, formData);
 }
 
 /** Automatic score hiding is retired: a stored `hideThreshold` is left where it is and ignored. */

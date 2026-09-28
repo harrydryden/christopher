@@ -5,7 +5,7 @@ import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { filterSuggestions, tagVocabulary, type User } from "@ava/db/schema";
+import { filterSuggestions, tagVocabulary, type FilterSuggestion, type User } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
@@ -42,6 +42,14 @@ async function appendOwnProfile(userId: string, expectedVersion: number, input: 
  * confirmed address, like every other action that spends (R-6.3's seed profile is the exception
  * below). Reading the page, rejecting a suggestion and accepting a tag spend nothing and do not.
  */
+/** The gate list each term suggestion adds its term to. */
+const GATE_FIELD_FOR: Partial<Record<FilterSuggestion["type"], "includeKeywords" | "seniorityKeywords" | "excludeKeywords" | "locationTerms">> = {
+  keyword_include: "includeKeywords",
+  seniority_include: "seniorityKeywords",
+  keyword_exclude: "excludeKeywords",
+  location: "locationTerms",
+};
+
 export async function savePinnedStatements(formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const raw = String(formData.get("pinnedStatements") ?? "");
@@ -141,14 +149,9 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
     const extracted = extractSuggestionValue(suggestion);
     const before = await countRolesInTable(user.id);
 
-    if (suggestion.type === "keyword_include" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, includeKeywords: [...new Set([...settings.gate.includeKeywords, extracted.term])] } });
-    } else if (suggestion.type === "seniority_include" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, seniorityKeywords: [...new Set([...(settings.gate.seniorityKeywords ?? []), extracted.term])] } });
-    } else if (suggestion.type === "keyword_exclude" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, excludeKeywords: [...new Set([...settings.gate.excludeKeywords, extracted.term])] } });
-    } else if (suggestion.type === "location" && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, locationTerms: [...new Set([...settings.gate.locationTerms, extracted.term])] } });
+    const field = GATE_FIELD_FOR[suggestion.type];
+    if (field && extracted.kind === "term") {
+      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, [field]: [...new Set([...(settings.gate[field] ?? []), extracted.term])] } });
     } else if (suggestion.type === "hide_threshold") {
       // Automatic score hiding is retired. A suggestion stored before that is resolved rather than
       // applied, so Accept on a stale page settles it instead of failing.

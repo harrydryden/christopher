@@ -125,6 +125,8 @@ export default async function CvDraftPage({
   // Typical durations, for "usually about 50 s" and the time left; held per process, and only read
   // while there is a build to estimate.
   const medians = reading.live ? await getCvMotionMedians() : {};
+  // What every view of the build feed starts from, whether it is the build as it happens or its log.
+  const live = { id, initial: reading, nowMs: now.getTime(), timeZone: system.timezone, versionLabel: version, maxAttempts, medians };
   const current =
     !!content &&
     cvAssessmentCurrent(
@@ -301,14 +303,8 @@ export default async function CvDraftPage({
               // the progress feed, which re-renders this page only when the build changes state.
               <CvBuildLive
                 key={`build:${reading.version}`}
-                id={id}
+                {...live}
                 mode="build"
-                initial={reading}
-                nowMs={now.getTime()}
-                timeZone={system.timezone}
-                versionLabel={version}
-                maxAttempts={maxAttempts}
-                medians={medians}
                 action={
                   <p className="text-14 text-muted">
                     Nothing is working on this build. It is retried automatically while attempts
@@ -321,14 +317,8 @@ export default async function CvDraftPage({
             {!busy && (
               <CvBuildLive
                 key={`log:${reading.version}`}
-                id={id}
+                {...live}
                 mode="log"
-                initial={reading}
-                nowMs={now.getTime()}
-                timeZone={system.timezone}
-                versionLabel={version}
-                maxAttempts={maxAttempts}
-                medians={medians}
               />
             )}
           </CvWorkspacePanel>
@@ -352,14 +342,8 @@ export default async function CvDraftPage({
               // published is still at work, and links to the revision that pass adopts.
               <CvBuildLive
                 key={`log:${reading.version}`}
-                id={id}
+                {...live}
                 mode="log"
-                initial={reading}
-                nowMs={now.getTime()}
-                timeZone={system.timezone}
-                versionLabel={version}
-                maxAttempts={maxAttempts}
-                medians={medians}
               />
             }
             tracking={

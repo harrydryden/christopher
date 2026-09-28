@@ -7,6 +7,7 @@ import { cache } from "react";
 import { db } from "@/lib/db";
 import { companyIcon } from "@/lib/company-icon";
 import { relativeTime } from "@/lib/format";
+import { readClampedPage } from "@/lib/queries/paging";
 
 export interface RoleCompany {
   id: string;
@@ -685,17 +686,15 @@ export async function countRoles(userId: string, filters: RolesFilters, archived
  */
 export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
   const started = Date.now();
-  const asked = Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1);
   const tab = tabCountedBy(filters, archived);
-  const [total, rows] = await Promise.all([
-    tab ? fetchRoleCounts(userId, filters.company || undefined).then(counts => counts[tab]) : countRoles(userId, filters, archived, now),
-    fetchRoleRows(userId, filters, archived, { offset: (asked - 1) * 50, limit: 50, now }),
-  ]);
+  const { rows: visible, total, page } = await readClampedPage(
+    requestedPage,
+    () => (tab ? fetchRoleCounts(userId, filters.company || undefined).then(counts => counts[tab]) : countRoles(userId, filters, archived, now)),
+    (page) => fetchRoleRows(userId, filters, archived, { offset: (page - 1) * 50, limit: 50, now }),
+  );
   // Fit is an explicit filter, never a second hidden workflow: nothing is ever held back.
   const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
-  const page = Math.min(pageCount, asked);
-  const visible = page === asked ? rows : await fetchRoleRows(userId, filters, archived, { offset: (page - 1) * 50, limit: 50, now });
   console.info(JSON.stringify({ event: 'role_page', durationMs: Date.now() - started, rows: visible.length, total, page }));
   return { visible, hidden: [] as RoleRow[], total, hiddenTotal, page, pageCount };
 }

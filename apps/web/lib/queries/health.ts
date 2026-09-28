@@ -6,9 +6,7 @@ import {
   costPerScoredRole,
   type CvBuildMotionStat,
   listHttpHostDaily,
-  listWorkerEvents,
   topStatements,
-  totalAiSpend,
   type CvBuildCosts,
   type ScoredRoleCost,
   type StatementTotals,
@@ -109,15 +107,6 @@ export async function getQueueCounts(): Promise<QueueCount[]> {
     .from(tasks)
     .groupBy(tasks.type, tasks.status)
     .orderBy(tasks.type, tasks.status);
-}
-
-/**
- * Everything spent since `since`, whoever it was for: every account's calls and the work no
- * account asked for, together. Budgets are per account and each carries its own window, so this is
- * Operations' report of the deployment rather than a limit anything is measured against.
- */
-export async function getTotalAiSpend(since: Date): Promise<number> {
-  return totalAiSpend(db(), since);
 }
 
 /** The operations report: one line per account, feature and model since `since`, dearest first. */
@@ -899,12 +888,6 @@ function eventRef(row: { userId: string | null; detail: Record<string, unknown> 
   return row.userId && UUID.test(row.userId) ? { kind: "user", id: row.userId } : null;
 }
 
-/** The last 30 things the worker did, newest first, with each one's subject named. */
-export async function listRecentWorkerEvents(limit = 30): Promise<WorkerEventRow[]> {
-  const rows = await ifLedger(() => listWorkerEvents(db(), { limit }), [] as Awaited<ReturnType<typeof listWorkerEvents>>);
-  return workerEventRows(rows, await resolveSubjects(rows.map((row) => eventRef(row))));
-}
-
 function workerEventRows(rows: WorkerEvent[], names: SubjectNames): WorkerEventRow[] {
   const refs = rows.map((row) => eventRef(row));
   return rows.map((row, i) => {
@@ -919,16 +902,6 @@ function workerEventRows(rows: WorkerEvent[], names: SubjectNames): WorkerEventR
       detail: eventDetailLine(row.kind, row.detail ?? {}),
     };
   });
-}
-
-/** The most recent crash recovery, with the tasks the dead process was holding. */
-export async function getLastCrashRecovery(): Promise<CrashRecovery | null> {
-  const [row] = await ifLedger(
-    () => listWorkerEvents(db(), { kinds: ["crash_recovery"], limit: 1 }),
-    [] as Awaited<ReturnType<typeof listWorkerEvents>>,
-  );
-  if (!row) return null;
-  return crashRecoveryFrom(row, await resolveSubjects(crashSuspectRefs(row.detail ?? {})));
 }
 
 function crashRecoveryFrom(row: WorkerEvent | null, names: SubjectNames): CrashRecovery | null {
@@ -953,13 +926,7 @@ export interface RunningTaskRow {
   deadlineMs: number;
 }
 
-/** Everything claimed right now: the tasks a crash would take with it. */
-export async function listRunningTasks(limit = 25): Promise<RunningTaskRow[]> {
-  const rows = await runningTasks(limit);
-  return runningTaskRows(rows, await resolveSubjects(rows.map((row) => taskSubjectRef(row.type, row.payload))));
-}
-
-/** What the running-task list shows: never the task's result or error text. */
+/** Everything claimed right now, the tasks a crash would take with it: never their result or error text. */
 function runningTasks(limit: number) {
   return db()
     .select({ id: tasks.id, type: tasks.type, payload: tasks.payload, startedAt: tasks.startedAt, lockedBy: tasks.lockedBy, attempts: tasks.attempts, maxAttempts: tasks.maxAttempts })
@@ -993,14 +960,8 @@ export interface RetryingTaskRow {
 /**
  * Queued tasks that have already been tried and carry an error: the ones the queue handed back
  * after a crash or a deadline. A crash-looping worker fills this list, which is how a run that is
- * being retried to death is told apart from a queue that is merely busy.
+ * being retried to death is told apart from a queue that is merely busy. Never the task's result.
  */
-export async function listRetryingTasks(limit = 25): Promise<RetryingTaskRow[]> {
-  const rows = await retryingTasks(limit);
-  return retryingTaskRows(rows, await resolveSubjects(rows.map((row) => taskSubjectRef(row.type, row.payload))));
-}
-
-/** What the retrying-task list shows: never the task's result. */
 function retryingTasks(limit: number) {
   return db()
     .select({ id: tasks.id, type: tasks.type, payload: tasks.payload, attempts: tasks.attempts, maxAttempts: tasks.maxAttempts, error: tasks.error, runAfter: tasks.runAfter })
@@ -1130,8 +1091,6 @@ export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanI
     };
   });
 }
-
-export { companySubscriptions as _companySubscriptions, workerEvents as _workerEvents };
 
 /* ---------------------------------------------------------------------------------------------
  * The attention list, and the resolution each item carries

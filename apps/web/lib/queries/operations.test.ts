@@ -15,11 +15,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import {
-  getLastCrashRecovery,
   getWorkerStatus,
-  listRecentWorkerEvents,
-  listRetryingTasks,
-  listRunningTasks,
   operationsActivity,
   resolveSubjects,
 } from "./health";
@@ -87,7 +83,7 @@ async function statements<T>(read: () => Promise<T>): Promise<{ value: T; count:
   }
 }
 
-it("answers exactly what the separate readers answer, in four statements", async () => {
+it("reads the worker, the queue and every subject they name in four statements", async () => {
   const now = new Date();
   const { value: activity, count } = await statements(() => operationsActivity(now, Promise.resolve([account.id, null])));
   expect(count).toBe(4);
@@ -95,13 +91,9 @@ it("answers exactly what the separate readers answer, in four statements", async
   expect(activity.status).toEqual(await getWorkerStatus(now));
   expect(activity.status.heartbeat?.concurrency).toBe(3);
   expect(activity.status.restartsLastHour).toBe(1);
-  expect(activity.crash).toEqual(await getLastCrashRecovery());
   expect(activity.crash!.suspects.map((s) => [s.subject, s.likely])).toEqual([["Stripe", true], ["CV: Stripe · Staff Engineer", false]]);
-  expect(activity.running).toEqual(await listRunningTasks(25));
   expect(activity.running.map((t) => t.subject)).toEqual(["Stripe", "Stripe (greenhouse)"]);
-  expect(activity.retrying).toEqual(await listRetryingTasks(25));
   expect(activity.retrying.map((t) => t.subject)).toEqual(["operations@example.com", "Stripe · Staff Engineer"]);
-  expect(activity.events).toEqual(await listRecentWorkerEvents(30));
   expect(activity.events.map((e) => [e.kind, e.subject])).toEqual([["task_abandoned", "Stripe"], ["crash_recovery", null], ["boot", null]]);
   // The spend table's accounts are named in the same statement.
   expect(activity.accountEmail(account.id)).toBe("operations@example.com");

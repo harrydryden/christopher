@@ -15,10 +15,10 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTopStatements, getTotalAiSpend, getWebVitalsP75 } from "./health";
+import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTopStatements, getWebVitalsP75 } from "./health";
 import { getCvMotionMedians, resetCvMotionMedians } from "./cv";
 import { totalAiUsage } from "@/lib/ai-usage";
-import { aiOutcome } from "@ava/db";
+import { aiOutcome, totalAiSpend } from "@ava/db";
 import { vitalBucket, vitalBucketValue } from "@/lib/web-vitals";
 
 /** The string packages/ai writes when it stops paying for a batch whose sibling has failed. */
@@ -70,7 +70,7 @@ it("adds AI calls up by account, feature and model, dearest first, and leaves th
 
   expect(totalAiUsage(rows)).toEqual({ calls: 4, failed: 1, cancelled: 0, stalled: 0, inputTokens: 4_000, outputTokens: 400, cacheReadTokens: 40, cacheWriteTokens: 20, costUsd: 4.25 });
   // Operations reports every account's calls and the unattributed ones together.
-  expect(await getTotalAiSpend(since)).toBe(4.25);
+  expect(await totalAiSpend(database, since)).toBe(4.25);
   expect(await getAiUsage(new Date(Date.now() + 60_000))).toEqual([]);
   expect(totalAiUsage([])).toMatchObject({ calls: 0, costUsd: 0 });
 });
@@ -145,22 +145,22 @@ it("itemises a CV build by stage and prices one scored role", async () => {
 
 import { foldOutboundTraffic, hostNeedsAttention, p95FromBuckets } from "@/lib/outbound-traffic";
 import {
-  getLastCrashRecovery,
   getWorkerHeartbeat,
   getWorkerStatus,
   listLargestScanInputs,
   outboundTraffic,
-  listRecentWorkerEvents,
   normaliseCvBuildCosts,
   operationDate,
   readHeartbeat,
   readMonitorSample,
   getMonitorSample,
   requiredOperationDate,
-  listRetryingTasks,
-  listRunningTasks,
+  operationsActivity,
   taskSubjectRef,
 } from "./health";
+
+/** The worker and queue cards as Operations reads them. */
+const activity = () => operationsActivity(new Date(), Promise.resolve([]));
 
 const MINUTE = 60_000;
 
@@ -339,7 +339,7 @@ it("names the crash suspects a person can act on, likeliest first", async () => 
     },
   });
 
-  const crash = await getLastCrashRecovery();
+  const crash = (await activity()).crash;
   expect(crash!.workerId).toBe("worker-b");
   // The one that had been retried 109 times is put first and marked.
   expect(crash!.suspects.map((s) => [s.subject, s.attempts, s.likely])).toEqual([
@@ -362,13 +362,12 @@ it("shows what is running against its deadline, and what a crash handed back", a
     { type: "scan_company", payload: { companyId: company!.id }, status: "queued", attempts: 0 },
   ]);
 
-  const [running] = await listRunningTasks();
+  const { running: [running], retrying } = await activity();
   expect(running).toMatchObject({ type: "scan_company", subject: "Stripe", attempts: 109 });
   // scan_company's three minutes, from the shared table in @ava/core.
   expect(running!.deadlineMs).toBe(3 * MINUTE);
   expect(Date.now() - running!.startedAt!.getTime()).toBeGreaterThan(running!.deadlineMs);
 
-  const retrying = await listRetryingTasks();
   expect(retrying.map((t) => [t.type, t.subject, t.attempts, t.error])).toEqual([
     ["suggest_filters", "queue@example.com", 2, "worker restarted"],
   ]);
@@ -482,7 +481,7 @@ it("reads the worker's own ledger into a timeline, and survives a database witho
     { workerId: "worker-a", kind: "holds_released", detail: { count: 2, amountUsd: 6, reason: "boot" }, at: new Date(Date.now() - MINUTE) },
   ]);
 
-  const timeline = await listRecentWorkerEvents(30);
+  const timeline = (await activity()).events;
   expect(timeline.map((e) => e.kind)).toEqual(["holds_released", "task_abandoned", "boot"]);
   expect(timeline[0]!.detail).toBe("2 AI budget holds released on boot");
   expect(timeline[1]).toMatchObject({ subject: "Figma", taskType: "scan_company" });
@@ -492,8 +491,8 @@ it("reads the worker's own ledger into a timeline, and survives a database witho
   // The interface can be serving before the worker has run the migration that creates the ledger.
   await database.execute(sql`alter table worker_events rename to worker_events_hidden`);
   try {
-    expect(await listRecentWorkerEvents(30)).toEqual([]);
-    expect(await getLastCrashRecovery()).toBeNull();
+    expect((await activity()).events).toEqual([]);
+    expect((await activity()).crash).toBeNull();
     expect((await getWorkerStatus()).restartsLastDay).toBe(0);
   } finally {
     await database.execute(sql`alter table worker_events_hidden rename to worker_events`);

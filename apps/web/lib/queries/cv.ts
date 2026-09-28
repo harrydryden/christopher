@@ -483,27 +483,6 @@ export async function getOwnCvLibrary(userId: string) {
   return library ?? null;
 }
 
-/** The account's saved versions, newest first. A history is read, not scrolled: twenty is plenty. */
-export async function listLibraryVersions(userId: string, limit = 20) {
-  return db()
-    .select({ version: cvLibraries.version, createdAt: cvLibraries.createdAt })
-    .from(cvLibraries)
-    .where(eq(cvLibraries.userId, userId))
-    .orderBy(desc(cvLibraries.version))
-    .limit(Math.max(1, Math.min(100, limit)));
-}
-
-/** Two of this account's versions by number, for a diff. Never read without the account. */
-export async function getLibraryVersionContents(userId: string, versions: number[]): Promise<Map<number, CvLibrary>> {
-  const wanted = [...new Set(versions.filter(version => Number.isInteger(version)))];
-  if (!wanted.length) return new Map();
-  const rows = await db()
-    .select({ version: cvLibraries.version, content: cvLibraries.content })
-    .from(cvLibraries)
-    .where(and(eq(cvLibraries.userId, userId), inArray(cvLibraries.version, wanted)));
-  return new Map(rows.map(row => [row.version, row.content]));
-}
-
 /** Whether a version number names one of this account's own saved libraries. */
 export async function ownsLibraryVersion(userId: string, version: number): Promise<boolean> {
   if (!Number.isInteger(version) || version < 1) return false;

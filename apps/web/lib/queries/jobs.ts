@@ -1,6 +1,6 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@ava/db";
 import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
-import { getTableColumns, and, eq, inArray, ne, isNull, sql, type SQL } from "drizzle-orm";
+import { getTableColumns, and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
 import { cache } from "react";
@@ -24,13 +24,6 @@ export interface RoleDecision {
   reason: string;
   tags: string[];
   createdAt: Date;
-}
-
-export interface RoleEvent {
-  id: string;
-  type: string;
-  payload: Record<string, unknown>;
-  at: Date;
 }
 
 /** A shared posting seen through one account: the job's fields plus that account's gate, fit and archive state. */
@@ -107,17 +100,6 @@ function baseRolesSelect(userId: string, summary = false, cursor: SQL<RoleCursor
     .leftJoin(latest, eq(latest.jobId, jobs.id));
 }
 
-/**
- * Every in-table (keyword+location gate passed) job: the main roles table before display filters.
- * `summary` leaves the 30k-character description behind, which every caller but role detail wants;
- * `limit` bounds a read that would otherwise grow with the table (the CSV export sets one).
- */
-export async function fetchTableJobs(userId: string, archived = false, summary = false, limit?: number): Promise<RoleRow[]> {
-  const query = baseRolesSelect(userId, summary).where(and(eq(userJobs.userId, userId), archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived")));
-  const rows = await (limit === undefined ? query : query.limit(limit));
-  return rows;
-}
-
 /** Fetch the large description payload only for the current page. */
 export async function fetchRoleDetails(userId: string, ids: string[]): Promise<RoleRow[]> {
   if (!ids.length) return [];
@@ -126,50 +108,10 @@ export async function fetchRoleDetails(userId: string, ids: string[]): Promise<R
 }
 
 /**
- * Most recent job_events per job id, newest first, capped per job: shared observations plus this
- * account's own.
- *
- * A posting followed by many accounts carries every one of their scored, decided and hidden
- * events, so the query never reads the job's whole history to rank it: for each job it takes the
- * newest few shared events and the newest few of this account's, each a bounded probe, and keeps
- * the newest few of the two. Another account's events are never read.
- */
-export async function fetchRecentEventsFor(userId: string, jobIds: string[], perJobLimit = 6): Promise<Map<string, RoleEvent[]>> {
-  const map = new Map<string, RoleEvent[]>();
-  const ids = [...new Set(jobIds)];
-  if (ids.length === 0) return map;
-  // Drizzle renders one placeholder per element, so the array is spelled out rather than passed whole.
-  const idArray = sql`array[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[]`;
-  const result = await db().execute(sql`
-    select e.id, e.job_id, e.type, e.payload, e.at
-    from unnest(${idArray}) as j(id)
-    cross join lateral (
-      (select id, job_id, type, payload, at from job_events
-        where job_id = j.id and user_id is null
-        order by at desc, id limit ${perJobLimit})
-      union all
-      (select id, job_id, type, payload, at from job_events
-        where user_id = ${userId}::uuid and job_id = j.id
-        order by at desc, id limit ${perJobLimit})
-    ) e
-    order by e.job_id, e.at desc, e.id`);
-  for (const row of result.rows as Array<{ id: string; job_id: string; type: string; payload: Record<string, unknown>; at: string | Date }>) {
-    const existing = map.get(row.job_id);
-    const entry: RoleEvent = { id: row.id, type: row.type, payload: row.payload, at: new Date(row.at) };
-    if (existing) {
-      if (existing.length < perJobLimit) existing.push(entry);
-    } else {
-      map.set(row.job_id, [entry]);
-    }
-  }
-  return map;
-}
-
-/**
  * The archive notes the review panel shows for one role ("Archived: No longer matches your
  * criteria"), read when the row expands rather than for every row of every page. Of the role's
- * newest few events — shared observations and this account's own, each a bounded probe as in
- * `fetchRecentEventsFor` — the ones that put it away, newest first. Only the two payload fields a
+ * newest few events — shared observations and this account's own, each a bounded probe, so a
+ * posting followed by many accounts is never read whole and another account's events never — the ones that put it away, newest first. Only the two payload fields a
  * note says are read, never the whole payload.
  */
 export async function fetchArchiveNotes(userId: string, jobId: string, recent = 6): Promise<string[]> {
@@ -188,8 +130,8 @@ export async function fetchArchiveNotes(userId: string, jobId: string, recent = 
 }
 
 // ---------------------------------------------------------------------------
-// Filters, parsed from URL search params. Kept pure and independently testable;
-// status/location filtering happens in JS per docs/SPEC.md guidance (single-user scale).
+// Filters, parsed from URL search params. Kept pure and independently testable; the filtering and
+// ordering they ask for happen in SQL (`rolesQuery`).
 // ---------------------------------------------------------------------------
 
 export const STATUS_VALUES = ["new", "active", "closed"] as const;
@@ -317,92 +259,6 @@ export function parseRolesFilters(sp: RawSearchParams): RolesFilters {
 /** The cut-off a `since` window makes, or null when the filter names no window. */
 export function sinceCutoff(filters: Pick<RolesFilters, "sinceDays">, now: Date): Date | null {
   return filters.sinceDays === null ? null : new Date(now.getTime() - filters.sinceDays * 86400000);
-}
-
-function locationMatches(job: RoleJob, needle: string): boolean {
-  const t = needle.toLowerCase();
-  if (job.location && job.location.toLowerCase().includes(t)) return true;
-  return (job.locations ?? []).some((l) => l.toLowerCase().includes(t));
-}
-
-export function matchesRolesFilters(row: RoleRow, filters: RolesFilters, now: Date): boolean {
-  const status = displayStatus(row.job, now);
-  const effectiveStatuses = filters.closed && !filters.status.includes("closed") ? [...filters.status, "closed" as StatusFilter] : filters.status;
-  if (effectiveStatuses.length > 0 && !effectiveStatuses.includes(status)) return false;
-
-  if (filters.company && row.company.id !== filters.company) return false;
-
-  if (filters.decision === "inbox" && row.decision) return false;
-  if (filters.decision === "undecided" && row.decision) return false;
-  if (filters.decision === "apply" && row.decision?.decision !== "apply") return false;
-  if (filters.decision === "skip" && row.decision?.decision !== "skip") return false;
-
-  if (filters.minFit !== null && (row.job.fitScore === null || row.job.fitScore < filters.minFit)) return false;
-
-  if (filters.location && !locationMatches(row.job, filters.location)) return false;
-
-  if (filters.q && !row.job.title.toLowerCase().includes(filters.q.toLowerCase())) return false;
-
-  const cutoff = sinceCutoff(filters, now);
-  if (cutoff && (!row.decision || row.decision.createdAt < cutoff)) return false;
-
-  return true;
-}
-
-export function applyRolesFilters(rows: RoleRow[], filters: RolesFilters, now: Date = new Date()): RoleRow[] {
-  return rows.filter((r) => matchesRolesFilters(r, filters, now));
-}
-
-function statusRank(status: DisplayStatus): number {
-  return status === "new" ? 0 : status === "active" ? 1 : 2;
-}
-
-function compareFitAsc(a: RoleRow, b: RoleRow): number {
-  const fa = a.job.fitScore;
-  const fb = b.job.fitScore;
-  if (fa === null && fb === null) return 0;
-  if (fa === null) return 1; // nulls always sort last
-  if (fb === null) return -1;
-  return fa - fb;
-}
-
-function compareRows(a: RoleRow, b: RoleRow, sort: SortKey, now: Date): number {
-  switch (sort) {
-    case "status": {
-      const sa = displayStatus(a.job, now);
-      const sb = displayStatus(b.job, now);
-      const rankDiff = statusRank(sa) - statusRank(sb);
-      if (rankDiff !== 0) return rankDiff;
-      const fitDiff = a.job.fitScore === null || b.job.fitScore === null ? compareFitAsc(a, b) : compareFitAsc(b, a); // desc by default within the same status
-      if (fitDiff !== 0) return fitDiff;
-      return b.job.firstSeenAt.getTime() - a.job.firstSeenAt.getTime();
-    }
-    case "fit":
-      return compareFitAsc(a, b);
-    case "company":
-      return a.company.name.localeCompare(b.company.name);
-    case "liveFor":
-      return liveFor(a.job, now).days - liveFor(b.job, now).days;
-    case "firstSeen":
-      return a.job.firstSeenAt.getTime() - b.job.firstSeenAt.getTime();
-    case "title":
-      return a.job.title.localeCompare(b.job.title);
-    case "location":
-      return (a.job.location ?? "").localeCompare(b.job.location ?? "");
-    case "decided":
-      // Undecided rows have no date to sort by, so they keep the fit ordering's rule: last.
-      return (a.decision?.createdAt.getTime() ?? -Infinity) - (b.decision?.createdAt.getTime() ?? -Infinity);
-    default:
-      return 0;
-  }
-}
-
-export function sortRoleRows(rows: RoleRow[], sort: SortKey, dir: SortDir, now: Date = new Date()): RoleRow[] {
-  const sorted = [...rows].sort((a, b) => {
-    if (sort === "fit" && (a.job.fitScore === null || b.job.fitScore === null)) return compareFitAsc(a, b);
-    return compareRows(a, b, sort, now) * (dir === "desc" ? -1 : 1);
-  });
-  return sorted;
 }
 
 /** Serialise filters back to a query string, e.g. for the CSV export link. */

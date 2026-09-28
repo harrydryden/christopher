@@ -162,13 +162,16 @@ export function sample(postings: RawPosting[], n = 3): RawPosting[] {
  */
 export type Verification = VerifyResult & { transient?: boolean };
 
-/** True for a failure that says nothing about the board: retrying later may well succeed. */
+/**
+ * True for a failure that says nothing about the board: retrying later may well succeed. Read by
+ * name as well as by class, because a verifier across a package boundary may throw its own copy.
+ */
 export function isTransientFailure(err: unknown): boolean {
-  if (err instanceof SourceFetchError) {
-    return err.kind === "rate_limited" || err.kind === "timeout" || err.kind === "network" || (err.kind === "http" && (err.status ?? 0) >= 500);
-  }
+  const e = err as { name?: unknown; kind?: string; status?: number } | null | undefined;
   // The fetcher's refusal to wait any longer for a busy host.
-  return err instanceof Error && err.name === "HostBusyError";
+  if (e?.name === "HostBusyError") return true;
+  if (!(err instanceof SourceFetchError) && e?.name !== "SourceFetchError") return false;
+  return e!.kind === "rate_limited" || e!.kind === "timeout" || e!.kind === "network" || (e!.kind === "http" && (e!.status ?? 0) >= 500);
 }
 
 /** One bounded read of a listing: the roles read and, when the feed says, how many it holds in all. */

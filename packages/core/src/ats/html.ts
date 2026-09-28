@@ -7,6 +7,10 @@ import { isAtsHost } from "./common";
 const JOB_PATH_RE =
   /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-details?|joblisting)\/|[?&](?:gh_jid|jobId|job_id|reqId|requisitionId)=/i;
 
+/** A link label saying it leads to the complete listing: "All jobs", "Search roles", "View open positions". */
+export const COMPLETE_LISTING_LABEL =
+  /\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities))\b/i;
+
 // These are listing, subscription or careers-content destinations, never posting-detail slugs.
 // Exact segment matching preserves genuine titles such as `/jobs/benefits-lead`.
 const NON_DETAIL_LAST_SEGMENT_RE =
@@ -53,7 +57,7 @@ export function isExplicitEmptyListing(html: string, url: string): boolean {
     const text = cleanText(node.text() || node.attr("aria-label") || node.attr("title"));
     const target = absoluteUrl(node.attr("href") ?? "", url);
     return Boolean(target
-      && /\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities))\b/i.test(text)
+      && COMPLETE_LISTING_LABEL.test(text)
       && normalizeUrl(target) !== normalizeUrl(url));
   });
   if (declaresCompleteListing) return false;

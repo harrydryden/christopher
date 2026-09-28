@@ -3,10 +3,11 @@
  * See docs/SPEC.md section 3.2. Every step adds candidates with a method; the best one decides the outcome.
  */
 import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, scanWindow, sha1, stripHtml } from "../normalize";
-import { isExplicitEmptyListing } from "../ats/html";
+import { COMPLETE_LISTING_LABEL, isExplicitEmptyListing } from "../ats/html";
+import { isTransientFailure, safeUrl } from "../ats/common";
 import { assertPublicHttpUrl } from "../url-safety";
 import type { FetchInit, RawPosting, SourceSpec } from "../types";
-import { confidenceFor, outcomeFor } from "./confidence";
+import { confidenceFor, methodRank as rank, outcomeFor, type DiscoveryMethod } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
 import { companyNameFromTitle, companyNamesMatch, looksLikeSoft404, nameFromDomain, nameFromSlug } from "./text";
 import type { DiscoveryCandidate, DiscoveryContext, DiscoveryResult, DiscoveryVerification, HarvestedLink } from "./types";
@@ -38,7 +39,7 @@ interface Fetched {
 
 interface RawCandidate {
   spec: SourceSpec;
-  method: string;
+  method: DiscoveryMethod;
   evidence: string[];
   sample?: RawPosting[];
   count?: number;
@@ -207,6 +208,11 @@ class Run {
     return true;
   }
 
+  /** A careers page on the company's site as a candidate, sampled from the postings read on it. */
+  addPage(url: string, method: DiscoveryMethod, evidence: string[], postings?: RawPosting[]): void {
+    this.add({ spec: { type: "html", url }, method, evidence, ...(postings ? { sample: postings.slice(0, 3), count: postings.length } : {}) });
+  }
+
   add(candidate: RawCandidate): void {
     const key = specKey(candidate.spec);
     const existing = this.candidates.get(key);
@@ -266,31 +272,33 @@ class Run {
     try {
       result = await this.ctx.verifySpec(spec);
     } catch (err) {
-      result = { ok: false, error: (err as Error).message, transient: isTransientError(err) };
+      result = { ok: false, error: (err as Error).message, transient: isTransientFailure(err) };
     }
     this.verified.set(key, result);
     return result;
   }
 }
 
-/** A failure that says nothing about the board: the host asked us to come back later. */
-function isTransientError(err: unknown): boolean {
-  const e = err as { name?: string; kind?: string; status?: number };
-  if (e?.name === "HostBusyError") return true;
-  if (e?.name !== "SourceFetchError") return false;
-  return e.kind === "rate_limited" || e.kind === "timeout" || e.kind === "network" || (e.kind === "http" && (e.status ?? 0) >= 500);
-}
-
 function specKey(spec: SourceSpec): string {
   return `${spec.type}|${spec.atsSlug ?? ""}|${spec.atsSite ?? ""}|${spec.atsSlug ? "" : normalizeUrl(spec.url)}`;
 }
 
-const METHOD_RANK: Record<string, number> = {
-  ats_network: 9, pasted_ats: 9, ats_link: 8, ats_script: 8, ats_bundle: 7,
-  listing_jsonld: 6, listing_html: 6, listing_empty: 6, pasted_listing: 6, ai_listing: 5, ats_sitemap: 3, ats_probe: 3, ats_guess: 3, landing: 1,
-};
-function rank(method: string): number {
-  return METHOD_RANK[method] ?? 0;
+/** How a verification failure is named in the log and in a retry reason. */
+function specLabel(spec: SourceSpec): string {
+  return `${spec.type}/${spec.atsSlug ?? spec.url}`;
+}
+
+function retryLater(spec: SourceSpec, error: string | undefined): string {
+  return `${specLabel(spec)} could not be verified for now (${error ?? "temporary failure"})`;
+}
+
+/** Links worth following, best first: `keep` picks by the link itself, `min` by its careers score. */
+function rankLinks(links: HarvestedLink[], pageUrl: string, ctx: DiscoveryContext, keep: (link: HarvestedLink) => boolean, min = -Infinity): Array<{ link: HarvestedLink; score: number }> {
+  return links
+    .filter(keep)
+    .map((link) => ({ link, score: scoreLink(link, pageUrl, { resolveSpec: ctx.resolveSpec }) }))
+    .filter((x) => x.score >= min)
+    .sort((a, b) => b.score - a.score);
 }
 
 function hasJsonLdJobPosting(html: string): boolean {
@@ -340,7 +348,7 @@ function isCareersContentNavigation(posting: RawPosting): boolean {
 function isExplicitCompleteListingLink(link: HarvestedLink, pageUrl: string, ctx: DiscoveryContext): boolean {
   if (link.kind !== "a" || !sameDomain(link.href, pageUrl) || normalizeUrl(link.href) === normalizeUrl(pageUrl) || ctx.resolveSpec(link.href)) return false;
   const label = link.text.trim() || link.context || "";
-  if (/\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities))\b/i.test(label)) return true;
+  if (COMPLETE_LISTING_LABEL.test(label)) return true;
   try {
     const target = new URL(link.href);
     return !target.search && /^\/(?:all-jobs?|jobs?|positions?|open-roles?|openings?|vacancies)\/?$/i.test(target.pathname);
@@ -422,7 +430,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
   let postings = safeExtract(ctx, html, finalUrl);
   if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
     run.say(`${finalUrl} is an explicitly empty listing`);
-    run.add({ spec: { type: "html", url: finalUrl }, method: "listing_empty", evidence: [`explicit no-openings state on ${finalUrl}`], sample: [], count: 0 });
+    run.addPage(finalUrl, "listing_empty", [`explicit no-openings state on ${finalUrl}`], []);
     return;
   }
   if (postings.length < 3 && ctx.render && shouldRenderCandidate(html, finalUrl, via)) {
@@ -434,7 +442,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       postings = safeExtract(ctx, html, finalUrl);
       if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
         run.say(`${finalUrl} is an explicitly empty listing after rendering`);
-        run.add({ spec: { type: "html", url: finalUrl }, method: "listing_empty", evidence: [`explicit no-openings state on rendered ${finalUrl}`], sample: [], count: 0 });
+        run.addPage(finalUrl, "listing_empty", [`explicit no-openings state on rendered ${finalUrl}`], []);
         return;
       }
     }
@@ -447,21 +455,14 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
     // Marketing and careers homepages commonly embed a few featured vacancies beside an explicit
     // "All jobs" or "Search roles" link. The embedded cards prove this is a listing, but returning
     // immediately would never inspect the complete listing and would auto-accept a short source.
-    const complete = links
-      .filter(link => isExplicitCompleteListingLink(link, finalUrl, ctx))
-      .map(link => ({ link, score: scoreLink(link, finalUrl, { resolveSpec: ctx.resolveSpec }) }))
-      .sort((a, b) => b.score - a.score)[0];
+    const [complete] = rankLinks(links, finalUrl, ctx, (link) => isExplicitCompleteListingLink(link, finalUrl, ctx));
     if (complete) {
       run.say(`${finalUrl} has featured roles; ${depth > 0 ? "checking" : "cannot check"} complete listing ${complete.link.href}`);
       if (depth > 0) await inspectPage(run, ctx, complete.link.href, depth - 1, `complete listing from ${finalUrl}`);
       // The page's own wording says these cards are a subset. It remains a confirmation fallback
       // even when following the declared full listing fails or produces an ATS candidate that is
       // later rejected during verification; a verified full-page candidate naturally outranks it.
-      run.add({
-        spec: { type: "html", url: finalUrl }, method: "landing",
-        evidence: [...evidence, `page declares a distinct complete listing at ${complete.link.href}`],
-        sample: postings.slice(0, 3), count: postings.length,
-      });
+      run.addPage(finalUrl, "landing", [...evidence, `page declares a distinct complete listing at ${complete.link.href}`], postings);
       return;
     }
     const atsBacked = new Map<string, { spec: SourceSpec; count: number }>();
@@ -474,14 +475,10 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
     }
     const dominantAts = [...atsBacked.values()].sort((a, b) => b.count - a.count)[0];
     if (dominantAts && dominantAts.count >= 3 && dominantAts.count / postings.length >= 0.8) {
-      run.add({
-        spec: { type: "html", url: finalUrl }, method: "landing",
-        evidence: [...evidence, `${dominantAts.count} of ${postings.length} posting links point to the same ${dominantAts.spec.type} board`],
-        sample: postings.slice(0, 3), count: postings.length,
-      });
+      run.addPage(finalUrl, "landing", [...evidence, `${dominantAts.count} of ${postings.length} posting links point to the same ${dominantAts.spec.type} board`], postings);
       return;
     }
-    run.add({ spec: { type: "html", url: finalUrl }, method, evidence, sample: postings.slice(0, 3), count: postings.length });
+    run.addPage(finalUrl, method, evidence, postings);
     return;
   }
 
@@ -489,11 +486,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
   let looksLikeLanding = false;
 
   if (depth > 0) {
-    const onward = links
-      .map((link) => ({ link, score: scoreLink(link, finalUrl, { resolveSpec: ctx.resolveSpec }) }))
-      .filter((x) => x.score >= 0.5 && normalizeUrl(x.link.href) !== normalizeUrl(finalUrl))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 4);
+    const onward = rankLinks(links, finalUrl, ctx, (link) => normalizeUrl(link.href) !== normalizeUrl(finalUrl), 0.5).slice(0, 4);
     if (onward.length > 0) {
       looksLikeLanding = true;
       run.say(`${finalUrl} looks like a landing page; following ${onward.length} link(s)`);
@@ -512,7 +505,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       const verdict = await ctx.ai.classifyPage({ url: finalUrl, text: stripHtml(html).slice(0, 6000), links: links.slice(0, 120) }, ctx.aiRef);
       run.say(`model classified ${finalUrl} as ${verdict.kind} (${verdict.confidence})`);
       if (verdict.kind === "listing" && verdict.confidence >= 0.7) {
-        run.add({ spec: { type: "html", url: finalUrl }, method: "ai_listing", evidence: [`model classified as a listing page`], sample: postings.slice(0, 3), count: postings.length });
+        run.addPage(finalUrl, "ai_listing", [`model classified as a listing page`], postings);
         return;
       }
       if (verdict.kind === "landing" && verdict.nextHopUrl && depth > 0) {
@@ -528,7 +521,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
   }
 
   if (looksLikeLanding && run.candidates.size === candidatesBeforeHops) {
-    run.add({ spec: { type: "html", url: finalUrl }, method: "landing", evidence: [`careers landing page, no listing within one hop`] });
+    run.addPage(finalUrl, "landing", [`careers landing page, no listing within one hop`]);
   }
 }
 
@@ -739,11 +732,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     links = harvestLinks(home.html, home.url);
     collectAtsFromPage(run, ctx, home.html, home.url, links);
 
-    const scored = links
-      .filter((l) => l.kind === "a")
-      .map((link) => ({ link, score: scoreLink(link, home!.url, { resolveSpec: ctx.resolveSpec }) }))
-      .filter((x) => x.score >= 0.4)
-      .sort((a, b) => b.score - a.score);
+    const scored = rankLinks(links, home.url, ctx, (l) => l.kind === "a", 0.4);
     run.say(`${scored.length} careers-like link(s) on the homepage`);
 
     for (const { link } of scored.filter((x) => sameDomain(x.link.href, home!.url)).slice(0, MAX_CANDIDATE_PAGES)) {
@@ -780,11 +769,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
       harvested++;
       const hubLinks = harvestLinks(hub.html, hub.url);
       collectAtsFromPage(run, ctx, hub.html, hub.url, hubLinks, `hub page ${path}`);
-      const hubScored = hubLinks
-        .filter((l) => l.kind === "a" && sameDomain(l.href, hub.url))
-        .map((link) => ({ link, score: scoreLink(link, hub.url, { resolveSpec: ctx.resolveSpec }) }))
-        .filter((x) => x.score >= 0.4)
-        .sort((a, b) => b.score - a.score);
+      const hubScored = rankLinks(hubLinks, hub.url, ctx, (l) => l.kind === "a" && sameDomain(l.href, hub.url), 0.4);
       if (hubScored.length) run.say(`${hubScored.length} careers-like link(s) on ${path}`);
       for (const { link } of hubScored.slice(0, 2)) {
         if (!run.budgetLeft()) break;
@@ -810,8 +795,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     let misses = 0;
     // A homepage given by IP literal has no subdomains: `careers.203.0.113.5` is not an address at
     // all, and building it must not end the run.
-    const parseable = (url: string) => { try { new URL(url); return true; } catch { return false; } };
-    for (const url of [...priorityProbes, ...remainingPathProbes].filter(parseable)) {
+    for (const url of [...priorityProbes, ...remainingPathProbes].filter((probe) => safeUrl(probe) !== null)) {
       if (!run.budgetLeft() || (await run.hasResolvableCandidate())) break;
       if (misses >= MAX_CONSECUTIVE_MISSES) {
         run.say(`${misses} probes in a row found nothing; stopping path probes`);
@@ -882,14 +866,14 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     }
     const verification = candidate.method === "ats_guess" && candidate.count !== undefined ? { ok: true, count: candidate.count, sample: candidate.sample, companyName: candidate.companyName } : await run.verify(candidate.spec);
     if (!verification.ok) {
-      run.say(`dropped ${candidate.spec.type}/${candidate.spec.atsSlug ?? candidate.spec.url}: ${verification.error ?? "verification failed"}`);
+      run.say(`dropped ${specLabel(candidate.spec)}: ${verification.error ?? "verification failed"}`);
       if ((verification as DiscoveryVerification).transient) failedForNow.push({ candidate, error: verification.error });
       continue;
     }
     const companyName = verification.companyName ?? candidate.companyName;
     const enriched = { ...candidate, companyName, count: verification.count ?? candidate.count };
     const identityUnconfirmed = !companyName && candidate.method !== "ats_guess" && !boardMatchesCompany(candidate.spec, run.homepageCompanyName, domain);
-    if (identityUnconfirmed) run.say(`${candidate.spec.type}/${candidate.spec.atsSlug ?? candidate.spec.url} names no company and its board does not match ${domain}; held for confirmation`);
+    if (identityUnconfirmed) run.say(`${specLabel(candidate.spec)} names no company and its board does not match ${domain}; held for confirmation`);
     finalCandidates.push({
       spec: candidate.spec,
       confidence: confidenceFor(enriched, { homepageCompanyName: run.homepageCompanyName, methodCount: methodCount(candidate), identityUnconfirmed }),
@@ -920,7 +904,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   const bestConfidence = result.best?.confidence ?? 0;
   const retryable = failedForNow.find(({ candidate }) => result.outcome !== "resolved" && confidenceFor(candidate, { methodCount: methodCount(candidate) }) > bestConfidence);
   if (retryable) {
-    result.retry = `${retryable.candidate.spec.type}/${retryable.candidate.spec.atsSlug ?? retryable.candidate.spec.url} could not be verified for now (${retryable.error ?? "temporary failure"})`;
+    result.retry = retryLater(retryable.candidate.spec, retryable.error);
     run.say(`retry later: ${result.retry}`);
   }
   if (result.candidates.length === 0) run.say("no careers source found");
@@ -963,7 +947,7 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
     // A pasted board is the answer or nothing: treating the vendor's URL as a homepage would crawl
     // the vendor's own site and could offer the vendor's own board for this company.
     run.say(`${normalized} looks like a ${spec.type} board but verification failed: ${verification.error}`);
-    const retry = verification.transient ? `${spec.type}/${spec.atsSlug ?? spec.url} could not be verified for now (${verification.error ?? "temporary failure"})` : undefined;
+    const retry = verification.transient ? retryLater(spec, verification.error) : undefined;
     return done({ outcome: "not_found", candidates: [], retry });
   }
 

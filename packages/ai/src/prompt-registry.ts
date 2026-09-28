@@ -140,6 +140,8 @@ const WRITER_LAYOUT: CacheLayout = { system: null, stable: ["1h", "1h"] };
  */
 const AUDIT_LAYOUT: CacheLayout = { system: null, stable: ["1h", "5m"] };
 const WEB_SEARCH = (maxUses: number) => [{ type: "web_search_20260209", name: "web_search", max_uses: maxUses }];
+/** A10's search allowance; its prompt names the same number. */
+export const A10_MAX_SEARCHES = 8;
 
 type Draft = Omit<PromptEntry, "version" | "effort" | "route" | "priority" | "timeoutMs" | "maxTokens" | "cacheLayout" | "expectedOutputTokens"> & {
   route: PromptRoute;
@@ -207,8 +209,10 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
     route: { model: "callSite", effort: "high" }, maxTokens: 4000, expectedOutputTokens: 500 }),
   A9: define({ id: "A9", callSite: "A9", system: P.A9_PROFILE_COMPANY, schema: S.CompanyProfileSchema,
     route: { model: "callSite", effort: "low" }, maxTokens: 2000, expectedOutputTokens: 300 }),
+  // Eight searches, not fifteen: one search usually turns up several candidates, and each search's
+  // results are re-sent as input on every later step of the turn (about 45 % of a run's cost).
   A10: define({ id: "A10", callSite: "A10", system: P.A10_SUGGEST_COMPANIES, schema: S.CompanySuggestionsSchema,
-    route: { model: "callSite", effort: "high" }, maxTokens: 8000, timeoutMs: 60_000, tools: WEB_SEARCH(15), expectedOutputTokens: 2_000 }),
+    route: { model: "callSite", effort: "high" }, maxTokens: 8000, timeoutMs: 60_000, tools: WEB_SEARCH(A10_MAX_SEARCHES), expectedOutputTokens: 2_000 }),
   "A10.sources": define({ id: "A10.sources", callSite: "A10", system: P.A10_EXTRACT_SOURCE_COMPANIES, schema: S.SourceCompaniesSchema,
     route: { model: "callSite", effort: "high" }, maxTokens: 8000, timeoutMs: 60_000, tools: WEB_SEARCH(5), expectedOutputTokens: 2_000 }),
   // A document is read once, so nothing of it is cached.

@@ -530,7 +530,7 @@ describe("call-site post-validation", () => {
     });
     const result = await engine.suggestCompanies({ portfolio: [{ name: "Acme", domain: "acme.example" }], excludeDomains: ["acme.example"], rejected: [], limit: 10 });
     expect(result!.map((c) => c.name)).toEqual(["Good Co"]);
-    expect(calls[0]!.params.tools).toEqual([{ type: "web_search_20260209", name: "web_search", max_uses: 15 }]);
+    expect(calls[0]!.params.tools).toEqual([{ type: "web_search_20260209", name: "web_search", max_uses: 8 }]);
   });
 });
 
@@ -1523,13 +1523,28 @@ describe("paused server-tool turns", () => {
     expect((await suggest(client, usage))!.map(c => c.name)).toEqual(["Good Co"]);
     expect(sent).toHaveLength(2);
     const resumed = sent[1]!.messages as Array<{ role: string; content: unknown }>;
-    // The user turn, then the paused assistant turn as it came back; nothing added after it.
+    // The user turn, then the paused assistant turn as it came back; nothing added after it but a
+    // cache marker on its last block, so the continuation reads the searches from the cache.
     expect(resumed.map(message => message.role)).toEqual(["user", "assistant"]);
-    expect(resumed[1]!.content).toEqual(paused(6).content);
+    expect(resumed[1]!.content).toEqual((paused(6).content as object[]).map(block => ({ ...block, cache_control: { type: "ephemeral" } })));
     expect(usage).toHaveLength(1);
     expect(usage[0]).toMatchObject({ ok: true, inputTokens: 4000, outputTokens: 500 });
     const tokens = estimateCostUsd("claude-opus-5", { inputTokens: 4000, outputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 0 });
     expect(usage[0]!.costUsd).toBeCloseTo(tokens + 10 * SERVER_TOOL_USD.web_search_requests!, 6);
+  });
+
+  it("marks only the newest paused turn for the cache, and never a thinking block", async () => {
+    const thinkingLast: ParseResponse = { ...paused(3), content: [...(paused(3).content as object[]), { type: "thinking", thinking: "…", signature: "sig" }] as never };
+    const { client, sent } = scripted([paused(4), thinkingLast, { stop_reason: "end_turn", parsed_output: { candidates: [candidate] },
+      usage: { input_tokens: 3000, output_tokens: 400 } }]);
+    expect(await suggest(client, [])).not.toBeNull();
+    const last = sent[2]!.messages as Array<{ role: string; content: Array<{ type: string; cache_control?: unknown }> }>;
+    expect(last.map(message => message.role)).toEqual(["user", "assistant", "assistant"]);
+    // The first paused turn lost its marker when the second was sent back.
+    expect(last[1]!.content.some(block => "cache_control" in block)).toBe(false);
+    expect(last[2]!.content.map(block => [block.type, block.cache_control ?? null])).toEqual([
+      ["server_tool_use", { type: "ephemeral" }], ["thinking", null],
+    ]);
   });
 
   it("gives up on a turn still paused after its continuations, naming it and charging all of it", async () => {

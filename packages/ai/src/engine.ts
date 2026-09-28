@@ -449,6 +449,35 @@ export const MAX_PAUSE_CONTINUATIONS = 2;
 /** The label of a server-tool turn still paused after every continuation it was allowed. */
 export const PAUSED_ERROR = `Server tool turn still paused after ${MAX_PAUSE_CONTINUATIONS} continuations.`;
 
+type ContentBlock = { type?: string; cache_control?: unknown } & Record<string, unknown>;
+
+/**
+ * A paused turn as it is sent back: its blocks unchanged, except that the last one a cache marker
+ * may sit on carries one, so the continuation reads the searches already run from the cache (a
+ * tenth of the input price) instead of paying for the whole transcript again. Only the newest
+ * paused turn is marked: the markers an earlier continuation put on turns already in `messages`
+ * are taken off, so a call never holds more cache breakpoints than the request allows.
+ */
+export function pausedTurnForResume(content: unknown[], messages: unknown): unknown[] {
+  for (const message of (Array.isArray(messages) ? messages : []) as Array<{ role?: string; content?: unknown }>) {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    message.content = (message.content as ContentBlock[]).map(block => {
+      if (!block || typeof block !== "object" || !("cache_control" in block)) return block;
+      const { cache_control: _dropped, ...rest } = block;
+      return rest;
+    });
+  }
+  const blocks = (content as ContentBlock[]).map(block => ({ ...block }));
+  // Thinking blocks cannot carry a marker; the last block that can is the end of the prefix.
+  for (let at = blocks.length - 1; at >= 0; at--) {
+    const type = blocks[at]!.type;
+    if (type === "thinking" || type === "redacted_thinking") continue;
+    blocks[at] = { ...blocks[at]!, cache_control: { type: "ephemeral" } };
+    break;
+  }
+  return blocks;
+}
+
 type Usage = NonNullable<ParseResponse["usage"]>;
 
 /** Two requests' usage as one: every token count added, and every server-tool count by its name. */
@@ -1151,7 +1180,7 @@ export class AiEngine {
         // it stands, lets it carry on from there. No extra user turn: the assistant's is resumed.
         for (let resumed = 0; response.stop_reason === "pause_turn" && resumed < MAX_PAUSE_CONTINUATIONS && !signal?.aborted; resumed++) {
           prior = addUsage(prior, response.usage ?? {});
-          request.messages = [...(request.messages as unknown[]), { role: "assistant", content: response.content ?? [] }];
+          request.messages = [...(request.messages as unknown[]), { role: "assistant", content: pausedTurnForResume(response.content ?? [], request.messages) }];
           response = await this.complete(request, sending);
         }
         const { validated, error, failure, refused } = this.judge<T>(entry, response);

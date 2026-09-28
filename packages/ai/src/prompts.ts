@@ -170,6 +170,9 @@ Rules:
 - Similarity means sector, business model, customer type, stage and size, not merely "also a tech company".
 - Prefer companies that plausibly hire the kinds of roles described in the preference profile.
 - If you cannot find enough good candidates, return fewer. Do not pad the list.
+- You have at most eight searches. Make each one broad enough to surface several candidates (a
+  sector list, a peer set, a funding round) rather than searching one company at a time, and take
+  up to fifteen candidates from what those searches find.
 ${UNTRUSTED_RULE}`;
 
 /** A10, from a source: a newsletter someone forwarded, or a page they pointed the product at. */

@@ -991,6 +991,18 @@ export class AiEngine {
   }
 
   /**
+   * The route and model an entry runs at: a route naming a model is the administrator's choice for
+   * the stage, otherwise the account's (handed in by the caller) or the call site's. The claim memo
+   * resolves through here as well, so its keys cannot drift from the route a call actually takes.
+   */
+  private async routeFor(entry: PromptEntry, callModel?: string) {
+    const route = resolveRoute(entry, await this.stageRoutes());
+    const model = route.model !== "cvModel" && route.model !== "callSite" ? route.model
+      : callModel ?? await this.options.getModel(entry.callSite);
+    return { route, model };
+  }
+
+  /**
    * The request one call of `entry` sends, as the provider reads it: the model its route names,
    * the entry's layout of the prompt, the output format without its parser, and the effort. The
    * live path adds the refusal fallback; a batched request goes without it, as the Batches API
@@ -998,11 +1010,7 @@ export class AiEngine {
    */
   private async buildRequest(entry: PromptEntry, call: Pick<CallInput, "user" | "model" | "maxTokens">, recorded: Omit<Ref, "signal" | "priority">) {
     const callSite = entry.callSite;
-    const route = resolveRoute(entry, await this.stageRoutes());
-    // A route naming a model is the administrator's choice for this stage; otherwise the model is
-    // the account's (handed in by the caller) or the call site's, as it always was.
-    const model = route.model !== "cvModel" && route.model !== "callSite" ? route.model
-      : call.model ?? await this.options.getModel(callSite);
+    const { route, model } = await this.routeFor(entry, call.model);
     const { system, content } = layoutFor(entry, typeof call.user === "string" ? { tail: call.user } : call.user);
     const texts = [...system.map(block => block.text), ...(typeof content === "string" ? [content] : content.map(block => block.text))];
     const maxTokens = call.maxTokens ?? entry.maxTokens;
@@ -1344,8 +1352,7 @@ export class AiEngine {
    */
   async claimMemoRoute(pass: CvAssessPass): Promise<CvClaimMemoRoute> {
     const entry = pass === "revision" ? PROMPTS["cv.review_candidate"] : PROMPTS["cv.review"];
-    const route = resolveRoute(entry, await this.stageRoutes());
-    const model = route.model !== "cvModel" && route.model !== "callSite" ? route.model : await this.options.getModel(entry.callSite);
+    const { route, model } = await this.routeFor(entry);
     return { promptVersion: entry.version, model, effort: route.effort };
   }
 
@@ -1544,6 +1551,14 @@ export class AiEngine {
     return { params: request, meta, model, estimateUsd: Number((estimate * BATCH_PRICE_MULTIPLIER).toFixed(6)) };
   }
 
+  /** The Message Batches resource, and the request options every call to it is made with. */
+  private batchApi(verb: "send" | "read", signal?: AbortSignal) {
+    const batches = this.client?.messages.batches;
+    if (!batches) throw new Error(`This model client cannot ${verb} Message Batches.`);
+    const stop = anySignal(signal, this.options.signal);
+    return { batches, signal: stop, options: { timeout: BATCH_REQUEST_TIMEOUT_MS, ...(stop ? { signal: stop } : {}) } };
+  }
+
   /**
    * Send one batch. The submission is one request, so it takes one stream at the governor for as
    * long as it is being sent, at background priority; a throttle it meets pauses every engine in
@@ -1551,16 +1566,14 @@ export class AiEngine {
    * request and never to the provider, so a recording can file each result under its prompt.
    */
   async submitBatch(requests: ReadonlyArray<{ customId: string; params: Record<string, unknown>; meta: AiCallMeta }>, opts: { signal?: AbortSignal } = {}): Promise<AiBatchLike> {
-    const batches = this.client?.messages.batches;
-    if (!batches) throw new Error("This model client cannot send Message Batches.");
+    const { batches, signal, options } = this.batchApi("send", opts.signal);
     if (!requests.length) throw new Error("A batch needs at least one request.");
-    const signal = anySignal(opts.signal, this.options.signal);
     const model = String(requests[0]!.params.model);
     const release = await this.governor.acquire(model, "background", signal);
     try {
       const batch = await batches.create(
         { requests: requests.map(item => ({ custom_id: item.customId, params: item.params })) },
-        { timeout: BATCH_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) },
+        options,
         { requests: Object.fromEntries(requests.map(item => [item.customId, item.meta])) },
       );
       this.governor.noteSuccess();
@@ -1575,18 +1588,14 @@ export class AiEngine {
 
   /** A batch's status. A cheap read, outside the governor. */
   async retrieveBatch(batchId: string, opts: { signal?: AbortSignal } = {}): Promise<AiBatchLike> {
-    const batches = this.client?.messages.batches;
-    if (!batches) throw new Error("This model client cannot read Message Batches.");
-    const signal = anySignal(opts.signal, this.options.signal);
-    return batches.retrieve(batchId, undefined, { timeout: BATCH_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) });
+    const { batches, options } = this.batchApi("read", opts.signal);
+    return batches.retrieve(batchId, undefined, options);
   }
 
   /** An ended batch's results, streamed one at a time and in any order: key them by `custom_id`. */
   async *batchResults(batchId: string, opts: { signal?: AbortSignal } = {}): AsyncGenerator<AiBatchResultLike> {
-    const batches = this.client?.messages.batches;
-    if (!batches) throw new Error("This model client cannot read Message Batches.");
-    const signal = anySignal(opts.signal, this.options.signal);
-    for await (const result of await batches.results(batchId, undefined, { timeout: BATCH_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) }))
+    const { batches, options } = this.batchApi("read", opts.signal);
+    for await (const result of await batches.results(batchId, undefined, options))
       yield result;
   }
 

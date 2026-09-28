@@ -79,7 +79,7 @@ function scriptedClient(options: ScriptOptions = {}) {
         : stable.evidence.find(item => item.id === "source:profile");
       const review: CvReviewPlan = {
         matches: batch.requirements.map(requirement => {
-          const demonstrated = requirement.id === "lead" || improved;
+          const demonstrated = requirement.id !== "change" || improved;
           const claim = printed.cv.find(item => requirement.id === "change" ? item.text.includes("Delivered transformation") : item.id === "profile")!;
           return { requirementId: requirement.id, status: demonstrated ? "demonstrated" : "missing", libraryStatus: "demonstrated",
             cvEvidence: demonstrated ? [{ id: claim.id, quote: claim.text }] : [],
@@ -118,9 +118,9 @@ function scriptedClient(options: ScriptOptions = {}) {
   return { client, calls, authorInputs };
 }
 
-async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }) {
+async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }, jobDescription = "Lead a team. Deliver transformation.") {
   const [draft] = await db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme",
-    jobDescription: "Lead a team. Deliver transformation.", libraryVersion: 1, librarySnapshot: library,
+    jobDescription, libraryVersion: 1, librarySnapshot: library,
     model: "claude-sonnet-5", buildCheckpoint: checkpoint }).returning();
   const payload = { draftId: draft!.id, userId };
   await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
@@ -193,6 +193,27 @@ it("publishes the baseline first, then adopts one verified improvement as a new 
   const publishedAt = steps.find(step => step.motion === "publish")!.finishedAt!;
   expect(baseline.progressAt!.getTime()).toBeLessThanOrEqual(publishedAt.getTime());
   expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
+});
+
+it("skips the optional improvement when the gap is a small share of the rubric, and records its weight", async () => {
+  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  // Seven more demonstrated desirables: the missing one is 1 of 10 weighted points, under the gate.
+  const extras = Array.from({ length: 7 }, (_, index) => ({ id: `extra${index}`, label: `Extra skill ${index}`, quote: `Extra skill ${index}`,
+    importance: "desirable" as const, category: "experience" as const }));
+  const wide: CvRubric = { caveats: [], requirements: [...rubric.requirements, ...extras] };
+  const plan: CvTailoringPlan = { ...noGapPlan, requirements: [...noGapPlan.requirements, ...extras.map(item =>
+    ({ requirementId: item.id, status: "demonstrated" as const, evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }))] };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: plan, quizCompleted: true, rubric: wide },
+    `Lead a team. Deliver transformation. ${extras.map(item => item.quote).join(". ")}.`);
+  await queue().drain();
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  expect(scripted.calls).not.toContain("improvement");
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  const improve = steps.find(step => step.motion === "improve_content")!;
+  expect(improve).toMatchObject({ status: "skipped", detail: { opportunities: 1, skipped: true, weightedPoints: 1, availableWeight: 10, essential: 0, writeScale: 1 } });
+  expect(improve.detail.reason).toContain("1 of 10 weighted priority points");
+  expect(improve.detail.reason).toContain("too small");
+  expect(steps.filter(step => step.motion === "admit_budget").map(step => step.detail.stage)).toEqual(["write", "audit"]);
 });
 
 it("re-checks the revision's changed claims only, beside every requirement, and reuses the baseline's other verdicts", async () => {

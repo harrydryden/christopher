@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CvContent } from "./cv";
 import type { CvAssessment } from "./cv-assessment";
-import { compareCvQuality, diagnoseCvQuality } from "./cv-quality";
+import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile, type CvQualityDiagnostics } from "./cv-quality";
 
 const content: CvContent = {
   name: "Example", contact: "", linkedinUrl: "", websiteUrl: "",
@@ -36,7 +36,7 @@ describe("CV quality diagnostics", () => {
     expect(result.coverageScore).toBe(63);
     expect(result.factualSupport).toMatchObject({ score: 50, supported: 1, total: 2, uncertain: 1 });
     expect(result.priorityCoverage).toMatchObject({ score: 67, demonstratedEssential: 1, totalEssential: 1 });
-    expect(result.evidencedOpportunityGap).toMatchObject({ count: 1, requirementIds: ["change"] });
+    expect(result.evidencedOpportunityGap).toMatchObject({ count: 1, essential: 0, requirementIds: ["change"] });
     expect(result.unverifiedLogistics).toEqual({ count: 1, requirementIds: ["loc"] });
     expect(result.editorial.repetition).toMatchObject({ kind: "heuristic_editorial_signal", label: "Review" });
     expect(result.editorial.disclaimer).toContain("do not predict hiring outcomes");
@@ -93,5 +93,43 @@ describe("CV quality diagnostics", () => {
     expect(result.accept).toBe(false);
     expect(result.reasons.join(" ")).toContain("different fixed rubric");
     expect(result.reasons.join(" ")).toContain("unsupported or uncertain");
+  });
+});
+
+describe("the optional improvement's gate", () => {
+  const diagnostics = (gap: { count?: number; weightedPoints: number; essential?: number }, availableWeight = 20): CvQualityDiagnostics => {
+    const base = diagnoseCvQuality(assessment(), content);
+    return {
+      ...base,
+      priorityCoverage: { ...base.priorityCoverage, availableWeight },
+      evidencedOpportunityGap: { count: gap.count ?? 1, weightedPoints: gap.weightedPoints, essential: gap.essential ?? 0, requirementIds: ["x"] },
+    };
+  };
+
+  it("runs for a gap of two weighted points, fifteen per cent of the weight, or any essential", () => {
+    expect(improvementWorthwhile(diagnostics({ weightedPoints: 2 }), 1).worthwhile).toBe(true);
+    expect(improvementWorthwhile(diagnostics({ weightedPoints: 1.5 }, 10), 1).worthwhile).toBe(true);
+    expect(improvementWorthwhile(diagnostics({ weightedPoints: 1, essential: 1 }), 1).worthwhile).toBe(true);
+  });
+
+  it("skips a small gap and names its weight and the headroom", () => {
+    const decision = improvementWorthwhile(diagnostics({ weightedPoints: 1 }, 7), 1);
+    expect(decision.worthwhile).toBe(false);
+    expect(decision.reason).toContain("1 of 7 weighted priority points");
+    expect(decision.reason).toContain("100% of its writing budget");
+    expect(decision.reason).toContain("too small");
+  });
+
+  it("skips a non-essential gap when the baseline had to be written smaller to fit", () => {
+    const decision = improvementWorthwhile(diagnostics({ weightedPoints: 4 }), 0.85);
+    expect(decision.worthwhile).toBe(false);
+    expect(decision.reason).toContain("85% of its writing budget");
+    expect(decision.reason).toContain("no headroom");
+    expect(improvementWorthwhile(diagnostics({ weightedPoints: 2, essential: 1 }), 0.85).worthwhile).toBe(true);
+  });
+
+  it("says nothing was omitted when the gap is empty", () => {
+    expect(improvementWorthwhile(diagnostics({ count: 0, weightedPoints: 0 }), 1))
+      .toEqual({ worthwhile: false, reason: "No important evidence available in the Library was omitted." });
   });
 });

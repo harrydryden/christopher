@@ -7,11 +7,11 @@ import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { cvJobReadiness, cvLibraryReadiness } from "@/lib/cv-ready";
 import type { OpenedCvLibrary } from "@/lib/cv-library-open";
 import { addJobRow, archivedBlocks, editableEmployment, jobEntry, jobRows, pendingRowKey, removeJob, removeJobRow, restoreBlock, restoreJob, setJobRows, tagRow, withArchivedEmployment } from "@/lib/cv-library-rows";
-import { NO_EVIDENCE, evidenceByEntry, missingFacetLine, rowScoreTitle, rowsMovedOn, untaggedFacets, type EvidencePrompt, type LibraryEvidence } from "@/lib/cv-library-evidence";
+import { NO_EVIDENCE, evidenceByEntry, missingFacetLine, rowGuidance, rowsMovedOn, untaggedFacets, type EvidencePrompt, type LibraryEvidence } from "@/lib/cv-library-evidence";
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { EvidenceSummary } from "./EvidenceScore";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
-import { FitBar } from "./table";
+import { RowScoreButton } from "./RowScoreButton";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 
@@ -363,14 +363,14 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
           {entry && untagged && untagged !== score?.missingLine && <p className="text-12 text-muted">{untagged}</p>}
           {rows.length > 20 && <p role="alert" className="text-14 text-warn">Combine rows to 20 or fewer before saving.</p>}
           {rows.length > 0 && <div className="relative overflow-x-auto border-2 border-line"><table className="w-full min-w-[820px] text-left text-14" aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibilities and outcomes`}>
-            <thead className="bg-sunken text-9 text-muted"><tr><th scope="col" className="ds-pixel tracking-th w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="ds-pixel tracking-th w-28 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="ds-pixel tracking-th border-b-2 border-line px-3 py-2">Narrative</th><th scope="col" className="ds-pixel tracking-th w-60 border-b-2 border-line px-3 py-2">Type</th><th scope="col" className="ds-pixel tracking-th w-32 border-b-2 border-line px-3 py-2">Score</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2"><span className="sr-only">Actions</span></th></tr></thead>
+            <thead className="bg-sunken text-9 text-muted"><tr><th scope="col" className="ds-pixel tracking-th w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="ds-pixel tracking-th border-b-2 border-line px-3 py-2">Narrative</th><th scope="col" className="ds-pixel tracking-th w-44 border-b-2 border-line px-3 py-2">Type</th><th scope="col" className="ds-pixel tracking-th w-32 border-b-2 border-line px-3 py-2">Score</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{rows.map((row, index) => {
               const key = rowKey(row);
               // What this row is for: what it is tagged with once there is text to key a tag to,
               // and until then what the prompt that asked for the row promised it would be.
               const facets = entry && key ? rowFacets(entry, key) : pendingFacets[pendingRowKey(currentJob.id, index)] ?? [];
-              // This row's own score, from the review of the saved library — only while the row on
-              // the screen is the row that was saved and scored.
+              // This row as the review of the saved library read it. Its marks stand only while the
+              // row on the screen is the row that was saved; otherwise the wording is read live.
               const rowScore = key ? score?.rows.find(item => item.row === key) : undefined;
               return <tr key={index} className="border-t border-line-faint align-top">
               <th scope="row" className="px-3 py-2 pt-4 font-normal text-muted">{index + 1}</th>
@@ -398,8 +398,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
                   }}
                 />
               </td>
-              <td className="px-3 py-2 pt-4">
-                <FitBar score={rowScore?.score ?? null} title={rowScoreTitle(rowScore, score?.source ?? "rules", score?.evaluating)} />
+              <td className="px-3 py-2">
+                <RowScoreButton index={index + 1} guidance={rowGuidance({ text: key, facets, view: rowScore, source: score?.source ?? "rules", evaluating: !!score?.evaluating })} />
               </td>
               <td className="px-3 py-2">
                 {/* The row goes and its tags go with it. The last row leaves an empty one to write

@@ -4,7 +4,7 @@
   "routes": {
     "/cv/[id]": 138000,
     "/companies/[id]": 130000,
-    "/library": 129000,
+    "/library": 137000,
     "/": 128000,
     "/applications": 123000,
     "/suggestions": 120000,

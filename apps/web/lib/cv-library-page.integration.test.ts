@@ -14,6 +14,8 @@ import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { libraryEntryInputHash, rulesLibraryReview } from "@ava/core/library-review";
+import { EVIDENCE_MARKS_BY_FACET, detectEvidenceMarks, scoreRowAgainst } from "@ava/core/evidence-rubric";
+import { sha1 } from "@ava/core";
 import { groupCvLibrary, type CvLibrary, type EvidenceFacet } from "@ava/core/cv";
 import { cvTailoringEvidence } from "@ava/core/cv-tailoring";
 import { signInTestUser } from "@/test/auth";
@@ -122,9 +124,11 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
     rating: baseline.rating,
   });
   expect(queued.evaluating).toBe(true);
-  // Two rows covering two of the six types: the baseline reads Weak, and the line names it.
-  expect(baseline.rating).toBe("weak");
-  expect(queued.line).toBe("Evidence: Weak · 1 job is Weak");
+  // Two rows covering two of the six types, 50 × 3/8; the responsibility row earns ownership and
+  // scale (50) and the metric row the figure, movement and driver (75), 50 × 62.5/100: 50, Good.
+  expect(baseline.score).toBe(50);
+  expect(baseline.rating).toBe("good");
+  expect(queued.line).toBe("Evidence: Good");
   // Nothing is stored yet, so the poll token is empty and the route says so.
   const before = await signatureOf(stored.version);
   expect(before.status).toBe(200);
@@ -142,10 +146,11 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
       ...baseline,
       // The model reads the second row as both the outcome and the figure that moved, which is
       // what a row carrying two types is for. Responsibility 1 + outcome 2 + metric 2 of 8 is
-      // 31.25, both rows specific is 25, one of two quantified is 12.5: 69, which is Good.
+      // 31.25. The rows are scored against the person's tags: the responsibility row earns two
+      // marks of four, the metric row all four, a mean of 75 and 37.5 more: 69, which is Good.
       rows: [
-        { ...baseline.rows[0]!, facets: ["responsibility"], specific: true },
-        { ...baseline.rows[1]!, facets: ["outcome", "metric"], specific: true, quantified: true, outcomeLinked: true },
+        { ...baseline.rows[0]!, facets: ["responsibility"], marks: ["responsibility.scope", "responsibility.ownership"] },
+        { ...baseline.rows[1]!, facets: ["outcome", "metric"], marks: ["outcome.change", ...EVIDENCE_MARKS_BY_FACET.metric] },
       ],
       prompts: ["What did the move to one site achieve?", "What changed as a result?"],
       score: 69,
@@ -160,9 +165,14 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
   expect(scored.entries[0]).toMatchObject({ source: "model", provisional: false, evaluating: false, score: 69, rating: "good" });
   expect(scored.evaluating).toBe(false);
   expect(scored.line).toBe("Evidence: Good");
-  // Each row scored on its own from the review: a type and specific is half; the second row has
-  // all four signals.
-  expect(scored.entries[0]!.rows.map(row => row.score)).toEqual([50, 100]);
+  // Each row carries what its score is read from, not the number: the person's tags, the marks the
+  // review found and what the review read the row as, so the editor scores it against the tags
+  // on screen.
+  expect(scored.entries[0]!.rows).toEqual([
+    { row: "Led a team of nine through a move to one site", tagged: ["responsibility"], marks: ["responsibility.scope", "responsibility.ownership"], reviewFacets: ["responsibility"], verified: true },
+    { row: "Cut handovers by 40%", tagged: ["metric"], marks: ["outcome.change", ...EVIDENCE_MARKS_BY_FACET.metric], reviewFacets: ["outcome", "metric"], verified: true },
+  ]);
+  expect(scored.entries[0]!.rows.map(row => scoreRowAgainst(row.marks, row.tagged).score)).toEqual([50, 100]);
   // Each prompt is one question; the one that is a type's own question carries that type for the
   // "Add a row for this" control, and the one the model wrote itself does not.
   expect(scored.entries[0]!.prompts).toEqual([
@@ -171,10 +181,11 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
   ]);
 });
 
-it("reads a review an earlier release stored, in today's shape", async () => {
-  // Every account already reviewed carries reviews whose rows name one `facet`, as a string, and
-  // whose row tags have not changed — so they still match by hash and are what the page shows.
-  // Read as they were written, their rows would carry no types at all.
+it("reads a review in an earlier release's shape, in today's shape", async () => {
+  // Reviews written before a row could carry several types name one `facet`, as a string, and
+  // reviews written before the type-specific rubric carry no marks. The rubric version in the hash
+  // keeps those from matching today's wording, but a row in either shape is still read through the
+  // one normaliser: read as written, its rows would carry no types and no marks at all.
   await save(libraryFixture(["Led a team of nine through a move to one site", "Cut handovers by 40%"], {
     "Led a team of nine through a move to one site": ["responsibility"],
     "Cut handovers by 40%": ["metric"],
@@ -213,6 +224,33 @@ it("reads a review an earlier release stored, in today's shape", async () => {
   expect(view.score).toBeGreaterThan(0);
   expect(view.prompts).toEqual([{ question: "What changed as a result?", facet: "outcome" }]);
   expect(view.reviewedRows).toEqual(rows);
+  // With no marks stored, the wording rules stand in; the tags are the person's own, as saved.
+  expect(view.rows.map(row => row.marks)).toEqual(rows.map(detectEvidenceMarks));
+  expect(view.rows.map(row => row.tagged)).toEqual([["responsibility"], ["metric"]]);
+  expect(view.rows.map(row => row.reviewFacets)).toEqual([["responsibility"], []]);
+});
+
+it("offers Re-score once for a review stored under the previous rubric, and keeps that review", async () => {
+  await save(libraryFixture(["Led a team of nine through a move to one site"], {
+    "Led a team of nine through a move to one site": ["responsibility"],
+  }), 0);
+  const stored = (await getOwnCvLibrary(user.id))!;
+  const entry = stored.content.entries[0]!;
+  // The hash the first rubric's reviews were stored under: the same list, with no version first.
+  const previous = sha1(JSON.stringify([["Led a team of nine through a move to one site"], ["responsibility"], ACME.company, ACME.jobTitle]));
+  expect(previous).not.toBe(libraryEntryInputHash(entry, ACME));
+  await upsertLibraryReviews(database, user.id, stored.version, [{
+    entryId: entry.id, inputHash: previous, source: "model", model: "test-model",
+    review: rulesLibraryReview(entry, stored.content),
+  }]);
+
+  // Not matched: the baseline stands in, provisionally, which is what puts Re-score on the page.
+  const evidence = await getLibraryEvidence(user.id, stored);
+  expect(evidence.entries[0]).toMatchObject({ source: "rules", provisional: true, evaluating: false });
+  // And not deleted: it is simply no longer read.
+  const kept = await database.select({ inputHash: schema.cvLibraryReviews.inputHash }).from(schema.cvLibraryReviews)
+    .where(eq(schema.cvLibraryReviews.userId, user.id));
+  expect(kept).toEqual([{ inputHash: previous }]);
 });
 
 it("archives a removed job's evidence instead of deleting it, and shows it nowhere again", async () => {

@@ -207,7 +207,7 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
     route: { model: "cvModel", effort: "low" }, maxTokens: 16_000, timeoutMs: 120_000, priority: "interactive", expectedOutputTokens: 1_500 }),
   A12: define({ id: "A12", callSite: "A12", stage: "review", system: P.A12_REVIEW_LIBRARY, schema: LibraryReviewPlanSchema,
     route: { model: "cvModel", effort: "low" }, maxTokens: 16_000, timeoutMs: 120_000, priority: "interactive",
-    cacheLayout: { system: "5m", stable: ["5m"] }, expectedOutputTokens: 3_200 }),
+    cacheLayout: { system: "5m", stable: ["5m"] }, expectedOutputTokens: 4_800 }),
 
   "cv.rubric": define({ id: "cv.rubric", callSite: "CV", stage: "rubric", system: CV_RUBRIC_PROMPT, schema: CvRubricSchema,
     // Thinking counts towards the ceiling; recorded rubrics reach 5.2k of the old 8k.

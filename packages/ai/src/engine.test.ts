@@ -1137,14 +1137,15 @@ describe("library evidence review (A12)", () => {
     [...userBlocks(params)[1]!.text.matchAll(/^Entry \[([^\]]+)\]/gmu)].map(match => match[1]!);
   /** A clean answer: every row quoted verbatim, with the types it serves. */
   const answerFor = (params: Record<string, unknown>, over: (entryId: string) => Partial<{
-    rows: Array<{ row: string; facets: string[]; specific: boolean; quantified: boolean; outcomeLinked: boolean; quote: string | null }>;
+    rows: Array<{ row: string; facets: string[]; marks: string[]; quote: string | null }>;
     prompts: string[];
   }> = () => ({})) => ({
     entries: entryIdsIn(params).map(entryId => ({
       entryId,
       rows: ROWS.map((row, index) => ({
         row, facets: index === 0 ? ["responsibility"] : ["outcome"],
-        specific: true, quantified: true, outcomeLinked: index === 1, quote: row,
+        marks: index === 0 ? ["responsibility.scope", "responsibility.ownership", "responsibility.scale"] : ["outcome.change", "outcome.magnitude"],
+        quote: row,
       })),
       prompts: ["What problem were you brought in to solve?"],
       ...over(entryId),
@@ -1170,10 +1171,13 @@ describe("library evidence review (A12)", () => {
     expect(entryIdsIn(calls[0]!.params)).toHaveLength(8);
     expect(entryIdsIn(calls[1]!.params)).toHaveLength(2);
     expect(reviews.map(review => review.entryId)).toEqual(library.entries.map(entry => entry.id));
-    // The score is code's: all six facets are not covered by two rows, so this is not a 100.
+    // The score is code's. Three facets' worth of coverage; the person has typed neither row, so
+    // neither has a score of its own however many marks it earns, and the row term reads 0.
     expect(reviews[0]!.rows.every(row => row.verified)).toBe(true);
-    expect(reviews[0]!.score).toBe(Math.round(50 * 3 / 8 + 50));
-    expect(reviews[0]!.rating).toBe("good");
+    expect(reviews[0]!.rows[0]!.marks).toEqual(["responsibility.scope", "responsibility.ownership", "responsibility.scale"]);
+    expect(reviews[0]!.rows.every(row => row.tagged.length === 0)).toBe(true);
+    expect(reviews[0]!.score).toBe(Math.round(50 * 3 / 8));
+    expect(reviews[0]!.rating).toBe("none");
     expect(reviews[0]!.missing).toEqual(["metric", "problem", "milestone", "style"]);
 
     // One library, written to the cache once: the first block is byte for byte the same in both
@@ -1206,11 +1210,11 @@ describe("library evidence review (A12)", () => {
           entryId: "entry0",
           rows: [
             // Tidied on the way back: the quote is no longer anything the person wrote.
-            { row: ROWS[0]!, facets: ["responsibility"], specific: true, quantified: true, outcomeLinked: false,
+            { row: ROWS[0]!, facets: ["responsibility"], marks: ["responsibility.scope", "responsibility.scale"],
               quote: "Ran the UK warehouse team of thirty through a relocation" },
-            { row: ROWS[1]!, facets: ["outcome"], specific: true, quantified: true, outcomeLinked: true, quote: ROWS[1]! },
+            { row: ROWS[1]!, facets: ["outcome"], marks: ["outcome.change"], quote: ROWS[1]! },
             // Never written by anybody: it is not one of the entry's rows.
-            { row: "Grew revenue by 40%", facets: ["metric"], specific: true, quantified: true, outcomeLinked: true, quote: "Grew revenue by 40%" },
+            { row: "Grew revenue by 40%", facets: ["metric"], marks: ["metric.figure"], quote: "Grew revenue by 40%" },
           ],
           prompts: ["What changed as a result?"],
         }],
@@ -1220,10 +1224,10 @@ describe("library evidence review (A12)", () => {
     const [review] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);
 
     expect(review!.rows.map(row => row.row)).toEqual(ROWS);
-    expect(review!.rows[0]).toMatchObject({ verified: false, facets: [], specific: false, quantified: false, quote: null });
-    expect(review!.rows[1]).toMatchObject({ verified: true, facets: ["outcome"], quote: ROWS[1] });
-    // An unverified row counts in the denominator and in neither numerator, so it lowers the score.
-    expect(review!.score).toBe(Math.round(50 * 2 / 8 + 25 * 0.5 + 25 * 0.5));
+    expect(review!.rows[0]).toMatchObject({ verified: false, facets: [], marks: [], quote: null });
+    expect(review!.rows[1]).toMatchObject({ verified: true, facets: ["outcome"], marks: ["outcome.change"], quote: ROWS[1] });
+    // An unverified row covers nothing and earns no marks: only the verified outcome row's coverage.
+    expect(review!.score).toBe(Math.round(50 * 2 / 8));
   });
 
   it("carries the person's own tags as a list and counts a row of two types under both", async () => {
@@ -1233,8 +1237,8 @@ describe("library evidence review (A12)", () => {
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
       calls.push({ params });
       return { parsed_output: { entries: [{ entryId: "entry0", rows: [
-        { row: ROWS[0]!, facets: ["responsibility", "milestone"], specific: true, quantified: true, outcomeLinked: false, quote: ROWS[0]! },
-        { row: ROWS[1]!, facets: ["outcome", "metric"], specific: true, quantified: true, outcomeLinked: true, quote: ROWS[1]! },
+        { row: ROWS[0]!, facets: ["responsibility", "milestone"], marks: ["responsibility.scope", "responsibility.ownership", "responsibility.scale"], quote: ROWS[0]! },
+        { row: ROWS[1]!, facets: ["outcome", "metric"], marks: ["problem.approach", "problem.resolution", "metric.movement", "outcome.change"], quote: ROWS[1]! },
       ], prompts: [] }] }, usage: { input_tokens: 10, output_tokens: 10 } };
     } } } });
 
@@ -1244,15 +1248,18 @@ describe("library evidence review (A12)", () => {
     expect(userBlocks(calls[0]!.params)[0]!.text).toContain("(they tagged this problem, metric)");
     expect(review!.rows.map(row => row.facets)).toEqual([["responsibility", "milestone"], ["outcome", "metric"]]);
     expect(review!.coverage).toEqual({ responsibility: 1, problem: 0, outcome: 1, metric: 1, milestone: 1, style: 0 });
-    // Four facets between two rows, each specific and quantified: 50 × 6/8 + 25 + 25 = 87.5 → 88.
-    expect(review!).toMatchObject({ score: 88, rating: "strong", missing: ["problem", "style"] });
+    // The rows are scored against the person's tags, not the model's reading: the second row is
+    // problem 50 and metric 25, 38; the untagged first row reads nothing.
+    expect(review!.rows.map(row => row.tagged)).toEqual([[], ["problem", "metric"]]);
+    // Four facets between two rows, 50 × 6/8 = 37.5, and 50 × 38/200 = 9.5: 47.
+    expect(review!).toMatchObject({ score: 47, rating: "weak", missing: ["problem", "style"] });
   });
 
   it("leaves unread an entry whose answer asks about a demographic attribute, and keeps the others", async () => {
     const library = libraryOf(2);
     const { client } = fakeClient({ entries: [
       { entryId: "entry0", rows: [], prompts: ["What is your date of birth?"] },
-      { entryId: "entry1", rows: ROWS.map(row => ({ row, facets: ["outcome"], specific: true, quantified: true, outcomeLinked: true, quote: row })), prompts: [] },
+      { entryId: "entry1", rows: ROWS.map(row => ({ row, facets: ["outcome"], marks: ["outcome.change"], quote: row })), prompts: [] },
     ] });
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client });
     const [refused, kept] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);

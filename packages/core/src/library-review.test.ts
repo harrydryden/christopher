@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   LIBRARY_FACET_WEIGHTS,
+  LIBRARY_RUBRIC_VERSION,
   LibraryReviewPlanSchema,
   evidenceRatingFor,
   facetForPrompt,
@@ -19,22 +20,27 @@ import {
   type LibraryRowReview,
 } from "./library-review";
 import { sha1 } from "./normalize";
+import { EVIDENCE_MARKS, EVIDENCE_MARKS_BY_FACET, detectEvidenceMarks, type EvidenceMark } from "./evidence-rubric";
 import { EVIDENCE_FACETS, EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_PROMPTS, consolidateExperience, setRowFacets, type CvLibrary, type Employment, type EvidenceFacet } from "./cv";
 
+/** A reviewed row, tagged by the person with what the review says it serves unless told otherwise. */
 const row = (over: Partial<LibraryRowReview> = {}): LibraryRowReview => ({
   row: over.row ?? "A row",
-  facets: ["responsibility"],
-  specific: false,
-  quantified: false,
-  outcomeLinked: false,
+  facets: over.facets ?? ["responsibility"],
+  tagged: over.tagged ?? over.facets ?? ["responsibility"],
+  marks: [],
   quote: null,
   verified: true,
   ...over,
 });
 
-/** One row per facet, so coverage is complete and the quality term is the only variable. */
-const oneEach = (over: Partial<LibraryRowReview> = {}) =>
-  EVIDENCE_FACETS.map((facet, index) => row({ row: `Row ${index}`, facets: [facet], ...over }));
+/** The first `count` marks of each type's checklist. */
+const firstMarks = (count: number, facets: readonly EvidenceFacet[] = EVIDENCE_FACETS): EvidenceMark[] =>
+  facets.flatMap(facet => EVIDENCE_MARKS_BY_FACET[facet].slice(0, count));
+
+/** One row per facet, so coverage is complete and the rows' own scores are the only variable. */
+const oneEach = (marks: number = 0) =>
+  EVIDENCE_FACETS.map((facet, index) => row({ row: `Row ${index}`, facets: [facet], marks: firstMarks(marks, [facet]) }));
 
 const job: Employment = { id: "acme", company: "Acme", jobTitle: "Operations Director", startDate: "2023-01", endDate: "", current: true };
 
@@ -53,19 +59,19 @@ describe("scoreLibraryRows", () => {
     expect(empty.missing).toEqual(["outcome", "metric", "responsibility", "problem", "milestone", "style"]);
   });
 
-  it("reads 100 only when all six facets are covered by specific, quantified rows", () => {
-    const perfect = scoreLibraryRows(oneEach({ specific: true, quantified: true }));
+  it("reads 100 only when all six facets are covered by rows that earn every mark of their type", () => {
+    const perfect = scoreLibraryRows(oneEach(4));
     expect(perfect).toMatchObject({ score: 100, rating: "strong", missing: [] });
     expect(perfect.coverage).toEqual({ responsibility: 1, problem: 1, outcome: 1, metric: 1, milestone: 1, style: 1 });
-    // 50 × coverage + 25 × specific share + 25 × quantified share, pinned term by term.
-    expect(scoreLibraryRows(oneEach()).score).toBe(50);
-    expect(scoreLibraryRows(oneEach({ specific: true })).score).toBe(75);
-    expect(scoreLibraryRows(oneEach({ quantified: true })).score).toBe(75);
+    // 50 × coverage + 50 × the mean row score, pinned term by term.
+    expect(scoreLibraryRows(oneEach(0)).score).toBe(50);
+    expect(scoreLibraryRows(oneEach(2)).score).toBe(75);
+    expect(scoreLibraryRows(oneEach(3)).score).toBe(88);
   });
 
   it("weights coverage by facet: an outcome or a metric is worth two of anything else", () => {
     const weightOf = (facet: EvidenceFacet) => scoreLibraryRows([row({ facets: [facet] })]).score;
-    // 50 × (weight ÷ 8), with no specific or quantified rows to add to it.
+    // 50 × (weight ÷ 8), with no marks for the rows to add to it.
     expect(weightOf("responsibility")).toBe(Math.round(50 / 8));
     expect(weightOf("outcome")).toBe(Math.round(100 / 8));
     expect(weightOf("metric")).toBe(weightOf("outcome"));
@@ -86,46 +92,80 @@ describe("scoreLibraryRows", () => {
     // Outcome and metric alone: 50 × 4/8 = 25, exactly the Weak floor.
     expect(scoreLibraryRows([row({ facets: ["outcome"] }), row({ row: "b", facets: ["metric"] })]))
       .toMatchObject({ score: 25, rating: "weak" });
-    // All six facets, five of six rows specific: 50 + 25 × 5/6 = 70.83 → 71, one band below Strong.
-    const almost = oneEach().map((item, index) => ({ ...item, specific: index > 0 }));
-    expect(scoreLibraryRows(almost)).toMatchObject({ score: 71, rating: "good" });
+    // All six facets, five rows at 50 and one at 25: 50 + 50 × 275/600 = 72.9 → 73, one band below Strong.
+    const almost = oneEach(2).map((item, index) => (index ? item : { ...item, marks: item.marks.slice(0, 1) }));
+    expect(scoreLibraryRows(almost)).toMatchObject({ score: 73, rating: "good" });
   });
 
-  it("gives an unverified row no types and no quality, and still counts it against the share", () => {
-    const rows = [row({ facets: ["outcome"], specific: true, quantified: true }), row({ row: "b", facets: ["metric"], specific: true, quantified: true, verified: false })];
+  it("gives an unverified row no types and no marks, and still counts it in the mean", () => {
+    const rows = [
+      row({ facets: ["outcome"], marks: [...EVIDENCE_MARKS_BY_FACET.outcome] }),
+      row({ row: "b", facets: ["metric"], marks: [...EVIDENCE_MARKS_BY_FACET.metric], verified: false }),
+    ];
     const scored = scoreLibraryRows(rows);
     expect(scored.coverage).toMatchObject({ outcome: 1, metric: 0 });
     expect(scored.missing).toContain("metric");
-    // 50 × 2/8 + 25 × 1/2 + 25 × 1/2 = 37.5 → 38, against 75 had both rows been verified.
+    // 50 × 2/8 + 50 × (100 + 0)/200 = 37.5 → 38, against 75 had both rows been verified.
     expect(scored.score).toBe(38);
     expect(scoreLibraryRows(rows.map(item => ({ ...item, verified: true }))).score).toBe(75);
-    // A verified row whose types the model could not name covers nothing but still counts.
-    expect(scoreLibraryRows([row({ facets: [], specific: true, quantified: true })]).score).toBe(50);
     // One row can carry two types and covers both: outcome and metric are 50 × 4/8 on their own.
     expect(scoreLibraryRows([row({ facets: ["metric", "outcome"] })])).toMatchObject({ score: 25, rating: "weak" });
     expect(scoreLibraryRows([row({ facets: ["metric", "outcome"] })]).coverage).toMatchObject({ outcome: 1, metric: 1 });
     // A type repeated on one row is one row's worth of it, not two.
     expect(scoreLibraryRows([row({ facets: ["outcome", "outcome"] })]).coverage.outcome).toBe(1);
   });
+
+  it("counts a row the person has not typed as 0, even when the model classified it", () => {
+    // Covers outcome in the model's reading (50 × 2/8 = 12.5 → 13) but has no score of its own.
+    const untyped = row({ facets: ["outcome"], tagged: [], marks: [...EVIDENCE_MARKS] });
+    expect(scoreLibraryRows([untyped]).score).toBe(13);
+    // Typed, the same marks read in full: 12.5 + 50.
+    expect(scoreLibraryRows([{ ...untyped, tagged: ["outcome"] }]).score).toBe(63);
+    // A verified row the model could not name the types of covers nothing, and scores from its tags.
+    expect(scoreLibraryRows([row({ facets: [], tagged: ["metric"], marks: firstMarks(2, ["metric"]) })]).score).toBe(25);
+  });
 });
 
 describe("libraryRowScore", () => {
-  it("gives a quarter for each of the four things a row is judged on", () => {
-    expect(libraryRowScore(row({ facets: [] })).score).toBe(0);
-    expect(libraryRowScore(row()).score).toBe(25);
-    expect(libraryRowScore(row({ specific: true, quantified: true })).score).toBe(75);
-    const full = libraryRowScore(row({ facets: ["outcome", "metric"], specific: true, quantified: true, outcomeLinked: true }));
-    expect(full).toEqual({ score: 100, signals: { typed: true, specific: true, quantified: true, outcomeLinked: true } });
+  const close: EvidenceMark[] = ["outcome.change", "outcome.cause", "outcome.magnitude", ...EVIDENCE_MARKS_BY_FACET.metric];
+
+  it("has no score for a row the person has not typed, whatever the model read it as", () => {
+    const untyped = libraryRowScore(row({ facets: ["outcome", "metric"], tagged: [], marks: close }));
+    expect(untyped).toEqual({ score: null, facets: [], byFacet: [], marks: close });
   });
 
-  it("scores a row the review could not tie to the wording at 0, as the entry's score counts it", () => {
-    expect(libraryRowScore(row({ verified: false, specific: true, quantified: true, outcomeLinked: true })).score).toBe(0);
+  it("reads the row's marks against its tags, a quarter a mark", () => {
+    const scored = libraryRowScore(row({ facets: ["metric"], marks: ["metric.figure", "metric.measure", "style.effect"] }));
+    expect(scored.score).toBe(50);
+    expect(scored.facets).toEqual(["metric"]);
+    expect(scored.byFacet).toEqual([{ facet: "metric", score: 50, earned: ["metric.figure", "metric.measure"], missing: ["metric.movement", "metric.driver"] }]);
+  });
+
+  it("shows the mean across the row's types", () => {
+    expect(libraryRowScore(row({ facets: ["metric", "outcome"], marks: close })).score).toBe(88);
+    expect(libraryRowScore(row({ facets: ["metric", "outcome"], marks: close })).facets).toEqual(["outcome", "metric"]);
+  });
+
+  it("re-scores against the tags it is given, without another review", () => {
+    const reviewed = row({ facets: ["outcome"], tagged: ["outcome"], marks: close });
+    expect(libraryRowScore(reviewed).score).toBe(75);
+    expect(libraryRowScore(reviewed, ["metric"]).score).toBe(100);
+    expect(libraryRowScore(reviewed, ["style"]).score).toBe(0);
+    expect(libraryRowScore(reviewed, []).score).toBeNull();
+  });
+
+  it("gives a row the review could not tie to the wording no marks, so 0 once typed", () => {
+    const unverified = libraryRowScore(row({ facets: ["metric"], marks: close, verified: false }));
+    expect(unverified).toMatchObject({ score: 0, marks: [] });
   });
 
   it("scores a baseline row from the person's own tags and wording", () => {
-    const stored = library("Cut handover time from 3 days to 4 hours across the UK warehouse network", { "Cut handover time from 3 days to 4 hours across the UK warehouse network": "metric" });
+    const text = "Cut month-end close from 10 to 6 days by rebuilding consolidation in Anaplan";
+    const stored = library(text, { [text]: "metric" });
     const review = rulesLibraryReview(stored.entries[0]!, stored);
-    expect(libraryRowScore(review.rows[0]!)).toEqual({ score: 100, signals: { typed: true, specific: true, quantified: true, outcomeLinked: true } });
+    expect(libraryRowScore(review.rows[0]!).score).toBe(100);
+    expect(libraryRowScore(review.rows[0]!, ["outcome"]).score).toBe(75);
+    expect(libraryRowScore(review.rows[0]!, ["outcome", "metric"]).score).toBe(88);
   });
 });
 
@@ -142,43 +182,33 @@ describe("rulesLibraryReview", () => {
   const review = rulesLibraryReview(subject.entries[0]!, subject);
   const byRow = new Map(review.rows.map(item => [item.row, item]));
 
-  it("marks a row specific only when it is long enough and names something checkable", () => {
-    expect(byRow.get(generic)!.specific).toBe(false);   // three words
-    expect(byRow.get(scoped)!.specific).toBe(true);     // ten words, names a unit ("team")
-    expect(byRow.get(named)!.specific).toBe(true);      // eleven words, names "Acme"
-    expect(byRow.get(counted)!.specific).toBe(false);   // five words: a number is not enough
-    expect(byRow.get(waffle)!.specific).toBe(false);    // long, but names nothing
-  });
-
-  it("marks a row quantified on a number, a percentage or an amount of money", () => {
-    expect(byRow.get(counted)!.quantified).toBe(true);
-    expect(byRow.get(scoped)!.quantified).toBe(false);
-    for (const text of ["Saved £40k a year", "Grew it to 3 sites", "Took 25% out of the cost"]) {
-      const one = library(text);
-      expect(rulesLibraryReview(one.entries[0]!, one).rows[0]!.quantified).toBe(true);
+  it("takes each row's marks from its own wording, and its types from the person's own tags", () => {
+    for (const text of [generic, scoped, named, counted, waffle]) {
+      expect(byRow.get(text)!.marks).toEqual(detectEvidenceMarks(text));
     }
-  });
-
-  it("takes the types from the person's own tags, quotes the row itself, and verifies it", () => {
+    expect(byRow.get(generic)!.marks).toContain("responsibility.ownership");
     expect(byRow.get(named)!.facets).toEqual(["milestone"]);
+    expect(byRow.get(named)!.tagged).toEqual(["milestone"]);
     expect(byRow.get(generic)!.facets).toEqual([]);
-    expect(byRow.get(counted)).toMatchObject({ facets: ["metric"], outcomeLinked: true, quote: counted, verified: true });
-    expect(byRow.get(named)!.outcomeLinked).toBe(false);
+    expect(byRow.get(generic)!.tagged).toEqual([]);
+    expect(byRow.get(counted)).toMatchObject({ facets: ["metric"], tagged: ["metric"], quote: counted, verified: true });
     expect(review.coverage).toMatchObject({ responsibility: 1, milestone: 1, metric: 1, outcome: 0, problem: 0, style: 0 });
   });
 
-  it("counts a row tagged with two types for both of them", () => {
+  it("counts a row tagged with two types for both of them, and scores it against each", () => {
     const both = "Cut the weekend backlog by 40% after taking over a broken handover";
     const subject = library([both, "Did some things"].join("\n"), { [both]: ["metric", "problem"] });
     const review = rulesLibraryReview(subject.entries[0]!, subject);
-    expect(review.rows[0]).toMatchObject({ facets: ["problem", "metric"], outcomeLinked: true, verified: true });
+    expect(review.rows[0]).toMatchObject({ facets: ["problem", "metric"], tagged: ["problem", "metric"], verified: true });
     expect(review.coverage).toMatchObject({ problem: 1, metric: 1 });
     expect(review.missing).toEqual(["outcome", "responsibility", "milestone", "style"]);
-    // Problem and metric together, one of the two rows specific and quantified:
-    // 50 × 3/8 + 25 × 1/2 + 25 × 1/2 = 43.75 → 44.
-    expect(review.score).toBe(44);
-    // An untagged row carries no types, which is what the prompts are there to fix.
-    expect(review.rows[1]).toMatchObject({ facets: [], outcomeLinked: false, verified: true });
+    // Problem 75 (it never says what made it hard) and metric 100: the row reads 88. The untyped
+    // row reads nothing. 50 × 3/8 + 50 × 88/200 = 40.75 → 41.
+    expect(libraryRowScore(review.rows[0]!).score).toBe(88);
+    expect(review.score).toBe(41);
+    // An untagged row carries no types and no score, which is what the prompts are there to fix.
+    expect(review.rows[1]).toMatchObject({ facets: [], tagged: [], marks: [], verified: true });
+    expect(libraryRowScore(review.rows[1]!).score).toBeNull();
   });
 
   it("asks at most three questions, for the heaviest facets it cannot find", () => {
@@ -204,31 +234,36 @@ describe("rulesLibraryReview", () => {
 describe("validateLibraryReview", () => {
   const first = "Rebuilt the Acme onboarding flow from scratch with the design group";
   const second = "Cut onboarding time by 40%";
-  const subject = library([first, second].join("\n"));
+  // The person tagged the first row a milestone; the model is about to read it as an outcome.
+  const subject = library([first, second].join("\n"), { [first]: "milestone" });
   const entry = subject.entries[0]!;
-  const said = (over: Partial<LibraryReviewPlanEntry["rows"][number]> = {}) => ({
-    row: first, facets: ["outcome"] as EvidenceFacet[], specific: true, quantified: true, outcomeLinked: true, quote: "Rebuilt the Acme onboarding flow", ...over,
+  const earned: EvidenceMark[] = ["outcome.change", "milestone.deliverable", "milestone.role"];
+  const said = (over: Partial<LibraryReviewPlanEntry["rows"][number]> = {}): LibraryReviewPlanEntry["rows"][number] => ({
+    row: first, facets: ["outcome"] as EvidenceFacet[], marks: earned, quote: "Rebuilt the Acme onboarding flow", ...over,
   });
   const plan = (rows: LibraryReviewPlanEntry["rows"], prompts: string[] = []): LibraryReviewPlanEntry => ({ entryId: entry.id, rows, prompts });
 
   it("keeps the entry's own rows and drops the ones the model invented", () => {
     const result = validateLibraryReview(entry, plan([said(), said({ row: "A row nobody wrote", quote: null })]));
     expect(result.rows.map(item => item.row)).toEqual([first, second]);
-    expect(result.rows[0]).toMatchObject({ facets: ["outcome"], specific: true, quantified: true, verified: true });
+    // `facets` is the model's reading, `tagged` the person's own, and the row is scored on the tags.
+    expect(result.rows[0]).toMatchObject({ facets: ["outcome"], tagged: ["milestone"], marks: earned, verified: true });
+    expect(libraryRowScore(result.rows[0]!).score).toBe(50);
     // The row the model never mentioned is marked, not dropped: the Library can say it went unread.
-    expect(result.rows[1]).toMatchObject({ row: second, facets: [], specific: false, quantified: false, verified: false, quote: null });
+    expect(result.rows[1]).toMatchObject({ row: second, facets: [], tagged: [], marks: [], verified: false, quote: null });
   });
 
   it("matches a row after NFKC and whitespace normalisation, but only once", () => {
-    const spaced = plan([said({ row: `  Rebuilt   the Acme onboarding\tflow from scratch with the design group ` }), said({ specific: false, quantified: false })]);
+    const spaced = plan([said({ row: `  Rebuilt   the Acme onboarding\tflow from scratch with the design group ` }), said({ marks: [] })]);
     const result = validateLibraryReview(entry, spaced);
     // The first classification of a row wins; a second one for the same row is ignored.
-    expect(result.rows[0]).toMatchObject({ verified: true, specific: true, quantified: true });
+    expect(result.rows[0]).toMatchObject({ verified: true, marks: earned });
   });
 
   it("marks a row unverified when its quote is not anchored in that row", () => {
     const result = validateLibraryReview(entry, plan([said({ quote: "Rebuilt the Globex onboarding flow" })]));
-    expect(result.rows[0]).toMatchObject({ verified: false, specific: false, quantified: false, quote: null, facets: [] });
+    expect(result.rows[0]).toMatchObject({ verified: false, marks: [], quote: null, facets: [], tagged: ["milestone"] });
+    expect(libraryRowScore(result.rows[0]!).score).toBe(0);
     expect(result.score).toBe(0);
     // A classification with no quote at all is verified: the row text itself was matched exactly.
     expect(validateLibraryReview(entry, plan([said({ quote: null })])).rows[0]).toMatchObject({ verified: true, facets: ["outcome"] });
@@ -237,9 +272,15 @@ describe("validateLibraryReview", () => {
   it("scores from the classifications, never from the model, and keeps its prompts", () => {
     const both = plan([said(), said({ row: second, facets: ["metric"], quote: "by 40%" })], ["What changed as a result?"]);
     const result = validateLibraryReview(entry, both);
-    // Outcome and metric: 50 × 4/8 + 25 + 25 = 75.
-    expect(result).toMatchObject({ entryId: entry.id, score: 75, rating: "strong", prompts: ["What changed as a result?"] });
+    // Outcome and metric covered, 50 × 4/8 = 25; the milestone row reads 50 and the untagged one
+    // nothing, 50 × 50/200 = 12.5: 37.5 → 38.
+    expect(result).toMatchObject({ entryId: entry.id, score: 38, rating: "weak", prompts: ["What changed as a result?"] });
     expect(result.missing).toEqual(["responsibility", "problem", "milestone", "style"]);
+  });
+
+  it("keeps only the marks the rubric knows, each once", () => {
+    const loose = said({ marks: ["style.effect", "vibes", "milestone.role", "milestone.role"] as never });
+    expect(validateLibraryReview(entry, plan([loose])).rows[0]!.marks).toEqual(["milestone.role", "style.effect"]);
   });
 
   it("refuses demographic prompts and a plan for another entry", () => {
@@ -267,6 +308,12 @@ describe("validateLibraryReview", () => {
     expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said({ facets: [...EVIDENCE_FACETS, "outcome"] as never })])] }).success).toBe(false);
     expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said()], ["a", "b", "c", "d"])] }).success).toBe(false);
     expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said()], ["x".repeat(161)])] }).success).toBe(false);
+    // Marks come from the rubric, at most all twenty-four of them.
+    expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said({ marks: [] })])] }).success).toBe(true);
+    expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said({ marks: ["metric.vibes"] as never })])] }).success).toBe(false);
+    expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said({ marks: [...EVIDENCE_MARKS, "metric.figure"] })])] }).success).toBe(false);
+    // The first rubric's judgements are not part of the answer any more.
+    expect(LibraryReviewPlanSchema.parse({ entries: [plan([{ ...said(), specific: true } as never])] }).entries[0]!.rows[0]).not.toHaveProperty("specific");
     // Eight entries a batch, so the whole library is written to the cache once and read back.
     expect(LibraryReviewPlanSchema.safeParse({ entries: Array.from({ length: 9 }, () => plan([])) }).success).toBe(false);
   });
@@ -310,13 +357,20 @@ describe("libraryEntryInputHash", () => {
     expect(libraryEntryInputHash(consolidated.entries[0]!, job)).toBe(hash);
   });
 
-  it("hashes a row of one type exactly as the release that stored it as a string did", () => {
-    // Every review stored to date was written against this hash. Rows in order, each row's types
-    // joined, the company and the job title: one type joins to itself and an untagged row to "",
-    // so nobody's Library is re-reviewed, and nothing is paid for again, over how tags are stored.
-    expect(libraryEntryInputHash(entry, job)).toBe(sha1(JSON.stringify([[first, second], ["", "metric"], job.company, job.jobTitle])));
+  it("leads with the rubric version, so a review under an earlier rubric no longer matches", () => {
+    expect(LIBRARY_RUBRIC_VERSION).toBe(2);
+    // What the first rubric's reviews were stored against: the same list with no version.
+    expect(hash).not.toBe(sha1(JSON.stringify([[first, second], ["", "metric"], job.company, job.jobTitle])));
+    expect(hash).not.toBe(sha1(JSON.stringify([1, [first, second], ["", "metric"], job.company, job.jobTitle])));
+  });
+
+  it("hashes a row of one type exactly as a row stored as a string", () => {
+    // Rows in order, each row's types joined, the company and the job title: one type joins to
+    // itself and an untagged row to "", so nobody's Library is re-reviewed, and nothing is paid
+    // for again, over how tags are stored.
+    expect(libraryEntryInputHash(entry, job)).toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], ["", "metric"], job.company, job.jobTitle])));
     expect(libraryEntryInputHash(library([first, second].join("\n"), { [second]: ["outcome", "metric"] }).entries[0]!, job))
-      .toBe(sha1(JSON.stringify([[first, second], ["", "outcome,metric"], job.company, job.jobTitle])));
+      .toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], ["", "outcome,metric"], job.company, job.jobTitle])));
     // And the entry as that release actually stored it — the tag a bare string, not a one-item
     // list — hashes to the same thing unparsed, which is the shape the worker's handler reads
     // `cv_libraries.content` in.
@@ -337,20 +391,29 @@ describe("normaliseLibraryReview", () => {
       { row: "Did some things", facet: "unclear", specific: false, quantified: false, outcomeLinked: false, quote: null, verified: true },
     ]));
     expect(review.rows.map(row => row.facets)).toEqual([["outcome"], []]);
-    expect(review.rows[0]).toMatchObject({ specific: true, quantified: true, verified: true, quote: "Rebuilt the onboarding flow" });
+    expect(review.rows[0]).toMatchObject({ verified: true, quote: "Rebuilt the onboarding flow", tagged: [] });
+    // It carries no marks, so the wording rules stand in for them; it names no tags either.
+    expect(review.rows[0]!.marks).toEqual(detectEvidenceMarks("Rebuilt the onboarding flow"));
+    expect(review.rows[1]!.marks).toEqual([]);
+    expect(review.rows[0]).not.toHaveProperty("specific");
     expect(review.prompts).toEqual(["What changed as a result?"]);
-    // Recomputed from the rows, and the same number the release that wrote it stored.
-    expect(review).toMatchObject({ entryId: "acme-block", score: Math.round(50 * 2 / 8 + 25 * 0.5 + 25 * 0.5), rating: "weak" });
+    // Recomputed from the rows: outcome covered, 50 × 2/8 = 12.5, and no row typed to score.
+    expect(review).toMatchObject({ entryId: "acme-block", score: 13, rating: "none" });
     expect(review.coverage).toMatchObject({ outcome: 1, metric: 0 });
     expect(review.missing).toEqual(["metric", "responsibility", "problem", "milestone", "style"]);
   });
 
   it("reads today's shape unchanged, and anything outside the vocabulary as nothing", () => {
-    const rows = [{ row: "Cut handover time by 40%", facets: ["metric", "problem", "vibes"], specific: true, quantified: true, outcomeLinked: true, quote: "by 40%", verified: true }];
+    const rows = [{
+      row: "Cut handover time by 40%", facets: ["metric", "problem", "vibes"], tagged: ["metric", "vibes"],
+      marks: ["metric.movement", "vibes", "metric.figure"], quote: "by 40%", verified: true,
+    }];
     const review = normaliseLibraryReview(stored(rows));
-    expect(review.rows[0]!.facets).toEqual(["problem", "metric"]);
+    expect(review.rows[0]).toMatchObject({ facets: ["problem", "metric"], tagged: ["metric"], marks: ["metric.figure", "metric.movement"] });
+    // Stored marks are read as stored, even an empty list: the wording rules only stand in when absent.
+    expect(normaliseLibraryReview(stored([{ ...rows[0], marks: [] }])).rows[0]!.marks).toEqual([]);
     expect(normaliseLibraryReview(stored([{ row: "A row nobody classified" }])).rows[0])
-      .toEqual({ row: "A row nobody classified", facets: [], specific: false, quantified: false, outcomeLinked: false, quote: null, verified: false });
+      .toEqual({ row: "A row nobody classified", facets: [], tagged: [], marks: detectEvidenceMarks("A row nobody classified"), quote: null, verified: false });
     expect(() => normaliseLibraryReview({ rows: [] })).toThrow();
   });
 });

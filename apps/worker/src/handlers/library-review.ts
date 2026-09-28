@@ -7,11 +7,12 @@
  * The deterministic baseline is written before anything is asked of a model, so the Library has a
  * score the moment someone saves it — and keeps one for an account whose budget is spent, whose
  * deployment has no key, or whose pass fails. `rulesLibraryReview` reads only the person's own
- * facet tags, so it costs nothing and cannot be wrong about what they wrote.
+ * facet tags and wording, so it costs nothing and cannot be wrong about what they wrote.
  *
- * Only entries whose wording changed are sent. `libraryEntryInputHash` covers an entry's rows,
- * their facets and the job it belongs to and nothing version-scoped, so fixing one typo re-reviews
- * one entry and every other entry carries its last review into the new version.
+ * Only entries whose wording changed are sent. `libraryEntryInputHash` covers the rubric version,
+ * an entry's rows, their facets and the job it belongs to and nothing version-scoped, so fixing
+ * one typo re-reviews one entry and every other entry carries its last review into the new
+ * version.
  *
  * The pass is admitted against the account's own monthly budget once, up front, exactly as a CV
  * build is, and a refusal finishes the task rather than failing it: work an exhausted account

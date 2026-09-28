@@ -9,14 +9,16 @@
 import { expect, it } from "vitest";
 import { evidenceRatingFor, rulesLibraryReview, type LibraryEntryReview } from "@ava/core/library-review";
 import { setRowFacets, type CvLibrary, type EvidenceFacet, type Employment } from "@ava/core/cv";
+import { EVIDENCE_MARK_SPECS } from "@ava/core/evidence-rubric";
 import {
   EVIDENCE_RATING_LABELS,
   libraryEvidenceLine,
   missingFacetLine,
-  rowScoreTitle,
+  rowGuidance,
   rowsMovedOn,
   untaggedFacets,
   type EvidenceEntryView,
+  type EvidenceRowView,
 } from "./cv-library-evidence";
 import { libraryEvidence, type StoredLibraryReview } from "./cv-library-reviews";
 
@@ -106,7 +108,8 @@ it("falls back to the baseline for an entry nobody has reviewed in this wording,
   expect(entry.prompts.map(prompt => prompt.facet)).toEqual(["outcome", "problem", "milestone"]);
   expect(entry.prompts[0]!.question).toBe("What changed as a result?");
   expect(evidence.evaluating).toBe(true);
-  expect(evidence.line).toBe(`Evidence: ${EVIDENCE_RATING_LABELS[baseline.rating]} · 1 job is Weak`);
+  // One job, rated as the baseline rates it; a Good job adds no clause after the rating.
+  expect(evidence.line).toBe(baseline.rating === "weak" ? `Evidence: Weak · 1 job is Weak` : `Evidence: ${EVIDENCE_RATING_LABELS[baseline.rating]}`);
 });
 
 it("shows a stored model review as it was computed and stops saying Evaluating", () => {
@@ -114,8 +117,8 @@ it("shows a stored model review as it was computed and stops saying Evaluating",
   const review: LibraryEntryReview = {
     entryId: "acme",
     rows: [
-      { row: "Led a team", facets: ["responsibility"], specific: false, quantified: false, outcomeLinked: false, quote: "Led a team", verified: true },
-      { row: "Cut handovers by 40%", facets: ["metric"], specific: true, quantified: true, outcomeLinked: true, quote: "Cut handovers by 40%", verified: true },
+      { row: "Led a team", facets: ["responsibility"], tagged: ["responsibility"], marks: ["responsibility.ownership"], quote: "Led a team", verified: true },
+      { row: "Cut handovers by 40%", facets: ["metric"], tagged: ["metric"], marks: ["metric.figure", "metric.measure", "metric.movement", "outcome.change", "outcome.magnitude"], quote: "Cut handovers by 40%", verified: true },
     ],
     coverage: { responsibility: 1, problem: 0, outcome: 0, metric: 1, milestone: 0, style: 0 },
     missing: ["outcome", "problem", "milestone", "style"],
@@ -178,19 +181,99 @@ it("knows when the rows on screen are no longer the rows that were scored", () =
   expect(rowsMovedOn(value.entries[0]!, ["Led a team of nine", "Cut handovers"])).toBe(true);
 });
 
-it("scores each row on its own and says what the number measures", () => {
+it("carries each reviewed row's inputs, not a number, so the browser scores it against the tags on screen", () => {
   const value = library({ acme: ["Led a team", "Cut handover time from 3 days to 4 hours across the UK network"] },
     { acme: { "Cut handover time from 3 days to 4 hours across the UK network": ["outcome"] } });
   const rows = libraryEvidence(value, new Map()).entries[0]!.rows;
-  expect(rows.map(row => [row.row, row.score])).toEqual([
-    ["Led a team", 0],
-    ["Cut handover time from 3 days to 4 hours across the UK network", 100],
+  expect(rows.map(row => [row.row, row.tagged, row.reviewFacets, row.verified])).toEqual([
+    ["Led a team", [], [], true],
+    ["Cut handover time from 3 days to 4 hours across the UK network", ["outcome"], ["outcome"], true],
   ]);
-  const title = rowScoreTitle(rows[0], "rules");
-  expect(title).toContain("Row evidence 0/100");
-  expect(title).toContain("Missing: has a type, specific, has a number, tied to an outcome.");
-  expect(title).toContain("Re-score for the full review");
-  expect(rowScoreTitle(rows[1], "model")).toContain("Has: has a type, specific, has a number, tied to an outcome. From the full review.");
-  // A row the saved library does not have yet is not scored, and the cell says how it will be.
-  expect(rowScoreTitle(undefined, "rules")).toMatch(/^Not scored yet/);
+});
+
+const FULL_REVIEW = "From the full review.";
+const OWN_WORDING = "From your own wording; Re-score for the full review.";
+const view1 = (over: Partial<EvidenceRowView> = {}): EvidenceRowView => ({
+  row: "Responsible for operations", tagged: ["responsibility"], marks: [], reviewFacets: ["responsibility"], verified: true, ...over,
+});
+
+it("asks for a type before it scores a row, and says what the full review read it as", () => {
+  const rules = rowGuidance({ text: "Responsible for operations", facets: [], view: undefined, source: "rules", evaluating: false });
+  expect(rules).toEqual({
+    score: null,
+    heading: "Select type",
+    missing: [],
+    footer: "Choose one or more types in the Type column; the row is scored against what each type needs.",
+  });
+  // The model classified the row, but the person has not tagged it: still no score, and the
+  // model's reading is offered as a hint, never applied.
+  const model = rowGuidance({
+    text: "Responsible for operations", facets: [], view: view1({ tagged: [], reviewFacets: ["responsibility", "metric"] }), source: "model", evaluating: false,
+  });
+  expect(model.score).toBeNull();
+  expect(model.heading).toBe("Select type");
+  expect(model.footer).toBe("Choose one or more types in the Type column; the row is scored against what each type needs. The full review reads this row as Responsibilities and Metrics moved.");
+});
+
+it("scores a typed row from its own wording and lists only what is missing, as lines to act on", () => {
+  const guidance = rowGuidance({ text: "Responsible for operations", facets: ["responsibility"], view: undefined, source: "rules", evaluating: false });
+  expect(guidance.score).toBe(25);
+  expect(guidance.heading).toBe("25/100 · Scored as Responsibilities");
+  expect(guidance.missing).toEqual([{
+    facet: "responsibility",
+    label: "Responsibilities",
+    asks: [
+      EVIDENCE_MARK_SPECS["responsibility.scope"].ask,
+      EVIDENCE_MARK_SPECS["responsibility.audience"].ask,
+      EVIDENCE_MARK_SPECS["responsibility.scale"].ask,
+    ],
+  }]);
+  // What the row already has is not listed.
+  expect(JSON.stringify(guidance)).not.toContain(EVIDENCE_MARK_SPECS["responsibility.ownership"].ask);
+  expect(guidance.footer).toBe(OWN_WORDING);
+  expect(rowGuidance({ text: "Responsible for operations", facets: ["responsibility"], view: undefined, source: "rules", evaluating: true }).footer)
+    .toBe("From your own wording while the full review runs.");
+});
+
+it("uses the full review's marks while the row on screen is the row it read", () => {
+  const view = view1({ marks: ["responsibility.scope", "responsibility.audience", "responsibility.ownership"] });
+  const guidance = rowGuidance({ text: "Responsible for operations", facets: ["responsibility"], view, source: "model", evaluating: false });
+  expect(guidance.score).toBe(75);
+  expect(guidance.missing).toEqual([{ facet: "responsibility", label: "Responsibilities", asks: [EVIDENCE_MARK_SPECS["responsibility.scale"].ask] }]);
+  expect(guidance.footer).toBe(FULL_REVIEW);
+  // Re-tagged on screen: the same marks, scored against the new type, without a new review.
+  const retagged = rowGuidance({ text: "Responsible for operations", facets: ["metric"], view, source: "model", evaluating: false });
+  expect(retagged.score).toBe(0);
+  expect(retagged.heading).toBe("0/100 · Scored as Metrics moved");
+});
+
+it("reads the wording live once the row has moved on from what was reviewed", () => {
+  const view = view1({ marks: ["responsibility.scope", "responsibility.audience", "responsibility.ownership", "responsibility.scale"] });
+  const moved = rowGuidance({ text: "Responsible for ops", facets: ["responsibility"], view, source: "model", evaluating: false });
+  // The review's four marks no longer describe this wording; the baseline's one does.
+  expect(moved.score).toBe(25);
+  expect(moved.footer).toBe(OWN_WORDING);
+});
+
+it("groups what is missing by type when a row carries several, and averages the scores", () => {
+  const text = "Cut month-end close from 10 to 6 days by rebuilding consolidation in Anaplan";
+  const guidance = rowGuidance({ text, facets: ["metric", "outcome"], view: undefined, source: "rules", evaluating: false });
+  // Outcomes 75 (no beneficiary), Metrics moved 100: the mean.
+  expect(guidance.score).toBe(88);
+  expect(guidance.heading).toBe("88/100 · Scored as Outcomes and Metrics moved");
+  expect(guidance.missing).toEqual([{ facet: "outcome", label: "Outcomes", asks: [EVIDENCE_MARK_SPECS["outcome.beneficiary"].ask] }]);
+
+  const thin = rowGuidance({ text: "Responsible for operations", facets: ["responsibility", "metric"], view: undefined, source: "rules", evaluating: false });
+  expect(thin.missing.map(group => [group.label, group.asks.length])).toEqual([["Responsibilities", 3], ["Metrics moved", 3]]);
+});
+
+it("says nothing is missing when a row earns every mark its types need", () => {
+  const text = "Cut month-end close from 10 to 6 days by rebuilding consolidation in Anaplan";
+  const guidance = rowGuidance({ text, facets: ["metric"], view: undefined, source: "rules", evaluating: false });
+  expect(guidance).toEqual({
+    score: 100,
+    heading: "100/100 · Scored as Metrics moved",
+    missing: [],
+    footer: `Nothing missing for Metrics moved. ${OWN_WORDING}`,
+  });
 });

@@ -1,4 +1,4 @@
-import { schema, abandonCvDraft, enqueueTask, pruneWorkerEvents, recordWorkerEvent, releaseAiHolds, releaseOrphanedCvHolds } from "@ava/db";
+import { schema, enqueueTask, pruneWorkerEvents, recordWorkerEvent, releaseOrphanedCvHolds } from "@ava/db";
 import { enqueueTasks, type EnqueueRow } from "@ava/db/tasks";
 import { dedupeKeyFor, localDateParts, priorityFor, resolveUserSettings, type TaskType } from "@ava/core";
 import { and, eq, lt, sql } from "drizzle-orm";
@@ -6,8 +6,7 @@ import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";
 import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
-import { CV_ABANDONED_MESSAGE, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
-import { failOpenCvBuildStepsQuietly } from "./handlers/cv-journal";
+import { closeAbandonedCvDraft, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
 import { runMonitorSample } from "./handlers/monitor-sample";
 import { agePriorities, failSpentTasks, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
@@ -233,14 +232,10 @@ export async function reconcileCvDrafts(deps: WorkerDeps, graceMinutes = 5): Pro
     // No task is left to read an attempt count from, so the record names what happened and who
     // moves next without one; the page never shows a bare "interrupted" without its taxonomy.
     const failure = cvInterruptedFailure();
-    const abandoned = await abandonCvDraft(deps.db, orphan.id, CV_ABANDONED_MESSAGE, failure);
+    const abandoned = await closeAbandonedCvDraft(deps.db, orphan.id, failure);
     if (!abandoned) continue;
-    await failOpenCvBuildStepsQuietly(deps.db, orphan.id, CV_ABANDONED_MESSAGE, failure);
     failed++;
-    // This build's hold alone: the account may have another build running, whose hold is its own
-    // and whose renewal would otherwise silently stop matching a row.
-    const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV", refId: orphan.id });
-    log.warn("failed a CV draft no task was building", { draftId: orphan.id, userId: abandoned.userId, holdsReleased: released.count });
+    log.warn("failed a CV draft no task was building", { draftId: orphan.id, userId: abandoned.userId, holdsReleased: abandoned.released.count });
   }
   // Holds outlive their builds when the pod that took them dies under another name or the draft
   // is discarded mid-build; a boot releases only its own pod's holds, so the sweep takes the rest.

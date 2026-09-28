@@ -601,8 +601,6 @@ export function classifyAiFailure(error: unknown): AiFailure | null {
   return { kind: "unknown" };
 }
 
-class BatchFailed extends Error {}
-
 /**
  * One controller for a batched pass: aborted with the outer signal's own reason when any outer
  * signal aborts (so a deadline stays a deadline on every batch), and with `SiblingFailed` by the
@@ -614,6 +612,42 @@ function batchController(outer: Array<AbortSignal | undefined>) {
     signal: anySignal(...outer, own.signal)!,
     siblingFailed: () => own.abort(new SiblingFailed()),
   };
+}
+type BatchController = ReturnType<typeof batchController>;
+
+/**
+ * A batched pass. The shared cache entry is readable only once the first response has begun, so the
+ * first batch goes alone until then (or until it settles) and the rest go together. A batch that is
+ * not `ok`, or throws, cancels its siblings; if the first fails before its response began nothing
+ * else is sent, and those indices are absent from the result. A throw is rethrown once all settle.
+ */
+async function runBatchedPass<R>(
+  indices: number[],
+  controller: BatchController,
+  run: (index: number, onStart?: () => void) => Promise<R>,
+  ok: (result: R) => boolean,
+): Promise<Map<number, R>> {
+  const results = new Map<number, R>();
+  if (!indices.length) return results;
+  const settle = (index: number, onStart?: () => void) => run(index, onStart).then(result => {
+    results.set(index, result);
+    if (!ok(result)) controller.siblingFailed();
+  });
+  let begun!: () => void;
+  const firstBegun = new Promise<void>(resolve => { begun = resolve; });
+  const [head, ...rest] = indices;
+  const pending = [settle(head!, () => begun())];
+  try {
+    const firstSettled = await Promise.race([firstBegun.then(() => false), pending[0]!.then(() => true)]);
+    if (firstSettled && !ok(results.get(head!)!)) return results;
+    pending.push(...rest.map(index => settle(index)));
+    await Promise.all(pending);
+  } catch (err) {
+    controller.siblingFailed();
+    await Promise.allSettled(pending);
+    throw err;
+  }
+  return results;
 }
 
 /**
@@ -810,6 +844,15 @@ export class AiEngine {
 
   private log(msg: string, data?: unknown) {
     this.options.logger?.(msg, data);
+  }
+
+  /** Tell a caller's progress hook, which may fail without failing the pass it reports on. */
+  private async notify<E>(hook: ((event: E) => void | Promise<void>) | undefined, event: E, failed: string) {
+    try {
+      await hook?.(event);
+    } catch (err) {
+      this.log(failed, err);
+    }
   }
 
   /** The stage routes, or none when they cannot be read: a settings fault must not stop the call. */
@@ -1248,14 +1291,10 @@ export class AiEngine {
       // The batches run together, so a watcher that only saw the audit begin and end could not say
       // which of five was slow or which paid twice. Each says so for itself, carrying the usage of
       // its own call rather than leaving the caller to guess from the engine-wide record.
-      const say = async (phase: CvAssessBatchEvent["phase"], extra: Partial<CvAssessBatchEvent> = {}) => {
-        try {
-          await options.onBatch?.({ index, total: batches.length, phase, pass,
-            requirements: batch.requirements.length, claims: batch.claims.length, usage: usage.at(-1), ...extra });
-        } catch (err) {
-          this.log("assessment batch hook failed", err);
-        }
-      };
+      const say = (phase: CvAssessBatchEvent["phase"], extra: Partial<CvAssessBatchEvent> = {}) => this.notify(options.onBatch, {
+        index, total: batches.length, phase, pass,
+        requirements: batch.requirements.length, claims: batch.claims.length, usage: usage.at(-1), ...extra,
+      }, "assessment batch hook failed");
       // A batch that produced nothing: stopped by this engine, or failed on its own.
       const ended = async (corrections?: number): Promise<CvAssessBatchResult> => {
         const last = usage.at(-1);
@@ -1266,7 +1305,6 @@ export class AiEngine {
           return { index, status: "cancelled", usage, ...(last?.error && last.error !== CANCELLED_ERROR ? { error: last.error } : {}) };
         }
         await say("failed", extra);
-        controller.siblingFailed();
         return { index, status: "failed", usage, ...(last!.error ? { error: last!.error } : {}), ...(last!.failure ? { failure: last!.failure } : {}) };
       };
       await say("start");
@@ -1291,29 +1329,14 @@ export class AiEngine {
       if (!complete(batch.requirements.map(item => item.id), result.matches.map(item => item.requirementId)) ||
           !complete(batch.claims.map(item => item.id), result.claims.map(item => item.claimId))) {
         await say("failed", extra);
-        controller.siblingFailed();
         return { index, status: "failed", usage, error: ASSESSMENT_COVERAGE_ERROR, failure: { kind: "output_invalid" } };
       }
       await say("done", extra);
       return { index, status: "done", result, usage };
     };
-    const outcomes = new Map<number, CvAssessBatchResult>();
-    if (indices.length) {
-      // The cache entry is readable only once the first response has begun; batches sent before
-      // then would each write their own copy. So the first goes alone until then, the rest together.
-      let begun!: () => void;
-      const firstBegun = new Promise<void>(resolve => { begun = resolve; });
-      const [head, ...rest] = indices;
-      const first = assess(head!, () => begun()).then(result => { outcomes.set(head!, result); return result; });
-      const settledFirst = await Promise.race([firstBegun.then(() => null), first]);
-      if (settledFirst && settledFirst.status !== "done") {
-        // It ended before its response began, so nothing else was sent: the rest were never paid for.
-        for (const index of rest) outcomes.set(index, { index, status: "cancelled", usage: [] });
-      } else {
-        await Promise.all([first, ...rest.map(index => assess(index).then(result => { outcomes.set(index, result); }))]);
-      }
-    }
-    const ran = indices.map(index => outcomes.get(index)!);
+    const outcomes = await runBatchedPass(indices, controller, assess, batch => batch.status === "done");
+    // A batch never sent, because the first ended before its response began, is cancelled.
+    const ran = indices.map(index => outcomes.get(index) ?? { index, status: "cancelled" as const, usage: [] });
     const whole = !options.only || indices.length === batches.length;
     const review = whole && ran.every(batch => batch.status === "done")
       ? mergeCvAssessBatches(ran.map(batch => batch.result!), { claims: input.claims, verdicts: reused }) : null;
@@ -1932,14 +1955,11 @@ export class AiEngine {
       // twice and one that simply had many batches. Name it separately.
     }, { ...ref, stage: missing ? "review_retry" : "review" });
 
-    const reviewBatch = async (entries: LibraryReviewEntry[], index: number, onStart?: () => void): Promise<LibraryEntryReview[]> => {
-      const say = async (phase: LibraryReviewBatchEvent["phase"], extra: Partial<LibraryReviewBatchEvent> = {}) => {
-        try {
-          await hooks.onBatch?.({ index, total: batches.length, phase, entries: entries.length, ...extra });
-        } catch (err) {
-          this.log("library review batch hook failed", err);
-        }
-      };
+    // Null when the batch produced nothing usable at all.
+    const reviewBatch = async (index: number, onStart?: () => void): Promise<LibraryEntryReview[] | null> => {
+      const entries = batches[index]!;
+      const say = (phase: LibraryReviewBatchEvent["phase"], extra: Partial<LibraryReviewBatchEvent> = {}) =>
+        this.notify(hooks.onBatch, { index, total: batches.length, phase, entries: entries.length, ...extra }, "library review batch hook failed");
       await say("start");
       let usage: AiUsageRecord | undefined;
       let plan = await ask(entries, undefined, onStart, record => { usage = record; });
@@ -1952,7 +1972,7 @@ export class AiEngine {
         const again = await ask(entries, uncovered.map(entry => entry.id), undefined, record => { usage = record; });
         if (!plan && !again) {
           await say("failed", { usage, uncovered: uncovered.length });
-          throw new BatchFailed();
+          return null;
         }
         if (again) {
           // The first answer's rows and prompts stand; the second fills in what the first lacked —
@@ -1990,31 +2010,11 @@ export class AiEngine {
       return reviews;
     };
 
-    const results: LibraryEntryReview[][] = [];
-    const pending: Promise<void>[] = [];
-    try {
-      // The cache entry is readable only once the first response has begun; batches sent before
-      // then would each write their own copy of the library. So the first goes alone until then.
-      let begun!: () => void;
-      const firstBegun = new Promise<void>(resolve => { begun = resolve; });
-      let firstFailed = false;
-      const first = reviewBatch(batches[0]!, 0, () => begun()).then(result => { results[0] = result; });
-      pending.push(first);
-      await Promise.race([firstBegun, first.then(() => undefined, () => { firstFailed = true; })]);
-      if (firstFailed) await first;
-      batches.slice(1).forEach((batch, index) => {
-        pending.push(reviewBatch(batch, index + 1).then(result => { results[index + 1] = result; }));
-      });
-      await Promise.all(pending);
-    } catch (err) {
-      // Without every batch the pass is incomplete: stop paying for the rest, then let them record.
-      controller.siblingFailed();
-      await Promise.allSettled(pending);
-      throw err instanceof BatchFailed
-        ? new Error("The evidence review returned nothing usable for one batch of entries.")
-        : err;
-    }
-    return results.flat();
+    // Without every batch the pass is incomplete; the runner has already stopped paying for the rest.
+    const results = await runBatchedPass(batches.map((_, index) => index), controller, reviewBatch, result => result !== null);
+    const reviews = batches.map((_, index) => results.get(index) ?? null);
+    if (reviews.includes(null)) throw new Error("The evidence review returned nothing usable for one batch of entries.");
+    return (reviews as LibraryEntryReview[][]).flat();
   }
 }
 

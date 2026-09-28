@@ -11,8 +11,7 @@ import { NO_EVIDENCE, evidenceByEntry, missingFacetLine, rowGuidance, rowsMovedO
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { EvidenceSummary } from "./EvidenceScore";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
-import { RowScoreButton } from "./RowScoreButton";
-import { buttonClass } from "@/components/Button";
+import { RowScoreButton } from "./RowScoreButton";import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 
 const input = inputClass;
@@ -372,6 +371,16 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
               // This row as the review of the saved library read it. Its marks stand only while the
               // row on the screen is the row that was saved; otherwise the wording is read live.
               const rowScore = key ? score?.rows.find(item => item.row === key) : undefined;
+              // One path for a row's types, whether they come from the Type menu or are the full
+              // review's reading adopted from the score panel.
+              const setFacets = (next: EvidenceFacet[]) => {
+                if (entry && key) setValue(tagRow(value, entry.id, key, next));
+                else setPendingFacets(current => {
+                  const rest = { ...current };
+                  if (next.length) rest[pendingRowKey(currentJob.id, index)] = next; else delete rest[pendingRowKey(currentJob.id, index)];
+                  return rest;
+                });
+              };
               return <tr key={index} className="border-t border-line-faint align-top">
               <th scope="row" className="px-3 py-2 pt-4 font-normal text-muted">{index + 1}</th>
               <td className="px-3 py-2 pt-4 text-center"><input type="checkbox" aria-label={`Confirm ${currentJob.company} ${currentJob.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(key) ?? false} onChange={event => {
@@ -388,18 +397,11 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
                 <LibraryRowTypeMenu
                   label={`Type of row ${index + 1}`}
                   value={facets}
-                  onChange={next => {
-                    if (entry && key) setValue(tagRow(value, entry.id, key, next));
-                    else setPendingFacets(current => {
-                      const rest = { ...current };
-                      if (next.length) rest[pendingRowKey(currentJob.id, index)] = next; else delete rest[pendingRowKey(currentJob.id, index)];
-                      return rest;
-                    });
-                  }}
+                  onChange={setFacets}
                 />
               </td>
               <td className="px-3 py-2">
-                <RowScoreButton index={index + 1} guidance={rowGuidance({ text: key, facets, view: rowScore, source: score?.source ?? "rules", evaluating: !!score?.evaluating })} />
+                <RowScoreButton index={index + 1} guidance={rowGuidance({ text: key, facets, view: rowScore, source: score?.source ?? "rules", evaluating: !!score?.evaluating })} onAdopt={setFacets} />
               </td>
               <td className="px-3 py-2">
                 {/* The row goes and its tags go with it. The last row leaves an empty one to write

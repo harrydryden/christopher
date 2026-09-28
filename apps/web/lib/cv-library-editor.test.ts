@@ -1,11 +1,18 @@
-import { createElement } from "react";
+// @vitest-environment jsdom
+// jsdom for the one case that clicks through the editor; the rest render to static markup, which
+// reads the same in either environment.
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import type { CvLibrary } from "@ava/core/cv";
 import { CvLibraryEditor } from "../components/CvLibraryEditor";
 import { jobRemovalConfirm } from "../components/EmploymentHistoryTable";
+import type { LibraryEvidence } from "./cv-library-evidence";
 import { libraryEvidence } from "./cv-library-reviews";
 import { openStoredLibrary } from "./cv-library-open";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/actions/cv", () => ({ saveCvLibrary: vi.fn(), rescoreLibrary: vi.fn() }));
@@ -303,6 +310,40 @@ it("says there is a way back before the job is removed", () => {
   // One row is one row, and a job with nothing typed into it yet is still named something.
   expect(jobRemovalConfirm(job, 1)).toContain("archive its 1 row?");
   expect(jobRemovalConfirm({ ...job, company: " ", jobTitle: "" }, 1)).toContain("Remove this job and archive");
+});
+
+it("tags an untyped row with the full review's reading when the person adopts it from the score panel", () => {
+  const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
+    employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
+    entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director",
+      details: "Led a team of six for the board", confirmedResponsibilities: ["Led a team of six for the board"] }] };
+  // A model review read the untagged row as a Responsibilities row; the person never tagged it.
+  const evidence: LibraryEvidence = { line: null, refusal: null, evaluating: false, entries: [{
+    entryId: "one", employmentId: "job", label: "Director · Acme", score: 0, rating: "none", source: "model",
+    provisional: false, evaluating: false, missing: [], missingLine: "", prompts: [],
+    reviewedRows: ["Led a team of six for the board"],
+    rows: [{ row: "Led a team of six for the board", tagged: [], marks: ["responsibility.ownership", "responsibility.audience"], reviewFacets: ["responsibility"], verified: true }],
+  }] };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  act(() => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1, evidence })));
+  const posted = () => JSON.parse(container.querySelector<HTMLInputElement>('input[name="library"]')!.value) as CvLibrary;
+  expect(posted().entries[0]!.rowFacets ?? {}).toEqual({});
+
+  act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Select a type for row 1"]')!.click());
+  const adopt = document.querySelector<HTMLButtonElement>('button[aria-label="Tag row 1 as Responsibilities"]')!;
+  expect(adopt.textContent).toBe("Use these types");
+  act(() => adopt.click());
+
+  // The same path the Type menu takes: the row is tagged in what the save will post, the menu reads
+  // it back, and the score cell scores it against the review's marks.
+  expect(posted().entries[0]!.rowFacets).toEqual({ "Led a team of six for the board": ["responsibility"] });
+  expect(container.querySelector('button[aria-label="Type of row 1"]')!.textContent).toContain("Responsibilities");
+  expect(container.querySelector('button[aria-label="Score 50 of 100 for row 1: show what is missing"]')).not.toBeNull();
+  expect(document.querySelector("[role=dialog]")).toBeNull();
+  act(() => root.unmount());
+  container.remove();
 });
 
 it("does not let a landing evidence score change what the form will post", () => {

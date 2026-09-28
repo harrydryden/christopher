@@ -234,6 +234,7 @@ it("asks for a type before it scores a row, and says what the full review read i
     heading: "Select type",
     missing: [],
     footer: "Choose one or more types in the Type column; the row is scored against what each type needs.",
+    suggested: [],
   });
   // The model classified the row, but the person has not tagged it: still no score, and the
   // model's reading is offered as a hint, never applied.
@@ -243,6 +244,20 @@ it("asks for a type before it scores a row, and says what the full review read i
   expect(model.score).toBeNull();
   expect(model.heading).toBe("Select type");
   expect(model.footer).toBe("Choose one or more types in the Type column; the row is scored against what each type needs. The full review reads this row as Responsibilities and Metrics moved.");
+  expect(model.suggested).toEqual(["responsibility", "metric"]);
+});
+
+it("offers the review's types only for an untyped row the review read as something", () => {
+  const read = view1({ tagged: [], reviewFacets: ["outcome"] });
+  expect(rowGuidance({ text: "Responsible for operations", facets: [], view: read, source: "model", evaluating: false }).suggested).toEqual(["outcome"]);
+  // Once the person has a type on the row, nothing is suggested, whatever the review read.
+  expect(rowGuidance({ text: "Responsible for operations", facets: ["metric"], view: read, source: "model", evaluating: false }).suggested).toEqual([]);
+  // The review read it as nothing, or there is no review of this row.
+  expect(rowGuidance({ text: "Responsible for operations", facets: [], view: view1({ tagged: [], reviewFacets: [] }), source: "model", evaluating: false }).suggested).toEqual([]);
+  expect(rowGuidance({ text: "Responsible for operations", facets: [], view: undefined, source: "model", evaluating: false }).suggested).toEqual([]);
+  // A copy, so adopting it cannot mutate the view.
+  const suggested = rowGuidance({ text: "Responsible for operations", facets: [], view: read, source: "model", evaluating: false }).suggested;
+  expect(suggested).not.toBe(read.reviewFacets);
 });
 
 it("scores a typed row from its own wording and lists only what is missing, as lines to act on", () => {
@@ -305,5 +320,6 @@ it("says nothing is missing when a row earns every mark its types need", () => {
     heading: "100/100 · Scored as Metrics moved",
     missing: [],
     footer: `Nothing missing for Metrics moved. ${OWN_WORDING}`,
+    suggested: [],
   });
 });

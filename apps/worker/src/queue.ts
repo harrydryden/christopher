@@ -400,26 +400,40 @@ export async function failTask(db: Db, task: Task, err: unknown): Promise<"retry
   return retry ? "retry" : "failed";
 }
 
-/** Run the type's abandonment hook, if it has one. A hook that throws never fails the recovery. */
-export async function runAbandonHook(task: SweptTask, reason: string, context: AbandonContext): Promise<void> {
-  const hook = context.onAbandon?.[task.type];
-  if (!hook || !context.deps) return;
+/** Run a type's hook, when it has one. A hook that throws never fails the recovery. */
+async function runHook(kind: "abandonment" | "interruption", task: SweptTask, run: (() => Promise<void>) | undefined): Promise<void> {
   try {
-    await hook(task, context.deps, reason);
+    await run?.();
   } catch (err) {
-    log.error("abandonment hook failed", { id: task.id, type: task.type, error: (err as Error)?.message });
+    log.error(`${kind} hook failed`, { id: task.id, type: task.type, error: (err as Error)?.message });
   }
 }
 
-/** Run the type's interruption hook, if it has one. A hook that throws never fails the recovery. */
-async function runInterruptedHook(task: Task, deps: WorkerDeps, hooks: InterruptedHookMap | undefined, info: { retryAt?: string }): Promise<void> {
-  const hook = hooks?.[task.type];
-  if (!hook) return;
-  try {
-    await hook(task, deps, info);
-  } catch (err) {
-    log.error("interruption hook failed", { id: task.id, type: task.type, error: (err as Error)?.message });
+/** Run the type's abandonment hook, if it has one. */
+export async function runAbandonHook(task: SweptTask, reason: string, { onAbandon, deps }: AbandonContext): Promise<void> {
+  const hook = onAbandon?.[task.type];
+  await runHook("abandonment", task, hook && deps ? () => hook(task, deps, reason) : undefined);
+}
+
+/**
+ * The ledger entry for a task given up on for good. One shape for the crash sweep and the last
+ * attempt of a handler that kept throwing, which Health reads as one kind.
+ */
+function abandonedEvent(task: SweptTask, error: string, workerId: string): Parameters<typeof recordWorkerEvent>[1] {
+  return {
+    workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
+    detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error },
+  };
+}
+
+/** Release every AI hold `workerId` took, with the ledger entry when there were any. */
+async function releaseWorkerHolds(db: Db, workerId: string, reason: "boot" | "shutdown"): Promise<ReleasedHolds> {
+  const holds = await releaseAiHolds(db, { workerId });
+  if (holds.count) {
+    log.warn(reason === "boot" ? "released ai holds left behind by an unclean exit" : "released ai reservations on shutdown", { workerId, ...holds });
+    await recordWorkerEvent(db, { workerId, kind: "holds_released", detail: { ...holds, reason } });
   }
+  return holds;
 }
 
 /**
@@ -438,10 +452,7 @@ export async function abandonTask(db: Db, task: SweptTask, error: string, worker
     .returning({ id: schema.tasks.id });
   if (!rows.length) return false;
   log.warn("task abandoned", { id: task.id, type: task.type, attempts: task.attempts, lockedBy: task.lockedBy, error });
-  await recordWorkerEvent(db, {
-    workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
-    detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error },
-  });
+  await recordWorkerEvent(db, abandonedEvent(task, error, workerId));
   await runAbandonHook(task, error, context);
   return true;
 }
@@ -600,11 +611,7 @@ export async function recoverFromCrash(
   // remainder after each abandonment hook has released its own.
   let holds: ReleasedHolds = { count: 0, amountUsd: 0 };
   try {
-    holds = await releaseAiHolds(deps.db, { workerId: opts.workerId });
-    if (holds.count) {
-      log.warn("released ai holds left behind by an unclean exit", { workerId: opts.workerId, ...holds });
-      await recordWorkerEvent(deps.db, { workerId: opts.workerId, kind: "holds_released", detail: { ...holds, reason: "boot" } });
-    }
+    holds = await releaseWorkerHolds(deps.db, opts.workerId, "boot");
   } catch (err) {
     log.error("failed to release ai holds on boot", err);
   }
@@ -783,11 +790,7 @@ export class TaskQueue {
   /** Drop this worker's live reservations: nothing it is stopping will settle them. */
   private async releaseHolds(): Promise<void> {
     try {
-      const released = await releaseAiHolds(this.deps.db, { workerId: this.opts.workerId });
-      if (released.count) {
-        log.warn("released ai reservations on shutdown", { ...released, workerId: this.opts.workerId });
-        await recordWorkerEvent(this.deps.db, { workerId: this.opts.workerId, kind: "holds_released", detail: { ...released, reason: "shutdown" } });
-      }
+      await releaseWorkerHolds(this.deps.db, this.opts.workerId, "shutdown");
     } catch (err) {
       log.error("failed to release ai reservations on shutdown", err);
     }
@@ -1095,17 +1098,14 @@ export class TaskQueue {
         // given up on, and its writes are fenced out. A task with attempts left is coming back, so
         // the type's hook says so where the person is looking; one with none is closed off by the
         // abandonment hook below instead.
-        if (outcome === "retry")
-          await runInterruptedHook(task, this.deps, this.opts.onInterrupted,
-            { retryAt: new Date(Date.now() + backoffMs(task.attempts)).toISOString() });
+        const interrupted = this.opts.onInterrupted?.[task.type];
+        if (outcome === "retry" && interrupted)
+          await runHook("interruption", task, () => interrupted(task, this.deps, { retryAt: new Date(Date.now() + backoffMs(task.attempts)).toISOString() }));
       }
       // The last attempt of a handler that keeps throwing leaves the same half-finished work
       // behind as a crash, so it closes it off the same way.
       if (outcome === "failed") {
-        await this.record({
-          workerId: this.opts.workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
-          detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error: (err as Error).message },
-        });
+        await this.record(abandonedEvent(task, (err as Error).message, this.opts.workerId));
         await runAbandonHook(task, (err as Error).message, { deps: this.deps, onAbandon: this.opts.onAbandon });
       }
     } finally {

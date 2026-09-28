@@ -12,7 +12,8 @@ import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { EvidenceSummary } from "./EvidenceScore";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
 import { RowScoreButton } from "./RowScoreButton";
-import { EvidenceGuide } from "./EvidenceGuide";import { buttonClass } from "@/components/Button";
+import { EvidenceGuide } from "./EvidenceGuide";
+import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 
 const input = inputClass;
@@ -297,7 +298,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {/* How well evidenced the whole history is, and how many jobs are holding it back. */}
     {evidence.line && <p className="text-14" role="status">{evidence.line}</p>}
     <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} />
-    <div role="tablist" aria-label="Library sections" className="flex gap-2 border-b border-line-muted">
+    <div role="tablist" aria-label="Library sections" className="flex flex-wrap gap-x-2 border-b border-line-muted">
       {libraryTabs.map(([id, label]) => <button
         key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
         aria-selected={tab === id} tabIndex={tab === id ? 0 : -1}

@@ -115,13 +115,12 @@ function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
   const library = size.libraryBytes / 3;
   const batches = CV_ASSESSMENT_BATCHES;
   // The audit writes the evidence, rubric and CV to the cache once and reads them back for the
-  // other batches; each batch sends its own slice of the rubric and writes about 7k tokens. The
-  // evidence and rubric are an hour-long entry, so they outlive the writer and serve the re-audit;
-  // the CV is a five-minute one.
+  // other batches; each batch sends its own slice of the rubric and writes about 7k tokens. Every
+  // entry is a five-minute one (`AUDIT_LAYOUT`): the measured call pattern (1.14 author calls a
+  // build, about 10 % of consecutive CV calls more than five minutes apart) does not pay for an hour.
   const assessment: TokenUsage = {
     inputTokens: batches * 2_500,
     cacheWriteTokens: library + 3_000,
-    cacheWrite1hTokens: library,
     cacheReadTokens: (batches - 1) * library,
     outputTokens: batches * CV_AUDIT_BATCH_OUTPUT_TOKENS,
   };
@@ -131,7 +130,6 @@ function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
     // the description again, and writes up to the calibrated most a call writes.
     inputTokens: description + CV_FITTER_ATTEMPTS * (library + description) + assessment.inputTokens,
     cacheWriteTokens: assessment.cacheWriteTokens,
-    cacheWrite1hTokens: assessment.cacheWrite1hTokens,
     cacheReadTokens: assessment.cacheReadTokens,
     outputTokens: 4_500 + CV_FITTER_ATTEMPTS * CV_AUTHOR_OUTPUT_TOKENS + assessment.outputTokens,
   };

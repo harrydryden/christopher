@@ -545,11 +545,11 @@ describe("helpers", () => {
     expect(estimateCostUsd("who-knows", { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })).toBeCloseTo(5, 6);
     // A build is held for the fitter's worst case — three author calls at the calibrated most one
     // writes — which is still well below the sum of its calls' ceilings.
-    // The audit's evidence is an hour-long cache entry, written at twice input rather than 1.25x.
-    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(5.4225, 3);
+    // The audit's evidence is a five-minute cache entry, written at 1.25x input.
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(5.31, 3);
     // An attempt resuming with its wording already written pays for the audit alone, derived from
     // the same figures.
-    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.2275, 3);
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.115, 3);
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeLessThan(
       estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }));
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeLessThan(

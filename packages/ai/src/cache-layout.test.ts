@@ -70,7 +70,7 @@ describe("canonical evidence", () => {
 });
 
 describe("the writer's user turn", () => {
-  it("sends each evidence row exactly once: the library, then the role, both cached for an hour, then the volatile tail", async () => {
+  it("sends each evidence row exactly once: the library, then the role, both cached for five minutes, then the volatile tail", async () => {
     const { client, calls } = capture(plan);
     const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1" });
     const tailoringPlan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const, evidence: [{ sourceId: "entry:e1:row:0", quote: "Acme delivered" }], reason: "Direct." }], gapQuestions: [] };
@@ -83,8 +83,8 @@ describe("the writer's user turn", () => {
     expect(user).not.toContain("tailoringEvidence");
     expect(user).not.toContain("confirmedResponsibilities");
     expect(blocks).toHaveLength(3);
-    expect(blocks[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
-    expect(blocks[1]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(blocks[0]!.cache_control).toEqual({ type: "ephemeral" });
+    expect(blocks[1]!.cache_control).toEqual({ type: "ephemeral" });
     expect(blocks[2]!.cache_control).toBeUndefined();
     expect(Object.keys(JSON.parse(blocks[0]!.text))).toEqual(["library"]);
     expect(JSON.parse(blocks[0]!.text).library).toMatchObject({ stylePreferences: "Plain British English.", preferredWording: "Kept wording." });
@@ -92,7 +92,7 @@ describe("the writer's user turn", () => {
     // The plan without its reasons and quotes: the rows are in the library block, by id.
     expect(JSON.parse(blocks[1]!.text).tailoringPlan).toEqual({ requirements: [{ requirementId: "r1", status: "demonstrated", evidence: ["entry:e1:row:0"] }] });
     expect(Object.keys(JSON.parse(blocks[2]!.text))).toEqual(["writingBudget", "improvements"]);
-    // No marker on the system prompt: a five-minute one may not precede the hour-long library.
+    // No marker on the system prompt: the library's breakpoint already covers it.
     expect(systemOf(calls[0]!)[0]!.cache_control).toBeUndefined();
   });
 
@@ -123,12 +123,12 @@ describe("the audit's cache layout", () => {
     claims: [{ claimId: "section:e1:0", status: "supported", evidence: [{ id: claimId, quote: rows("Acme", 6)[0] }], reason: "Supported" }],
   });
 
-  it("caches the evidence for an hour ahead of the five-minute CV, with no system marker", async () => {
+  it("caches the evidence and then the CV for five minutes each, with no system marker", async () => {
     const { client, calls } = capture(answer("entry:e1", "entry:e1"));
     const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1" });
     expect(await engine.assessCv(input)).toBeTruthy();
     const blocks = blocksOf(calls[0]!);
-    expect(blocks.map(block => block.cache_control ?? null)).toEqual([{ type: "ephemeral", ttl: "1h" }, { type: "ephemeral" }, null]);
+    expect(blocks.map(block => block.cache_control ?? null)).toEqual([{ type: "ephemeral" }, { type: "ephemeral" }, null]);
     expect(systemOf(calls[0]!)[0]!.cache_control).toBeUndefined();
   });
 

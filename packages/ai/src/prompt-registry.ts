@@ -122,23 +122,24 @@ export const CvReviewBatchSchema = CvReviewPlanSchema.extend({
 const SINGLE: CacheLayout = { system: "5m", stable: [] };
 /**
  * The writer: the canonical library, then the role, then the volatile tail (the allocation, the
- * layout feedback, the improvements). The library and the role outlive every call of one build —
- * each of the fitter's rewrites starts after the previous answer has finished, and the improvement
- * after a whole audit, both well past five minutes — so both are cached for an hour. The library
- * block is also the same for the next build from the same library. The system prompt has no
- * marker of its own: the library's breakpoint already covers it, and a five-minute marker may not
- * precede an hour-long one.
+ * layout feedback, the improvements). Both stable blocks are cached for five minutes. An hour-long
+ * write costs twice input against 1.25x, and pays back only when the next reader starts more than
+ * five minutes after the last: measured, a build makes 1.14 author calls on average, and about 10 %
+ * of consecutive CV calls are more than five minutes apart. The fitter's rewrites start as soon as
+ * the previous answer ends, well inside five minutes of its start, and a cache read refreshes the
+ * entry; only a late improvement misses, and it breaks even only if more than about 60 % did. The
+ * system prompt has no marker of its own: the library's breakpoint already covers it.
  */
-const WRITER_LAYOUT: CacheLayout = { system: null, stable: ["1h", "1h"] };
+const WRITER_LAYOUT: CacheLayout = { system: null, stable: ["5m", "5m"] };
 /**
- * The audit: the evidence and the rubric's caveats, then the printed CV, then the batch. The
- * evidence outlives a revision, and the re-audit of an improved CV comes after the writer, more
- * than five minutes after the first audit, so it is cached for an hour. The CV changes with each
- * revision and is cached for five minutes, which covers the batches of one audit: the first batch
- * alone writes it, and the rest go out once its response has begun. No system marker, for the
- * same reason as the writer's.
+ * The audit: the evidence and the rubric's caveats, then the printed CV, then the batch. Both are
+ * cached for five minutes, which covers the batches of one audit: the first batch alone writes
+ * them, and the rest go out once its response has begun. The re-audit of an improved CV usually
+ * starts within five minutes of the last draft batch (the same measured call pattern as the
+ * writer's), so the evidence is no longer written for an hour on the chance it does not. No system
+ * marker, for the same reason as the writer's.
  */
-const AUDIT_LAYOUT: CacheLayout = { system: null, stable: ["1h", "5m"] };
+const AUDIT_LAYOUT: CacheLayout = { system: null, stable: ["5m", "5m"] };
 const WEB_SEARCH = (maxUses: number) => [{ type: "web_search_20260209", name: "web_search", max_uses: maxUses }];
 /** A10's search allowance; its prompt names the same number. */
 export const A10_MAX_SEARCHES = 8;

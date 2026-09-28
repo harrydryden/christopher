@@ -11,11 +11,12 @@ import { NO_EVIDENCE, evidenceByEntry, missingFacetLine, rowGuidance, rowsMovedO
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { EvidenceSummary } from "./EvidenceScore";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
-import { RowScoreButton } from "./RowScoreButton";import { buttonClass } from "@/components/Button";
+import { RowScoreButton } from "./RowScoreButton";
+import { EvidenceGuide } from "./EvidenceGuide";import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 
 const input = inputClass;
-const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"]] as const;
+const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]] as const;
 type LibraryTab = typeof libraryTabs[number][0];
 const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
 
@@ -453,6 +454,10 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       </div>
     </fieldset>)}
     <button type="button" className="mr-4 text-14 underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "active", heading: "", details: "" }] })}>Add education, skill or interest</button>
+    </div>
+    {/* How rows and jobs are scored. Read-only: no field in it, so nothing invalid to reveal. */}
+    <div role="tabpanel" id="library-panel-guide" aria-labelledby="library-tab-guide" hidden={tab !== 'guide'} className="space-y-4">
+      <EvidenceGuide />
     </div>
   </form>;
 }

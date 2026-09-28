@@ -162,6 +162,21 @@ it("keeps skill labels in a separate Library panel without appearance controls",
   expect(html).toContain('id="library-panel-education" aria-labelledby="library-tab-education" hidden=""');
 });
 
+it("puts the Scoring guide in a fourth tab after Education, hidden until chosen, with nothing to fill in", () => {
+  const library: CvLibrary = { name: "Example", contact: "", profile: "", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL" }] };
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
+  const strip = html.slice(html.indexOf('aria-label="Library sections"'));
+  expect([...strip.slice(0, strip.indexOf("</div>")).matchAll(/role="tab" id="library-tab-(\w+)"[^>]*>([^<]*)</g)].map(match => [match[1], match[2]]))
+    .toEqual([["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]]);
+  expect(html).toContain('<button type="button" role="tab" id="library-tab-guide" aria-controls="library-panel-guide" aria-selected="false" tabindex="-1"');
+  const panel = html.slice(html.indexOf('id="library-panel-guide"'));
+  expect(panel).toMatch(/^id="library-panel-guide" aria-labelledby="library-tab-guide" hidden=""/);
+  const body = panel.slice(0, panel.indexOf("</form>"));
+  expect(body).toContain('<h2 class="ds-pixel text-12">Scoring guide</h2>');
+  expect(body).toContain("A strong row says");
+  expect(body).not.toMatch(/<(input|select|textarea|button)\b/);
+});
+
 it("shows the evidence a stored review reports, with a question and a control that answers it", () => {
   const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],

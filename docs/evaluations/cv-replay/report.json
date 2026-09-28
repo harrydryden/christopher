@@ -1,8 +1,8 @@
 {
   "kind": "cv-replay",
-  "at": "2026-09-28T09:29:34.796Z",
-  "draftId": "b6549871-3586-49f8-80a1-13968b150f97",
-  "promptSetVersion": "9b0332b46e67",
+  "at": "2026-09-28T10:43:05.771Z",
+  "draftId": "94270362-4ec8-4dbe-abc4-531564a0d88d",
+  "promptSetVersion": "ac4d09210809",
   "unverified": true,
   "source": "recording",
   "recording": "docs/evaluations/recordings/cv-replay-fixture.jsonl",
@@ -62,12 +62,12 @@
       "costUsd": 0.141
     }
   },
-  "wallMs": 403,
+  "wallMs": 509,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",
     "score": 90,
-    "availableEvidenceScore": 100,
+    "availableEvidenceScore": 80,
     "pageCount": 2,
     "essentials": {
       "r4": 1,
@@ -85,7 +85,7 @@
     },
     "regressions": [],
     "score": 90,
-    "availableEvidenceScore": 100,
+    "availableEvidenceScore": 80,
     "pageCount": 2,
     "maxPages": 3,
     "diagnostics": {

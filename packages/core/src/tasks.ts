@@ -107,65 +107,6 @@ export type TaskType = keyof TaskPayloads;
  */
 export const GATE_REEVALUATION_VERSION = 1;
 
-export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[T]): string | null {
-  switch (type) {
-    case "extract_document": return `extract_document:${(payload as TaskPayloads["extract_document"]).documentId}`;
-    case "verify_company": return `verify_company:${(payload as TaskPayloads["verify_company"]).candidateId}`;
-    case "monitor_source": return `monitor_source:${(payload as TaskPayloads["monitor_source"]).sourceId}`;
-    // The draft, not the account: a draft id is already one account's, and the interface and the
-    // abandonment hooks find a build's task by exactly this key.
-    case "generate_cv": return `generate_cv:${(payload as TaskPayloads["generate_cv"]).draftId}`;
-    case "discover":
-      { const p = payload as TaskPayloads["discover"];
-        return p.logoOnly ? `company_logo:${p.companyId}:${p.homepageUrl}` : `discover:${p.companyId}`; }
-    case "scan_company":
-      return `scan_company:${(payload as TaskPayloads["scan_company"]).companyId}`;
-    case "run_daily":
-      return `run_daily`;
-    case "fetch_description":
-      return `fetch_description:${(payload as TaskPayloads["fetch_description"]).jobId}`;
-    case "score_job":
-      { const p = payload as TaskPayloads["score_job"]; return `score_job:${p.userId}:${p.jobId}`; }
-    case "collect_score_batch":
-      return "collect_score_batch";
-    case "poll_score_batch":
-      return `poll_score_batch:${(payload as TaskPayloads["poll_score_batch"]).batchId}`;
-    case "tag_reason":
-      return `tag_reason:${(payload as TaskPayloads["tag_reason"]).decisionId}`;
-    case "synthesize_profile":
-      return `synthesize_profile:${(payload as TaskPayloads["synthesize_profile"]).userId}`;
-    case "suggest_filters":
-      return `suggest_filters:${(payload as TaskPayloads["suggest_filters"]).userId}`;
-    case "suggest_from_scans":
-      return `suggest_from_scans:${(payload as TaskPayloads["suggest_from_scans"]).userId}`;
-    case "profile_company":
-      return `profile_company:${(payload as TaskPayloads["profile_company"]).companyId}`;
-    case "suggest_companies":
-      return `suggest_companies:${(payload as TaskPayloads["suggest_companies"]).userId}`;
-    case "rescore_all":
-      return `rescore_all:${(payload as TaskPayloads["rescore_all"]).userId}`;
-    case "reevaluate_gate":
-      { const p = payload as TaskPayloads["reevaluate_gate"];
-        return `reevaluate_gate:${p.userId ?? "all"}${p.companyId ? `:${p.companyId}` : ""}`; }
-    case "import_posting":
-      { const p = payload as TaskPayloads["import_posting"];
-        return `import_posting:${p.userId}:${p.companyId}:${p.url}`; }
-    // Deliberately not scoped to the version: the editor saves the whole library at once, so a
-    // person typing through five saves would otherwise queue five passes over the same entries.
-    case "review_library":
-      return `review_library:${(payload as TaskPayloads["review_library"]).userId}`;
-    // The import, not the account: two documents brought in the same minute are two extractions,
-    // and re-reading one that failed is the same piece of work rather than a second one.
-    case "import_library_document":
-      return `import_library_document:${(payload as TaskPayloads["import_library_document"]).importId}`;
-    // One walk at a time: a second request while a pass waits to start is the same walk.
-    case "reencode_logos":
-      return "reencode_logos";
-    default:
-      return null;
-  }
-}
-
 /**
  * The types a person is waiting for. The queue's interactive lane serves these first, and ageing
  * reads its floor from their priorities. Defined here rather than in the worker so the floor and
@@ -178,43 +119,59 @@ export const INTERACTIVE_TASK_TYPES = [
 /** The shared daily scan and its fan-out: the scan lane's own work. */
 export const SCAN_TASK_TYPES = ["scan_company", "run_daily"] as const satisfies readonly TaskType[];
 
-/** Lower runs first. Interactive tasks jump the queue. */
+/**
+ * Every task type's queue behaviour: its priority (lower runs first; interactive tasks jump the
+ * queue) and its dedupe key, which a second enqueue of the same work collapses onto (null: never
+ * deduplicated). The compiler demands an entry for every type in `TaskPayloads`, so a new type
+ * cannot slip through with a default.
+ */
+const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T]) => string | null } } = {
+  extract_document: { priority: 5, dedupe: (p) => `extract_document:${p.documentId}` },
+  verify_company: { priority: 5, dedupe: (p) => `verify_company:${p.candidateId}` },
+  monitor_source: { priority: 5, dedupe: (p) => `monitor_source:${p.sourceId}` },
+  discover: { priority: 1, dedupe: (p) => (p.logoOnly ? `company_logo:${p.companyId}:${p.homepageUrl}` : `discover:${p.companyId}`) },
+  scan_company: { priority: 5, dedupe: (p) => `scan_company:${p.companyId}` },
+  run_daily: { priority: 5, dedupe: () => "run_daily" },
+  fetch_description: { priority: 4, dedupe: (p) => `fetch_description:${p.jobId}` },
+  score_job: { priority: 4, dedupe: (p) => `score_job:${p.userId}:${p.jobId}` },
+  tag_reason: { priority: 1, dedupe: (p) => `tag_reason:${p.decisionId}` },
+  synthesize_profile: { priority: 6, dedupe: (p) => `synthesize_profile:${p.userId}` },
+  suggest_filters: { priority: 6, dedupe: (p) => `suggest_filters:${p.userId}` },
+  suggest_from_scans: { priority: 6, dedupe: (p) => `suggest_from_scans:${p.userId}` },
+  profile_company: { priority: 6, dedupe: (p) => `profile_company:${p.companyId}` },
+  suggest_companies: { priority: 7, dedupe: (p) => `suggest_companies:${p.userId}` },
+  rescore_all: { priority: 6, dedupe: (p) => `rescore_all:${p.userId}` },
+  reevaluate_gate: { priority: 1, dedupe: (p) => `reevaluate_gate:${p.userId ?? "all"}${p.companyId ? `:${p.companyId}` : ""}` },
+  // Someone asked for this CV and is watching it build. One step behind the quick interactive
+  // work, as the interface has always queued it, because a build holds its slot for minutes.
+  // Keyed by the draft, not the account: a draft id is already one account's, and the interface
+  // and the abandonment hooks find a build's task by exactly this key.
+  generate_cv: { priority: 2, dedupe: (p) => `generate_cv:${p.draftId}` },
+  import_posting: { priority: 1, dedupe: (p) => `import_posting:${p.userId}:${p.companyId}:${p.url}` },
+  // Someone is looking at the Library, waiting for the scores to land. Deliberately not scoped to
+  // the version: the editor saves the whole library at once, so a person typing through five saves
+  // would otherwise queue five passes over the same entries.
+  review_library: { priority: 1, dedupe: (p) => `review_library:${p.userId}` },
+  // Someone has just handed over their CV and is watching the page for what came of it. Keyed by
+  // the import, not the account: two documents brought in the same minute are two extractions, and
+  // re-reading one that failed is the same piece of work rather than a second one.
+  import_library_document: { priority: 1, dedupe: (p) => `import_library_document:${p.importId}` },
+  collect_score_batch: { priority: 4, dedupe: () => "collect_score_batch" },
+  poll_score_batch: { priority: 4, dedupe: (p) => `poll_score_batch:${p.batchId}` },
+  // Housekeeping nobody is waiting for: behind everything else, and one walk at a time — a second
+  // request while a pass waits to start is the same walk.
+  reencode_logos: { priority: 7, dedupe: () => "reencode_logos" },
+};
+
+/** Every task type, in the order the database's column enum lists them. */
+export const TASK_TYPE_NAMES = Object.keys(TASKS) as TaskType[];
+
+export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[T]): string | null {
+  return (TASKS[type].dedupe as (p: TaskPayloads[T]) => string | null)(payload);
+}
+
 export function priorityFor(type: TaskType): number {
-  switch (type) {
-    // Someone asked for this CV and is watching it build. One step behind the quick interactive
-    // work, as the interface has always queued it, because a build holds its slot for minutes.
-    case "generate_cv":
-      return 2;
-    case "discover":
-    case "tag_reason":
-    case "reevaluate_gate":
-    case "import_posting":
-    // Someone is looking at the Library, waiting for the scores to land.
-    case "review_library":
-    // Someone has just handed over their CV and is watching the page for what came of it.
-    case "import_library_document":
-      return 1;
-    case "fetch_description":
-    case "score_job":
-    case "collect_score_batch":
-    case "poll_score_batch":
-      return 4;
-    case "scan_company":
-    case "run_daily":
-      return 5;
-    case "synthesize_profile":
-    case "suggest_filters":
-    case "suggest_from_scans":
-    case "profile_company":
-    case "rescore_all":
-      return 6;
-    case "suggest_companies":
-    // Housekeeping nobody is waiting for: behind everything else.
-    case "reencode_logos":
-      return 7;
-    default:
-      return 5;
-  }
+  return TASKS[type].priority;
 }
 
 /**
@@ -326,17 +283,6 @@ export function deadlineMsFor(type: TaskType, overrides: TaskDeadlines = {}): nu
 
 /** The same function under the shorter name the interface calls it by. */
 export { deadlineMsFor as deadlineFor };
-
-/** Every task type, checked against `TaskPayloads` by the compiler in both directions. */
-const EVERY_TASK_TYPE: Record<TaskType, true> = {
-  extract_document: true, verify_company: true, monitor_source: true, generate_cv: true, discover: true,
-  scan_company: true, run_daily: true, fetch_description: true, score_job: true, tag_reason: true,
-  synthesize_profile: true, suggest_filters: true, suggest_from_scans: true, profile_company: true,
-  suggest_companies: true, rescore_all: true, reevaluate_gate: true, import_posting: true,
-  review_library: true, import_library_document: true, collect_score_batch: true, poll_score_batch: true,
-  reencode_logos: true,
-};
-export const TASK_TYPE_NAMES = Object.keys(EVERY_TASK_TYPE) as TaskType[];
 
 /** The longest deadline a task may have and still count as short. */
 export const SHORT_TASK_DEADLINE_MS = 45_000;

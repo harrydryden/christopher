@@ -152,9 +152,105 @@ type Draft = Omit<PromptEntry, "version" | "effort" | "route" | "priority" | "ti
   expectedOutputTokens?: number;
 };
 
+// --- the output format --------------------------------------------------------------------------
+
+type JsonSchemaNode = Record<string, unknown>;
+
+/** Keywords the SDK folds into a description that the provider's output grammar does enforce. */
+const RESTORED_KEYWORDS = new Set(["enum", "const"]);
+
+/**
+ * Read the `{key: json, key: json}` text the SDK appends to a description for every keyword its
+ * strict transform does not keep. Values are JSON, so a comma inside a string or an array is not a
+ * separator; the scan tracks strings and brackets. Anything it cannot read returns null, and the
+ * description is left as it was.
+ */
+function parseFoldedKeywords(text: string): Array<[string, unknown]> | null {
+  if (!text.startsWith("{") || !text.endsWith("}")) return null;
+  const body = text.slice(1, -1);
+  const entries: Array<[string, unknown]> = [];
+  let i = 0;
+  while (i < body.length) {
+    const key = /^([A-Za-z_$][\w$]*): /.exec(body.slice(i));
+    if (!key) return null;
+    i += key[0].length;
+    const start = i;
+    let depth = 0;
+    let inString = false;
+    for (; i < body.length; i++) {
+      const ch = body[i]!;
+      if (inString) {
+        if (ch === "\\") i++;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') inString = true;
+      else if (ch === "[" || ch === "{") depth++;
+      else if (ch === "]" || ch === "}") depth--;
+      else if (depth === 0 && ch === "," && body[i + 1] === " ") break;
+    }
+    try {
+      entries.push([key[1]!, JSON.parse(body.slice(start, i))]);
+    } catch {
+      return null;
+    }
+    if (i < body.length) i += 2;
+  }
+  return entries.length ? entries : null;
+}
+
+/** Move `enum` and `const` out of a node's description, where the SDK folded them, back onto the node. */
+function restoreNode(node: JsonSchemaNode): void {
+  const description = node.description;
+  if (typeof description !== "string") return;
+  const split = description.lastIndexOf("\n\n{");
+  const prefix = split >= 0 ? description.slice(0, split) : "";
+  const folded = split >= 0 ? description.slice(split + 2) : description;
+  const entries = parseFoldedKeywords(folded);
+  if (!entries || !entries.some(([key]) => RESTORED_KEYWORDS.has(key))) return;
+  for (const [key, value] of entries) if (RESTORED_KEYWORDS.has(key)) node[key] = value;
+  const kept = entries.filter(([key]) => !RESTORED_KEYWORDS.has(key));
+  const rest = kept.length ? `{${kept.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(", ")}}` : "";
+  const text = [prefix, rest].filter(Boolean).join("\n\n");
+  if (text) node.description = text;
+  else delete node.description;
+}
+
+function restoreKeywords(node: unknown): void {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) restoreKeywords(item);
+    return;
+  }
+  const record = node as JsonSchemaNode;
+  restoreNode(record);
+  for (const key of ["properties", "$defs"]) {
+    const children = record[key];
+    if (children && typeof children === "object") for (const child of Object.values(children)) restoreKeywords(child);
+  }
+  for (const key of ["items", "anyOf", "allOf"]) restoreKeywords(record[key]);
+}
+
+export interface OutputFormat {
+  type: "json_schema";
+  schema: Record<string, unknown>;
+}
+
+/**
+ * The output format a call sends, without the SDK's parser. The SDK's strict transform keeps only a
+ * few keywords and folds the rest into the description as text, which drops `enum` and `const` from
+ * the grammar although the provider enforces both: a `z.enum` field would otherwise be a free
+ * string the model is only asked, in prose, to keep to. They are restored here, recursively; every
+ * other folded keyword (lengths, bounds) stays description text, since the grammar does not take
+ * it. This is the one place a format is built, for the request and for the prompt's version.
+ */
+export function outputFormat(schema: z.ZodType): OutputFormat {
+  const { parse: _parse, ...format } = zodOutputFormat(schema);
+  restoreKeywords(format.schema);
+  return format as OutputFormat;
+}
+
 /** The prompt text and output contract as one short hash. */
 export function promptVersion(system: string, schema: z.ZodType): string {
-  const { parse: _parse, ...format } = zodOutputFormat(schema);
+  const format = outputFormat(schema);
   return createHash("sha256").update(system).update("\0").update(JSON.stringify(format)).digest("hex").slice(0, 10);
 }
 

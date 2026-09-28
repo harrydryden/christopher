@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  CV_PROMPT_IDS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, layoutFor, promptSetVersion, promptVersion, resolveRoute, routedModel,
+  CV_PROMPT_IDS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, layoutFor, outputFormat, promptSetVersion, promptVersion, resolveRoute, routedModel,
+  type OutputFormat,
 } from "./prompt-registry";
 import { createAiEngine, type AiCallMeta, type AiUsageRecord } from "./engine";
 import { EVIDENCE_MARKS, LibraryReviewPlanSchema } from "@ava/core";
@@ -72,6 +73,149 @@ describe("the prompt registry", () => {
     const row = { row: "Revenue £5m", facets: ["metric"], marks: ["metric.figure", "metric.measure"], quote: null };
     expect(LibraryReviewPlanSchema.safeParse({ entries: [{ entryId: "e", rows: [row], prompts: [] }] }).success).toBe(true);
     expect(PROMPTS.A12.expectedOutputTokens).toBe(4_800);
+  });
+});
+
+describe("the output format", () => {
+  const countEnums = (value: unknown) => (JSON.stringify(value).match(/"(enum|const)":/g) ?? []).length;
+
+  it("restores the enums and literals the SDK folds into descriptions, and leaves other text alone", () => {
+    const Shared = z.enum(["x", "y"]);
+    const schema = z.object({
+      kind: z.enum(["listing", "landing", "other"]),
+      mode: z.literal("fixed"),
+      note: z.enum(["a, b", "c"]).describe("Pick one, carefully."),
+      level: z.enum(["low", "high"]).nullable(),
+      short: z.string().max(300),
+      items: z.array(z.object({ status: z.enum(["demonstrated", "missing"]) })).max(8),
+      first: Shared,
+      second: Shared,
+    });
+    const format = outputFormat(schema);
+    expect(format).toMatchInlineSnapshot(`
+      {
+        "schema": {
+          "$defs": {
+            "__schema0": {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "enum": [
+                    "demonstrated",
+                    "missing",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "status",
+              ],
+              "type": "object",
+            },
+            "__schema1": {
+              "enum": [
+                "x",
+                "y",
+              ],
+              "type": "string",
+            },
+          },
+          "additionalProperties": false,
+          "description": "{$schema: "https://json-schema.org/draft/2020-12/schema"}",
+          "properties": {
+            "first": {
+              "$ref": "#/$defs/__schema1",
+            },
+            "items": {
+              "description": "{maxItems: 8}",
+              "items": {
+                "$ref": "#/$defs/__schema0",
+              },
+              "type": "array",
+            },
+            "kind": {
+              "enum": [
+                "listing",
+                "landing",
+                "other",
+              ],
+              "type": "string",
+            },
+            "level": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "low",
+                    "high",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "mode": {
+              "const": "fixed",
+              "type": "string",
+            },
+            "note": {
+              "description": "Pick one, carefully.",
+              "enum": [
+                "a, b",
+                "c",
+              ],
+              "type": "string",
+            },
+            "second": {
+              "$ref": "#/$defs/__schema1",
+            },
+            "short": {
+              "description": "{maxLength: 300}",
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "mode",
+            "note",
+            "level",
+            "short",
+            "items",
+            "first",
+            "second",
+          ],
+          "type": "object",
+        },
+        "type": "json_schema",
+      }
+    `);
+  });
+
+  it("carries every registry entry's enums into its grammar, and none is left as description text", () => {
+    for (const id of PROMPT_IDS) {
+      const format = outputFormat(PROMPTS[id].schema);
+      const text = JSON.stringify(format);
+      expect(text, id).not.toContain("{enum:");
+      expect(text, id).not.toContain("{const:");
+      expect(countEnums(format), id).toBe(countEnums(z.toJSONSchema(PROMPTS[id].schema, { reused: "ref" })));
+    }
+    expect(countEnums(outputFormat(PROMPTS["cv.review"].schema))).toBeGreaterThan(0);
+  });
+
+  it("is what the engine sends", async () => {
+    let params: Record<string, unknown> | undefined;
+    const engine = createAiEngine({
+      getModel: () => "claude-opus-5",
+      client: { messages: { create: async (sent) => {
+        params = sent as Record<string, unknown>;
+        return { parsed_output: { score: 50, verdict: "possible", rationale: "ok", flags: [] }, usage: { input_tokens: 10, output_tokens: 5 }, stop_reason: "end_turn" };
+      } } },
+    });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    const format = (params!.output_config as { format: OutputFormat }).format;
+    expect(format).toEqual(outputFormat(PROMPTS.A5.schema));
+    expect((format.schema.properties as Record<string, { enum?: string[] }>).verdict!.enum).toEqual(["strong", "possible", "unlikely"]);
   });
 });
 

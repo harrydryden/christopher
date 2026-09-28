@@ -81,17 +81,24 @@ describe("suggestFromScans at scale", () => {
     { ...gate, includeKeywords: ["partner*", "data"], excludeKeywords: ["manag*"], locationTerms: [] },
   ];
 
-  it("files exactly what the one-regex-per-group implementation filed", () => {
+  // The reference is the slow implementation on purpose, and the deep comparison of six large
+  // results is not quick either: about four seconds on a quiet four-core machine, which is inside
+  // the runner's default five-second timeout only until another suite shares the CPU. The budget
+  // is explicit so a loaded runner reports a real failure, never a timeout.
+  it("files exactly what the one-regex-per-group implementation filed", { timeout: 60_000 }, () => {
     const pool = [...corpus(3000), ...corpus(1000, [...vocabulary, ...invented(400)])];
     for (const g of gates) {
       for (const opts of [{}, { minAdmits: 1, limit: 1000 }]) expect(suggestFromScans(pool, g, opts)).toEqual(referenceSuggest(pool, g, opts));
     }
   });
-  it("mines fifty thousand titles well inside a slot's patience", () => {
+  // Measured in CPU time, not wall-clock time: the bound is on the work the mining does, and a
+  // runner busy with other suites stretches the clock without adding any.
+  it("mines fifty thousand titles well inside a slot's patience", { timeout: 60_000 }, () => {
     const pool = corpus(50_000, [...vocabulary, ...invented(4000)]);
-    const started = performance.now();
+    const started = process.cpuUsage();
     suggestFromScans(pool, { ...gate, locationTerms: [] }, { minAdmits: 1, limit: 1000 });
-    expect(performance.now() - started).toBeLessThan(2_000);
+    const { user, system } = process.cpuUsage(started);
+    expect((user + system) / 1000).toBeLessThan(2_000);
   });
 });
 

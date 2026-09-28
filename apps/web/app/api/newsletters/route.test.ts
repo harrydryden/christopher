@@ -52,6 +52,14 @@ it("caps actual bytes even without a Content-Length header", async () => {
   expect((await POST(request({ content: "a".repeat(500001) }))).status).toBe(413);
   expect(mocks.values).not.toHaveBeenCalled();
 });
+it("answers a body that fails part way with a 400, not an unhandled error", async () => {
+  const broken = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode("{")); controller.error(new Error("connection reset")); },
+  });
+  const response = await POST(new Request("http://localhost/api/newsletters", { method: "POST", headers: { authorization: "Bearer test-secret" }, body: broken, duplex: "half" } as RequestInit));
+  expect(response.status).toBe(400);
+  expect(mocks.values).not.toHaveBeenCalled();
+});
 it("takes a bounded number of documents into one source a day, and counts only real sources", async () => {
   const payload = { sourceId, title: "Edition", content: "<p>Acme Robotics is expanding its team in London.</p>".repeat(5) };
   mocks.source = undefined;

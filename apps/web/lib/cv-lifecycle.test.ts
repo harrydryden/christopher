@@ -661,8 +661,25 @@ it("rejects unauthenticated, cross-origin, malformed and oversized JSON mutation
       )
     ).status,
   ).toBe(400);
+  const cookie = session;
   session = undefined;
   expect((await POST(request(payload))).status).toBe(401);
+  expect(await rows()).toHaveLength(1);
+
+  // A database that cannot say whose session this is fails the request; it is not "sign in again".
+  session = cookie;
+  const real = database;
+  database = new Proxy(real, {
+    get(target, key, receiver) {
+      if (key === "select" || key === "execute") return () => { throw new Error("connection refused"); };
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  try {
+    await expect(POST(request(payload))).rejects.toThrow("connection refused");
+  } finally {
+    database = real;
+  }
   expect(await rows()).toHaveLength(1);
 });
 

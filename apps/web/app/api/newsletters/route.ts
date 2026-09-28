@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import { zUuid } from "@/lib/validation";
 import { sourceIdForAddress } from "@/lib/newsletter-address";
+import { readCapped } from "@/lib/route-request";
 
 export const runtime = "nodejs";
 /**
@@ -39,22 +40,16 @@ export async function POST(request: Request): Promise<Response> {
   const supplied = Buffer.from(request.headers.get("authorization") ?? "");
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return Response.json({ ok: false, error: "Unauthorised" }, { status: 401 });
   // Bound actual streamed bytes, including requests without Content-Length.
-  const reader = request.body?.getReader();
-  if (!reader) return Response.json({ ok: false, error: "Body required" }, { status: 400 });
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > 500000) { await reader.cancel(); return Response.json({ ok: false, error: "Content too large" }, { status: 413 }); }
-    chunks.push(value);
+  const received = await readCapped(request, 500000);
+  if (!received.ok) {
+    if (received.reason === "too_large") return Response.json({ ok: false, error: "Content too large" }, { status: 413 });
+    return Response.json({ ok: false, error: received.reason === "missing" ? "Body required" : "Body could not be read" }, { status: 400 });
   }
   let payload: z.infer<typeof payloadSchema>;
   let body: string;
   let title: string;
   try {
-    payload = payloadSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    payload = payloadSchema.parse(JSON.parse(received.bytes.toString("utf8")));
     body = payload.content ?? payload.text ?? payload.html ?? "";
     title = (payload.title ?? payload.subject ?? "").trim();
     if (!title || body.length < 100) throw new Error();

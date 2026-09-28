@@ -12,6 +12,7 @@
  * is, never an instruction.
  */
 import { NextResponse } from "next/server";
+import { readCapped } from "@/lib/route-request";
 import { addCvShareComment, CvShareClosedError } from "@ava/db";
 import { db } from "@/lib/db";
 import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
@@ -64,30 +65,12 @@ async function boundedFormData(request: Request): Promise<FormData | NextRespons
     if (!Number.isSafeInteger(bytes) || bytes < 0) return plain("That note could not be read.", 400);
     if (bytes > CV_SHARE_COMMENT_REQUEST_MAX_BYTES) return plain("That note is too large to send.", 413);
   }
-  const reader = request.body?.getReader();
-  if (!reader) return plain("That note could not be read.", 400);
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > CV_SHARE_COMMENT_REQUEST_MAX_BYTES) {
-        await reader.cancel();
-        return plain("That note is too large to send.", 413);
-      }
-      chunks.push(value);
-    }
-  } catch {
-    return plain("That note could not be read.", 400);
-  } finally {
-    reader.releaseLock();
-  }
+  const body = await readCapped(request, CV_SHARE_COMMENT_REQUEST_MAX_BYTES);
+  if (!body.ok) return body.reason === "too_large" ? plain("That note is too large to send.", 413) : plain("That note could not be read.", 400);
   const contentType = request.headers.get("content-type");
   if (!contentType) return plain("That note could not be read.", 400);
   try {
-    return await new Response(Buffer.concat(chunks), { headers: { "content-type": contentType } }).formData();
+    return await new Response(body.bytes, { headers: { "content-type": contentType } }).formData();
   } catch {
     return plain("That note could not be read.", 400);
   }

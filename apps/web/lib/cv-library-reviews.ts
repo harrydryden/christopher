@@ -41,8 +41,11 @@ import {
 
 type CvEntry = CvLibrary["entries"][number];
 
-/** Entry kinds an evidence review is about, as the worker's handler defines them. */
-const REVIEWABLE_KINDS = new Set(["experience", "education", "skill"]);
+/**
+ * Entry kinds an evidence review is about, as the worker's handler defines them: experience only,
+ * because the rubric's marks are job-shaped and mean nothing on a degree or a skill.
+ */
+const REVIEWABLE_KINDS = new Set(["experience"]);
 
 /** A stored review, as much of it as the page reads. */
 export interface StoredLibraryReview {

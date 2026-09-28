@@ -147,9 +147,14 @@ it("carries the worker's own refusal and stops evaluating when the pass is done"
 it("ignores blocks with nothing in them and a library that has not been written", () => {
   expect(libraryEvidence(null, new Map()).entries).toEqual([]);
   const value = library({ acme: ["Led a team"] });
-  value.entries.push({ id: "interest", kind: "interest", status: "active", heading: "Running", details: "Marathons" });
+  value.entries.push(
+    { id: "interest", kind: "interest", status: "active", heading: "Running", details: "Marathons" },
+    { id: "degree", kind: "education", status: "active", heading: "University of Leeds", details: "MSc Operations Management, 2014" },
+    { id: "skills", kind: "skill", status: "active", heading: "Skills", details: "Forecasting\nSQL" },
+  );
   const evidence = libraryEvidence(value, new Map());
-  // An interests block is not evidence of anything, and only jobs are counted in the line.
+  // An interests block is not evidence of anything, and the rubric's marks are job-shaped, so an
+  // education or skill block is neither scored nor listed: the page lists only jobs.
   expect(evidence.entries.map(entry => entry.entryId)).toEqual(["acme"]);
 });
 

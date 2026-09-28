@@ -47,8 +47,13 @@ import type { TaskRunContext } from "../queue";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
 
-/** Entry kinds an evidence review is about. An interests block is not evidence of anything. */
-const REVIEWABLE_KINDS = new Set(["experience", "education", "skill"]);
+/**
+ * Entry kinds an evidence review is about: experience only. The rubric's marks are job-shaped —
+ * who a row was for, the scale it ran at, the figure it moved — and "give the size: headcount,
+ * budget" is nonsense on a degree or a skill, so those blocks are neither reviewed nor scored.
+ * An interests block is not evidence of anything.
+ */
+const REVIEWABLE_KINDS = new Set(["experience"]);
 
 type CvEntry = CvLibrary["entries"][number];
 

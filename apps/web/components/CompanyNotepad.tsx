@@ -1,8 +1,9 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { saveCompanyNotes } from "@/app/actions/companies";
 import { Button } from "@/components/Button";
+import { useActionCall } from "@/components/useActionCall";
 import { blocksToNotes, notesToBlocks, type NoteBlock, type NoteRun } from "@/lib/notes-markdown";
 
 /** Elements that end a line wherever they appear: a new one starts after them. */
@@ -126,9 +127,8 @@ export function CompanyNotepad({ companyId, notes }: { companyId: string; notes:
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [bold, setBold] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [pending, setPending] = useState(false);
+  const { busy: pending, error, setError, run } = useActionCall();
   const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [error, setError] = useState<string | null>(null);
   /** The text the editor was last built from or last saved. */
   const syncedRef = useRef<string | null>(null);
 
@@ -156,20 +156,14 @@ export function CompanyNotepad({ companyId, notes }: { companyId: string; notes:
 
   const save = useCallback(() => {
     const editor = editorRef.current;
-    if (!editor || pending) return;
-    const text = blocksToNotes(blocksFromDom(editor));
-    setPending(true);
-    setError(null);
-    startTransition(async () => {
-      try {
-        const result = await saveCompanyNotes(companyId, text);
-        if (result.ok) { syncedRef.current = text; setSavedAt(new Date()); setDirty(false); }
-        else setError(result.error);
-      } catch {
-        setError("Could not save your notes. Reload to check the current state before retrying.");
-      } finally { setPending(false); }
-    });
-  }, [companyId, pending]);
+    if (!editor) return;
+    run(true, async () => {
+      const text = blocksToNotes(blocksFromDom(editor));
+      const result = await saveCompanyNotes(companyId, text);
+      if (result.ok) { syncedRef.current = text; setSavedAt(new Date()); setDirty(false); }
+      else setError(result.error);
+    }, { failed: "Could not save your notes. Reload to check the current state before retrying." });
+  }, [companyId, run, setError]);
 
   function command(name: "bold" | "insertUnorderedList") {
     editorRef.current?.focus();

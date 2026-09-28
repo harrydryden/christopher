@@ -14,9 +14,10 @@
  * are untouched by all three. Each action authenticates and scopes by the caller's own
  * subscription, so the company id the client sends is no more than a name for the row.
  */
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { archiveCompany, pauseCompany, rediscoverCompany, refreshCompany, resumeCompany, unfollowCompany } from "@/app/actions/companies";
 import { Button } from "@/components/Button";
+import { useActionCall } from "@/components/useActionCall";
 import type { CompanySubscription } from "@ava/db/schema";
 
 type MenuAction = "refresh" | "rediscover" | "pause" | "resume" | "archive" | "unfollow";
@@ -55,22 +56,13 @@ export function CompanyManageMenu({
   blockedReason?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState<MenuAction | null>(null);
-  const [, startTransition] = useTransition();
+  const call = useActionCall<MenuAction>();
+  const pending = call.pending;
 
   function run(action: MenuAction, confirmMessage?: string) {
-    if (pending) return;
-    if (confirmMessage && !confirm(confirmMessage)) return;
-    setPending(action);
     // The action revalidates the company pages, so its own response carries the fresh page; a
-    // refusal comes back as the redirect it has always been.
-    startTransition(async () => {
-      try {
-        await ACTIONS[action](companyId);
-      } finally {
-        setPending(null);
-      }
-    });
+    // refusal comes back as the redirect it has always been, so nothing is caught here.
+    call.run(action, () => ACTIONS[action](companyId), { confirm: confirmMessage });
   }
 
   return (

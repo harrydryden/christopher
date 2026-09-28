@@ -190,9 +190,15 @@ interface DomainVerification extends Omit<VerificationResult, "matchingRoles"> {
   sample?: Array<{ title: string; location?: string; remote?: boolean }>;
 }
 
-/** A 429 or 503, a 5xx, a timeout or a busy host. A DNS failure is not: that is what an invented domain does. */
-function transientFailure(err: unknown): boolean {
-  if (err instanceof SourceFetchError) return err.kind === "rate_limited" || err.kind === "timeout" || (err.status ?? 0) >= 500;
+/**
+ * A 429 or 503 the host sent as "come back later", a plain 5xx, a timeout or a busy host. Not a
+ * `blocked` verdict, whatever status it carries — a robots refusal (999) or a bot challenge served
+ * as a 503 is a fact about the host, cached for the day like any other failure — and not a DNS
+ * failure, which is what an invented domain does.
+ */
+export function transientFailure(err: unknown): boolean {
+  if (err instanceof SourceFetchError)
+    return err.kind === "rate_limited" || err.kind === "timeout" || (err.kind === "http" && (err.status ?? 0) >= 500);
   return err instanceof Error && err.name === "HostBusyError";
 }
 

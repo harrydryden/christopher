@@ -98,14 +98,5 @@ export function canonicalEvidenceItems(evidence: CanonicalEvidence): CvTextItem[
   ];
 }
 
-/**
- * The block a citation belongs to. An auditor reading the canonical evidence sees row ids and an
- * entry's own id as well as its block id, and a row quoted under any of them is the same evidence
- * as that row quoted under its block's, so a citation is judged by the block it came from.
- * `entryIds` are the library's entry ids, so a bare one can be recognised.
- */
-export function evidenceBlockId(id: string, entryIds?: ReadonlySet<string>): string {
-  const match = /^(entry:.+):(?:row|skill):\d+$/.exec(id);
-  if (match) return match[1]!;
-  return entryIds?.has(id) ? `entry:${id}` : id;
-}
+/** Moved to core, where the plan's library verdicts are derived; re-exported for the audit. */
+export { evidenceBlockId } from "@ava/core/cv-assessment";

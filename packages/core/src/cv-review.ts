@@ -15,11 +15,13 @@ import {
   cvEvidenceItems,
   cvMatchPoints,
   cvRequirementWeight,
+  evidenceBlockId,
   type CvAssessment,
   type CvRubric,
   type CvReviewPlan,
   type CvTextItem,
 } from "./cv-assessment";
+import type { CvTailoringPlan } from "./cv-tailoring";
 export { mentionsDemographicAttribute } from "./cv-demographics";
 import { mentionsDemographicAttribute } from "./cv-demographics";
 
@@ -84,15 +86,85 @@ function cvSectionClaimIds(section: CvContent["sections"][number]) {
     .filter((item) => item.id !== "profile")
     .map((item) => item.id);
 }
+type CvMatch = CvReviewPlan["matches"][number];
+/** A requirement's library-side verdict: what the confirmed evidence holds, whatever the CV prints. */
+export type CvLibraryVerdict = Pick<CvMatch, "libraryStatus" | "libraryEvidence">;
+const MAX_LIBRARY_EVIDENCE = 8;
+
+/**
+ * The evidence plan as the audit's library-side verdict, per requirement. The plan judged each
+ * requirement against the library by the same rules the audit uses, and that judgement depends on
+ * the rubric and the evidence only, never on the CV, so it is made once and handed to every audit.
+ * Each of the plan's row citations is named by its block (the id the audit cites evidence by) and
+ * kept only when its quote is in that block's text; a positive status left with no such quote is
+ * `unknown`, so a verdict never claims support it cannot show.
+ */
+export function cvLibraryVerdicts(
+  plan: CvTailoringPlan,
+  evidence: CvTextItem[],
+  entryIds: ReadonlySet<string>,
+): Map<string, CvLibraryVerdict> {
+  const byId = new Map(evidence.map((item) => [item.id, item]));
+  const verdicts = new Map<string, CvLibraryVerdict>();
+  for (const requirement of plan.requirements) {
+    const seen = new Set<string>();
+    const libraryEvidence: CvLibraryVerdict["libraryEvidence"] = [];
+    for (const ref of requirement.evidence) {
+      const id = evidenceBlockId(ref.sourceId, entryIds);
+      const block = byId.get(id);
+      if (!block || !anchored(ref.quote, block.text)) continue;
+      const key = `${id}\u0000${normalise(ref.quote)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      libraryEvidence.push({ id, quote: ref.quote });
+      if (libraryEvidence.length === MAX_LIBRARY_EVIDENCE) break;
+    }
+    const libraryStatus =
+      cvMatchPoints(requirement.status) && !libraryEvidence.length
+        ? "unknown"
+        : requirement.status;
+    verdicts.set(requirement.requirementId, { libraryStatus, libraryEvidence });
+  }
+  return verdicts;
+}
+
+/**
+ * A review with the plan's library-side verdict on every match, in place of whatever the model
+ * said (or left out): the stored assessment carries the plan's judgement of the library, never a
+ * second one. A requirement the plan does not name has no verdict to give, so it gets none.
+ */
+function withLibraryVerdicts(value: unknown, verdicts: ReadonlyMap<string, CvLibraryVerdict>): unknown {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { matches?: unknown }).matches)) return value;
+  const review = value as { matches: unknown[] };
+  return {
+    ...review,
+    matches: review.matches.map((match) => {
+      if (!match || typeof match !== "object") return match;
+      const id = (match as { requirementId?: unknown }).requirementId;
+      const verdict = typeof id === "string" ? verdicts.get(id) : undefined;
+      return {
+        ...match,
+        libraryStatus: verdict?.libraryStatus ?? "unknown",
+        libraryEvidence: structuredClone(verdict?.libraryEvidence ?? []),
+      };
+    }),
+  };
+}
+
 export function validateCvReview(
   rubric: CvRubric,
   content: CvContent,
   library: CvLibrary,
   value: unknown,
+  plan?: CvTailoringPlan,
 ): CvReviewPlan {
-  const review = CvReviewPlanSchema.parse(value);
+  const evidence = cvEvidenceItems(library);
+  const review = CvReviewPlanSchema.parse(
+    plan
+      ? withLibraryVerdicts(value, cvLibraryVerdicts(plan, evidence, new Set(library.entries.map((entry) => entry.id))))
+      : value,
+  );
   const cv = cvTextItems(content),
-    evidence = cvEvidenceItems(library),
     claims = cvClaimItems(content);
   if (
     !exactIds(
@@ -176,10 +248,15 @@ export function createCvAssessment(input: {
   model: string;
   pageCount: number;
   now?: Date;
+  /**
+   * The build's evidence plan. Given, it is the library-side verdict of every requirement
+   * (`cvLibraryVerdicts`), replacing the model's; builds without one keep the audit's own.
+   */
+  plan?: CvTailoringPlan;
 }): CvAssessment {
   const library = groupCvLibrary(input.library);
   const rubric = validateCvRubric(input.description, input.rubric);
-  const review = validateCvReview(rubric, input.content, library, input.review);
+  const review = validateCvReview(rubric, input.content, library, input.review, input.plan);
   const total = rubric.requirements.reduce(
     (sum, item) => sum + cvRequirementWeight(item),
     0,

@@ -194,8 +194,21 @@ export function isUserSettingsKey(key: string): key is UserSettingsKey {
 
 type SettingsRow = { key: string; value: unknown };
 
+/**
+ * What reading stored settings had to correct. A model id outside `MODEL_CHOICES` (a hand-edited
+ * row, a seed, a validator an older release shipped) would fail every call that uses it, so it is
+ * replaced on read by the default and named here for the Health page rather than trusted.
+ */
+export interface SettingsReadWarnings {
+  warnings?: string[];
+}
+
+function modelWarning(key: string, id: unknown, fallback: string): string {
+  return `${key} ${JSON.stringify(id)} is not a supported model; using ${fallback}.`;
+}
+
 /** Apply stored rows onto a defaults object in place, tolerating missing or malformed values. */
-function applyRows(out: AppSettings, rows: SettingsRow[]): void {
+function applyRows(out: AppSettings, rows: SettingsRow[], warnings: string[]): void {
   for (const row of rows) {
     const key = row.key as SettingsKey;
     if (!(key in DEFAULT_SETTINGS)) continue;
@@ -232,6 +245,24 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
       out.stageRoutes = sanitiseStageRoutes(val);
       continue;
     }
+    // A model id is checked against the supported list on read as well as on save: one that is
+    // not there falls back to the default and is reported, instead of failing at call time.
+    if (key === "defaultModel" || key === "cvModel") {
+      if (typeof val === "string" && isKnownModel(val)) out[key] = val;
+      else warnings.push(modelWarning(key, val, DEFAULT_SETTINGS[key]));
+      continue;
+    }
+    if (key === "modelOverrides") {
+      const overrides: Record<string, string> = {};
+      if (!Array.isArray(val)) {
+        for (const [callSite, id] of Object.entries(val as Record<string, unknown>)) {
+          if (typeof id === "string" && isKnownModel(id)) overrides[callSite] = id;
+          else warnings.push(modelWarning(`modelOverrides.${callSite}`, id, "the default model"));
+        }
+      }
+      out.modelOverrides = overrides;
+      continue;
+    }
     // Both scoring keys decide where money is spent, so anything but a known mode or an interval
     // inside the range keeps the default: live scoring, every ten minutes.
     if (key === "scoringMode") {
@@ -259,23 +290,29 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
  * stray `gate` or `aiBudgetUsd` in the shared table would otherwise silently override the setting
  * for every account at once.
  */
-export function resolveSettings(rows: SettingsRow[], userRows: SettingsRow[] = []): AppSettings {
-  const out: AppSettings = structuredClone(DEFAULT_SETTINGS);
-  applyRows(out, rows.filter((row) => !isUserSettingsKey(row.key)));
-  applyRows(out, userRows);
+export function resolveSettings(rows: SettingsRow[], userRows: SettingsRow[] = []): AppSettings & SettingsReadWarnings {
+  const out: AppSettings & SettingsReadWarnings = structuredClone(DEFAULT_SETTINGS);
+  const warnings: string[] = [];
+  applyRows(out, rows.filter((row) => !isUserSettingsKey(row.key)), warnings);
+  applyRows(out, userRows, warnings);
+  if (warnings.length) out.warnings = warnings;
   return out;
 }
 
-export function resolveSystemSettings(rows: SettingsRow[]): SystemSettings {
-  const merged = resolveSettings(rows.filter((row) => isSystemSettingsKey(row.key)));
-  return Object.fromEntries(SYSTEM_SETTINGS_KEYS.map((key) => [key, merged[key]])) as unknown as SystemSettings;
+function pickSettings<T>(merged: AppSettings & SettingsReadWarnings, keys: readonly SettingsKey[]): T & SettingsReadWarnings {
+  const out = Object.fromEntries(keys.map((key) => [key, merged[key]])) as unknown as T & SettingsReadWarnings;
+  if (merged.warnings) out.warnings = merged.warnings;
+  return out;
 }
 
-export function resolveUserSettings(rows: SettingsRow[]): UserSettings {
+export function resolveSystemSettings(rows: SettingsRow[]): SystemSettings & SettingsReadWarnings {
+  return pickSettings<SystemSettings>(resolveSettings(rows.filter((row) => isSystemSettingsKey(row.key))), SYSTEM_SETTINGS_KEYS);
+}
+
+export function resolveUserSettings(rows: SettingsRow[]): UserSettings & SettingsReadWarnings {
   // One account's rows, so they go in as account rows: `resolveSettings` reads user-scoped keys
   // from that side alone.
-  const merged = resolveSettings([], rows.filter((row) => isUserSettingsKey(row.key)));
-  return Object.fromEntries(USER_SETTINGS_KEYS.map((key) => [key, merged[key]])) as unknown as UserSettings;
+  return pickSettings<UserSettings>(resolveSettings([], rows.filter((row) => isUserSettingsKey(row.key))), USER_SETTINGS_KEYS);
 }
 
 export function modelForCallSite(settings: Pick<SystemSettings, "defaultModel" | "modelOverrides">, callSite: string): string {

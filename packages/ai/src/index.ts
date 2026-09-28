@@ -1,13 +1,13 @@
 export {
   ASSESSMENT_COVERAGE_ERROR, mergeCvAssessBatches, SERVER_FALLBACK_BETA, STREAM_IDLE_MS, stallMessage, streamIdleMsFromEnv,
   AiEngine, BATCH_ERROR_PREFIX, BATCH_REQUEST_TIMEOUT_MS, a3OutputCeiling, createAiEngine, createProviderClient, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
-  INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, SDK_MAX_RETRIES, STREAM_CEILING_MS,
+  INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, MODEL_ACCESS_BREAKER_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, SDK_MAX_RETRIES, STREAM_CEILING_MS,
 } from "./engine";
 export type { CvAssessBatchResult, CvAssessInput, CvAssessOptions, CvAssessPass, CvAssessResult } from "./engine";
 export { cvClaimMemoFrom, cvClaimMemoKey, cvClaimMemoKeys, cvRubricHash } from "./claim-memo";
 export type { CvClaimMemo, CvClaimMemoRoute, CvClaimVerdict } from "./claim-memo";
 export { UNVERIFIED_CLAIM_REASON } from "./cv-review-batch";
-export type { AiBatchesLike, AiBatchLike, AiBatchMeta, AiBatchResultLike, BatchErrorBody, BatchResultContext, BatchScoreRequest, ScoreJobInput, ScoreJobResult, AiCallMeta, AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, LibraryReviewBatchEvent, LibraryReviewEntry, LibraryReviewHooks, ParseResponse, Ref, ReserveHint } from "./engine";
+export type { AiBatchesLike, AiBatchLike, AiBatchMeta, AiBatchResultLike, BatchErrorBody, BatchResultContext, BatchScoreRequest, ScoreJobInput, ScoreJobResult, AiCallMeta, AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, ModelProbe, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, LibraryReviewBatchEvent, LibraryReviewEntry, LibraryReviewHooks, ParseResponse, Ref, ReserveHint } from "./engine";
 export {
   CV_PROMPT_IDS, CV_REVIEW_BATCH_SIZE, EFFORT_OUTPUT_SCALE, EFFORTS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, expectedOutputTokens, isPromptId, layoutFor, promptEntry,
   promptSetVersion, promptVersion, resolveRoute, routedModel,
@@ -30,6 +30,8 @@ export { canonicalEvidence, canonicalEvidenceBlock, canonicalEvidenceItems, evid
 export type { CanonicalEvidence, CanonicalEvidenceEntry, CanonicalEvidenceRow } from "./evidence";
 export { AiGovernor, BASE_PAUSE_MS, DEFAULT_MAX_STREAMS, MAX_PAUSE_MS, aiGovernorStats, defaultGovernor, maxStreamsFromEnv, retryAfterMs } from "./governor";
 export type { GovernorOptions, GovernorStats } from "./governor";
+export { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, aiBreakerStats, defaultBreaker, isModelAccessFailure } from "./breaker";
+export type { BreakerStats, BreakerTrip } from "./breaker";
 export { modelSupportsEffort, modelSupportsServerFallback } from "./model-capabilities";
 export * as schemas from "./schemas";
 export * as prompts from "./prompts";

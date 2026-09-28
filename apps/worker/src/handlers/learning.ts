@@ -1,7 +1,7 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
 import { schema, queueScoring, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
-import { decisionDigest, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
+import { decisionDigest, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -205,18 +205,30 @@ export async function writeScore(
   return true;
 }
 
+/** A score that could not be asked for because this key cannot reach the model; the task retries. */
+export class ModelAccessError extends Error {
+  constructor(readonly failure: AiFailure) {
+    super(`A5 model unreachable with this key${failure.status ? ` (HTTP ${failure.status})` : ""}; the role stays unscored and the task retries`);
+    this.name = "ModelAccessError";
+  }
+}
+
 export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, jobId } = task.payload as unknown as TaskPayloads["score_job"];
   const prep = await prepareScoreJob(deps, userId, jobId);
   if ("done" in prep) return prep.done;
   const { input } = prep.prepared;
+  let failure: AiFailure | undefined;
   const result = await withinAccountBudget(deps.ai.scoreJob(input,
-    { refType: "job", refId: jobId, userId, signal: deps.signal },
+    { refType: "job", refId: jobId, userId, signal: deps.signal, onFailure: failed => { failure = failed; } },
   ));
   if (result === ACCOUNT_BUDGET_REFUSED) {
     await markScoreState(deps, userId, jobId, "budget");
     return BUDGET_SKIP;
   }
+  // The key could not reach the model: nothing was asked, so the role is not "scored without a
+  // result", which a scan would never queue again. It stays unscored and the task retries.
+  if (!result && failure?.kind === "model_access") throw new ModelAccessError(failure);
   if (!result) {
     await markScoredWithoutResult(deps.db, deps.now(), userId, jobId);
     return { skipped: "no ai result" };

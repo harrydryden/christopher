@@ -11,12 +11,14 @@ import { createDb, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { gzipSync } from "node:zlib";
+import { NotFoundError } from "@ava/ai";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import {
   handleReevaluateGate,
   handleRescoreAll,
   handleScoreJob,
+  ModelAccessError,
   handleTagReason,
   handleSuggestFilters,
   handleSynthesizeProfile,
@@ -177,6 +179,28 @@ it("skips a score whose own hold the account's budget refuses, and finishes rath
     expect(await handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).toEqual({ skipped: "account ai budget exceeded" });
     expect(await viewOf(job.id)).toMatchObject({ scoreState: "budget" });
     expect(create).not.toHaveBeenCalled();
+  } finally {
+    await engine.close();
+  }
+});
+
+it("leaves a role unscored, and the task to retry, when the key cannot reach the scoring model", async () => {
+  const create = vi.fn().mockRejectedValue(new NotFoundError(404, { type: "error", error: { type: "not_found_error", message: "model: claude-sonnet-5" } }, undefined, new Headers()));
+  const engine = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0, aiClient: { messages: { create } } });
+  try {
+    const { job } = await seedRole();
+    const withRealEngine = { ...engine, assertOwnership: undefined } as WorkerDeps;
+    await expect(handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).rejects.toBeInstanceOf(ModelAccessError);
+    expect(await viewOf(job.id)).toMatchObject({ scoreState: null, scoredAt: null, fitScore: null });
+    // The breaker is open now: the retry is refused without a request, and still leaves it unscored.
+    await expect(handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).rejects.toBeInstanceOf(ModelAccessError);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect((await viewOf(job.id)).scoredAt).toBeNull();
+
+    // Any other empty answer still records that the model was asked and gave nothing.
+    const empty = aiDeps({ scoreJob: vi.fn().mockResolvedValue(null) });
+    expect(await handleScoreJob(task({ userId, jobId: job.id }), empty)).toEqual({ skipped: "no ai result" });
+    expect(await viewOf(job.id)).toMatchObject({ scoreState: "scored" });
   } finally {
     await engine.close();
   }

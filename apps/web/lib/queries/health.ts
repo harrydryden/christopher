@@ -28,7 +28,7 @@ import {
 } from "@ava/db/schema";
 // The deadline table lives in packages/core so the interface can say how long a running task has
 // left without importing the worker.
-import { aiBudgetWindowStart, aiFeatureLabel, deadlineFor } from "@ava/core";
+import { aiBudgetWindowStart, aiFeatureLabel, deadlineFor, resolveSystemSettings } from "@ava/core";
 import { cache } from "react";
 import { aiUsageKey, groupAiUsage, type AiUsageGroup, type AiUsagePercentiles } from "@/lib/ai-usage";
 import { accountAiBudget, budgetFromRow, budgetSelect, defaultAccountAiBudget, type BudgetRow } from "@/lib/queries/accounts";
@@ -36,7 +36,7 @@ import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
 import { ifMigrated } from "@/lib/schema-skew";
-import { deriveWorkerStatus, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
+import { deriveWorkerStatus, type ModelAccessEvent, type WorkerBreaker, type WorkerBreakerTrip, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
 import { histogramP75, VITAL_METRICS, type VitalMetric } from "@/lib/web-vitals";
 
 /** Companies one account follows; with no account, every company (the administrator's view). */
@@ -566,6 +566,50 @@ function readGovernor(stored: unknown): WorkerHeartbeat["governor"] {
   return streamCap === null && inFlight === null && queued === null ? null : { streamCap, inFlight, queued, pausedUntil, models };
 }
 
+/** A time the engine reports as epoch milliseconds, or an ISO string. */
+function epochOrIso(value: unknown): Date | null {
+  const ms = finite(value);
+  return ms !== null ? new Date(ms) : isoDate(value);
+}
+
+function readBreakerTrip(stored: unknown): WorkerBreakerTrip | null {
+  if (!stored || typeof stored !== "object") return null;
+  const trip = stored as Record<string, unknown>;
+  if (typeof trip.model !== "string") return null;
+  return {
+    model: trip.model,
+    message: typeof trip.message === "string" ? trip.message : "",
+    status: finite(trip.status),
+    trippedAt: epochOrIso(trip.trippedAt),
+    openUntil: epochOrIso(trip.openUntil),
+    refused: finite(trip.refused) ?? 0,
+  };
+}
+
+/**
+ * The engine's model-access breaker as the heartbeat reports it: `{ open: [trip], last: trip }`.
+ * Absent (an older worker) reads as null.
+ */
+function readBreaker(stored: unknown): WorkerBreaker | null {
+  if (!stored || typeof stored !== "object") return null;
+  const value = stored as Record<string, unknown>;
+  const open = Array.isArray(value.open) ? value.open.flatMap((trip) => readBreakerTrip(trip) ?? []) : [];
+  return { open, last: readBreakerTrip(value.last) };
+}
+
+/** A `model_access` worker event as the one-line Health summary reads it. */
+function modelAccessEvent(row: WorkerEvent | null): ModelAccessEvent | null {
+  if (!row) return null;
+  const detail = row.detail ?? {};
+  return {
+    at: row.at,
+    model: typeof detail.model === "string" ? detail.model : null,
+    message: typeof detail.message === "string" ? detail.message.slice(0, 200) : null,
+    status: finite(detail.status),
+    source: typeof detail.source === "string" ? detail.source : null,
+  };
+}
+
 export function readHeartbeat(stored: unknown): WorkerHeartbeat | null {
   const value = (stored && typeof stored === "object" ? stored : undefined) as Record<string, unknown> | undefined;
   const at = isoDate(value?.at);
@@ -581,6 +625,7 @@ export function readHeartbeat(stored: unknown): WorkerHeartbeat | null {
     active: finite(value.active),
     concurrency: finite(value.concurrency),
     governor: readGovernor(value.governor),
+    breaker: readBreaker(value.breaker),
   };
 }
 
@@ -620,6 +665,8 @@ interface WorkerState {
   lastCrash: WorkerEvent | null;
   events: WorkerEvent[];
   monitor: MonitorReading | null;
+  /** The last `model_access` event, and what reading the stored model settings had to replace. */
+  modelAccess: { event: ModelAccessEvent | null; warnings: string[] };
 }
 
 /** A ledger row as `to_jsonb` spells it, read back into the row the table would have returned. */
@@ -657,10 +704,15 @@ async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerSta
       (select count(*)::int from worker_events where kind = 'crash_recovery' and at >= ${day}) as restarts_day,
       (select to_jsonb(e) from (select * from worker_events where kind = 'boot' order by at desc limit 1) e) as boot,
       (select to_jsonb(e) from (select * from worker_events where kind = 'crash_recovery' order by at desc limit 1) e) as crash,
+      (select to_jsonb(e) from (select * from worker_events where kind = 'model_access' order by at desc limit 1) e) as model_access,
+      (select coalesce(jsonb_agg(jsonb_build_object('key', key, 'value', value)), '[]'::jsonb)
+        from settings where key in ('defaultModel', 'modelOverrides')) as model_settings,
       (select coalesce(jsonb_agg(to_jsonb(e) order by e.at desc), '[]'::jsonb)
         from (select * from worker_events order by at desc limit ${eventLimit}) e) as events`);
-    const row = result.rows[0] as { heartbeat: unknown; monitor: unknown; restarts_hour: number; restarts_day: number; boot: unknown; crash: unknown; events: unknown } | undefined;
+    const row = result.rows[0] as { heartbeat: unknown; monitor: unknown; restarts_hour: number; restarts_day: number; boot: unknown; crash: unknown; model_access: unknown; model_settings: unknown; events: unknown } | undefined;
+    const modelSettings = (Array.isArray(row?.model_settings) ? row.model_settings : []) as Array<{ key: string; value: unknown }>;
     return {
+      modelAccess: { event: modelAccessEvent(ledgerEvent(row?.model_access)), warnings: resolveSystemSettings(modelSettings).warnings ?? [] },
       heartbeat: readHeartbeat(row?.heartbeat),
       restartsLastHour: Number(row?.restarts_hour ?? 0),
       restartsLastDay: Number(row?.restarts_day ?? 0),
@@ -672,7 +724,7 @@ async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerSta
   }, async () => {
     // The interface can be serving before the worker has run the migration that creates the
     // ledger. The heartbeat is still read; the ledger is "nothing recorded".
-    return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [], monitor: await getMonitorSample() };
+    return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [], monitor: await getMonitorSample(), modelAccess: { event: null, warnings: [] } };
   });
 }
 
@@ -869,6 +921,13 @@ function eventDetailLine(kind: WorkerEventKind, detail: Record<string, unknown>)
       return finite(detail.elapsedMs) !== null
         ? `ran ${Math.round((finite(detail.elapsedMs) ?? 0) / 1000)}s against a ${Math.round((finite(detail.deadlineMs) ?? 0) / 1000)}s deadline`
         : null;
+    case "model_access":
+      return [
+        typeof detail.model === "string" ? detail.model : null,
+        finite(detail.status) !== null ? `HTTP ${detail.status}` : null,
+        detail.source === "boot" ? "found at boot" : null,
+        typeof detail.message === "string" ? detail.message.slice(0, 200) : null,
+      ].filter(Boolean).join(" · ") || null;
     case "holds_released":
       return finite(detail.count) !== null
         ? `${detail.count} AI budget holds released${typeof detail.reason === "string" ? ` on ${detail.reason}` : ""}`
@@ -991,6 +1050,8 @@ export interface OperationsActivity {
   events: WorkerEventRow[];
   /** The worker's last monitor sample, read in the same statement as its heartbeat. */
   monitor: MonitorReading | null;
+  /** The last model-access failure and any replaced model setting, read in the same statement. */
+  modelAccess: { event: ModelAccessEvent | null; warnings: string[] };
   /** The address of an account the page names elsewhere (the spend table), or null. */
   accountEmail: (userId: string) => string | null;
 }
@@ -1026,6 +1087,7 @@ export async function operationsActivity(
     retrying: retryingTaskRows(retrying, names),
     events: workerEventRows(state.events, names),
     monitor: state.monitor,
+    modelAccess: state.modelAccess,
     accountEmail: (userId) => names.get(subjectKey({ kind: "user", id: userId })) ?? null,
   };
 }

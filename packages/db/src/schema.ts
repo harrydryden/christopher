@@ -998,7 +998,7 @@ export const aiReservations = pgTable("ai_reservations", {
   index("ai_reservations_ref_idx").on(t.refId), index("ai_reservations_expires_idx").on(t.expiresAt)]);
 
 export const WORKER_EVENT_KINDS = [
-  "boot", "shutdown", "crash_recovery", "task_abandoned", "task_deadline", "holds_released", "vitals",
+  "boot", "shutdown", "crash_recovery", "task_abandoned", "task_deadline", "holds_released", "vitals", "model_access",
 ] as const;
 export type WorkerEventKind = (typeof WORKER_EVENT_KINDS)[number];
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { STREAM_IDLE_MS } from "./engine";
+import { MODEL_ACCESS_BREAKER_ERROR_PREFIX, STREAM_IDLE_MS } from "./engine";
+import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, isModelAccessFailure } from "./breaker";
 import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, SDK_MAX_RETRIES, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
@@ -939,6 +940,71 @@ describe("named failures", () => {
     const { engine, usage } = raise(new Error("boom"));
     expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
     expect(usage[0]!.failure).toEqual({ kind: "unknown" });
+  });
+
+  describe("the model-access breaker", () => {
+    const tripped = (error: unknown, now: { t: number }) => {
+      const usage: AiUsageRecord[] = [];
+      const logs: string[] = [];
+      let sent = 0;
+      let holds = 0;
+      const breaker = new ModelAccessBreaker(MODEL_ACCESS_BREAKER_MS, () => now.t);
+      const engine = createAiEngine({
+        getModel: () => "claude-opus-5",
+        onUsage: record => { usage.push(record); },
+        logger: msg => { logs.push(msg); },
+        breaker,
+        reserve: async () => { holds++; return async () => {}; },
+        client: { messages: { create: () => { sent++; return Promise.reject(error); } } },
+      });
+      return { engine, usage, logs, breaker, counts: () => ({ sent, holds }) };
+    };
+
+    it("refuses a model for ten minutes after the key could not reach it, without a slot or a hold, and logs once", async () => {
+      const now = { t: 1_000_000 };
+      const { engine, usage, logs, counts } = tripped(new NotFoundError(404, body("not_found_error"), undefined, headers()), now);
+      const failures: string[] = [];
+      expect(await engine.analyseCvJob("Must lead operations", { onFailure: failure => failures.push(failure.kind) })).toBeNull();
+      expect(await engine.analyseCvJob("Must lead operations", { onFailure: failure => failures.push(failure.kind) })).toBeNull();
+      expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
+      expect(counts()).toEqual({ sent: 1, holds: 1 });
+      expect(failures).toEqual(["model_access", "model_access"]);
+      expect(usage.map(record => record.failure)).toEqual([{ kind: "model_access", status: 404 }, { kind: "model_access", status: 404 }, { kind: "model_access", status: 404 }]);
+      expect(usage[1]).toMatchObject({ ok: false, costUsd: 0, inputTokens: 0, promptId: "cv.rubric" });
+      expect(usage[1]!.error!.startsWith(MODEL_ACCESS_BREAKER_ERROR_PREFIX)).toBe(true);
+      expect(logs.filter(msg => msg.startsWith("model access breaker open"))).toHaveLength(1);
+      expect(engine.breakerStats().open).toMatchObject([{ model: "claude-opus-5", status: 404, refused: 2 }]);
+
+      // When the window ends the next call is sent, and trips it again.
+      now.t += MODEL_ACCESS_BREAKER_MS;
+      expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
+      expect(counts()).toEqual({ sent: 2, holds: 2 });
+      expect(logs.filter(msg => msg.startsWith("model access breaker open"))).toHaveLength(2);
+    });
+
+    it("does not open for a request that was wrong on its own, or for a throttle", async () => {
+      for (const error of [
+        new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 250000 tokens > 200000 maximum" } }, undefined, headers()),
+        new RateLimitError(429, body("rate_limit_error"), undefined, headers()),
+      ]) {
+        const { engine, counts } = tripped(error, { t: 0 });
+        await engine.analyseCvJob("Must lead operations");
+        await engine.analyseCvJob("Must lead operations");
+        expect(counts().sent).toBe(2);
+        expect(engine.breakerStats()).toEqual({ open: [], last: null });
+      }
+    });
+
+    it("tells a key or model failure from a request's own", () => {
+      expect(isModelAccessFailure(401, "invalid x-api-key")).toBe(true);
+      expect(isModelAccessFailure(403, "forbidden")).toBe(true);
+      expect(isModelAccessFailure(404, "model: claude-opus-5")).toBe(true);
+      expect(isModelAccessFailure(400, "This workspace does not have access to the model")).toBe(true);
+      expect(isModelAccessFailure(400, "Unexpected value(s) for the `anthropic-beta` header")).toBe(true);
+      expect(isModelAccessFailure(400, "max_tokens: 64000 > 32000, which is the maximum for this model")).toBe(false);
+      expect(isModelAccessFailure(400, "messages: at least one message is required")).toBe(false);
+      expect(isModelAccessFailure(429, "model overloaded")).toBe(false);
+    });
   });
 
   it("keeps the class through a stream that was cut off part-way", async () => {

@@ -223,20 +223,20 @@ it("retries a page-limit failure against the page limit set since, keeping the C
   expect(retried.librarySnapshot.theme!.maxPages).toBe(3);
 });
 
-it("refuses a retry the account's current CV model cannot run, and queues nothing", async () => {
+it("refuses a retry on the extraction model, and reads a retired CV model as the default", async () => {
   const draft = await failedDraft();
   // The website extraction model, which a CV build may not share.
   await setCvModel("claude-sonnet-5");
   expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({
     ok: false, error: "Choose a CV model different from website extraction before generating.",
   });
-  // A model this deployment no longer offers.
-  await setCvModel("claude-retired-4");
-  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({
-    ok: false, error: "Choose a supported model for CV generation in Settings.",
-  });
   expect((await draftRow(draft.id)).status).toBe("failed");
   expect(await buildTasks()).toHaveLength(0);
+  // A stored model this deployment no longer offers is read as the default CV model, rather than
+  // refusing every build until someone edits the row, so the retry goes ahead on that.
+  await setCvModel("claude-retired-4");
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  expect(await buildTasks()).toHaveLength(1);
 });
 
 const DESCRIPTION = "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.";

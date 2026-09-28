@@ -3,7 +3,7 @@
  * alone says a crash-looping worker is healthy. These are the rules both Health pages read.
  */
 import { expect, it } from "vitest";
-import { deriveWorkerStatus, governorSummary, heapSummary, waitSummary, workerStateTone, workerStatusSentence, type WorkerHeartbeat } from "./worker-status";
+import { deriveWorkerStatus, governorSummary, heapSummary, modelAccessSummary, waitSummary, workerStateTone, workerStatusSentence, type WorkerHeartbeat } from "./worker-status";
 
 const now = new Date("2026-09-18T12:00:00.000Z");
 const ago = (ms: number) => new Date(now.getTime() - ms);
@@ -82,6 +82,23 @@ it("names the stream cap as the per-model figure it is, with each busy model's s
   expect(governorSummary({ streamCap: 4, inFlight: 1, queued: 0, pausedUntil: ago(1_000) }, now)).toBe(
     "Model streams: 1 open; each model may have 4 open at once.",
   );
+});
+
+it("says which models the key cannot reach, the last failure and any replaced setting, in warn tone while it matters", () => {
+  const trip = { model: "claude-opus-5", message: "404", status: 404, trippedAt: ago(60_000), openUntil: new Date(now.getTime() + 540_000), refused: 3 };
+  const event = { at: ago(60_000), model: "claude-opus-5", message: "404 model: claude-opus-5", status: 404, source: "call" };
+  const open = modelAccessSummary({ open: [trip], last: trip }, event, [], now);
+  expect(open.warn).toBe(true);
+  expect(open.text).toContain(`Refusing claude-opus-5 until ${trip.openUntil.toISOString().slice(11, 16)} UTC (3 calls not sent): this key could not reach it`);
+  expect(open.text).toContain("claude-opus-5 (HTTP 404), 404 model: claude-opus-5");
+
+  // Nothing open and nothing recent: the quiet line, muted.
+  const old = { ...event, at: ago(3 * 86_400_000) };
+  expect(modelAccessSummary({ open: [{ ...trip, openUntil: ago(1_000) }], last: trip }, old, [], now).warn).toBe(false);
+  expect(modelAccessSummary(null, null, [], now)).toEqual({ text: "No model access failure recorded.", warn: false });
+  const replaced = modelAccessSummary(null, null, ['defaultModel "x" is not a supported model; using claude-sonnet-5.'], now);
+  expect(replaced.warn).toBe(true);
+  expect(replaced.text).toContain('Settings: defaultModel "x" is not a supported model; using claude-sonnet-5.');
 });
 
 it("says what the worker waits on besides memory, in warn tone at 200 ms of loop delay or any pool wait", () => {

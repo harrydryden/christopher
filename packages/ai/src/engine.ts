@@ -45,6 +45,7 @@ import { canonicalEvidence, evidenceBlockId } from "./evidence";
 import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./claim-memo";
 import { AiGovernor, abortableSleep, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
+import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, type BreakerStats } from "./breaker";
 
 export type { Effort } from "./prompt-registry";
 
@@ -140,6 +141,12 @@ export interface Ref {
    * answer nobody will read. It is never recorded; the rest of the ref is.
    */
   signal?: AbortSignal;
+  /**
+   * Told why the call produced nothing, when it failed as a call (not recorded). A method returns
+   * null for every failure, and some callers must act differently on some: scoring leaves a role
+   * unscored and retries after a `model_access` failure instead of marking it scored.
+   */
+  onFailure?: (failure: AiFailure) => void;
 }
 
 /**
@@ -173,7 +180,12 @@ export interface AiClientLike {
    * (`useServerFallback`). A client without it — a fake, say — is called without the fallback.
    */
   beta?: { messages: Omit<AiClientLike["messages"], "batches"> };
+  /** The SDK's models resource, for proving at boot that this key can reach a model. Free: no tokens. */
+  models?: { retrieve(modelId: string, params?: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown> };
 }
+
+/** What asking the provider about one model found: reachable, or why not. */
+export type ModelProbe = { ok: true } | { ok: false; message: string; status?: number; failure: AiFailure | null };
 
 /**
  * The slice of the SDK's Message Batches resource the engine uses (`client.messages.batches`).
@@ -306,6 +318,11 @@ export interface AiEngineOptions {
    */
   governor?: AiGovernor;
   /**
+   * The model-access breaker. Engines that build their own client share the process's
+   * (`defaultBreaker`); an engine given a client shares one per client unless given this.
+   */
+  breaker?: ModelAccessBreaker;
+  /**
    * How many times the engine itself re-sends a request that failed before its response began
    * (a throttle, an overload, a dropped connection), waiting out the governor's shared pause.
    * Default: `SDK_MAX_RETRIES` for an engine that built its own client — whose SDK retries are then
@@ -377,6 +394,17 @@ interface StreamStats {
   maxEventGapMs?: number;
   requestId?: string;
 }
+
+/** An engine given a client shares one breaker with every engine given the same client. */
+const clientBreakers = new WeakMap<object, ModelAccessBreaker>();
+function breakerFor(client: AiClientLike): ModelAccessBreaker {
+  let breaker = clientBreakers.get(client);
+  if (!breaker) clientBreakers.set(client, breaker = new ModelAccessBreaker());
+  return breaker;
+}
+
+/** The error a call refused by an open model-access breaker records, ahead of the provider's message. */
+export const MODEL_ACCESS_BREAKER_ERROR_PREFIX = "Model unreachable with this key; not sent:";
 
 /** An engine given a client shares one governor with every engine given the same client. */
 const clientGovernors = new WeakMap<object, AiGovernor>();
@@ -836,6 +864,7 @@ export class AiEngine {
   private readonly client: AiClientLike | null;
 
   private readonly governor: AiGovernor;
+  private readonly breaker: ModelAccessBreaker;
   private readonly retries: number;
   private readonly idleMs: number;
 
@@ -853,6 +882,7 @@ export class AiEngine {
     this.enabled = this.client !== null;
     this.retries = Math.max(0, Math.floor(options.retries ?? (options.client ? 0 : SDK_MAX_RETRIES)));
     this.governor = options.governor ?? (options.client ? governorFor(options.client) : defaultGovernor());
+    this.breaker = options.breaker ?? (options.client ? breakerFor(options.client) : defaultBreaker());
     this.idleMs = options.streamIdleMs ?? streamIdleMsFromEnv();
   }
 
@@ -861,13 +891,35 @@ export class AiEngine {
     return this.governor.stats();
   }
 
+  /** The models this engine is refusing after a model-access failure, and its last trip, for Health. */
+  breakerStats(): BreakerStats {
+    return this.breaker.stats();
+  }
+
+  /**
+   * Ask the provider whether this key can use `model`, without a message and so without a token.
+   * Null when there is no client, or the client cannot ask (a fake). It reports and nothing more:
+   * the breaker opens only on a real call's failure.
+   */
+  async probeModel(model: string, signal?: AbortSignal): Promise<ModelProbe | null> {
+    if (!this.client?.models?.retrieve) return null;
+    try {
+      await this.client.models.retrieve(model, {}, { timeout: 15_000, ...(signal ? { signal } : {}) });
+      return { ok: true };
+    } catch (err) {
+      const status = err instanceof APIError ? err.status : undefined;
+      const message = (err as Error).message ?? String(err);
+      return { ok: false, message: message.slice(0, 500), ...(status !== undefined ? { status } : {}), failure: classifyAiFailure(err) };
+    }
+  }
+
   /**
    * This engine for one run: every call it makes also stops when `signal` aborts. The client, and
    * its connection pool, is shared rather than built again from the key, and so are the budget
    * and the ledger, so a run's engine spends and records exactly as the shared one does.
    */
   withSignal(signal: AbortSignal): AiEngine {
-    return new AiEngine({ ...this.options, client: this.client ?? undefined, governor: this.governor, retries: this.retries,
+    return new AiEngine({ ...this.options, client: this.client ?? undefined, governor: this.governor, breaker: this.breaker, retries: this.retries,
       streamIdleMs: this.idleMs, signal: anySignal(this.options.signal, signal) });
   }
 
@@ -1095,13 +1147,28 @@ export class AiEngine {
 
   private async run<T>(entry: PromptEntry, call: CallInput, ref: Ref = {}): Promise<T | null> {
     // The signal stops the call, and is not part of what is recorded about it.
-    const { signal: callerSignal, priority, ...recorded } = ref;
+    const { signal: callerSignal, priority, onFailure, ...recorded } = ref;
     // A call's own signal when it has one (an assessment batch's, which already listens to the
     // run's and the caller's), otherwise the caller's and the run's together.
     const signal = call.signal ?? anySignal(callerSignal, this.options.signal);
     if (!this.client || signal?.aborted) return null;
     const started = Date.now();
     const { callSite, model, request, texts, maxTokens, tools, identity, meta } = await this.buildRequest(entry, call, recorded);
+    // A model this key could not reach a moment ago is refused here, before the governor and the
+    // budget: the call would fail the same way, instantly, and hold both for nothing. The row it
+    // leaves costs nothing and names the failure, so a caller can tell it from a model that answered badly.
+    const open = this.breaker.refuse(model);
+    if (open) {
+      const failure: AiFailure = { kind: "model_access", ...(open.status !== undefined ? { status: open.status } : {}) };
+      const record: AiUsageRecord = {
+        callSite, model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, durationMs: 0,
+        ok: false, error: `${MODEL_ACCESS_BREAKER_ERROR_PREFIX} ${open.message}`.slice(0, 500), failure, ...identity,
+      };
+      await this.record(record);
+      call.onRecord?.(record);
+      onFailure?.(failure);
+      return null;
+    }
     // A refusal is re-run server-side on the provider's recommended fallback, inside this call.
     const fallback = this.options.useServerFallback !== false && modelSupportsServerFallback(model) && !!this.client.beta?.messages;
     if (fallback) {
@@ -1196,9 +1263,14 @@ export class AiEngine {
         record = usageRecord(snapshot?.model ?? model, addUsage(prior, snapshot?.usage ?? {}),
           { ok: false, error: (err as Error).message.slice(0, 500), failure: classifyAiFailure(err) ?? undefined });
         note = [`${callSite} failed`, err];
+        const cause = err instanceof CallCutOff ? err.reason : err;
+        if (record.failure?.kind === "model_access" && cause instanceof APIError && isModelAccessFailure(cause.status, cause.message)
+          && this.breaker.trip(model, cause.message, cause.status))
+          this.log(`model access breaker open for ${model} for ${MODEL_ACCESS_BREAKER_MS / 60_000} minutes`, { status: cause.status, message: cause.message });
       }
       landed = await this.record(record);
       call.onRecord?.(record);
+      if (record.failure) onFailure?.(record.failure);
       if (note) this.log(...note);
       return result;
     } finally {

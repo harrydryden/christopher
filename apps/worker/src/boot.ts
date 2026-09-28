@@ -6,11 +6,53 @@
  * one is a boot that takes longer the more people use the product, at exactly the moment the
  * worker can least afford it.
  */
-import { SEED_TAGS, type Db } from "@ava/db";
-import { GATE_REEVALUATION_VERSION } from "@ava/core";
+import { recordWorkerEvent, SEED_TAGS, type Db } from "@ava/db";
+import { DEFAULT_SETTINGS, GATE_REEVALUATION_VERSION, isKnownModel, type SystemSettings } from "@ava/core";
+import type { AiEngine } from "@ava/ai";
 import { sql } from "drizzle-orm";
 import { log } from "./log";
 import { getInternal, setInternal } from "./settings";
+
+/**
+ * Every model this deployment is configured to call: the default, the per-call-site overrides, the
+ * stage routes, and each CV model an account has chosen (or the default one). One statement for
+ * the accounts' choices, whatever their number.
+ */
+export async function configuredModels(db: Db, settings: Pick<SystemSettings, "defaultModel" | "modelOverrides" | "stageRoutes">): Promise<string[]> {
+  const chosen = await db.execute<{ model: unknown }>(sql`select distinct value as model from user_settings where key = 'cvModel'`);
+  const models = [
+    settings.defaultModel,
+    ...Object.values(settings.modelOverrides),
+    ...Object.values(settings.stageRoutes).map(route => route?.model),
+    DEFAULT_SETTINGS.cvModel,
+    ...chosen.rows.map(row => row.model),
+  ];
+  // Only ids reading settings would let through: an unknown one is replaced by the default on read.
+  return [...new Set(models.filter((model): model is string => typeof model === "string" && isKnownModel(model)))].sort();
+}
+
+/**
+ * Prove, once per boot, that this key can reach every configured model. `models.retrieve` costs no
+ * tokens. A model it cannot reach is a `model_access` worker event Health shows (and opens the
+ * engine's breaker), rather than a day of calls failing one by one; nothing here stops the boot.
+ * Returns the models that failed.
+ */
+export async function probeConfiguredModels(deps: { db: Db; ai: Pick<AiEngine, "probeModel">; settings(): Promise<SystemSettings> }, workerId: string): Promise<string[]> {
+  const failed: string[] = [];
+  try {
+    const models = await configuredModels(deps.db, await deps.settings());
+    for (const model of models) {
+      const probe = await deps.ai.probeModel(model);
+      if (!probe || probe.ok) continue;
+      failed.push(model);
+      log.warn("model unreachable with this key", { model, status: probe.status, message: probe.message });
+      await recordWorkerEvent(deps.db, { workerId, kind: "model_access", detail: { model, message: probe.message, ...(probe.status !== undefined ? { status: probe.status } : {}), source: "boot" } });
+    }
+  } catch (err) {
+    log.warn("model probe failed", err);
+  }
+  return failed;
+}
 
 /** Where the last gate version a boot applied is kept. */
 export const GATE_REEVALUATION_KEY = "gateReevaluationVersion";

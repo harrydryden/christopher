@@ -12,6 +12,7 @@ import { CHOOSE_GATE_SENTENCE } from "@/lib/setup";
 import { isUserFacingError, UserFacingError, zUuid } from "@/lib/validation";
 import { assertFollowCapacity } from "@/lib/follow-limits";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
+import { revalidate } from "@/lib/action-helpers";
 
 export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryActionResult> {
   const user = await requireVerifiedUser();
@@ -50,7 +51,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
     if (isUserFacingError(error)) return { ok: false as const, error: error.message };
     throw error;
   });
-  revalidatePath("/suggestions"); revalidatePath("/companies"); revalidatePath("/");
+  revalidate("/suggestions", "/companies", "/");
   return result;
 }
 

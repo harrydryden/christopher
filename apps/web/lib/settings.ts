@@ -1,10 +1,11 @@
 import { cache } from "react";
 import { eq, notLike, sql } from "drizzle-orm";
 import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
-import { dedupeKeyFor, isSystemSettingsKey, isUserSettingsKey, priorityFor, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
+import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
 import { enqueueTask, reevaluateGate } from "@ava/db";
 import { requireUser } from "./auth";
 import { db } from "./db";
+import { enqueue } from "./enqueue";
 
 type Writer = Pick<ReturnType<typeof db>, "select" | "insert" | "execute">;
 
@@ -90,7 +91,7 @@ export async function saveSettingsAndGate(userId: string, entries: Partial<UserS
       // The account's key holds only a pass that has not started, so a running one never absorbs
       // this; a waiting one — the boot pass, say — is brought up to a person's priority instead.
       const payload = { userId };
-      await enqueueTask(tx, "reevaluate_gate", payload, { dedupeKey: dedupeKeyFor("reevaluate_gate", payload), priority: priorityFor("reevaluate_gate"), promote: true });
+      await enqueue("reevaluate_gate", payload, tx);
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
     if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
   });

@@ -12,12 +12,11 @@ import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { fail, zUuid, type ActionResult } from "@/lib/validation";
 import { unsafeUrlRefusal } from "@/lib/public-url";
+import { revalidate } from "@/lib/action-helpers";
 
 /** Catalogue edits are seen by every follower, so they live in the administrator's section. */
 function revalidateCatalogue(companyId?: string | null): void {
-  revalidatePath("/admin/catalogue");
-  revalidatePath("/companies");
-  revalidatePath("/");
+  revalidate("/admin/catalogue", "/companies", "/");
   if (companyId) revalidatePath(`/companies/${companyId}`);
 }
 

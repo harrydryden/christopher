@@ -43,7 +43,7 @@ import type * as S from "./schemas";
 import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
 import { canonicalEvidence, evidenceBlockId } from "./evidence";
 import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./claim-memo";
-import { AiGovernor, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
+import { AiGovernor, abortableSleep, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
 
 export type { Effort } from "./prompt-registry";
@@ -406,13 +406,6 @@ function isRetryable(error: unknown): boolean {
   return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
-const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
-  if (signal?.aborted) return reject(signal.reason);
-  const timer = setTimeout(() => { signal?.removeEventListener("abort", stop); resolve(); }, ms);
-  const stop = () => { clearTimeout(timer); reject(signal!.reason); };
-  signal?.addEventListener("abort", stop, { once: true });
-});
-
 export const OUTPUT_LIMIT_ERROR = "Model output limit reached before the response was complete.";
 export const CANCELLED_ERROR = "Cancelled because another call in the same task failed.";
 /**
@@ -616,16 +609,10 @@ class BatchFailed extends Error {}
  * pass itself when one batch fails.
  */
 function batchController(outer: Array<AbortSignal | undefined>) {
-  const controller = new AbortController();
-  const signals = outer.filter((signal): signal is AbortSignal => !!signal);
-  const forward = (event: Event) => controller.abort((event.target as AbortSignal).reason);
-  const aborted = signals.find(signal => signal.aborted);
-  if (aborted) controller.abort(aborted.reason);
-  else for (const signal of signals) signal.addEventListener("abort", forward, { once: true });
+  const own = new AbortController();
   return {
-    signal: controller.signal,
-    siblingFailed: () => controller.abort(new SiblingFailed()),
-    release: () => { for (const signal of signals) signal.removeEventListener("abort", forward); },
+    signal: anySignal(...outer, own.signal)!,
+    siblingFailed: () => own.abort(new SiblingFailed()),
   };
 }
 
@@ -878,7 +865,7 @@ export class AiEngine {
         const began = Date.now();
         try {
           if (isThrottle(reason)) await this.governor.waitForPause(params.signal);
-          else await sleep(backOff, params.signal);
+          else await abortableSleep(backOff, params.signal);
           waited += Date.now() - began;
         } catch {
           const cut = cutFor(params.signal?.reason);
@@ -1311,24 +1298,20 @@ export class AiEngine {
       return { index, status: "done", result, usage };
     };
     const outcomes = new Map<number, CvAssessBatchResult>();
-    try {
-      if (indices.length) {
-        // The cache entry is readable only once the first response has begun; batches sent before
-        // then would each write their own copy. So the first goes alone until then, the rest together.
-        let begun!: () => void;
-        const firstBegun = new Promise<void>(resolve => { begun = resolve; });
-        const [head, ...rest] = indices;
-        const first = assess(head!, () => begun()).then(result => { outcomes.set(head!, result); return result; });
-        const settledFirst = await Promise.race([firstBegun.then(() => null), first]);
-        if (settledFirst && settledFirst.status !== "done") {
-          // It ended before its response began, so nothing else was sent: the rest were never paid for.
-          for (const index of rest) outcomes.set(index, { index, status: "cancelled", usage: [] });
-        } else {
-          await Promise.all([first, ...rest.map(index => assess(index).then(result => { outcomes.set(index, result); }))]);
-        }
+    if (indices.length) {
+      // The cache entry is readable only once the first response has begun; batches sent before
+      // then would each write their own copy. So the first goes alone until then, the rest together.
+      let begun!: () => void;
+      const firstBegun = new Promise<void>(resolve => { begun = resolve; });
+      const [head, ...rest] = indices;
+      const first = assess(head!, () => begun()).then(result => { outcomes.set(head!, result); return result; });
+      const settledFirst = await Promise.race([firstBegun.then(() => null), first]);
+      if (settledFirst && settledFirst.status !== "done") {
+        // It ended before its response began, so nothing else was sent: the rest were never paid for.
+        for (const index of rest) outcomes.set(index, { index, status: "cancelled", usage: [] });
+      } else {
+        await Promise.all([first, ...rest.map(index => assess(index).then(result => { outcomes.set(index, result); }))]);
       }
-    } finally {
-      controller.release();
     }
     const ran = indices.map(index => outcomes.get(index)!);
     const whole = !options.only || indices.length === batches.length;
@@ -2030,8 +2013,6 @@ export class AiEngine {
       throw err instanceof BatchFailed
         ? new Error("The evidence review returned nothing usable for one batch of entries.")
         : err;
-    } finally {
-      controller.release();
     }
     return results.flat();
   }

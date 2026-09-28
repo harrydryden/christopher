@@ -76,7 +76,8 @@ export function retryAfterMs(headers: unknown, now = Date.now()): number | undef
   return Number.isNaN(at) ? undefined : Math.max(0, at - now);
 }
 
-function abortable(ms: number, signal?: AbortSignal): Promise<void> {
+/** A wait that rejects with the signal's reason if the signal aborts first. */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
     const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, Math.max(0, ms));
@@ -185,7 +186,7 @@ export class AiGovernor {
       if (left <= 0) return;
       const jitter = this.random() * Math.min(MAX_PAUSE_JITTER_MS, this.pauseLength / 4);
       const ends = this.pauseEnds;
-      await abortable(left + jitter, signal);
+      await abortableSleep(left + jitter, signal);
       // A throttle met while this caller slept extends the pause; wait that out too.
       if (this.pauseEnds <= ends) return;
     }

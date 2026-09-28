@@ -10,6 +10,7 @@ import { writeFile, readFile } from 'node:fs/promises';
 import { cpus, freemem, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { localDatabaseUrl } from './lib/database.mjs';
 import { sessionCookie, startWeb } from './lib/web.mjs';
 // The pollers' own rules, imported rather than copied, so the probe cannot drift from the app.
 import { BANNER_FIRST_MS, FIRST_POLL_MS, LONGEST_POLL_MS, nextPollDelay } from '../apps/web/lib/polling.ts';
@@ -104,14 +105,8 @@ export function benchmarkShape(env = process.env) {
 export function needsRender(shown, reading) {
   return reading.ok && shown !== undefined && reading.version !== shown;
 }
-export function assertDedicatedDatabase(input, expected = 'christopher_users_benchmark') {
-  const url = new URL(input);
-  const database = decodeURIComponent(url.pathname.slice(1));
-  if (!['postgres:', 'postgresql:'].includes(url.protocol) ||
-      !['127.0.0.1', 'localhost', '::1'].includes(url.hostname) ||
-      database !== expected) throw new Error(`Use the dedicated local ${expected} database`);
-  return url;
-}
+export const assertDedicatedDatabase = (input, expected = 'christopher_users_benchmark') =>
+  localDatabaseUrl(input, { name: expected, message: `Use the dedicated local ${expected} database` });
 export function summarise(values) {
   const times = values.map(x => x.ms).sort((a, b) => a - b);
   const at = p => times.length ? Math.round(times[Math.min(times.length - 1, Math.floor(times.length * p))]) : null;

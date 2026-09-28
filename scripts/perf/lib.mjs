@@ -9,6 +9,7 @@
  * so it gives the same count on a laptop, in CI and on the audit host.
  */
 import net from "node:net";
+import { localDatabaseUrl } from "../lib/database.mjs";
 import { startWeb } from "../lib/web.mjs";
 
 export const BENCH_SECRET = "local-benchmark-only-0123456789abcdef0123456789abcdef";
@@ -17,15 +18,8 @@ export const BENCH_SECRET = "local-benchmark-only-0123456789abcdef0123456789abcd
  * Only a local scratch database whose name starts with `ava_perf` (ava_perf_bench, ava_perf_ci, …):
  * the fixture writes a hundred accounts into it, and the measurements write sessions and decisions.
  */
-export function assertPerfDatabase(input) {
-  let url;
-  try { url = new URL(input); } catch { throw new Error("DATABASE_URL must name a local ava_perf scratch database"); }
-  const database = decodeURIComponent(url.pathname.slice(1));
-  if (!["postgres:", "postgresql:"].includes(url.protocol) || !["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname)
-      || !/^ava_perf[a-z0-9_]*$/.test(database) || /christopher_/.test(database))
-    throw new Error("DATABASE_URL must name a local scratch database whose name starts with ava_perf (never christopher_dev or christopher_test)");
-  return url;
-}
+export const assertPerfDatabase = input => localDatabaseUrl(input, { name: /^ava_perf[a-z0-9_]*$/, forbid: /christopher_/,
+  message: "DATABASE_URL must name a local scratch database whose name starts with ava_perf (never christopher_dev or christopher_test)" });
 
 export { sessionCookie } from "../lib/web.mjs";
 

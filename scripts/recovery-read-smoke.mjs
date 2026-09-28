@@ -2,15 +2,11 @@
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
+import { localDatabaseUrl } from "./lib/database.mjs";
 import { insertSession, startWeb } from "./lib/web.mjs";
 
 const EXPECTED_DB = "christopher_recovery_drill";
-export function validateSmokeUrl(raw) {
-  const url = new URL(raw);
-  if (!["localhost", "127.0.0.1"].includes(url.hostname) || decodeURIComponent(url.pathname.slice(1)) !== EXPECTED_DB)
-    throw new Error(`recovery smoke requires local database ${EXPECTED_DB}`);
-  return url;
-}
+export const validateSmokeUrl = raw => localDatabaseUrl(raw, { name: EXPECTED_DB, message: `recovery smoke requires local database ${EXPECTED_DB}` });
 
 async function main() {
   const url = validateSmokeUrl(process.env.RECOVERY_TARGET_URL ?? "");

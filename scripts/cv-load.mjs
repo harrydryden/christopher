@@ -50,6 +50,7 @@ import { writeFile } from 'node:fs/promises';
 import { cpus, totalmem, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { localDatabaseUrl } from './lib/database.mjs';
 
 /**
  * What "50 users building CVs at the same time" has to mean to pass. A run with a shortened scripted
@@ -124,15 +125,8 @@ export const cvBuildCap = (_concurrency, cvConcurrency = 8) => cvConcurrency;
 /** The worker's database pool for its general and CV slots, as apps/worker/src/env.ts sizes it. */
 export const workerPoolMax = (concurrency, cvConcurrency = 8) => (concurrency + cvConcurrency) * 2 + 4;
 
-export function assertScratchDatabase(input) {
-  let url;
-  try { url = new URL(input); } catch { throw new Error('DATABASE_URL must name the local ava_cvload scratch database'); }
-  const database = decodeURIComponent(url.pathname.slice(1));
-  if (!['postgres:', 'postgresql:'].includes(url.protocol) || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname)
-      || !/^ava_cvload[a-z0-9_]*$/.test(database) || /christopher_(dev|test)/.test(database))
-    throw new Error('DATABASE_URL must name a local scratch database called ava_cvload (never christopher_dev or christopher_test)');
-  return url;
-}
+export const assertScratchDatabase = input => localDatabaseUrl(input, { name: /^ava_cvload[a-z0-9_]*$/, forbid: /christopher_(dev|test)/,
+  message: 'DATABASE_URL must name a local scratch database called ava_cvload (never christopher_dev or christopher_test)' });
 
 /** A small deterministic generator, so the same shape asks in the same order every run. */
 function seeded(seed) {

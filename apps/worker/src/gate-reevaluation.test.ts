@@ -3,7 +3,7 @@
  * only by a gate that matches on it.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, reevaluateGate, schema, type Db } from "@ava/db";
+import { createDb, reevaluateGate, schema, viewUpdate, viewVerdict, writeViewUpdates, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
@@ -139,4 +139,30 @@ it("analyses user_jobs after a re-evaluation that writes over five hundred views
   // The statistics view is updated asynchronously; the manual analyse is what it records.
   for (let i = 0; i < 30 && (await lastAnalyse()) === before; i++) await new Promise(r => setTimeout(r, 100));
   expect(await lastAnalyse()).not.toBe(before);
+});
+
+it("writes one view writer's columns as each caller asks: hidden only when given, near-miss always cleared", async () => {
+  const user = await ensureTestUser(db, "gate-writer@example.com");
+  const { job } = await seedFollowedPosting(user.id);
+  // A legacy row: hidden and a near miss, both set by code long since retired.
+  await db.insert(schema.userJobs).values({ userId: user.id, jobId: job.id, inTable: false, hidden: true, nearMiss: true });
+  const read = async () => (await db.select().from(schema.userJobs).where(sql`user_id = ${user.id} and job_id = ${job.id}`))[0]!;
+  const verdict = { keywordMatched: true, keywordTerms: ["operations"], excluded: false, excludedTerms: [], locationOk: true, locationTerms: [], remote: false, inTable: true };
+
+  // A scan's values carry no `hidden`, and the legacy near miss alone is reason to write.
+  const scanValues = viewVerdict(verdict, false);
+  const view = { ...(await read()), keywordMatched: true, keywordTerms: ["operations"] };
+  const scanUpdate = viewUpdate(user.id, job.id, view, scanValues);
+  expect(scanUpdate).toMatchObject({ restore: false });
+  expect(scanUpdate).not.toHaveProperty("hidden");
+  // Without the near-miss column read (the gate walk), the same agreeing view needs no write.
+  expect(viewUpdate(user.id, job.id, { ...view, nearMiss: undefined }, scanValues)).toBeNull();
+  await writeViewUpdates(db, [scanUpdate!], now);
+  expect(await read()).toMatchObject({ keywordMatched: true, inTable: false, hidden: true, nearMiss: false });
+
+  // The description and gate paths pass `hidden: false`, which the write then sets.
+  const shown = viewUpdate(user.id, job.id, await read(), viewVerdict(verdict, true, { hidden: false }));
+  await writeViewUpdates(db, [shown!], now);
+  expect(await read()).toMatchObject({ inTable: true, hidden: false });
+  expect(viewUpdate(user.id, job.id, await read(), viewVerdict(verdict, true, { hidden: false }))).toBeNull();
 });

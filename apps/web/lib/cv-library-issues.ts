@@ -11,6 +11,7 @@
  * except short strings, truncated, and anything unreadable falls back to the index.
  */
 import type { z } from "zod";
+import { employmentKey } from "@ava/core/cv-helpers";
 
 /** The refusal core raises when two jobs in employment history are the same job. */
 const DUPLICATE_JOB = "This company, job title and date range already exist in employment history.";
@@ -101,14 +102,16 @@ export function cvLibraryIssueLabel(path: readonly PropertyKey[], submitted: unk
   return FIELDS[section] ?? section;
 }
 
-/** The key core compares two jobs by: the company and the title as text, and the dates exactly. */
-const employmentKey = (job: unknown): string => JSON.stringify([
-  text(at(job, "company"), 160).replace(/\s+/g, " ").toLowerCase(),
-  text(at(job, "jobTitle"), 160).replace(/\s+/g, " ").toLowerCase(),
-  at(job, "startDate"),
-  at(job, "endDate"),
-  at(job, "current"),
-]);
+/** Core's key for "the same job", over a submitted value read defensively. */
+const submittedJobKey = (job: unknown): string => employmentKey({
+  id: "",
+  company: text(at(job, "company"), 160),
+  jobTitle: text(at(job, "jobTitle"), 160),
+  // Compared exactly, as core compares them; an unreadable value simply fails to match.
+  startDate: at(job, "startDate") as string,
+  endDate: at(job, "endDate") as string,
+  current: at(job, "current") as boolean,
+});
 
 /**
  * Whether the job a duplicate refusal is about is one that was removed rather than one on screen.
@@ -137,7 +140,7 @@ function duplicatesArchivedJob(submitted: unknown): boolean {
     return typeof id === "string" && archived.has(id) && !shown.has(id);
   };
   const groups = new Map<string, unknown[]>();
-  for (const job of employment) groups.set(employmentKey(job), [...(groups.get(employmentKey(job)) ?? []), job]);
+  for (const job of employment) groups.set(submittedJobKey(job), [...(groups.get(submittedJobKey(job)) ?? []), job]);
   return [...groups.values()].some(group => group.length > 1 && group.some(removed) && group.some(job => !removed(job)));
 }
 

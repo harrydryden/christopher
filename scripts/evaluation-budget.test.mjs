@@ -32,3 +32,20 @@ test('invalid budgets and cost estimates fail closed', async () => {
   for (const estimate of [0, -1, NaN, Infinity]) await assert.rejects(budget.reserve('CV', estimate));
   assert.throws(() => budget.onUsage({costUsd: -1}));
 });
+
+test('prior spend counts against the cap, a hard cap throws past it, and every change is reported', async () => {
+  let changes = 0;
+  const budget = evaluationBudget(1, { prior: 0.6, hardCap: true, onChange: () => { changes++; } });
+  assert.equal(await budget.reserve('CV', 0.5), null);
+  const release = await budget.reserve('CV', 0.3);
+  assert.equal(changes, 1);
+  assert.ok(Math.abs(budget.snapshot().remainingUsd - 0.1) < 1e-9);
+  budget.onUsage({costUsd: 0.2, ok: true});
+  await release();
+  assert.equal(changes, 3);
+  assert.equal(budget.calls.length, 1);
+  assert.throws(() => budget.onUsage({costUsd: 0.3, ok: true}), /Hard evaluation spend cap exceeded/);
+  assert.equal(changes, 3, 'the call that broke the cap is recorded but not reported as a change');
+  assert.equal(budget.snapshot().exceeded, true);
+  assert.equal(budget.calls.length, 2);
+});

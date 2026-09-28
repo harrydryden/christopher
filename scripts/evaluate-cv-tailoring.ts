@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { createAiEngine, PRICING, type AiUsageRecord } from "../packages/ai/src/index";
+import { createAiEngine, PRICING } from "../packages/ai/src/index";
 import { buildFittedCv } from "../packages/core/src/cv-fit";
 import { cvRelevanceTerms, type CvSemanticTarget } from "../packages/core/src/cv-budget";
 import { CvLibrarySchema, materialiseCv, type CvContent, type CvLibrary, type CvPlan } from "../packages/core/src/cv";
@@ -14,6 +14,7 @@ import { cvClaimItems, cvEvidenceItems, cvTextItems, type CvRubric } from "../pa
 import { createCvAssessment, validateCvRubric } from "../packages/core/src/cv-review";
 import { cvTailoringEvidence } from "../packages/core/src/cv-tailoring";
 import { renderCvPdfWithReport } from "../packages/core/src/cv-pdf";
+import { evaluationBudget } from "./evaluation-budget.mjs";
 import { providerReadiness } from "./provider-readiness.mjs";
 import { sharedContrastLibrary, sameLibraryRoleContrasts } from "./cv-quality-contrast-fixtures.mjs";
 import { blindedPairwiseCsv, gradeSameLibraryContrasts } from "./cv-quality-contrast.mjs";
@@ -108,9 +109,9 @@ async function main() {
   const requestedCap = Number(process.env.CV_TAILORING_EVAL_MAX_USD ?? ABSOLUTE_CAP_USD);
   const capUsd = Math.min(ABSOLUTE_CAP_USD, Number.isFinite(requestedCap) ? requestedCap : ABSOLUTE_CAP_USD);
   const priorSpendUsd = Math.max(0, Number(process.env.CV_TAILORING_EVAL_PRIOR_SPEND_USD ?? 0));
-  let spentUsd = priorSpendUsd;
-  let heldUsd = 0;
-  const usage: AiUsageRecord[] = [];
+  // Every hold, release and recorded call is saved to the report as it happens.
+  const budget = evaluationBudget(capUsd, { prior: priorSpendUsd, hardCap: true, onChange: () => save() });
+  const usage = budget.calls;
   const report: Record<string, unknown> = {
     at: new Date().toISOString(), status: "running", syntheticCandidate: true, model: model ?? null,
     capUsd, priorSpendUsd, paidCallsAuthorised: true, humanReview: "not performed",
@@ -123,29 +124,17 @@ async function main() {
     },
     cases: [],
   };
-  const save = () => writeFileSync(reportPath, JSON.stringify({ ...report, budget: { capUsd, spentUsd, heldUsd, remainingUsd: Math.max(0, capUsd - spentUsd - heldUsd), calls: usage } }, null, 2) + "\n");
+  const save = () => {
+    const { records: calls, exceeded: _exceeded, ...figures } = budget.snapshot();
+    writeFileSync(reportPath, JSON.stringify({ ...report, budget: { ...figures, calls } }, null, 2) + "\n");
+  };
   save();
   if (!model || !apiKey) throw new Error("CV_EVAL_MODEL and ANTHROPIC_API_KEY must be configured.");
   const readiness = await providerReadiness({ apiKey, models: [model], prices: PRICING });
   report.provider = readiness;
   if (readiness.status !== "passed") throw new Error("Provider preflight did not pass.");
 
-  const ai = createAiEngine({
-    apiKey, getModel: () => model,
-    reserve: async (_site, estimate) => {
-      if (!Number.isFinite(estimate) || estimate <= 0 || spentUsd + heldUsd + estimate > capUsd) return null;
-      heldUsd += estimate; save();
-      let released = false;
-      return async () => { if (!released) { released = true; heldUsd = Math.max(0, heldUsd - estimate); save(); } };
-    },
-    onUsage: record => {
-      spentUsd += record.costUsd;
-      usage.push(record);
-      if (spentUsd > capUsd + 1e-9) throw new Error("Hard evaluation spend cap exceeded.");
-      save();
-    },
-    logger: message => console.error(message),
-  });
+  const ai = createAiEngine({ apiKey, getModel: () => model, reserve: budget.reserve, onUsage: budget.onUsage, logger: message => console.error(message) });
   const library = sharedLibrary();
   const baseline = materialiseCv(library, baselinePlan(library));
   const outputs: Record<string, { text: string; selectedEvidenceIds: string[]; leadingEvidenceId?: string }> = {};
@@ -204,7 +193,7 @@ async function main() {
   report.status = cases.length === 3 && cases.every(item => item.status === "passed") && (report.contrast as { passed: boolean }).passed
     ? "automated_checks_passed" : cases.length < 3 ? "incomplete_budget_guard" : "review_required";
   report.humanReview = "Blinded pack prepared with blank preference fields; no human judgement has been recorded.";
-  writeFileSync(markdownPath, `# Synthetic CV tailoring contrast\n\nGenerated ${new Date().toISOString()}. This is an automated synthetic evaluation; no human review has been performed.\n\n- Status: **${report.status}**\n- Model: ${model}\n- Cumulative spend for this subtask: $${spentUsd.toFixed(4)} of the $${capUsd.toFixed(2)} hard cap${priorSpendUsd ? ` (including $${priorSpendUsd.toFixed(4)} from the superseded first run)` : ""}\n- Completed roles: ${cases.length}/3\n- Distinct semantic plans: ${(report.contrast as { distinctPlans?: boolean }).distinctPlans ? "yes" : "no"}\n- Blinded review: [blinded-review.csv](./blinded-review.csv)\n- Separate key: [blinded-review-key.json](./blinded-review-key.json)\n- Full machine report: [report.json](./report.json)\n\nThe baseline is a literal Library-derived control containing the stored profile and evidence rows. It is not output from the previous production authoring engine, so this comparison does not measure an old-versus-new engine quality gain. The preference columns are intentionally blank and human review remains pending.\n`);
+  writeFileSync(markdownPath, `# Synthetic CV tailoring contrast\n\nGenerated ${new Date().toISOString()}. This is an automated synthetic evaluation; no human review has been performed.\n\n- Status: **${report.status}**\n- Model: ${model}\n- Cumulative spend for this subtask: $${budget.snapshot().spentUsd.toFixed(4)} of the $${capUsd.toFixed(2)} hard cap${priorSpendUsd ? ` (including $${priorSpendUsd.toFixed(4)} from the superseded first run)` : ""}\n- Completed roles: ${cases.length}/3\n- Distinct semantic plans: ${(report.contrast as { distinctPlans?: boolean }).distinctPlans ? "yes" : "no"}\n- Blinded review: [blinded-review.csv](./blinded-review.csv)\n- Separate key: [blinded-review-key.json](./blinded-review-key.json)\n- Full machine report: [report.json](./report.json)\n\nThe baseline is a literal Library-derived control containing the stored profile and evidence rows. It is not output from the previous production authoring engine, so this comparison does not measure an old-versus-new engine quality gain. The preference columns are intentionally blank and human review remains pending.\n`);
   save();
   if (report.status !== "automated_checks_passed") process.exitCode = 1;
 }

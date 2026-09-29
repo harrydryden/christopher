@@ -1,0 +1,108 @@
+{
+  "generatedAt": "2026-09-29T14:22:07.266320+00:00",
+  "baseMain": "ebb346b1fa64e34c16447fffb0d47afbbfd890ac",
+  "parentCommit": "67fb2a539aa1df89e666eda0eaba66610f9003c3",
+  "branch": "codex/jtbd-90",
+  "runtime": "v22.18.0",
+  "pnpm": "10.33.0",
+  "testRuns": [
+    {
+      "name": "core",
+      "summary": [
+        "Test Files  40 passed (40)",
+        "Tests  684 passed (684)",
+        "Start at  15:17:36",
+        "Duration  3.03s (tests 46%, import 34%, transform 19%, worker 1%)"
+      ],
+      "scope": "Final source snapshot",
+      "rawLogSha256": "d23c3e0673f49ca1c0c6e9e1b4cd17583e749dfa5d5fa7fb6e86dd607b5a6851",
+      "evidenceFile": "source-core.log",
+      "evidenceSha256": "566b9ef639e53a55fde4cf6f4b4e90f645ea8bcdfb4ff10d4936c72d957f14c3"
+    },
+    {
+      "name": "worker",
+      "summary": [
+        "Test Files  53 passed (53)",
+        "Tests  683 passed (683)",
+        "Start at  15:05:36",
+        "Duration  267.57s (tests 92%, import 8%, transform 1%)"
+      ],
+      "scope": "Before final Mozilla/Wise/Eightfold repairs; supplemented by final core, browser and harness checks",
+      "rawLogSha256": "38d66812c74c2fd98993584944c3a0e410714c7df98257d051578ea861eb3f63"
+    },
+    {
+      "name": "harness",
+      "summary": [
+        "Test Files  3 passed (3)",
+        "Tests  37 passed (37)",
+        "Start at  15:16:41",
+        "Duration  1.79s (transform 51%, import 45%, tests 4%)"
+      ],
+      "scope": "Final source snapshot",
+      "rawLogSha256": "f9dddb72b56e34ab5e5da0f94111767b3539a90b6f9dd254bae7829555db76c0",
+      "evidenceFile": "source-harness.log",
+      "evidenceSha256": "761addd1062c2891c7fd434da44d4fa8be29d4285b86221e0bf96b130b493499"
+    }
+  ],
+  "sourceSha256": {
+    "apps/worker/src/browser.test.ts": "d14b18831446c4349977c941e5745c3069f0efa7698aa58f399b2fc35a87b0e2",
+    "apps/worker/src/browser.ts": "b6c97933f8716dd8d4340a2d852beb3dbe7c7e3c4edc6e5b20ceba4f218f1f8d",
+    "apps/worker/src/e2e.test.ts": "e8c227062921dc178d0fb27544708808419a54cc43857edfd40adf822f890a4c",
+    "apps/worker/src/handlers/scan.ts": "a08e682fd8e5302f5e6b2becb11c2065efb85b065aa5b7b869784b2464e31054",
+    "apps/worker/src/live-acceptance-cli.ts": "40ab8e606fcd845c7b1b720c9eef97ef67feab4878cdf09d4a0fd9615814592e",
+    "apps/worker/src/live-acceptance-html.test.ts": "546e57ac124e8a69bd6a6faeb4359cdfbeba26f059b58ac7d2bd893961fa95e6",
+    "apps/worker/src/live-acceptance-html.ts": "68f85484c785ff42bdd8bd09715754e793d2462f95948c92babcbf12c1310467",
+    "apps/worker/src/live-acceptance-manifest.ts": "0d3693de4af20fc04e4bf6f675e25c633b744bb70edfe610a79dbf593116c8f3",
+    "apps/worker/src/live-acceptance-postings.test.ts": "4cc53e8684e243013beb0483a2d0f8996adba0dc942b82710ce7401069b8ae02",
+    "apps/worker/src/live-acceptance-postings.ts": "37860dc998d959a07ebd4a82494c31eb6c44fb2a5daa834f2ede29d10dbc5d9b",
+    "apps/worker/src/live-acceptance.test.ts": "c8fa56b8ea1e2db390aeae14767fa7a3e19d18ad44b9e2bac4974e8c52cd4029",
+    "apps/worker/src/live-acceptance.ts": "6dd746f3dc6302750c69ece22eb4231d4cebef79ff40c350cc90ecb081fb6ae8",
+    "packages/core/src/ats/ashby.ts": "db0ad2eab3dfb07b0dba654f5c44c7b32e66023511de50deb330a18169b3e1b8",
+    "packages/core/src/ats/ats.test.ts": "3d64c02112f882e5398bc98ea104a35551c4293390ead7a25ccf89460a1618a2",
+    "packages/core/src/ats/common.ts": "45ca853bf972e329cb36773c176dd6659e016b802f9ff6b61559e19f650ccd47",
+    "packages/core/src/ats/html.ts": "f3f84f8c937a30d6442278443d84b8c035d2110c47890a5782c6493085c3172b",
+    "packages/core/src/ats/index.ts": "758a642c6c0e9fe165d45026689cbda51543e36c4035bfc92856b26985438f97",
+    "packages/core/src/ats/registry.ts": "b5e9a270492d5ad78c3d2a6a42e96306e2383b7c15919d37466f307e36865308",
+    "packages/core/src/ats/tier2.test.ts": "58a33e75949d51576677d3f9ba4b231cf7e99add2b12e032dbaa7c8af6262801",
+    "packages/core/src/ats/tier2.ts": "ae1739fc06cf5c212c4876673322cf2cdee1ba83d1ab835628e5e86d63ca07ce",
+    "packages/core/src/discovery/discover.test.ts": "8c5f24daf6f424e5893c41b1241644442953cdef79d105e9edb5350ca6674c06",
+    "packages/core/src/discovery/discover.ts": "6569de9f70ae1d0c55ec948692c63f07d1f34a9a1aaca18f6ea8824ae4cc213f",
+    "packages/core/src/types.ts": "831f2c5b779d10bc627c9f25726d8440afd267fef0da26c17f0f0897ce9e51cc",
+    "scripts/live-acceptance.mjs": "3d2549b81871eacfbf3c180a0e5ec11c23609cbae934c6b2649258bfe83f3f69"
+  },
+  "limitations": [
+    "Separate local runs, not a single hosted CI execution.",
+    "Worker total overlaps final focused suites and must not be added to them.",
+    "Full-corpus live observation predates the final repairs; later subset checks do not qualify the corpus.",
+    "No paid model, human usability, production deployment or managed restore qualification."
+  ],
+  "buildAndTypes": [
+    {
+      "evidenceFile": "source-types.log",
+      "status": "passed",
+      "rawLogSha256": "281cd6042ec9566dac275f0be7f86269c7613fe15e9db66d5d1bb1b446863637",
+      "evidenceSha256": "d7e2212d4e2c09c25f105df5dedf8169a73199dd720a5e2cf8900cdd5072bbb7"
+    },
+    {
+      "evidenceFile": "source-build.log",
+      "status": "passed",
+      "rawLogSha256": "34ec61d78ff9c80d1b7180bb259adf8e3ac20bb578e52a257a94e24de3c66ca9",
+      "evidenceSha256": "5710c40c34c1cca60873fc68ac1ec939e0d504536dc9a374d047ffbaa4c30fef"
+    }
+  ],
+  "browserCheck": {
+    "command": "AVA_DISABLE_BROWSER=0 pnpm --filter @ava/worker exec vitest run src/browser.test.ts",
+    "passed": 15,
+    "skipped": 0,
+    "reportedBy": "Sol execution agent",
+    "scope": "Final browser pagination and private-network fixtures; overlaps the earlier full worker suite"
+  },
+  "commands": [
+    "pnpm --filter @ava/core test",
+    "TEST_DATABASE_URL=<disposable PostgreSQL> AVA_DISABLE_BROWSER=0 pnpm --filter @ava/worker test",
+    "pnpm --filter @ava/worker exec vitest run src/live-acceptance.test.ts src/live-acceptance-html.test.ts src/live-acceptance-postings.test.ts",
+    "pnpm build",
+    "pnpm typecheck"
+  ],
+  "logFormatting": "Committed text logs normalise terminal carriage returns, trailing whitespace and blank edges; raw log hashes are retained separately."
+}

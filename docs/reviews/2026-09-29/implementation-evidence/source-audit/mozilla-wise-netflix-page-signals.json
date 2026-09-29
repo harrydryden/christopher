@@ -1,0 +1,40 @@
+{
+  "observedAtUtc": "2026-09-29T14:08:27Z",
+  "method": "Read-only HTTP GET of each public first-party page; the site-declared counts are diagnostic signals, not independently labelled posting identities.",
+  "pages": [
+    {
+      "url": "https://www.mozilla.org/en-GB/careers/",
+      "httpStatus": 200,
+      "bodySha256": "b6ded3c215eed89aecc7b1d0ac180a0868590d07ac7fc162797983448dc671f6",
+      "observed": [
+        "Careers navigation links Job Listings to /en-GB/careers/listings/.",
+        "Three editorial links under blog.mozilla.org/careers/ have job-shaped profile headings; the generic HTML extractor reads them as three postings on the overview."
+      ]
+    },
+    {
+      "url": "https://www.mozilla.org/en-GB/careers/listings/",
+      "httpStatus": 200,
+      "bodySha256": "1556162a7b3607fc0927efe6502bc45bb19622653f7396a46a11047b81952e58",
+      "observed": ["The listing HTML yielded 27 distinct posting links in the current generic extractor."]
+    },
+    {
+      "url": "https://wise.jobs/jobs",
+      "httpStatus": 200,
+      "bodySha256": "a7815afa91499e039fa88a44af85e1136df70304dc1c743fe02c217d4ba78467",
+      "observed": [
+        "The first-party pagination widget says 408 results and marks 12 results per page as active.",
+        "It exposes a Next pagination page control calling pagination(2) and a Last pagination page control calling pagination(25).",
+        "The live diagnostic extracted 12 roles; this is a first-page slice, not evidence of complete coverage."
+      ]
+    },
+    {
+      "url": "https://explore.jobs.netflix.net/careers",
+      "httpStatus": 200,
+      "bodySha256": "a3fa6a1fded4fcfd271c860e4ce6d59f103350e4fc665cc2abbccdd72f76174c",
+      "observed": [
+        "The first-party smartApplyData element declares count 475 for an unfiltered query.",
+        "The live diagnostic extracted 50 roles; that is a page or API slice, not evidence of complete coverage."
+      ]
+    }
+  ]
+}

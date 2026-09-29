@@ -15,4 +15,4 @@ export {
 } from "./registry";
 export { extractJsonLdPostings } from "./jsonld";
 export { MAX_POSTINGS } from "./common";
-export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel, nextListingPage, isExplicitEmptyListing } from "./html";
+export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel, nextListingPage, isExplicitEmptyListing, hasListingExpansionControl, hasUnfollowableListingContinuation } from "./html";

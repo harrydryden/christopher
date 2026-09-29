@@ -90,7 +90,9 @@ const LOCAL_SCHEMES = /^(?:data|blob|about):/i;
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
 const LOAD_MORE_TEXT = /^(?:(?:load|show|view|see) more(?: (?:jobs|roles|positions|openings|results))?|more (?:jobs|roles|positions|openings))$/i;
-const NEXT_TEXT = /^next(?: page| jobs| roles| results)?(?:\s*[›»→>])?$/i;
+// Keep this label set aligned with NEXT_TEXT_RE in packages/core/src/ats/html.ts: a control
+// recognised as pending expansion must also be clickable by the renderer.
+const NEXT_TEXT = /^(?:next(?: page| jobs| roles| results| pagination page)?(?:\s*[›»→>]+)?|go to next page(?:,\s*number\s*\d+)?)$/i;
 
 export class BrowserRenderer {
   private browser: Browser | null = null;
@@ -503,9 +505,11 @@ export class BrowserRenderer {
         if (el.matches(":disabled") || el.getAttribute("aria-disabled") === "true") continue;
         const href = el.getAttribute("href");
         if (href) {
-          let origin: string;
-          try { origin = new URL(href, location.href).origin; } catch { return "unparsable"; }
-          if (origin !== location.origin) continue;
+          let target: URL;
+          try { target = new URL(href, location.href); } catch { return "unparsable"; }
+          // Some job boards paginate through an explicitly labelled javascript: control. The
+          // guarded browser may click it; every network request it starts is still checked.
+          if (target.protocol !== "javascript:" && target.origin !== location.origin) continue;
         }
         el.setAttribute("data-ava-listing-control", "");
         return "found";

@@ -57,6 +57,18 @@ beforeAll(async () => {
     {
       "www.acmeind.example": { "/open-roles": { body: SHELL_PAGE },
         "/paginated": { body: `<html><body><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button id="next" onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button></body></html>` },
+        "/pagination-labels": { body: `<html><body><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul>
+          <button aria-label="Go to Next Page, Number 2" onclick="window.step=(window.step||0)+1;
+            document.getElementById('jobs').innerHTML=window.step===1
+              ? '<li><a href=/jobs/two>Finance Director</a></li>'
+              : '<li><a href=/jobs/three>People Director</a></li>';
+            if(window.step===1){this.removeAttribute('aria-label');this.textContent='Next &gt;&gt;';}
+            else this.disabled=true">Next</button></body></html>` },
+        "/javascript-pagination": { body: `<html><head><style>.next{display:inline-block;width:40px;height:25px}</style></head><body>
+          <ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul>
+          <a class="next" href="javascript:pagination(2)" aria-label="Next pagination page"></a>
+          <script>function pagination(n){document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';
+            document.querySelector('.next').setAttribute('aria-disabled','true');}</script></body></html>` },
         "/consent": { body: `<html><body>${'<button>Other</button>'.repeat(45)}<a role="button" data-bs-toggle="collapse" href=".locations">Show more</a><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button><div class="consent-modal" role="dialog" aria-label="Cookie consent" style="position:fixed;inset:0;background:white;z-index:999"><button class="consent-reject" onclick="this.parentElement.remove()">I do not accept</button></div></body></html>` },
         "/stuck": { body: `<html><body><ul><li><a href="/jobs/one">Operations Director</a></li></ul><button>Next</button></body></html>` },
         "/media": { body: MEDIA_PAGE },
@@ -95,6 +107,18 @@ describe.skipIf(skip)("headless rendering", () => {
     expect(postings.map(p => p.title)).toEqual(["Operations Director", "Finance Director"]);
     expect(page.incomplete).toBe(false);
   }, 120000);
+  it("follows accessible next-page labels and repeated arrow controls", async () => {
+    const page = await renderer.render("https://www.acmeind.example/pagination-labels", { scrollAndExpand: true });
+    const postings = page.listingPages!.flatMap(capture => ats.extractPostingsFromHtml(capture.html, capture.url));
+    expect(postings.map(posting => posting.title)).toEqual(["Operations Director", "Finance Director", "People Director"]);
+    expect(page.incomplete).toBe(false);
+  }, 120_000);
+  it("clicks a labelled JavaScript pagination anchor without following its href as a URL", async () => {
+    const page = await renderer.render("https://www.acmeind.example/javascript-pagination", { scrollAndExpand: true });
+    const postings = page.listingPages!.flatMap(capture => ats.extractPostingsFromHtml(capture.html, capture.url));
+    expect(postings.map(posting => posting.title)).toEqual(["Operations Director", "Finance Director"]);
+    expect(page.incomplete).toBe(false);
+  }, 120_000);
   it("dismisses a consent overlay and ignores location expanders while following pagination", async () => {
     const page = await renderer.render("https://www.acmeind.example/consent", { scrollAndExpand: true });
     const titles = page.listingPages!.flatMap(p => ats.extractPostingsFromHtml(p.html, p.url)).map(p => p.title);
@@ -265,13 +289,24 @@ describe.skipIf(skip)("headless rendering", () => {
   }, 120_000);
 
   it("keeps the page from reaching the private network: no script, frame, redirect or websocket gets through", async () => {
-    // The page is on 127.0.0.1, which this renderer's policy treats as public; the service on
-    // 127.0.0.2 plays the worker's private network. Anything that reaches it is a hit.
+    // The page is on 127.0.0.1, which this renderer's policy treats as public. A second loopback
+    // address plays the worker's private network: macOS does not bind 127.0.0.2 by default.
     const hits: string[] = [];
     const internal = createServer((req, res) => { hits.push(req.url ?? "/"); res.writeHead(200, { "content-type": "text/html", "access-control-allow-origin": "*" }); res.end("internal secret"); });
     internal.on("upgrade", (req, socket) => { hits.push(`upgrade ${req.url}`); socket.destroy(); });
-    await new Promise<void>(resolve => internal.listen(0, "127.0.0.2", resolve));
-    const inside = `http://127.0.0.2:${(internal.address() as AddressInfo).port}`;
+    const internalHost = process.platform === "darwin" ? "::1" : "127.0.0.2";
+    const internalAuthority = internalHost.includes(":") ? `[${internalHost}]` : internalHost;
+    const listen = (server: ReturnType<typeof createServer>, host: string) => new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => { server.off("listening", onListening); reject(error); };
+      const onListening = () => { server.off("error", onError); resolve(); };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(0, host);
+    });
+    const close = (server: ReturnType<typeof createServer>) => server.listening
+      ? new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      : Promise.resolve();
+    let inside = "";
     const page = createServer((req, res) => {
       if (req.url === "/redirect") { res.writeHead(302, { location: `${inside}/redirected` }); return res.end(); }
       res.writeHead(200, { "content-type": "text/html" });
@@ -282,14 +317,17 @@ describe.skipIf(skip)("headless rendering", () => {
           .catch(function () { document.getElementById("out").textContent = "refused"; });
       </script></body></html>`);
     });
-    await new Promise<void>(resolve => page.listen(0, "127.0.0.1", resolve));
-    const outside = `http://127.0.0.1:${(page.address() as AddressInfo).port}`;
-    const guarded = new BrowserRenderer({
-      userAgent: "AVAJobMonitor/0.1 (test)",
-      executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-      isAllowedAddress: address => address === "127.0.0.1",
-    });
+    let guarded: BrowserRenderer | undefined;
     try {
+      await listen(internal, internalHost);
+      inside = `http://${internalAuthority}:${(internal.address() as AddressInfo).port}`;
+      await listen(page, "127.0.0.1");
+      const outside = `http://127.0.0.1:${(page.address() as AddressInfo).port}`;
+      guarded = new BrowserRenderer({
+        userAgent: "AVAJobMonitor/0.1 (test)",
+        executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+        isAllowedAddress: address => address === "127.0.0.1",
+      });
       const rendered = await guarded.render(`${outside}/careers`);
       expect(rendered.html).toContain("refused");
       expect(rendered.html).not.toContain("internal secret");
@@ -299,9 +337,9 @@ describe.skipIf(skip)("headless rendering", () => {
       await expect(guarded.render("http://169.254.169.254/latest/meta-data/")).rejects.toMatchObject({ kind: "blocked" });
       expect(hits).toEqual([]);
     } finally {
-      await guarded.close();
-      await new Promise<void>(resolve => page.close(() => resolve()));
-      await new Promise<void>(resolve => internal.close(() => resolve()));
+      await guarded?.close();
+      await close(page);
+      await close(internal);
     }
   }, 120_000);
 });

@@ -1,6 +1,8 @@
 import { ats, discovery, type DiscoveryAiHooks, type SourceSpec, type SourceType } from "@ava/core";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import type { BrowserRenderer } from "./browser";
+import { observeHtmlListing } from "./live-acceptance-html";
+import { compareReferencePostings, canonicalPostingIdentity, type ReferencePostingSnapshot, type PostingComparison } from "./live-acceptance-postings";
 
 export interface LiveAcceptanceCase {
   id: string;
@@ -36,8 +38,16 @@ export interface LiveAcceptanceResult {
     browserFailures: Array<{ url: string; code: "robots_denied" | "browser_error"; error: string }>;
   };
   extraction: {
+    /** This phase starts from the independently labelled source, not discovery output. */
+    basis?: "labelled_source_diagnostic";
+    referenceComparison?: PostingComparison;
+    browserAttempts?: number;
+    browserRenders?: number;
+    browserUrls?: string[];
     outcome: "complete" | "partial" | "failed" | "not_run";
+    /** Unique canonical posting URLs, distinct from raw adapter rows. */
     observedRoleCount?: number;
+    rawObservedRoleCount?: number;
     countMatchesLabel: boolean | null;
     sample: Array<{ title: string; location?: string; url: string }>;
     error?: string;
@@ -62,6 +72,9 @@ export interface LiveAcceptanceMetrics {
   discoveryAccuracy: number | null;
   /** Exact agreement only. This is not posting-level recall or precision. */
   extractionExactCountAgreement: number | null;
+  postingIdentityLabelled: number;
+  postingIdentityFailures: number;
+  /** Qualified labels only; machine-enumerated API comparisons remain per-case diagnostics. */
   postingIdentityRecall: number | null;
   postingIdentityPrecision: number | null;
 }
@@ -80,12 +93,8 @@ export function resolveLiveAcceptanceConcurrency(raw: string | undefined, browse
 }
 
 function normaliseSourceUrl(value: string): string {
-  const url = new URL(value);
-  url.hash = "";
-  url.search = "";
-  url.hostname = url.hostname.toLowerCase();
-  url.pathname = url.pathname.replace(/\/+$/, "") || "/";
-  return url.toString();
+  // A location/category/page query changes listing scope. Only known tracking fields may vanish.
+  return canonicalPostingIdentity(value);
 }
 
 export function sourceMatches(expected: LiveAcceptanceCase["expectedSource"], actual?: SourceSpec): boolean {
@@ -105,7 +114,7 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
   let sourceMatchesCount = 0;
   let labelledAutomaticMatchesAt085 = 0;
   let wrongAutomaticAccepts = 0;
-  const countLabelled = cases.filter(item => item.expectedRoleCount !== null).length;
+  let countLabelled = cases.filter(item => item.expectedRoleCount !== null).length;
   let countMatches = 0;
   for (const result of results) {
     const item = byId.get(result.id);
@@ -119,6 +128,23 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
       if (result.extraction.countMatchesLabel === true) countMatches++;
     }
   }
+  const qualified = results.filter(r => r.extraction.referenceComparison?.qualifiesForAcceptance === true);
+  for (const r of qualified) {
+    if (byId.get(r.id)?.expectedRoleCount === null) {
+      countLabelled++;
+      const c = r.extraction.referenceComparison!;
+      if (r.extraction.outcome === "complete" && c.expectedCount === c.observedCount) countMatches++;
+    }
+  }
+  const compared = qualified.map(r => r.extraction.referenceComparison!);
+  const expectedPostings = compared.reduce((n, c) => n + c.expectedCount, 0);
+  const observedPostings = compared.reduce((n, c) => n + c.observedCount, 0);
+  const matchedPostings = compared.reduce((n, c) => n + c.matchedCount, 0);
+  const postingIdentityFailures = qualified.filter(r => {
+    const c = r.extraction.referenceComparison!;
+    const html = byId.get(r.id)?.expectedSource.type === "html";
+    return c.recall < (html ? 0.90 : 0.98) || c.precision < 0.98;
+  }).length;
   return {
     total: results.length,
     sourceLabelled,
@@ -134,23 +160,30 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
     countMatches,
     discoveryAccuracy: sourceLabelled ? labelledAutomaticMatchesAt085 / sourceLabelled : null,
     extractionExactCountAgreement: countLabelled ? countMatches / countLabelled : null,
-    postingIdentityRecall: null,
-    postingIdentityPrecision: null,
+    postingIdentityLabelled: qualified.length,
+    postingIdentityFailures,
+    postingIdentityRecall: !qualified.length ? null : expectedPostings ? matchedPostings / expectedPostings : 1,
+    postingIdentityPrecision: !qualified.length ? null : observedPostings ? matchedPostings / observedPostings : 1,
   };
 }
 
-export function liveAcceptanceVerdict(cases: LiveAcceptanceCase[], metrics: LiveAcceptanceMetrics): { verdict: LiveAcceptanceVerdict; reasons: string[] } {
+export function liveAcceptanceVerdict(cases: LiveAcceptanceCase[], metrics: LiveAcceptanceMetrics, requiredCaseIds: string[] = cases.map(item => item.id)): { verdict: LiveAcceptanceVerdict; reasons: string[] } {
   const reasons: string[] = [];
+  const selectedIds = new Set(cases.map(item => item.id));
+  const missingCases = requiredCaseIds.filter(id => !selectedIds.has(id));
+  if (missingCases.length) reasons.push(`${missingCases.length} required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus`);
   if (metrics.wrongAutomaticAccepts > 0) reasons.push(`${metrics.wrongAutomaticAccepts} labelled wrong source(s) automatically accepted at or above 0.85`);
   if (metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8) reasons.push(`labelled automatic discovery agreement is ${(metrics.discoveryAccuracy * 100).toFixed(1)}%, below 80%`);
   if (metrics.sourceLabelled < cases.length) reasons.push(`${cases.length - metrics.sourceLabelled} source label(s) remain independently unverified`);
-  if (metrics.countLabelled < cases.length) reasons.push(`${cases.length - metrics.countLabelled} case(s) lack an independent posting-identity golden snapshot`);
+  if (metrics.countLabelled < cases.length) reasons.push(`${cases.length - metrics.countLabelled} case(s) lack an independent role-count label`);
   if (metrics.countMatches < metrics.countLabelled) reasons.push(`${metrics.countLabelled - metrics.countMatches} labelled extraction count(s) disagree`);
+  if (metrics.postingIdentityLabelled < cases.length) reasons.push(`${cases.length - metrics.postingIdentityLabelled} case(s) lack a qualifying independent posting-identity snapshot`);
+  if (metrics.postingIdentityFailures) reasons.push(`${metrics.postingIdentityFailures} case(s) fail the posting recall/precision threshold`);
   if (metrics.postingIdentityRecall === null || metrics.postingIdentityPrecision === null) reasons.push("posting-identity recall and precision have not been measured");
   if (metrics.total < cases.length) reasons.push(`${cases.length - metrics.total} selected case(s) have no result`);
   if (metrics.extractionComplete + metrics.extractionPartial + metrics.extractionFailed < metrics.total) reasons.push("one or more selected cases did not run extraction");
   if (metrics.extractionFailed > 0 || metrics.extractionPartial > 0) reasons.push(`${metrics.extractionFailed} extraction failure(s) and ${metrics.extractionPartial} partial extraction(s)`);
-  if (metrics.wrongAutomaticAccepts > 0 || (metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8) || metrics.countMatches < metrics.countLabelled) return { verdict: "fail", reasons };
+  if (metrics.postingIdentityFailures > 0 || metrics.wrongAutomaticAccepts > 0 || (metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8) || metrics.countMatches < metrics.countLabelled) return { verdict: "fail", reasons };
   if (reasons.length) return { verdict: "blocked", reasons };
   return { verdict: "pass", reasons: [] };
 }
@@ -164,8 +197,13 @@ function extractionErrorCode(error: unknown): NonNullable<LiveAcceptanceResult["
   return "extraction_error";
 }
 
-export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer; ai?: DiscoveryAiHooks } = {}): Promise<LiveAcceptanceResult> {
+export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer; ai?: DiscoveryAiHooks; reference?: ReferencePostingSnapshot; referenceRawHashVerified?: boolean } = {}): Promise<LiveAcceptanceResult> {
+  if (options.reference && options.reference.caseId !== item.id) throw new Error("Posting reference belongs to a different case");
   const started = Date.now();
+  const referenceSourceMatches = options.reference ? sourceMatches(item.expectedSource,
+    ats.specFromAnyUrl(options.reference.sourceUrl) ?? { type: item.expectedSource.type, url: options.reference.sourceUrl }) : false;
+  const referenceProof = { sourceMatchesLabel: referenceSourceMatches, rawHashVerified: options.referenceRawHashVerified === true };
+  const uniqueCount = (rows: Array<{ url: string }>) => new Set(rows.map(row => canonicalPostingIdentity(row.url))).size;
   const fetcher = options.fetcher ?? new PoliteFetcher({
     userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
     respectRobots: () => true,
@@ -221,34 +259,45 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
       sourceMatchesLabel: item.labelStatus === "source_independently_checked" ? sourceMatches(item.expectedSource, observed.best?.spec) : null,
       browserAttempts,
       browserRenders,
-      browserUrls,
-      browserFailures,
+      browserUrls: [...browserUrls],
+      browserFailures: [...browserFailures],
     };
   } catch (error) {
-    result.discovery = { outcome: "error", sourceMatchesLabel: null, error: (error as Error).message, errorCode: "discovery_error", browserAttempts, browserRenders, browserUrls, browserFailures };
+    result.discovery = { outcome: "error", sourceMatchesLabel: null, error: (error as Error).message, errorCode: "discovery_error", browserAttempts, browserRenders, browserUrls: [...browserUrls], browserFailures: [...browserFailures] };
   }
   if (!options.discoveryOnly) {
     try {
       const spec = ats.specFromAnyUrl(item.expectedSource.url) ?? { type: item.expectedSource.type, url: item.expectedSource.url };
-      const postings = await ats.getAdapter(spec.type).fetchPostings(spec, fetchContext);
+      const postings = spec.type === "html" ? await observeHtmlListing(spec, fetchContext) : await ats.getAdapter(spec.type).fetchPostings(spec, fetchContext);
       result.extraction = {
+        ...(options.reference ? { referenceComparison: compareReferencePostings(options.reference, postings, { observation: "complete", now: new Date(started), ...referenceProof }) } : {}),
+        basis: "labelled_source_diagnostic",
         outcome: "complete",
-        observedRoleCount: postings.length,
-        countMatchesLabel: item.expectedRoleCount === null ? null : postings.length === item.expectedRoleCount,
+        observedRoleCount: uniqueCount(postings),
+        rawObservedRoleCount: postings.length,
+        countMatchesLabel: item.expectedRoleCount === null ? null : uniqueCount(postings) === item.expectedRoleCount,
         sample: postings.slice(0, 3).map(({ title, location, url }) => ({ title, location, url })),
       };
     } catch (error) {
       const partial = error instanceof Error && error.name === "IncompleteListingError";
       const postings = partial && "postings" in (error as object) ? (error as Error & { postings: Array<{ title: string; location?: string; url: string }> }).postings : [];
       result.extraction = {
+        ...(options.reference ? { referenceComparison: compareReferencePostings(options.reference, postings, { observation: "partial", now: new Date(started), ...referenceProof }) } : {}),
+        basis: "labelled_source_diagnostic",
         outcome: partial ? "partial" : "failed",
-        observedRoleCount: partial ? postings.length : undefined,
+        observedRoleCount: partial ? uniqueCount(postings) : undefined,
+        rawObservedRoleCount: partial ? postings.length : undefined,
         countMatchesLabel: null,
         sample: postings.slice(0, 3).map(({ title, location, url }) => ({ title, location, url })),
         error: (error as Error).message,
         errorCode: extractionErrorCode(error),
       };
     }
+  }
+  if (!options.discoveryOnly) {
+    result.extraction.browserAttempts = browserAttempts - result.discovery.browserAttempts;
+    result.extraction.browserRenders = browserRenders - result.discovery.browserRenders;
+    result.extraction.browserUrls = browserUrls.slice(result.discovery.browserUrls.length);
   }
   result.durationMs = Date.now() - started;
   return result;

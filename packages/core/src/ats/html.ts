@@ -5,22 +5,27 @@ import { extractJsonLdPostings } from "./jsonld";
 import { isAtsHost } from "./common";
 
 const JOB_PATH_RE =
-  /\/(?:jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-details?|joblisting)\//i;
+  /\/(?:jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-?details?|joblisting)\//i;
 const JOB_QUERY_KEYS = new Set(["gh_jid", "jobid", "job_id", "reqid", "requisitionid"]);
 
 /** A link label saying it leads to the complete listing: "All jobs", "Search roles", "View open positions". */
 export const COMPLETE_LISTING_LABEL =
-  /\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities))\b/i;
+  /\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:jobs?|roles?|positions?|vacancies)\s+listings?)\b/i;
 
 // These are listing, subscription or careers-content destinations, never posting-detail slugs.
 // Exact segment matching preserves genuine titles such as `/jobs/benefits-lead`.
 const NON_DETAIL_LAST_SEGMENT_RE =
-  /^(?:search|listings?|all-jobs?|open-jobs?|feed|rss|compatibility|emerging-talent|benefits?|teams?|locations?|faqs?|support|help|legal|privacy|terms|polic(?:y|ies)|accessibility|code-of-conduct|accommodations?(?:-for-disability)?|(?:our-)?commitment-to-(?:applicants|candidates)|(?:working-on-)?diversity-and-inclus(?:ion|ivity))$/i;
+  /^(?:search|listings?|all-jobs?|open-jobs?|feed|rss|compatibility|emerging-talent|benefits?|teams?|locations?|faqs?|support|help|legal|privacy|terms|polic(?:y|ies)|accessibility|code-of-conduct|accommodations?(?:-for-disability)?|(?:our-)?commitment-to-(?:applicants|candidates)|(?:working-on-)?diversity-and-inclus(?:ion|ivity)|culture-and-values(?:-at-[a-z0-9-]+)?|total-rewards|interview-guide|how-(?:we-hire|to-apply)|life-at-[a-z0-9-]+)$/i;
 
 const NAV_TEXT_RE =
-  /^(careers?|jobs?|all (?:jobs|roles|openings|positions)|view all(?: jobs| roles| openings)?|see (?:all|open) (?:jobs|roles|positions|openings)|open (?:roles|positions|jobs)|apply(?: now)?|learn more|read more|find out more|back(?: to .*)?|home|search|our team|join us|join the team|next|previous|more|show more|load more|view openings|browse jobs|filter|sort|menu|close)$/i;
+  /^(careers?|jobs?|all (?:jobs|roles|openings|positions)|view all(?: jobs| roles| openings)?|see (?:all|open) (?:jobs|roles|positions|openings)|open (?:roles|positions|jobs)|apply(?: now)?|learn more|read more|discover more|find out more|how to apply|back(?: to .*)?|home|search|our team|join us|join the team|next|previous|more|show more|load more|view openings|browse jobs|filter|sort|menu|close)$/i;
+const INFORMATIONAL_CTA_RE = /^(?:learn|read|discover|explore|find out) more about\b/i;
 const POLICY_LINK_TEXT_RE =
   /^(?:report (?:this|a) (?:content|page)|(?:faqs?|frequently asked questions)(?:\s*(?:&|and)\s*support)?|(?:review\s+)?accommodations? for disability|(?:our\s+)?code of conduct|(?:our\s+)?commitment to applicants?)$/i;
+// Match the BrowserRenderer's expansion labels; detecting one in the HTTP page means that page
+// alone cannot prove the whole listing, even when it already contains some role links.
+const LOAD_MORE_TEXT_RE = /^(?:(?:load|show|view|see) more(?: (?:jobs|roles|positions|openings|results))?|more (?:jobs|roles|positions|openings))$/i;
+const NEXT_TEXT_RE = /^(?:next(?: page| jobs| roles| results| pagination page)?(?:\s*[›»→>]+)?|go to next page(?:,\s*number\s*\d+)?)$/i;
 
 const LOCATION_HINT_RE =
   /(remote|hybrid|on-?site|,\s*[A-Z]{2}\b|,\s*(?:UK|USA|US|UAE)\b|london|new york|san francisco|berlin|paris|amsterdam|dublin|singapore|sydney|toronto|austin|seattle|boston|chicago|denver|los angeles|washington|manchester|edinburgh|cambridge|oxford|bristol|leeds|glasgow|tel aviv|bangalore|tokyo|madrid|barcelona|munich|zurich|stockholm|copenhagen|milan|lisbon|warsaw|dubai|costa mesa|irvine|el segundo|reston|arlington)/i;
@@ -36,6 +41,32 @@ export interface JobLink {
 
 function cleanText(s: string | undefined | null): string {
   return (s ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** Find a usable expansion control in static HTML, including nested labels and accessible names. */
+export function hasListingExpansionControl(html: string, pageUrl: string): boolean {
+  const $ = cheerio.load(html);
+  for (const element of $("button, a, [role='button']").toArray()) {
+    const node = $(element);
+    if (node.is(":disabled") || node.is("[disabled], [aria-disabled='true']") || node.closest("fieldset[disabled]").length) continue;
+    if (node.is("[data-toggle='collapse'], [data-bs-toggle='collapse']")) continue;
+    if (node.closest("template, [hidden], [aria-hidden='true']").length) continue;
+    if (node.parents().addBack().toArray().some(parent => /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test($(parent).attr("style") ?? ""))) continue;
+    const label = cleanText(node.attr("aria-label") || node.text());
+    if (label.length > 60 || !(LOAD_MORE_TEXT_RE.test(label) || NEXT_TEXT_RE.test(label) || node.attr("rel") === "next")) continue;
+    const href = node.attr("href");
+    if (href) {
+      try {
+        const target = new URL(href, pageUrl);
+        // JavaScript pagination has no HTTP next URL. Its explicit, visible control still proves
+        // that this static page is only a slice; the guarded browser may click it.
+        if (target.protocol !== "javascript:" && target.origin !== new URL(pageUrl).origin) continue;
+      }
+      catch { return true; } // An unparseable candidate still requires browser verification.
+    }
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -85,8 +116,18 @@ function looksLikeTitle(text: string): boolean {
   if (t.length < 2 || t.length > 120) return false;
   if (!/\p{L}/u.test(t)) return false;
   if (NAV_TEXT_RE.test(t)) return false;
+  if (INFORMATIONAL_CTA_RE.test(t)) return false;
   if (POLICY_LINK_TEXT_RE.test(t)) return false;
   return true;
+}
+
+/** A role card's named title is more specific than the whole link, which may also wrap team and location. */
+function linkTitle($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]): string {
+  const link = $(el);
+  const named = link.find("h1, h2, h3, h4, h5, h6, [data-job-title], [itemprop='title'], [class*='job-title'], [class*='role-title'], [class*='position-title']").first();
+  const title = cleanLinkText(named.text());
+  if (named.length) return title;
+  return cleanLinkText(link.text()) || cleanLinkText(link.attr("aria-label")) || cleanLinkText(link.attr("title"));
 }
 
 function isJobHref(url: string, pageUrl: string): boolean {
@@ -139,7 +180,7 @@ export function findJobLinks(html: string, pageUrl: string): JobLink[] {
     if (!href) return;
     const abs = absoluteUrl(href, pageUrl);
     if (!abs) return;
-    const text = cleanLinkText($(el).text()) || cleanLinkText($(el).attr("aria-label")) || cleanLinkText($(el).attr("title"));
+    const text = linkTitle($, el);
     if (!looksLikeTitle(text)) return;
     if (!isJobHref(abs, pageUrl)) return;
     const key = normalizeUrl(abs);
@@ -355,10 +396,33 @@ export function nextListingPage(html: string, pageUrl: string): string | null {
     const node = $(element);
     const label = cleanText(node.attr("aria-label") || node.text());
     const explicit = (node.attr("rel") ?? "").split(/\s+/).includes("next");
-    if (!explicit && !/^(next(?: page)?|older (?:jobs|posts)|next [›»→])$/i.test(label)) continue;
+    if (!explicit && !NEXT_TEXT_RE.test(label) && !/^older (?:jobs|posts)$/i.test(label)) continue;
     if (node.attr("aria-disabled") === "true") continue;
     const target = absoluteUrl(node.attr("href") ?? "", pageUrl);
     if (target && new URL(target).origin === new URL(pageUrl).origin && normalizeUrl(target) !== normalizeUrl(pageUrl)) return target;
   }
   return null;
+}
+
+/** An explicit next page that cannot be traversed under the same-origin listing policy. */
+export function hasUnfollowableListingContinuation(html: string, pageUrl: string): boolean {
+  let origin: string;
+  try { origin = new URL(pageUrl).origin; }
+  catch { return false; }
+  const $ = cheerio.load(html);
+  for (const element of $("link[rel~='next'], a[href]").toArray()) {
+    const node = $(element);
+    const relNext = (node.attr("rel") ?? "").split(/\s+/).some(value => value.toLowerCase() === "next");
+    const label = cleanText(node.attr("aria-label") || node.text());
+    const explicitLabel = /^(?:next (?:page|jobs|roles|results)(?:\s*[›»→>]+)?|go to next page(?:,\s*number\s*\d+)?|older (?:jobs|posts))$/i.test(label);
+    const paginationContext = node.closest("nav[aria-label*='pagination' i], [class*='pagination' i], [id*='pagination' i]").length > 0;
+    if (!relNext && !explicitLabel && !(paginationContext && NEXT_TEXT_RE.test(label))) continue;
+    if (node.is("a")) {
+      if (node.is("[disabled], [aria-disabled='true']") || node.closest("fieldset[disabled], template, [hidden], [aria-hidden='true']").length) continue;
+      if (node.parents().addBack().toArray().some(parent => /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test($(parent).attr("style") ?? ""))) continue;
+    }
+    const target = absoluteUrl(node.attr("href") ?? "", pageUrl);
+    if (target && new URL(target).origin !== origin) return true;
+  }
+  return false;
 }

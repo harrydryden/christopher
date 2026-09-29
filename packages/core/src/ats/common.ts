@@ -269,11 +269,13 @@ export function feedAdapter(o: {
   verifyRead?: (spec: SourceSpec, ctx: FetchContext) => Promise<ListingRead>;
   companyName?: (spec: SourceSpec, ctx: FetchContext) => Promise<string | undefined>;
   descriptionsPerPosting?: boolean;
+  completeFromFirstResponse?: true;
 }): Adapter {
   const { read, verifyRead, companyName } = o;
   return {
     type: o.type,
     ...(o.descriptionsPerPosting ? { descriptionsPerPosting: true } : {}),
+    ...(o.completeFromFirstResponse ? { completeFromFirstResponse: true } : {}),
     specFromUrl: o.fromUrl,
     fetchPostings: (spec, ctx) => read(spec, ctx),
     verify: (spec, ctx) =>

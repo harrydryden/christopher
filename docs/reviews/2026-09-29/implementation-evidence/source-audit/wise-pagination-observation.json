@@ -1,0 +1,41 @@
+{
+  "capturedAt": "2026-09-29T14:13:13.595Z",
+  "sourceUrl": "https://wise.jobs/jobs",
+  "responseUrl": "https://wise.jobs/jobs",
+  "httpStatus": 200,
+  "rawHtmlSha256": "009fc24ec6ff48348eee8d10b5907b0d58be73e7b278f8f931edb56fb066bb8f",
+  "rawHtmlBytes": 457584,
+  "visibleResultText": "408 results",
+  "uniqueFirstPageJobHrefs": 12,
+  "paginationControls": [
+    {
+      "tag": "a",
+      "href": "javascript:pagination(2)",
+      "ariaLabel": "Next pagination page",
+      "parentClass": "attrax-pagination__next",
+      "disabled": null
+    },
+    {
+      "tag": "a",
+      "href": "javascript:pagination(25)",
+      "ariaLabel": "Last pagination page",
+      "parentClass": "attrax-pagination__last",
+      "disabled": null
+    },
+    {
+      "tag": "a",
+      "href": "javascript:pagination(2)",
+      "ariaLabel": "Next pagination page",
+      "parentClass": "attrax-pagination__next",
+      "disabled": null
+    },
+    {
+      "tag": "a",
+      "href": "javascript:pagination(25)",
+      "ariaLabel": "Last pagination page",
+      "parentClass": "attrax-pagination__last",
+      "disabled": null
+    }
+  ],
+  "scope": "Minimal first-party DOM observation. The result count is page text, not a human-reviewed posting snapshot; no full listing enumeration was attempted."
+}

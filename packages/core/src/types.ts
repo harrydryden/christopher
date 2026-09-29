@@ -149,6 +149,10 @@ export interface VerifyResult {
 
 export interface Adapter {
   type: SourceType;
+  /** The first fetchText response alone is the complete posting listing and all mapped fields.
+   * Only such an adapter may reuse a previous successful listing when that response is unchanged.
+   * Default false: pagination and secondary indexes must be read again each scan. */
+  completeFromFirstResponse?: true;
   /**
    * True when the listing deliberately carries no description and one request per role does
    * (Greenhouse). A scan of such a source never reads descriptions inline: it defers every

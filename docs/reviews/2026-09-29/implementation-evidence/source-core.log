@@ -1,0 +1,14 @@
+> @ava/core@0.1.0 test /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core
+> vitest run
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core
+
+
+ Test Files  40 passed (40)
+      Tests  684 passed (684)
+   Start at  15:17:36
+   Duration  3.03s (tests 46%, import 34%, transform 19%, worker 1%)
+
+    Isolate  40 workers spawned · ~123ms startup each (spawn + environment, per file)
+             at least ~424ms faster with isolate: false — reuses workers across files instead of one per file

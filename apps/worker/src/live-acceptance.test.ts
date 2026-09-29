@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { liveAcceptanceVerdict, resolveLiveAcceptanceConcurrency, runLiveAcceptanceCase, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
+import { compareReferencePostings, type ReferencePostingSnapshot } from "./live-acceptance-postings";
 import { createLiveAcceptanceAiBudget } from "./live-acceptance-ai";
 
 const labelled: LiveAcceptanceCase = { id: "a", company: "A", homepageUrl: "https://a.test", expectedSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme" }, expectedRoleCount: null, labelStatus: "source_independently_checked", labelNote: "checked" };
@@ -62,6 +63,13 @@ describe("live acceptance reporting", () => {
     )).toBe(false);
   });
 
+  it("does not equate filtered or paginated HTML sources with the full listing", () => {
+    const expected = { type: "html" as const, url: "https://a.test/jobs" };
+    expect(sourceMatches(expected, { type: "html", url: "https://a.test/jobs?location=London" })).toBe(false);
+    expect(sourceMatches(expected, { type: "html", url: "https://a.test/jobs?page=2" })).toBe(false);
+    expect(sourceMatches(expected, { type: "html", url: "https://a.test/jobs/?utm_source=careers#roles" })).toBe(true);
+  });
+
   it("excludes unverified labels and missing manual counts from accuracy denominators", () => {
     const metrics = summariseLiveAcceptance([labelled, unverified], [result("a", false), result("b", true)]);
     expect(metrics.sourceLabelled).toBe(1);
@@ -116,5 +124,50 @@ describe("live acceptance reporting", () => {
     expect(observed.discovery.browserRenders).toBe(1);
     expect(observed.discovery.browserAttempts).toBe(1);
     expect(observed.discovery.browserUrls).toEqual(["https://a.test/"]);
+  });
+});
+
+
+describe("independent posting references", () => {
+  const now = new Date("2026-09-29T13:00:00Z");
+  const snapshot: ReferencePostingSnapshot = {
+    caseId: "a", sourceUrl: "https://a.test/jobs", evidenceUrl: "https://a.test/careers",
+    capturedAt: "2026-09-29T12:00:00Z", rawSha256: "a".repeat(64), rawPath: "fixture.raw.json", enumerationMethod: "Independent reviewer enumerated the unfiltered snapshot",
+    reviewStatus: "human_reviewed", completeScope: true, postingUrls: ["https://a.test/jobs/one", "https://a.test/jobs/two"],
+  };
+  it("does not promote machine-enumerated references into qualification metrics", () => {
+    const r = result("a", true);
+    r.extraction.referenceComparison = compareReferencePostings({ ...snapshot, reviewStatus: "machine_enumerated" }, snapshot.postingUrls.map(url => ({ title: "Engineer", url })), { observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true });
+    expect(r.extraction.referenceComparison.recall).toBe(1);
+    const metrics = summariseLiveAcceptance([labelled], [r]);
+    expect(metrics.postingIdentityLabelled).toBe(0);
+    expect(metrics.postingIdentityRecall).toBeNull();
+    expect(liveAcceptanceVerdict([labelled], metrics).verdict).toBe("blocked");
+  });
+  it("rejects an equal-count extraction with the wrong posting identities", () => {
+    const r = result("a", true);
+    r.extraction.referenceComparison = compareReferencePostings(snapshot, [{ title: "One", url: snapshot.postingUrls[0]! }, { title: "Wrong", url: "https://a.test/jobs/wrong" }], { observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true });
+    const metrics = summariseLiveAcceptance([labelled], [r]);
+    expect(metrics.countMatches).toBe(1);
+    expect(metrics.postingIdentityRecall).toBe(0.5);
+    expect(metrics.postingIdentityPrecision).toBe(0.5);
+    expect(liveAcceptanceVerdict([labelled], metrics).verdict).toBe("fail");
+  });
+  it("accepts the fully qualified matching corpus without a redundant manual count", () => {
+    const r = result("a", true);
+    r.extraction.referenceComparison = compareReferencePostings(snapshot, snapshot.postingUrls.map(url => ({ title: "Engineer", url })), { observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true });
+    expect(liveAcceptanceVerdict([labelled], summariseLiveAcceptance([labelled], [r]))).toEqual({ verdict: "pass", reasons: [] });
+    expect(liveAcceptanceVerdict([labelled], summariseLiveAcceptance([labelled], [r]), ["a", "b"]).verdict).toBe("blocked");
+  });
+  it("does not mix extraction browser work into discovery evidence", async () => {
+    const fetcher = {
+      fetchText: async (url: string) => ({ url, body: '<html><main><div id="app"></div></main></html>', status: 200, headers: {} }),
+      fetchBytes: async () => { throw new Error("unused"); },
+    };
+    const browser = { render: async (url: string) => ({ html: '<main><section class="jobs">There are currently no positions.</section></main>', finalUrl: url, requests: [], status: 200, listingPages: [], incomplete: false }) };
+    const r = await runLiveAcceptanceCase({ ...labelled, expectedSource: { type: "html", url: "https://a.test/jobs" } }, { maxFetches: 1, fetcher: fetcher as never, browser: browser as never });
+    expect(r.extraction).toMatchObject({ basis: "labelled_source_diagnostic", outcome: "complete", browserAttempts: 1, browserRenders: 1, browserUrls: ["https://a.test/jobs"] });
+    expect(r.discovery.browserUrls).toHaveLength(r.discovery.browserAttempts);
+    expect(r.discovery.browserUrls).not.toContain("https://a.test/jobs");
   });
 });

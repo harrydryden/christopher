@@ -4,6 +4,8 @@
 
 Astra coordinated the state model, integration and final judgement. Three Sol workstreams implemented changes, reviewed each other's work and produced independent provisional assessments. The [original baseline](JTBD-READINESS.md) is preserved. Work is local on `codex/jtbd-90`, based on main `ebb346b`; no production deployment or external notification was performed.
 
+**Subsequent development checkpoint:** [Source reliability follow-up](SOURCE-RELIABILITY-FOLLOWUP.md) records further discovery, pagination, cache and false-completeness repairs, including defects exposed by independent review. Its new observations supersede the earlier extraction-completion interpretation below; historical run files remain unchanged. Independent review corrects J2 completeness from 4.5 to 4 and readiness from 80 to 77: the observed coverage makes the earlier completeness judgement too optimistic. Other scores remain unchanged; no 90-point acceptance gate is certified.
+
 ## Re-score
 
 The unchanged formula is **20 × (0.30 completeness + 0.30 robustness + 0.40 UX/UI)**. These are engineering judgements supported by the evidence below, not percentages of users succeeding. All three dimensions have a maximum of 5. Your dimension floors (4.5/4/4) produce 83; reaching 90 also requires more strength above those floors. The working target is 4.5/4.5/4.5. No high-impact defect or failed acceptance gate can be hidden by averaging jobs.
@@ -11,7 +13,7 @@ The unchanged formula is **20 × (0.30 completeness + 0.30 robustness + 0.40 UX/
 | Job | Baseline | Completeness | Robustness | UX/UI | Now | Target met? | What prevents 90 |
 |---|---:|---:|---:|---:|---:|---|---|
 | J1 — Get set up and reach a useful first scan | 66 | 4.5 | 4 | 4 | **83** | No | Unaided first-use and real first-scan journey, including an empty successful result |
-| J2 — Follow companies and reliably receive relevant roles | 63 | 4.5 | 3.5 | 4 | **80** | No | Live source gate fails; independent posting recall/precision and manual-resolution coverage absent |
+| J2 — Follow companies and reliably receive relevant roles | 63 | 4 | 3.5 | 4 | **77** | No | Live source gate fails; measured partial/blocked coverage and former false-complete listings limit the outcome; independent posting recall/precision and manual-resolution coverage absent |
 | J3 — Review roles and decide quickly | 79 | 4.5 | 4 | 4.25 | **85** | No | Representative rapid-review/keyboard/assistive-technology and repeat-use evidence |
 | J4 — Make the strongest honest application | 73 | 4.5 | 4 | 4 | **83** | No | Current verified provider replay, independent claim/PDF quality review and first-time CV task success |
 | J5 — Maintain a safe, reusable evidence Library | 59 | 4.5 | 4 | 4.25 | **85** | No | Representative document imports and novice evidence-editing comprehension; device/assistive-technology coverage |
@@ -20,7 +22,7 @@ The unchanged formula is **20 × (0.30 completeness + 0.30 robustness + 0.40 UX/
 | J8 — Notice problems and recover without losing progress | 62 | 4.5 | 4 | 4 | **83** | No | Complete exception matrix across browsers, network interruption and assistive technology |
 | J9 — Keep work available through failures and releases | 60 | 3.5 | 3 | 3.5 | **67** | No | Provider promotion protection, exact-commit hosted CI/release, delivered alert and full managed restore/worker recovery |
 
-Canonical mean: **83.5**, previously 68.2. All nine mean: **81.2**. These means are descriptive only; the acceptance condition remains **every job ≥90 and every dimension at or above its floor**. J2, J7 and J9 still miss dimension floors as well as the total score. No job is certified at 90.
+Canonical mean: **83.0**, previously 68.2. All nine mean: **80.9**. These means are descriptive only; the acceptance condition remains **every job ≥90 and every dimension at or above its floor**. J2, J7 and J9 still miss dimension floors as well as the total score. No job is certified at 90.
 
 The final assessment keeps the independent reviewers' conservative scores except J5 UX and J8, where the subsequent narrow-screen editing, actual two-tab conflict recovery and completed failure-path checks add evidence. The provisional reviews remain available with their original scope and timing: [CV/Library](IMPLEMENTATION-CV-REVIEW.md), [UX/applications/operations](IMPLEMENTATION-UX-REVIEW.md), [reliability](IMPLEMENTATION-RELIABILITY-REVIEW.md).
 

@@ -3,7 +3,7 @@ import { createFakeFetchContext } from "../testing";
 import * as fx from "../fixtures";
 import { adapters, descriptionsFetchedPerPosting, fetchDescriptionFor, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { extractJsonLdPostings } from "./jsonld";
-import { applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, isExplicitEmptyListing, validateRecipe } from "./html";
+import { applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, hasListingExpansionControl, hasUnfollowableListingContinuation, isExplicitEmptyListing, nextListingPage, validateRecipe } from "./html";
 import { IncompleteListingError, type FetchContext, type HtmlRecipe, type SourceFetchError, type SourceSpec } from "../types";
 import { INLINE_DESCRIPTIONS_MAX_BYTES } from "./common";
 
@@ -71,6 +71,13 @@ describe("specFromAnyUrl", () => {
     expect(isAtsHost("boards.greenhouse.io")).toBe(true);
     expect(isAtsHost("acme.breezy.hr")).toBe(true);
     expect(isAtsHost("www.acme.com")).toBe(false);
+  });
+  it("permits whole-listing reuse only for explicitly single-response adapters", () => {
+    for (const type of ["ashby", "jsonld", "rss"] as const) expect(getAdapter(type).completeFromFirstResponse).toBe(true);
+    for (const type of ["html", "greenhouse", "lever", "smartrecruiters", "workday", "workable"] as const)
+      expect(getAdapter(type).completeFromFirstResponse).not.toBe(true);
+    // A newly registered adapter must opt in; its default is never inferred from its source type.
+    expect(adapters.filter(adapter => adapter.completeFromFirstResponse).map(adapter => adapter.type).sort()).toEqual(["ashby", "jsonld", "rss"]);
   });
 });
 
@@ -514,6 +521,68 @@ describe("JSON-LD extraction", () => {
 });
 
 describe("HTML extraction", () => {
+  it("detects usable nested and accessible listing expansion controls", () => {
+    const url = "https://acme.example/jobs";
+    expect(hasListingExpansionControl('<main><button><span>Load more</span></button></main>', url)).toBe(true);
+    expect(hasListingExpansionControl('<main><div role="button" aria-label="Show more jobs"><svg></svg></div></main>', url)).toBe(true);
+    expect(hasListingExpansionControl('<main><a rel="next" href="?page=2"><span>2</span></a></main>', url)).toBe(true);
+    expect(hasListingExpansionControl('<main><button>Next results →</button></main>', url)).toBe(true);
+    expect(hasListingExpansionControl('<main><button><span>Load more</span></button><a href="/jobs/1">Engineer</a></main>', url)).toBe(true);
+  });
+  it("follows a source-shaped accessible next-page link instead of calling six visible roles complete", () => {
+    const url = "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/";
+    const html = `<main><div class="list-controls__text__legend" aria-label="999+ results">1 - 6 of 999+ results</div>
+      <nav aria-label="Pagination Navigation"><ul><li class="paginationNextLink">
+        <a href="/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&amp;folderOffset=6"
+          aria-label="Go to Next Page, Number 2">Next &gt;&gt;</a>
+      </li></ul></nav></main>`;
+    expect(hasListingExpansionControl(html, url)).toBe(true);
+    expect(nextListingPage(html, url)).toBe("https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=6");
+    expect(nextListingPage('<a href="?folderOffset=6">Next &gt;&gt;</a>', url)).toBe("https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderOffset=6");
+    expect(nextListingPage('<a href="?keywords=engineer&amp;folderOffset=6" aria-label="Go to Next Page, Number 2">Next</a>', `${url}?keywords=engineer`))
+      .toBe("https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?keywords=engineer&folderOffset=6");
+    expect(nextListingPage('<a href="?folderOffset=6" aria-label="Go to Previous Page, Number 1">Previous</a>', url)).toBeNull();
+  });
+  it("recognises Wise-shaped JavaScript pagination without treating its first 12 roles as complete", () => {
+    const url = "https://wise.jobs/jobs";
+    const html = `<main><p>408 results</p>${Array.from({ length: 12 }, (_, i) => `<a href="/job/role-${i}-jid-${i}">Role ${i}</a>`).join("")}
+      <nav aria-label="Pagination"><li class="attrax-pagination__next">
+        <a href="javascript:pagination(2)" aria-label="Next pagination page" tabindex="0"></a>
+      </li><li class="attrax-pagination__last"><a href="javascript:pagination(25)" aria-label="Last pagination page"></a></li></nav></main>`;
+    expect(extractPostingsFromHtml(html, url)).toHaveLength(12);
+    expect(nextListingPage(html, url)).toBeNull();
+    expect(hasListingExpansionControl(html, url)).toBe(true);
+    expect(hasListingExpansionControl('<a href="javascript:pagination(25)" aria-label="Last pagination page"></a>', url)).toBe(false);
+    expect(hasListingExpansionControl('<a href="https://elsewhere.example/jobs">Next pagination page</a>', url)).toBe(false);
+  });
+  it("ignores hidden, disabled, unrelated and off-site controls", () => {
+    const url = "https://acme.example/jobs";
+    const html = `<main>
+      <button disabled><span>Load more</span></button>
+      <div hidden><button>Show more</button></div>
+      <div aria-hidden="true"><div role="button">Next</div></div>
+      <button style="display: none">Load more jobs</button>
+      <button style="visibility:hidden">Next page</button>
+      <button aria-disabled="true">Show more</button>
+      <button data-toggle="collapse">Load more</button>
+      <a href="https://other.example/jobs?page=2">Next</a>
+      <a href="/jobs/1">Support Engineer</a>
+    </main>`;
+    expect(hasListingExpansionControl(html, url)).toBe(false);
+  });
+  it("flags only usable explicit cross-origin continuation as incomplete", () => {
+    const url = "https://acme.example/jobs";
+    expect(hasUnfollowableListingContinuation('<head><link rel="next" href="https://pages.example/jobs?page=2"></head>', url)).toBe(true);
+    expect(hasUnfollowableListingContinuation('<main><a href="https://pages.example/jobs?page=2" aria-label="Go to Next Page, Number 2">Next</a></main>', url)).toBe(true);
+    expect(hasUnfollowableListingContinuation('<nav aria-label="Pagination"><a href="https://pages.example/jobs?page=2">Next</a></nav>', url)).toBe(true);
+    expect(hasUnfollowableListingContinuation('<a rel="next" href="?page=2">Next</a>', url)).toBe(false);
+    expect(hasUnfollowableListingContinuation('<a href="https://pages.example/jobs?page=2">Next</a>', url)).toBe(false);
+    expect(hasUnfollowableListingContinuation('<a href="https://pages.example/jobs/engineer">Engineer</a>', url)).toBe(false);
+    expect(hasUnfollowableListingContinuation('<a rel="next" aria-disabled="true" href="https://pages.example/jobs?page=2">Next</a>', url)).toBe(false);
+    expect(hasUnfollowableListingContinuation('<div hidden><a rel="next" href="https://pages.example/jobs?page=2">Next</a></div>', url)).toBe(false);
+    expect(hasUnfollowableListingContinuation('<a rel="next" style="display:none" href="https://pages.example/jobs?page=2">Next</a>', url)).toBe(false);
+    expect(hasUnfollowableListingContinuation('<a rel="prev" href="https://pages.example/jobs?page=1">Previous</a>', url)).toBe(false);
+  });
   it("recognises only a scoped, unfiltered explicit empty listing", () => {
     expect(isExplicitEmptyListing(fx.EMPTY_CAREERS_LISTING_HTML, "https://www.acme.example/jobs")).toBe(true);
     expect(isExplicitEmptyListing('<main><div class="jobs-empty">No jobs available.</div></main>', "https://www.acme.example/jobs?department=sales")).toBe(false);
@@ -529,6 +598,24 @@ describe("HTML extraction", () => {
     expect(links.map((l) => l.text)).toContain("Operations Manager");
     expect(links.map((l) => l.text)).not.toContain("Careers");
     expect(links.map((l) => l.text)).not.toContain("Back to careers");
+  });
+  it("recognises JobDetail and JobDetails role paths while excluding generic help navigation", () => {
+    const pageUrl = "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/";
+    const html = `<main>
+      <article><a href="/en_US/externaljobs/JobDetail/524218">Senior Electrical Engineer</a></article>
+      <article><a href="/en_US/externaljobs/JobDetails/524219">Operations Manager</a></article>
+      <article><a href="/en_US/externaljobs/job-detail/524220">Product Designer</a></article>
+      <article><a href="/en_US/externaljobs/JobDetails/Help">Help with applications</a></article>
+      <nav><a href="/en_US/externaljobs/JobDetails/overview">Browse job details</a></nav>
+    </main>`;
+    expect(findJobLinks(html, pageUrl).map(link => link.url)).toEqual([
+      "https://jobs.siemens.com/en_US/externaljobs/JobDetail/524218",
+      "https://jobs.siemens.com/en_US/externaljobs/JobDetails/524219",
+      "https://jobs.siemens.com/en_US/externaljobs/job-detail/524220",
+    ]);
+    expect(extractPostingsFromHtml(html, pageUrl).map(posting => posting.title)).toEqual([
+      "Senior Electrical Engineer", "Operations Manager", "Product Designer",
+    ]);
   });
   it("reads locations from the surrounding markup", () => {
     const postings = extractPostingsFromHtml(fx.LISTING_PAGE_HTML, url);
@@ -547,6 +634,21 @@ describe("HTML extraction", () => {
     expect(findJobLinks(html, "https://openai.com/careers/search/")).toEqual([
       expect.objectContaining({ text: "Research Engineer", url: "https://openai.com/careers/research-engineer/" }),
       expect.objectContaining({ text: "Operations Lead", url: "https://jobs.ashbyhq.com/acme/456" }),
+    ]);
+  });
+  it("reads a role card's named title without appending its team or location", () => {
+    // Synthetic card shapes: a link can wrap both a semantic role title and adjacent metadata.
+    const html = `<main>
+      <article><a href="/careers/3p-systems-architect/"><h3>3P Systems Architect</h3><span>Datacenter Design</span><span>2 locations</span></a></article>
+      <article><a href="/jobs/abuse-investigator/"><span class="job-title">Abuse Investigator - Scams &amp; Fraud</span><span>Intelligence &amp; Investigations</span><span>4 locations</span></a></article>
+      <article><a href="/jobs/account-associate/"><span data-job-title>Account Associate - EMEA</span><span>Account Associates</span><span>Dublin, Ireland</span></a></article>
+    </main>`;
+    const pageUrl = "https://acme.example/careers/search/";
+    expect(findJobLinks(html, pageUrl).map(link => link.text)).toEqual([
+      "3P Systems Architect", "Abuse Investigator - Scams & Fraud", "Account Associate - EMEA",
+    ]);
+    expect(extractPostingsFromHtml(html, pageUrl).map(posting => posting.title)).toEqual([
+      "3P Systems Architect", "Abuse Investigator - Scams & Fraud", "Account Associate - EMEA",
     ]);
   });
   it("excludes career navigation without blacklisting words that can be role titles", () => {
@@ -596,6 +698,24 @@ describe("HTML extraction", () => {
     </main>`;
     const pageUrl = "https://acme.example/careers/";
     const expected = ["Support Engineer", "Accessibility Engineer", "Compliance/Policy Officer", "Policy Officer", "Support Engineer II"];
+    expect(findJobLinks(html, pageUrl).map(link => link.text)).toEqual(expected);
+    expect(extractPostingsFromHtml(html, pageUrl).map(posting => posting.title)).toEqual(expected);
+  });
+  it("excludes informational careers links while retaining similarly named roles", () => {
+    // Source-shaped paths and labels from public Zapier and Siemens pages, with synthetic role
+    // titles to ensure the exclusion does not blacklist a profession by keyword alone.
+    const html = `<main>
+      <article><a href="https://zapier.com/jobs/culture-and-values-at-zapier">Learn more about our company values</a></article>
+      <article><a href="https://zapier.com/l/jobs/total-rewards">Learn more about Total Rewards at Zapier</a></article>
+      <article><a href="https://zapier.com/l/jobs/interview-guide">Interviewing at Zapier</a></article>
+      <article><a href="https://www.siemens.com/global/en/company/jobs/life-at-siemens.html">Discover more</a></article>
+      <article><a href="https://www.siemens.com/global/en/company/jobs/how-we-hire.html">How to apply</a></article>
+      <article><a href="/jobs/learning-and-development-manager">Learning and Development Manager</a></article>
+      <article><a href="/jobs/total-rewards-manager">Total Rewards Manager</a></article>
+      <article><a href="/jobs/interview-coordinator">Interview Coordinator</a></article>
+    </main>`;
+    const pageUrl = "https://zapier.com/jobs";
+    const expected = ["Learning and Development Manager", "Total Rewards Manager", "Interview Coordinator"];
     expect(findJobLinks(html, pageUrl).map(link => link.text)).toEqual(expected);
     expect(extractPostingsFromHtml(html, pageUrl).map(posting => posting.title)).toEqual(expected);
   });

@@ -176,6 +176,7 @@ describe("tier-2 page budgets", () => {
     const board = createFakeFetchContext({ routes: {
       "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com&start=0&num=100": { body: { positions: positions(0, 100) } },
       "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com&start=100&num=100": { body: { positions: positions(100, 30) } },
+      "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com&start=130&num=100": { body: { positions: [] } },
     } });
     const spec = eightfoldSpec("acme.eightfold.ai", "acme.com");
     expect(await getAdapter("eightfold").fetchPostings(spec, board)).toHaveLength(130);
@@ -184,5 +185,44 @@ describe("tier-2 page budgets", () => {
     } });
     expect(await getAdapter("eightfold").verify(spec, counted)).toMatchObject({ ok: true, count: 730 });
     expect(counted.requestLog).toHaveLength(1);
+  });
+  it("advances by the returned rows when Eightfold caps num below the requested page size", async () => {
+    const positions = (from: number, n: number) => Array.from({ length: n }, (_, i) => ({ id: from + i, name: `Role ${from + i}` }));
+    const base = "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com";
+    const board = createFakeFetchContext({ routes: {
+      [`${base}&start=0&num=100`]: { body: { count: 25, positions: positions(0, 10) } },
+      [`${base}&start=10&num=100`]: { body: { count: 25, positions: positions(10, 10) } },
+      [`${base}&start=20&num=100`]: { body: { count: 25, positions: positions(20, 5) } },
+    } });
+    const spec = eightfoldSpec("acme.eightfold.ai", "acme.com");
+    const postings = await getAdapter("eightfold").fetchPostings(spec, board);
+    expect(postings).toHaveLength(25);
+    expect(postings.map(p => p.externalId)).toEqual(Array.from({ length: 25 }, (_, i) => String(i)));
+    expect(board.requestLog.map(request => request.url)).toEqual([
+      `${base}&start=0&num=100`, `${base}&start=10&num=100`, `${base}&start=20&num=100`,
+    ]);
+  });
+  it("does not call a capped Eightfold listing complete when a counted page is empty or repeated", async () => {
+    const first = Array.from({ length: 10 }, (_, i) => ({ id: i, name: `Role ${i}` }));
+    const base = "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com";
+    const spec = eightfoldSpec("acme.eightfold.ai", "acme.com");
+    for (const second of [[], first]) {
+      const board = createFakeFetchContext({ routes: {
+        [`${base}&start=0&num=100`]: { body: { count: 25, positions: first } },
+        [`${base}&start=10&num=100`]: { body: { count: 25, positions: second } },
+      } });
+      await expect(getAdapter("eightfold").fetchPostings(spec, board)).rejects.toMatchObject({
+        name: "IncompleteListingError", postings: expect.arrayContaining([expect.objectContaining({ externalId: "0" })]),
+      });
+    }
+  });
+  it("keeps malformed Eightfold counts incomplete instead of trusting a short page", async () => {
+    const spec = eightfoldSpec("acme.eightfold.ai", "acme.com");
+    const board = createFakeFetchContext({ routes: {
+      "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com&start=0&num=100": {
+        body: { count: "unknown", positions: [{ id: "1", name: "Operations Manager" }] },
+      },
+    } });
+    await expect(getAdapter("eightfold").fetchPostings(spec, board)).rejects.toBeInstanceOf(IncompleteListingError);
   });
 });

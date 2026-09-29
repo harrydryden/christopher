@@ -1,0 +1,2712 @@
+{
+  "snapshots": [
+    {
+      "schemaVersion": 1,
+      "caseId": "zapier",
+      "sourceUrl": "https://api.ashbyhq.com/posting-api/job-board/zapier",
+      "evidenceUrl": "https://zapier.com/jobs",
+      "capturedAt": "2026-09-29T13:29:20Z",
+      "rawSha256": "9219a038de991448cf8a1a0e75489752e21a5e38067495cdc00fb9662098a5c9",
+      "rawPath": "zapier-ashby.raw.json",
+      "enumerationMethod": "Direct unauthenticated HTTP GET of public board JSON; parsed jobs array by an independent Python stdlib script, not AVA discovery/extraction; Zapier isListed=true only; no human posting review.",
+      "reviewStatus": "machine_enumerated",
+      "completeScope": false,
+      "postingUrls": [
+        "https://jobs.ashbyhq.com/zapier/04838dc8-0efa-4fe5-b705-c99f6b3f17c6",
+        "https://jobs.ashbyhq.com/zapier/1767482d-de23-460c-80eb-6d0a3caa72ab",
+        "https://jobs.ashbyhq.com/zapier/381a771d-b04c-4a8d-8515-ea677d6bd80b",
+        "https://jobs.ashbyhq.com/zapier/45b2c110-f8e0-497a-914c-72fddf447ed0",
+        "https://jobs.ashbyhq.com/zapier/6adee270-03bf-4b1b-915b-eba5fb56d1b6",
+        "https://jobs.ashbyhq.com/zapier/7dd68291-3696-4fd0-a5d0-24ab73d22fff",
+        "https://jobs.ashbyhq.com/zapier/b14ac81b-d94c-4a46-89a3-017f3d113517",
+        "https://jobs.ashbyhq.com/zapier/cb1aec2c-05cd-4598-8117-bd1f7ed9a49f",
+        "https://jobs.ashbyhq.com/zapier/d4576c10-a27e-47fa-a056-30c898b9e672",
+        "https://jobs.ashbyhq.com/zapier/eaf4ef36-116b-4aa1-b874-7474b16851e6"
+      ],
+      "jobs": [
+        {
+          "id": "04838dc8-0efa-4fe5-b705-c99f6b3f17c6",
+          "title": "Legal Counsel",
+          "url": "https://jobs.ashbyhq.com/zapier/04838dc8-0efa-4fe5-b705-c99f6b3f17c6"
+        },
+        {
+          "id": "1767482d-de23-460c-80eb-6d0a3caa72ab",
+          "title": "Staff Backend Engineer, Commerce",
+          "url": "https://jobs.ashbyhq.com/zapier/1767482d-de23-460c-80eb-6d0a3caa72ab"
+        },
+        {
+          "id": "381a771d-b04c-4a8d-8515-ea677d6bd80b",
+          "title": "Director, India",
+          "url": "https://jobs.ashbyhq.com/zapier/381a771d-b04c-4a8d-8515-ea677d6bd80b"
+        },
+        {
+          "id": "45b2c110-f8e0-497a-914c-72fddf447ed0",
+          "title": "Automation Strategist, Customer Success",
+          "url": "https://jobs.ashbyhq.com/zapier/45b2c110-f8e0-497a-914c-72fddf447ed0"
+        },
+        {
+          "id": "6adee270-03bf-4b1b-915b-eba5fb56d1b6",
+          "title": "Sales Assist Representative",
+          "url": "https://jobs.ashbyhq.com/zapier/6adee270-03bf-4b1b-915b-eba5fb56d1b6"
+        },
+        {
+          "id": "7dd68291-3696-4fd0-a5d0-24ab73d22fff",
+          "title": "Manager, GTM Analytics",
+          "url": "https://jobs.ashbyhq.com/zapier/7dd68291-3696-4fd0-a5d0-24ab73d22fff"
+        },
+        {
+          "id": "b14ac81b-d94c-4a46-89a3-017f3d113517",
+          "title": "Growth Design Lead",
+          "url": "https://jobs.ashbyhq.com/zapier/b14ac81b-d94c-4a46-89a3-017f3d113517"
+        },
+        {
+          "id": "cb1aec2c-05cd-4598-8117-bd1f7ed9a49f",
+          "title": "Finance Manager, Marketing",
+          "url": "https://jobs.ashbyhq.com/zapier/cb1aec2c-05cd-4598-8117-bd1f7ed9a49f"
+        },
+        {
+          "id": "d4576c10-a27e-47fa-a056-30c898b9e672",
+          "title": "Account Executive, Mid Market",
+          "url": "https://jobs.ashbyhq.com/zapier/d4576c10-a27e-47fa-a056-30c898b9e672"
+        },
+        {
+          "id": "eaf4ef36-116b-4aa1-b874-7474b16851e6",
+          "title": "Sr. Technical Account Manager",
+          "url": "https://jobs.ashbyhq.com/zapier/eaf4ef36-116b-4aa1-b874-7474b16851e6"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "caseId": "datadog",
+      "sourceUrl": "https://boards-api.greenhouse.io/v1/boards/datadog/jobs",
+      "evidenceUrl": "https://careers.datadoghq.com/all-jobs/",
+      "capturedAt": "2026-09-29T13:29:22Z",
+      "rawSha256": "8ded3d1e58d0f2e6141ea7c4072bf7290875ef2b7258c2307c51fec74ec1fc1c",
+      "rawPath": "datadog-greenhouse.raw.json",
+      "enumerationMethod": "Direct unauthenticated HTTP GET of public board JSON; parsed jobs array by an independent Python stdlib script, not AVA discovery/extraction; Zapier isListed=true only; no human posting review.",
+      "reviewStatus": "machine_enumerated",
+      "completeScope": false,
+      "postingUrls": [
+        "https://careers.datadoghq.com/detail/1497543/?gh_jid=1497543",
+        "https://careers.datadoghq.com/detail/1694375/?gh_jid=1694375",
+        "https://careers.datadoghq.com/detail/3851927/?gh_jid=3851927",
+        "https://careers.datadoghq.com/detail/3851935/?gh_jid=3851935",
+        "https://careers.datadoghq.com/detail/4452918/?gh_jid=4452918",
+        "https://careers.datadoghq.com/detail/4599111/?gh_jid=4599111",
+        "https://careers.datadoghq.com/detail/4599148/?gh_jid=4599148",
+        "https://careers.datadoghq.com/detail/5283132/?gh_jid=5283132",
+        "https://careers.datadoghq.com/detail/5486716/?gh_jid=5486716",
+        "https://careers.datadoghq.com/detail/5511968/?gh_jid=5511968",
+        "https://careers.datadoghq.com/detail/5608424/?gh_jid=5608424",
+        "https://careers.datadoghq.com/detail/5622381/?gh_jid=5622381",
+        "https://careers.datadoghq.com/detail/5742916/?gh_jid=5742916",
+        "https://careers.datadoghq.com/detail/5798241/?gh_jid=5798241",
+        "https://careers.datadoghq.com/detail/5925905/?gh_jid=5925905",
+        "https://careers.datadoghq.com/detail/6009777/?gh_jid=6009777",
+        "https://careers.datadoghq.com/detail/6009779/?gh_jid=6009779",
+        "https://careers.datadoghq.com/detail/6163246/?gh_jid=6163246",
+        "https://careers.datadoghq.com/detail/6185452/?gh_jid=6185452",
+        "https://careers.datadoghq.com/detail/6307160/?gh_jid=6307160",
+        "https://careers.datadoghq.com/detail/6427176/?gh_jid=6427176",
+        "https://careers.datadoghq.com/detail/6430289/?gh_jid=6430289",
+        "https://careers.datadoghq.com/detail/6430945/?gh_jid=6430945",
+        "https://careers.datadoghq.com/detail/6485604/?gh_jid=6485604",
+        "https://careers.datadoghq.com/detail/6512321/?gh_jid=6512321",
+        "https://careers.datadoghq.com/detail/6512326/?gh_jid=6512326",
+        "https://careers.datadoghq.com/detail/6512586/?gh_jid=6512586",
+        "https://careers.datadoghq.com/detail/6522009/?gh_jid=6522009",
+        "https://careers.datadoghq.com/detail/6522720/?gh_jid=6522720",
+        "https://careers.datadoghq.com/detail/6522747/?gh_jid=6522747",
+        "https://careers.datadoghq.com/detail/6523631/?gh_jid=6523631",
+        "https://careers.datadoghq.com/detail/6572669/?gh_jid=6572669",
+        "https://careers.datadoghq.com/detail/6652564/?gh_jid=6652564",
+        "https://careers.datadoghq.com/detail/6665385/?gh_jid=6665385",
+        "https://careers.datadoghq.com/detail/6677658/?gh_jid=6677658",
+        "https://careers.datadoghq.com/detail/6685931/?gh_jid=6685931",
+        "https://careers.datadoghq.com/detail/6703351/?gh_jid=6703351",
+        "https://careers.datadoghq.com/detail/6759702/?gh_jid=6759702",
+        "https://careers.datadoghq.com/detail/6761448/?gh_jid=6761448",
+        "https://careers.datadoghq.com/detail/6781197/?gh_jid=6781197",
+        "https://careers.datadoghq.com/detail/6798820/?gh_jid=6798820",
+        "https://careers.datadoghq.com/detail/6831903/?gh_jid=6831903",
+        "https://careers.datadoghq.com/detail/6832925/?gh_jid=6832925",
+        "https://careers.datadoghq.com/detail/6836442/?gh_jid=6836442",
+        "https://careers.datadoghq.com/detail/6873775/?gh_jid=6873775",
+        "https://careers.datadoghq.com/detail/6960503/?gh_jid=6960503",
+        "https://careers.datadoghq.com/detail/7003239/?gh_jid=7003239",
+        "https://careers.datadoghq.com/detail/7016097/?gh_jid=7016097",
+        "https://careers.datadoghq.com/detail/7034798/?gh_jid=7034798",
+        "https://careers.datadoghq.com/detail/7055008/?gh_jid=7055008",
+        "https://careers.datadoghq.com/detail/7057036/?gh_jid=7057036",
+        "https://careers.datadoghq.com/detail/7101117/?gh_jid=7101117",
+        "https://careers.datadoghq.com/detail/7107437/?gh_jid=7107437",
+        "https://careers.datadoghq.com/detail/7117086/?gh_jid=7117086",
+        "https://careers.datadoghq.com/detail/7128703/?gh_jid=7128703",
+        "https://careers.datadoghq.com/detail/7129425/?gh_jid=7129425",
+        "https://careers.datadoghq.com/detail/7131363/?gh_jid=7131363",
+        "https://careers.datadoghq.com/detail/7131386/?gh_jid=7131386",
+        "https://careers.datadoghq.com/detail/7131396/?gh_jid=7131396",
+        "https://careers.datadoghq.com/detail/7131404/?gh_jid=7131404",
+        "https://careers.datadoghq.com/detail/7131495/?gh_jid=7131495",
+        "https://careers.datadoghq.com/detail/7131726/?gh_jid=7131726",
+        "https://careers.datadoghq.com/detail/7132132/?gh_jid=7132132",
+        "https://careers.datadoghq.com/detail/7134079/?gh_jid=7134079",
+        "https://careers.datadoghq.com/detail/7137624/?gh_jid=7137624",
+        "https://careers.datadoghq.com/detail/7142205/?gh_jid=7142205",
+        "https://careers.datadoghq.com/detail/7180265/?gh_jid=7180265",
+        "https://careers.datadoghq.com/detail/7194969/?gh_jid=7194969",
+        "https://careers.datadoghq.com/detail/7232590/?gh_jid=7232590",
+        "https://careers.datadoghq.com/detail/7255532/?gh_jid=7255532",
+        "https://careers.datadoghq.com/detail/7314667/?gh_jid=7314667",
+        "https://careers.datadoghq.com/detail/7329207/?gh_jid=7329207",
+        "https://careers.datadoghq.com/detail/7338800/?gh_jid=7338800",
+        "https://careers.datadoghq.com/detail/7405822/?gh_jid=7405822",
+        "https://careers.datadoghq.com/detail/7405831/?gh_jid=7405831",
+        "https://careers.datadoghq.com/detail/7409175/?gh_jid=7409175",
+        "https://careers.datadoghq.com/detail/7409198/?gh_jid=7409198",
+        "https://careers.datadoghq.com/detail/7409236/?gh_jid=7409236",
+        "https://careers.datadoghq.com/detail/7410254/?gh_jid=7410254",
+        "https://careers.datadoghq.com/detail/7413847/?gh_jid=7413847",
+        "https://careers.datadoghq.com/detail/7421284/?gh_jid=7421284",
+        "https://careers.datadoghq.com/detail/7426680/?gh_jid=7426680",
+        "https://careers.datadoghq.com/detail/7426707/?gh_jid=7426707",
+        "https://careers.datadoghq.com/detail/7426752/?gh_jid=7426752",
+        "https://careers.datadoghq.com/detail/7435209/?gh_jid=7435209",
+        "https://careers.datadoghq.com/detail/7436312/?gh_jid=7436312",
+        "https://careers.datadoghq.com/detail/7439145/?gh_jid=7439145",
+        "https://careers.datadoghq.com/detail/7439149/?gh_jid=7439149",
+        "https://careers.datadoghq.com/detail/7439152/?gh_jid=7439152",
+        "https://careers.datadoghq.com/detail/7439569/?gh_jid=7439569",
+        "https://careers.datadoghq.com/detail/7439573/?gh_jid=7439573",
+        "https://careers.datadoghq.com/detail/7442122/?gh_jid=7442122",
+        "https://careers.datadoghq.com/detail/7452669/?gh_jid=7452669",
+        "https://careers.datadoghq.com/detail/7453034/?gh_jid=7453034",
+        "https://careers.datadoghq.com/detail/7453039/?gh_jid=7453039",
+        "https://careers.datadoghq.com/detail/7463727/?gh_jid=7463727",
+        "https://careers.datadoghq.com/detail/7463765/?gh_jid=7463765",
+        "https://careers.datadoghq.com/detail/7463769/?gh_jid=7463769",
+        "https://careers.datadoghq.com/detail/7463989/?gh_jid=7463989",
+        "https://careers.datadoghq.com/detail/7465857/?gh_jid=7465857",
+        "https://careers.datadoghq.com/detail/7466155/?gh_jid=7466155",
+        "https://careers.datadoghq.com/detail/7476847/?gh_jid=7476847",
+        "https://careers.datadoghq.com/detail/7487353/?gh_jid=7487353",
+        "https://careers.datadoghq.com/detail/7496207/?gh_jid=7496207",
+        "https://careers.datadoghq.com/detail/7496237/?gh_jid=7496237",
+        "https://careers.datadoghq.com/detail/7515110/?gh_jid=7515110",
+        "https://careers.datadoghq.com/detail/7516279/?gh_jid=7516279",
+        "https://careers.datadoghq.com/detail/7526356/?gh_jid=7526356",
+        "https://careers.datadoghq.com/detail/7529852/?gh_jid=7529852",
+        "https://careers.datadoghq.com/detail/7530418/?gh_jid=7530418",
+        "https://careers.datadoghq.com/detail/7536402/?gh_jid=7536402",
+        "https://careers.datadoghq.com/detail/7554877/?gh_jid=7554877",
+        "https://careers.datadoghq.com/detail/7555575/?gh_jid=7555575",
+        "https://careers.datadoghq.com/detail/7558666/?gh_jid=7558666",
+        "https://careers.datadoghq.com/detail/7560494/?gh_jid=7560494",
+        "https://careers.datadoghq.com/detail/7560815/?gh_jid=7560815",
+        "https://careers.datadoghq.com/detail/7582679/?gh_jid=7582679",
+        "https://careers.datadoghq.com/detail/7582681/?gh_jid=7582681",
+        "https://careers.datadoghq.com/detail/7583609/?gh_jid=7583609",
+        "https://careers.datadoghq.com/detail/7584250/?gh_jid=7584250",
+        "https://careers.datadoghq.com/detail/7586019/?gh_jid=7586019",
+        "https://careers.datadoghq.com/detail/7590670/?gh_jid=7590670",
+        "https://careers.datadoghq.com/detail/7591735/?gh_jid=7591735",
+        "https://careers.datadoghq.com/detail/7599334/?gh_jid=7599334",
+        "https://careers.datadoghq.com/detail/7627531/?gh_jid=7627531",
+        "https://careers.datadoghq.com/detail/7645709/?gh_jid=7645709",
+        "https://careers.datadoghq.com/detail/7650367/?gh_jid=7650367",
+        "https://careers.datadoghq.com/detail/7658810/?gh_jid=7658810",
+        "https://careers.datadoghq.com/detail/7683226/?gh_jid=7683226",
+        "https://careers.datadoghq.com/detail/7683726/?gh_jid=7683726",
+        "https://careers.datadoghq.com/detail/7703288/?gh_jid=7703288",
+        "https://careers.datadoghq.com/detail/7703553/?gh_jid=7703553",
+        "https://careers.datadoghq.com/detail/7721005/?gh_jid=7721005",
+        "https://careers.datadoghq.com/detail/7722122/?gh_jid=7722122",
+        "https://careers.datadoghq.com/detail/7728298/?gh_jid=7728298",
+        "https://careers.datadoghq.com/detail/7729887/?gh_jid=7729887",
+        "https://careers.datadoghq.com/detail/7730200/?gh_jid=7730200",
+        "https://careers.datadoghq.com/detail/7743369/?gh_jid=7743369",
+        "https://careers.datadoghq.com/detail/7763117/?gh_jid=7763117",
+        "https://careers.datadoghq.com/detail/7777798/?gh_jid=7777798",
+        "https://careers.datadoghq.com/detail/7785319/?gh_jid=7785319",
+        "https://careers.datadoghq.com/detail/7785350/?gh_jid=7785350",
+        "https://careers.datadoghq.com/detail/7787715/?gh_jid=7787715",
+        "https://careers.datadoghq.com/detail/7792033/?gh_jid=7792033",
+        "https://careers.datadoghq.com/detail/7793359/?gh_jid=7793359",
+        "https://careers.datadoghq.com/detail/7800409/?gh_jid=7800409",
+        "https://careers.datadoghq.com/detail/7806043/?gh_jid=7806043",
+        "https://careers.datadoghq.com/detail/7806117/?gh_jid=7806117",
+        "https://careers.datadoghq.com/detail/7807783/?gh_jid=7807783",
+        "https://careers.datadoghq.com/detail/7815616/?gh_jid=7815616",
+        "https://careers.datadoghq.com/detail/7834545/?gh_jid=7834545",
+        "https://careers.datadoghq.com/detail/7843331/?gh_jid=7843331",
+        "https://careers.datadoghq.com/detail/7857714/?gh_jid=7857714",
+        "https://careers.datadoghq.com/detail/7858788/?gh_jid=7858788",
+        "https://careers.datadoghq.com/detail/7868421/?gh_jid=7868421",
+        "https://careers.datadoghq.com/detail/7868711/?gh_jid=7868711",
+        "https://careers.datadoghq.com/detail/7874990/?gh_jid=7874990",
+        "https://careers.datadoghq.com/detail/7894188/?gh_jid=7894188",
+        "https://careers.datadoghq.com/detail/7904634/?gh_jid=7904634",
+        "https://careers.datadoghq.com/detail/7905276/?gh_jid=7905276",
+        "https://careers.datadoghq.com/detail/7917340/?gh_jid=7917340",
+        "https://careers.datadoghq.com/detail/7919037/?gh_jid=7919037",
+        "https://careers.datadoghq.com/detail/7926141/?gh_jid=7926141",
+        "https://careers.datadoghq.com/detail/7927485/?gh_jid=7927485",
+        "https://careers.datadoghq.com/detail/7939294/?gh_jid=7939294",
+        "https://careers.datadoghq.com/detail/7947683/?gh_jid=7947683",
+        "https://careers.datadoghq.com/detail/7947742/?gh_jid=7947742",
+        "https://careers.datadoghq.com/detail/7958663/?gh_jid=7958663",
+        "https://careers.datadoghq.com/detail/7959705/?gh_jid=7959705",
+        "https://careers.datadoghq.com/detail/7959962/?gh_jid=7959962",
+        "https://careers.datadoghq.com/detail/7959966/?gh_jid=7959966",
+        "https://careers.datadoghq.com/detail/7959967/?gh_jid=7959967",
+        "https://careers.datadoghq.com/detail/7960450/?gh_jid=7960450",
+        "https://careers.datadoghq.com/detail/7961297/?gh_jid=7961297",
+        "https://careers.datadoghq.com/detail/7964141/?gh_jid=7964141",
+        "https://careers.datadoghq.com/detail/7965428/?gh_jid=7965428",
+        "https://careers.datadoghq.com/detail/7966795/?gh_jid=7966795",
+        "https://careers.datadoghq.com/detail/7967871/?gh_jid=7967871",
+        "https://careers.datadoghq.com/detail/7974511/?gh_jid=7974511",
+        "https://careers.datadoghq.com/detail/7976683/?gh_jid=7976683",
+        "https://careers.datadoghq.com/detail/7977644/?gh_jid=7977644",
+        "https://careers.datadoghq.com/detail/7982225/?gh_jid=7982225",
+        "https://careers.datadoghq.com/detail/7982288/?gh_jid=7982288",
+        "https://careers.datadoghq.com/detail/7982373/?gh_jid=7982373",
+        "https://careers.datadoghq.com/detail/7984184/?gh_jid=7984184",
+        "https://careers.datadoghq.com/detail/7984962/?gh_jid=7984962",
+        "https://careers.datadoghq.com/detail/7984983/?gh_jid=7984983",
+        "https://careers.datadoghq.com/detail/7984985/?gh_jid=7984985",
+        "https://careers.datadoghq.com/detail/7985840/?gh_jid=7985840",
+        "https://careers.datadoghq.com/detail/7989348/?gh_jid=7989348",
+        "https://careers.datadoghq.com/detail/7993551/?gh_jid=7993551",
+        "https://careers.datadoghq.com/detail/7996907/?gh_jid=7996907",
+        "https://careers.datadoghq.com/detail/7997198/?gh_jid=7997198",
+        "https://careers.datadoghq.com/detail/7997846/?gh_jid=7997846",
+        "https://careers.datadoghq.com/detail/8002771/?gh_jid=8002771",
+        "https://careers.datadoghq.com/detail/8003073/?gh_jid=8003073",
+        "https://careers.datadoghq.com/detail/8003080/?gh_jid=8003080",
+        "https://careers.datadoghq.com/detail/8003181/?gh_jid=8003181",
+        "https://careers.datadoghq.com/detail/8003531/?gh_jid=8003531",
+        "https://careers.datadoghq.com/detail/8003977/?gh_jid=8003977",
+        "https://careers.datadoghq.com/detail/8007589/?gh_jid=8007589",
+        "https://careers.datadoghq.com/detail/8007598/?gh_jid=8007598",
+        "https://careers.datadoghq.com/detail/8007606/?gh_jid=8007606",
+        "https://careers.datadoghq.com/detail/8010585/?gh_jid=8010585",
+        "https://careers.datadoghq.com/detail/8011158/?gh_jid=8011158",
+        "https://careers.datadoghq.com/detail/8012549/?gh_jid=8012549",
+        "https://careers.datadoghq.com/detail/8014851/?gh_jid=8014851",
+        "https://careers.datadoghq.com/detail/8021535/?gh_jid=8021535",
+        "https://careers.datadoghq.com/detail/8023763/?gh_jid=8023763",
+        "https://careers.datadoghq.com/detail/8024670/?gh_jid=8024670",
+        "https://careers.datadoghq.com/detail/8024708/?gh_jid=8024708",
+        "https://careers.datadoghq.com/detail/8024863/?gh_jid=8024863",
+        "https://careers.datadoghq.com/detail/8026831/?gh_jid=8026831",
+        "https://careers.datadoghq.com/detail/8026835/?gh_jid=8026835",
+        "https://careers.datadoghq.com/detail/8028422/?gh_jid=8028422",
+        "https://careers.datadoghq.com/detail/8030214/?gh_jid=8030214",
+        "https://careers.datadoghq.com/detail/8030324/?gh_jid=8030324",
+        "https://careers.datadoghq.com/detail/8030598/?gh_jid=8030598",
+        "https://careers.datadoghq.com/detail/8031007/?gh_jid=8031007",
+        "https://careers.datadoghq.com/detail/8035351/?gh_jid=8035351",
+        "https://careers.datadoghq.com/detail/8035492/?gh_jid=8035492",
+        "https://careers.datadoghq.com/detail/8041182/?gh_jid=8041182",
+        "https://careers.datadoghq.com/detail/8041622/?gh_jid=8041622",
+        "https://careers.datadoghq.com/detail/8042600/?gh_jid=8042600",
+        "https://careers.datadoghq.com/detail/8043036/?gh_jid=8043036",
+        "https://careers.datadoghq.com/detail/8043560/?gh_jid=8043560",
+        "https://careers.datadoghq.com/detail/8045964/?gh_jid=8045964",
+        "https://careers.datadoghq.com/detail/8046392/?gh_jid=8046392",
+        "https://careers.datadoghq.com/detail/8047666/?gh_jid=8047666",
+        "https://careers.datadoghq.com/detail/8048106/?gh_jid=8048106",
+        "https://careers.datadoghq.com/detail/8048588/?gh_jid=8048588",
+        "https://careers.datadoghq.com/detail/8050591/?gh_jid=8050591",
+        "https://careers.datadoghq.com/detail/8051068/?gh_jid=8051068",
+        "https://careers.datadoghq.com/detail/8051616/?gh_jid=8051616",
+        "https://careers.datadoghq.com/detail/8052114/?gh_jid=8052114",
+        "https://careers.datadoghq.com/detail/8052118/?gh_jid=8052118",
+        "https://careers.datadoghq.com/detail/8053714/?gh_jid=8053714",
+        "https://careers.datadoghq.com/detail/8054420/?gh_jid=8054420",
+        "https://careers.datadoghq.com/detail/8054774/?gh_jid=8054774",
+        "https://careers.datadoghq.com/detail/8054902/?gh_jid=8054902",
+        "https://careers.datadoghq.com/detail/8059382/?gh_jid=8059382",
+        "https://careers.datadoghq.com/detail/8060821/?gh_jid=8060821",
+        "https://careers.datadoghq.com/detail/8065187/?gh_jid=8065187",
+        "https://careers.datadoghq.com/detail/8065192/?gh_jid=8065192",
+        "https://careers.datadoghq.com/detail/8074318/?gh_jid=8074318",
+        "https://careers.datadoghq.com/detail/8074700/?gh_jid=8074700",
+        "https://careers.datadoghq.com/detail/8075664/?gh_jid=8075664",
+        "https://careers.datadoghq.com/detail/8077142/?gh_jid=8077142",
+        "https://careers.datadoghq.com/detail/8077474/?gh_jid=8077474",
+        "https://careers.datadoghq.com/detail/8078805/?gh_jid=8078805",
+        "https://careers.datadoghq.com/detail/8080601/?gh_jid=8080601",
+        "https://careers.datadoghq.com/detail/8080606/?gh_jid=8080606",
+        "https://careers.datadoghq.com/detail/8080628/?gh_jid=8080628",
+        "https://careers.datadoghq.com/detail/8082007/?gh_jid=8082007",
+        "https://careers.datadoghq.com/detail/8082391/?gh_jid=8082391",
+        "https://careers.datadoghq.com/detail/8083563/?gh_jid=8083563",
+        "https://careers.datadoghq.com/detail/8083862/?gh_jid=8083862",
+        "https://careers.datadoghq.com/detail/8088095/?gh_jid=8088095",
+        "https://careers.datadoghq.com/detail/8090275/?gh_jid=8090275",
+        "https://careers.datadoghq.com/detail/8091868/?gh_jid=8091868",
+        "https://careers.datadoghq.com/detail/8091967/?gh_jid=8091967",
+        "https://careers.datadoghq.com/detail/8092004/?gh_jid=8092004",
+        "https://careers.datadoghq.com/detail/8094106/?gh_jid=8094106",
+        "https://careers.datadoghq.com/detail/8094111/?gh_jid=8094111",
+        "https://careers.datadoghq.com/detail/8094179/?gh_jid=8094179",
+        "https://careers.datadoghq.com/detail/8094188/?gh_jid=8094188",
+        "https://careers.datadoghq.com/detail/8094219/?gh_jid=8094219",
+        "https://careers.datadoghq.com/detail/8094924/?gh_jid=8094924",
+        "https://careers.datadoghq.com/detail/8095166/?gh_jid=8095166",
+        "https://careers.datadoghq.com/detail/8095826/?gh_jid=8095826",
+        "https://careers.datadoghq.com/detail/8095963/?gh_jid=8095963",
+        "https://careers.datadoghq.com/detail/8096105/?gh_jid=8096105",
+        "https://careers.datadoghq.com/detail/8096181/?gh_jid=8096181",
+        "https://careers.datadoghq.com/detail/8096323/?gh_jid=8096323",
+        "https://careers.datadoghq.com/detail/8096400/?gh_jid=8096400",
+        "https://careers.datadoghq.com/detail/8097533/?gh_jid=8097533",
+        "https://careers.datadoghq.com/detail/8098863/?gh_jid=8098863",
+        "https://careers.datadoghq.com/detail/8098939/?gh_jid=8098939",
+        "https://careers.datadoghq.com/detail/8099069/?gh_jid=8099069",
+        "https://careers.datadoghq.com/detail/8100001/?gh_jid=8100001",
+        "https://careers.datadoghq.com/detail/8102624/?gh_jid=8102624",
+        "https://careers.datadoghq.com/detail/8102794/?gh_jid=8102794",
+        "https://careers.datadoghq.com/detail/8103045/?gh_jid=8103045",
+        "https://careers.datadoghq.com/detail/8103585/?gh_jid=8103585",
+        "https://careers.datadoghq.com/detail/8104969/?gh_jid=8104969",
+        "https://careers.datadoghq.com/detail/8105372/?gh_jid=8105372",
+        "https://careers.datadoghq.com/detail/8105684/?gh_jid=8105684",
+        "https://careers.datadoghq.com/detail/8108241/?gh_jid=8108241",
+        "https://careers.datadoghq.com/detail/8108349/?gh_jid=8108349",
+        "https://careers.datadoghq.com/detail/8108378/?gh_jid=8108378",
+        "https://careers.datadoghq.com/detail/8109441/?gh_jid=8109441",
+        "https://careers.datadoghq.com/detail/8113116/?gh_jid=8113116",
+        "https://careers.datadoghq.com/detail/8113520/?gh_jid=8113520",
+        "https://careers.datadoghq.com/detail/8113562/?gh_jid=8113562",
+        "https://careers.datadoghq.com/detail/8113654/?gh_jid=8113654",
+        "https://careers.datadoghq.com/detail/8114161/?gh_jid=8114161",
+        "https://careers.datadoghq.com/detail/8114186/?gh_jid=8114186",
+        "https://careers.datadoghq.com/detail/8115033/?gh_jid=8115033",
+        "https://careers.datadoghq.com/detail/8119493/?gh_jid=8119493",
+        "https://careers.datadoghq.com/detail/8119496/?gh_jid=8119496",
+        "https://careers.datadoghq.com/detail/8119837/?gh_jid=8119837",
+        "https://careers.datadoghq.com/detail/8119973/?gh_jid=8119973",
+        "https://careers.datadoghq.com/detail/8121553/?gh_jid=8121553",
+        "https://careers.datadoghq.com/detail/8122915/?gh_jid=8122915",
+        "https://careers.datadoghq.com/detail/8126596/?gh_jid=8126596",
+        "https://careers.datadoghq.com/detail/8127768/?gh_jid=8127768",
+        "https://careers.datadoghq.com/detail/8127916/?gh_jid=8127916",
+        "https://careers.datadoghq.com/detail/8128182/?gh_jid=8128182",
+        "https://careers.datadoghq.com/detail/8128450/?gh_jid=8128450",
+        "https://careers.datadoghq.com/detail/8128764/?gh_jid=8128764",
+        "https://careers.datadoghq.com/detail/8128810/?gh_jid=8128810",
+        "https://careers.datadoghq.com/detail/8129799/?gh_jid=8129799",
+        "https://careers.datadoghq.com/detail/8130003/?gh_jid=8130003",
+        "https://careers.datadoghq.com/detail/8130580/?gh_jid=8130580",
+        "https://careers.datadoghq.com/detail/8131949/?gh_jid=8131949",
+        "https://careers.datadoghq.com/detail/8131985/?gh_jid=8131985",
+        "https://careers.datadoghq.com/detail/8132294/?gh_jid=8132294",
+        "https://careers.datadoghq.com/detail/8134425/?gh_jid=8134425",
+        "https://careers.datadoghq.com/detail/8136510/?gh_jid=8136510",
+        "https://careers.datadoghq.com/detail/8136512/?gh_jid=8136512",
+        "https://careers.datadoghq.com/detail/8137139/?gh_jid=8137139",
+        "https://careers.datadoghq.com/detail/8137579/?gh_jid=8137579",
+        "https://careers.datadoghq.com/detail/8137729/?gh_jid=8137729",
+        "https://careers.datadoghq.com/detail/8138342/?gh_jid=8138342",
+        "https://careers.datadoghq.com/detail/8138482/?gh_jid=8138482",
+        "https://careers.datadoghq.com/detail/8139132/?gh_jid=8139132",
+        "https://careers.datadoghq.com/detail/8139161/?gh_jid=8139161",
+        "https://careers.datadoghq.com/detail/8139190/?gh_jid=8139190",
+        "https://careers.datadoghq.com/detail/8139277/?gh_jid=8139277",
+        "https://careers.datadoghq.com/detail/8139279/?gh_jid=8139279",
+        "https://careers.datadoghq.com/detail/8139662/?gh_jid=8139662",
+        "https://careers.datadoghq.com/detail/8141240/?gh_jid=8141240",
+        "https://careers.datadoghq.com/detail/8141243/?gh_jid=8141243",
+        "https://careers.datadoghq.com/detail/8141489/?gh_jid=8141489",
+        "https://careers.datadoghq.com/detail/8141670/?gh_jid=8141670",
+        "https://careers.datadoghq.com/detail/8141790/?gh_jid=8141790",
+        "https://careers.datadoghq.com/detail/8142150/?gh_jid=8142150",
+        "https://careers.datadoghq.com/detail/8142217/?gh_jid=8142217",
+        "https://careers.datadoghq.com/detail/8143729/?gh_jid=8143729",
+        "https://careers.datadoghq.com/detail/8143849/?gh_jid=8143849",
+        "https://careers.datadoghq.com/detail/8144018/?gh_jid=8144018",
+        "https://careers.datadoghq.com/detail/8144607/?gh_jid=8144607",
+        "https://careers.datadoghq.com/detail/8144628/?gh_jid=8144628",
+        "https://careers.datadoghq.com/detail/8144783/?gh_jid=8144783",
+        "https://careers.datadoghq.com/detail/8144946/?gh_jid=8144946",
+        "https://careers.datadoghq.com/detail/8146986/?gh_jid=8146986",
+        "https://careers.datadoghq.com/detail/8147235/?gh_jid=8147235",
+        "https://careers.datadoghq.com/detail/8147489/?gh_jid=8147489",
+        "https://careers.datadoghq.com/detail/8147614/?gh_jid=8147614",
+        "https://careers.datadoghq.com/detail/8147740/?gh_jid=8147740",
+        "https://careers.datadoghq.com/detail/8147903/?gh_jid=8147903",
+        "https://careers.datadoghq.com/detail/8148092/?gh_jid=8148092",
+        "https://careers.datadoghq.com/detail/8152975/?gh_jid=8152975",
+        "https://careers.datadoghq.com/detail/8154643/?gh_jid=8154643",
+        "https://careers.datadoghq.com/detail/8155867/?gh_jid=8155867",
+        "https://careers.datadoghq.com/detail/8157360/?gh_jid=8157360",
+        "https://careers.datadoghq.com/detail/8161455/?gh_jid=8161455",
+        "https://careers.datadoghq.com/detail/8163359/?gh_jid=8163359",
+        "https://careers.datadoghq.com/detail/8163361/?gh_jid=8163361",
+        "https://careers.datadoghq.com/detail/8164122/?gh_jid=8164122",
+        "https://careers.datadoghq.com/detail/8164133/?gh_jid=8164133",
+        "https://careers.datadoghq.com/detail/8164181/?gh_jid=8164181",
+        "https://careers.datadoghq.com/detail/8164588/?gh_jid=8164588",
+        "https://careers.datadoghq.com/detail/8166231/?gh_jid=8166231",
+        "https://careers.datadoghq.com/detail/8167729/?gh_jid=8167729",
+        "https://careers.datadoghq.com/detail/8170070/?gh_jid=8170070",
+        "https://careers.datadoghq.com/detail/8170639/?gh_jid=8170639",
+        "https://careers.datadoghq.com/detail/8171303/?gh_jid=8171303",
+        "https://careers.datadoghq.com/detail/8172855/?gh_jid=8172855",
+        "https://careers.datadoghq.com/detail/8172864/?gh_jid=8172864",
+        "https://careers.datadoghq.com/detail/8173840/?gh_jid=8173840",
+        "https://careers.datadoghq.com/detail/8173897/?gh_jid=8173897",
+        "https://careers.datadoghq.com/detail/8173964/?gh_jid=8173964",
+        "https://careers.datadoghq.com/detail/8174361/?gh_jid=8174361",
+        "https://careers.datadoghq.com/detail/8174661/?gh_jid=8174661",
+        "https://careers.datadoghq.com/detail/8175708/?gh_jid=8175708",
+        "https://careers.datadoghq.com/detail/8177097/?gh_jid=8177097",
+        "https://careers.datadoghq.com/detail/8177270/?gh_jid=8177270",
+        "https://careers.datadoghq.com/detail/8179647/?gh_jid=8179647",
+        "https://careers.datadoghq.com/detail/8179766/?gh_jid=8179766",
+        "https://careers.datadoghq.com/detail/8180459/?gh_jid=8180459",
+        "https://careers.datadoghq.com/detail/8180585/?gh_jid=8180585",
+        "https://careers.datadoghq.com/detail/8180681/?gh_jid=8180681",
+        "https://careers.datadoghq.com/detail/8181440/?gh_jid=8181440",
+        "https://careers.datadoghq.com/detail/8184643/?gh_jid=8184643",
+        "https://careers.datadoghq.com/detail/8185652/?gh_jid=8185652",
+        "https://careers.datadoghq.com/detail/8185903/?gh_jid=8185903",
+        "https://careers.datadoghq.com/detail/8186274/?gh_jid=8186274",
+        "https://careers.datadoghq.com/detail/8186361/?gh_jid=8186361",
+        "https://careers.datadoghq.com/detail/8186363/?gh_jid=8186363",
+        "https://careers.datadoghq.com/detail/8187141/?gh_jid=8187141",
+        "https://careers.datadoghq.com/detail/8188985/?gh_jid=8188985",
+        "https://careers.datadoghq.com/detail/8189660/?gh_jid=8189660",
+        "https://careers.datadoghq.com/detail/8191005/?gh_jid=8191005",
+        "https://careers.datadoghq.com/detail/8191288/?gh_jid=8191288",
+        "https://careers.datadoghq.com/detail/8195697/?gh_jid=8195697",
+        "https://careers.datadoghq.com/detail/8195860/?gh_jid=8195860",
+        "https://careers.datadoghq.com/detail/8195864/?gh_jid=8195864",
+        "https://careers.datadoghq.com/detail/8196248/?gh_jid=8196248",
+        "https://careers.datadoghq.com/detail/8196718/?gh_jid=8196718",
+        "https://careers.datadoghq.com/detail/8196977/?gh_jid=8196977",
+        "https://careers.datadoghq.com/detail/8197674/?gh_jid=8197674",
+        "https://careers.datadoghq.com/detail/8197852/?gh_jid=8197852",
+        "https://careers.datadoghq.com/detail/8200728/?gh_jid=8200728",
+        "https://careers.datadoghq.com/detail/8202086/?gh_jid=8202086",
+        "https://careers.datadoghq.com/detail/8202699/?gh_jid=8202699",
+        "https://careers.datadoghq.com/detail/8203657/?gh_jid=8203657",
+        "https://careers.datadoghq.com/detail/8203733/?gh_jid=8203733",
+        "https://careers.datadoghq.com/detail/8204056/?gh_jid=8204056",
+        "https://careers.datadoghq.com/detail/8204065/?gh_jid=8204065",
+        "https://careers.datadoghq.com/detail/8204163/?gh_jid=8204163",
+        "https://careers.datadoghq.com/detail/8204554/?gh_jid=8204554",
+        "https://careers.datadoghq.com/detail/8206747/?gh_jid=8206747",
+        "https://careers.datadoghq.com/detail/8206923/?gh_jid=8206923",
+        "https://careers.datadoghq.com/detail/8210153/?gh_jid=8210153",
+        "https://careers.datadoghq.com/detail/8210323/?gh_jid=8210323",
+        "https://careers.datadoghq.com/detail/8211078/?gh_jid=8211078",
+        "https://careers.datadoghq.com/detail/8211090/?gh_jid=8211090",
+        "https://careers.datadoghq.com/detail/8211563/?gh_jid=8211563",
+        "https://careers.datadoghq.com/detail/8212114/?gh_jid=8212114",
+        "https://careers.datadoghq.com/detail/8213715/?gh_jid=8213715",
+        "https://careers.datadoghq.com/detail/8214090/?gh_jid=8214090",
+        "https://careers.datadoghq.com/detail/8219989/?gh_jid=8219989",
+        "https://careers.datadoghq.com/detail/8220277/?gh_jid=8220277",
+        "https://careers.datadoghq.com/detail/8222279/?gh_jid=8222279",
+        "https://careers.datadoghq.com/detail/8223272/?gh_jid=8223272",
+        "https://careers.datadoghq.com/detail/8223819/?gh_jid=8223819",
+        "https://careers.datadoghq.com/detail/8223855/?gh_jid=8223855",
+        "https://careers.datadoghq.com/detail/8223858/?gh_jid=8223858",
+        "https://careers.datadoghq.com/detail/8224963/?gh_jid=8224963",
+        "https://careers.datadoghq.com/detail/8226275/?gh_jid=8226275",
+        "https://careers.datadoghq.com/detail/8226522/?gh_jid=8226522",
+        "https://careers.datadoghq.com/detail/8230456/?gh_jid=8230456",
+        "https://careers.datadoghq.com/detail/8230663/?gh_jid=8230663",
+        "https://careers.datadoghq.com/detail/8231811/?gh_jid=8231811",
+        "https://careers.datadoghq.com/detail/8234190/?gh_jid=8234190"
+      ],
+      "jobs": [
+        {
+          "id": "1497543",
+          "title": "Commercial Account Executive - Boston",
+          "url": "https://careers.datadoghq.com/detail/1497543/?gh_jid=1497543"
+        },
+        {
+          "id": "1694375",
+          "title": "Commercial Account Executive",
+          "url": "https://careers.datadoghq.com/detail/1694375/?gh_jid=1694375"
+        },
+        {
+          "id": "3851927",
+          "title": "Senior Software Engineer - Distributed Systems",
+          "url": "https://careers.datadoghq.com/detail/3851927/?gh_jid=3851927"
+        },
+        {
+          "id": "3851935",
+          "title": "Senior Software Engineer ",
+          "url": "https://careers.datadoghq.com/detail/3851935/?gh_jid=3851935"
+        },
+        {
+          "id": "4452918",
+          "title": "Software Engineer with Systems Depth",
+          "url": "https://careers.datadoghq.com/detail/4452918/?gh_jid=4452918"
+        },
+        {
+          "id": "4599111",
+          "title": "Senior Software Engineer - Distributed Systems",
+          "url": "https://careers.datadoghq.com/detail/4599111/?gh_jid=4599111"
+        },
+        {
+          "id": "4599148",
+          "title": "Senior Software Engineer - Backend ",
+          "url": "https://careers.datadoghq.com/detail/4599148/?gh_jid=4599148"
+        },
+        {
+          "id": "5283132",
+          "title": "Commercial Account Executive (DACH)",
+          "url": "https://careers.datadoghq.com/detail/5283132/?gh_jid=5283132"
+        },
+        {
+          "id": "5486716",
+          "title": "Customer Success Associate",
+          "url": "https://careers.datadoghq.com/detail/5486716/?gh_jid=5486716"
+        },
+        {
+          "id": "5511968",
+          "title": "Strategic Account Executive (DACH)",
+          "url": "https://careers.datadoghq.com/detail/5511968/?gh_jid=5511968"
+        },
+        {
+          "id": "5608424",
+          "title": "Senior Staff Software Engineer ",
+          "url": "https://careers.datadoghq.com/detail/5608424/?gh_jid=5608424"
+        },
+        {
+          "id": "5622381",
+          "title": "Strategic Account Executive (UKI)",
+          "url": "https://careers.datadoghq.com/detail/5622381/?gh_jid=5622381"
+        },
+        {
+          "id": "5742916",
+          "title": "Strategic Account Executive (Rome - Italy) ",
+          "url": "https://careers.datadoghq.com/detail/5742916/?gh_jid=5742916"
+        },
+        {
+          "id": "5798241",
+          "title": "Commercial Account Executive",
+          "url": "https://careers.datadoghq.com/detail/5798241/?gh_jid=5798241"
+        },
+        {
+          "id": "5925905",
+          "title": "Enterprise Sales Executive (Sweden) ",
+          "url": "https://careers.datadoghq.com/detail/5925905/?gh_jid=5925905"
+        },
+        {
+          "id": "6009777",
+          "title": "Commercial Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6009777/?gh_jid=6009777"
+        },
+        {
+          "id": "6009779",
+          "title": "Customer Success Associate",
+          "url": "https://careers.datadoghq.com/detail/6009779/?gh_jid=6009779"
+        },
+        {
+          "id": "6163246",
+          "title": "Mid Market Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6163246/?gh_jid=6163246"
+        },
+        {
+          "id": "6185452",
+          "title": "Enterprise Sales Executive (Benelux)",
+          "url": "https://careers.datadoghq.com/detail/6185452/?gh_jid=6185452"
+        },
+        {
+          "id": "6307160",
+          "title": "Sales Development Representative (DACH) ",
+          "url": "https://careers.datadoghq.com/detail/6307160/?gh_jid=6307160"
+        },
+        {
+          "id": "6427176",
+          "title": "Commercial Account Executive UKI/Nordics",
+          "url": "https://careers.datadoghq.com/detail/6427176/?gh_jid=6427176"
+        },
+        {
+          "id": "6430289",
+          "title": "Enterprise Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/6430289/?gh_jid=6430289"
+        },
+        {
+          "id": "6430945",
+          "title": "Strategic Account Executive (SLED)",
+          "url": "https://careers.datadoghq.com/detail/6430945/?gh_jid=6430945"
+        },
+        {
+          "id": "6485604",
+          "title": "Key Accounts Executive - EMEA",
+          "url": "https://careers.datadoghq.com/detail/6485604/?gh_jid=6485604"
+        },
+        {
+          "id": "6512321",
+          "title": "Commercial Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6512321/?gh_jid=6512321"
+        },
+        {
+          "id": "6512326",
+          "title": "Commercial Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6512326/?gh_jid=6512326"
+        },
+        {
+          "id": "6512586",
+          "title": "Commercial Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6512586/?gh_jid=6512586"
+        },
+        {
+          "id": "6522009",
+          "title": "Mid Market Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6522009/?gh_jid=6522009"
+        },
+        {
+          "id": "6522720",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6522720/?gh_jid=6522720"
+        },
+        {
+          "id": "6522747",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6522747/?gh_jid=6522747"
+        },
+        {
+          "id": "6523631",
+          "title": "Mid Market Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6523631/?gh_jid=6523631"
+        },
+        {
+          "id": "6572669",
+          "title": "AI Research Scientist - Datadog AI Research (DAIR)",
+          "url": "https://careers.datadoghq.com/detail/6572669/?gh_jid=6572669"
+        },
+        {
+          "id": "6652564",
+          "title": "AI Research Scientist - Datadog AI Research (DAIR)",
+          "url": "https://careers.datadoghq.com/detail/6652564/?gh_jid=6652564"
+        },
+        {
+          "id": "6665385",
+          "title": "Mid Market Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6665385/?gh_jid=6665385"
+        },
+        {
+          "id": "6677658",
+          "title": "Enterprise Account Executive - Denmark",
+          "url": "https://careers.datadoghq.com/detail/6677658/?gh_jid=6677658"
+        },
+        {
+          "id": "6685931",
+          "title": "Sales Development Representative (LATAM - Portuguese Speaking)",
+          "url": "https://careers.datadoghq.com/detail/6685931/?gh_jid=6685931"
+        },
+        {
+          "id": "6703351",
+          "title": "Enterprise Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/6703351/?gh_jid=6703351"
+        },
+        {
+          "id": "6759702",
+          "title": "Technical Support Engineer II",
+          "url": "https://careers.datadoghq.com/detail/6759702/?gh_jid=6759702"
+        },
+        {
+          "id": "6761448",
+          "title": "Technical Support Engineer II",
+          "url": "https://careers.datadoghq.com/detail/6761448/?gh_jid=6761448"
+        },
+        {
+          "id": "6781197",
+          "title": "Senior Applied Scientist",
+          "url": "https://careers.datadoghq.com/detail/6781197/?gh_jid=6781197"
+        },
+        {
+          "id": "6798820",
+          "title": "Mid-Market Account Executive - Boston",
+          "url": "https://careers.datadoghq.com/detail/6798820/?gh_jid=6798820"
+        },
+        {
+          "id": "6831903",
+          "title": "Enterprise Sales Engineer (Bahasa Indonesia Speaking)",
+          "url": "https://careers.datadoghq.com/detail/6831903/?gh_jid=6831903"
+        },
+        {
+          "id": "6832925",
+          "title": "Enterprise Sales Engineer (Bahasa Indonesia Speaking)",
+          "url": "https://careers.datadoghq.com/detail/6832925/?gh_jid=6832925"
+        },
+        {
+          "id": "6836442",
+          "title": "Enterprise Account Executive - UKI",
+          "url": "https://careers.datadoghq.com/detail/6836442/?gh_jid=6836442"
+        },
+        {
+          "id": "6873775",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/6873775/?gh_jid=6873775"
+        },
+        {
+          "id": "6960503",
+          "title": "Senior Staff GenAI Engineer - Application Performance Monitoring (APM)",
+          "url": "https://careers.datadoghq.com/detail/6960503/?gh_jid=6960503"
+        },
+        {
+          "id": "7003239",
+          "title": "Sales Development Representative (LATAM - Spanish Speaking)",
+          "url": "https://careers.datadoghq.com/detail/7003239/?gh_jid=7003239"
+        },
+        {
+          "id": "7016097",
+          "title": "Sales Development Representative (UKI)",
+          "url": "https://careers.datadoghq.com/detail/7016097/?gh_jid=7016097"
+        },
+        {
+          "id": "7034798",
+          "title": "Sales Development Representative (France)",
+          "url": "https://careers.datadoghq.com/detail/7034798/?gh_jid=7034798"
+        },
+        {
+          "id": "7055008",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7055008/?gh_jid=7055008"
+        },
+        {
+          "id": "7057036",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7057036/?gh_jid=7057036"
+        },
+        {
+          "id": "7101117",
+          "title": "Strategic Account Executive - Paris",
+          "url": "https://careers.datadoghq.com/detail/7101117/?gh_jid=7101117"
+        },
+        {
+          "id": "7107437",
+          "title": "Staff Software Engineer - ML Observability",
+          "url": "https://careers.datadoghq.com/detail/7107437/?gh_jid=7107437"
+        },
+        {
+          "id": "7117086",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7117086/?gh_jid=7117086"
+        },
+        {
+          "id": "7128703",
+          "title": "Customer Success Manager - Boston",
+          "url": "https://careers.datadoghq.com/detail/7128703/?gh_jid=7128703"
+        },
+        {
+          "id": "7129425",
+          "title": "Enterprise Security Sales Specialist",
+          "url": "https://careers.datadoghq.com/detail/7129425/?gh_jid=7129425"
+        },
+        {
+          "id": "7131363",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7131363/?gh_jid=7131363"
+        },
+        {
+          "id": "7131386",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7131386/?gh_jid=7131386"
+        },
+        {
+          "id": "7131396",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7131396/?gh_jid=7131396"
+        },
+        {
+          "id": "7131404",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7131404/?gh_jid=7131404"
+        },
+        {
+          "id": "7131495",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7131495/?gh_jid=7131495"
+        },
+        {
+          "id": "7131726",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7131726/?gh_jid=7131726"
+        },
+        {
+          "id": "7132132",
+          "title": "Enterprise Security Sales Specialist",
+          "url": "https://careers.datadoghq.com/detail/7132132/?gh_jid=7132132"
+        },
+        {
+          "id": "7134079",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7134079/?gh_jid=7134079"
+        },
+        {
+          "id": "7137624",
+          "title": "Sales Development Representative - Denver",
+          "url": "https://careers.datadoghq.com/detail/7137624/?gh_jid=7137624"
+        },
+        {
+          "id": "7142205",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7142205/?gh_jid=7142205"
+        },
+        {
+          "id": "7180265",
+          "title": "Commercial Customer Success Manager (DACH; German-Speaking)",
+          "url": "https://careers.datadoghq.com/detail/7180265/?gh_jid=7180265"
+        },
+        {
+          "id": "7194969",
+          "title": "AI Research Engineer - Datadog AI Research (DAIR)",
+          "url": "https://careers.datadoghq.com/detail/7194969/?gh_jid=7194969"
+        },
+        {
+          "id": "7232590",
+          "title": "Customer Success Manager - Denver",
+          "url": "https://careers.datadoghq.com/detail/7232590/?gh_jid=7232590"
+        },
+        {
+          "id": "7255532",
+          "title": "Enterprise Sales Engineer - Brazil",
+          "url": "https://careers.datadoghq.com/detail/7255532/?gh_jid=7255532"
+        },
+        {
+          "id": "7314667",
+          "title": "Strategic Account Executive (SLED)",
+          "url": "https://careers.datadoghq.com/detail/7314667/?gh_jid=7314667"
+        },
+        {
+          "id": "7329207",
+          "title": "Commercial Account Executive - LATAM (Spanish Speaking) - Boston",
+          "url": "https://careers.datadoghq.com/detail/7329207/?gh_jid=7329207"
+        },
+        {
+          "id": "7338800",
+          "title": "Strategic Account Executive (Saudi Arabia)",
+          "url": "https://careers.datadoghq.com/detail/7338800/?gh_jid=7338800"
+        },
+        {
+          "id": "7405822",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/7405822/?gh_jid=7405822"
+        },
+        {
+          "id": "7405831",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/7405831/?gh_jid=7405831"
+        },
+        {
+          "id": "7409175",
+          "title": "Major Account Manager (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/7409175/?gh_jid=7409175"
+        },
+        {
+          "id": "7409198",
+          "title": "Major Account Manager",
+          "url": "https://careers.datadoghq.com/detail/7409198/?gh_jid=7409198"
+        },
+        {
+          "id": "7409236",
+          "title": "Key Accounts Executive",
+          "url": "https://careers.datadoghq.com/detail/7409236/?gh_jid=7409236"
+        },
+        {
+          "id": "7410254",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/7410254/?gh_jid=7410254"
+        },
+        {
+          "id": "7413847",
+          "title": "Product Strategy and Corporate Development Lead (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/7413847/?gh_jid=7413847"
+        },
+        {
+          "id": "7421284",
+          "title": "Enterprise Sales Executive (FED)",
+          "url": "https://careers.datadoghq.com/detail/7421284/?gh_jid=7421284"
+        },
+        {
+          "id": "7426680",
+          "title": "Enterprise Sales Executive (FED)",
+          "url": "https://careers.datadoghq.com/detail/7426680/?gh_jid=7426680"
+        },
+        {
+          "id": "7426707",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/7426707/?gh_jid=7426707"
+        },
+        {
+          "id": "7426752",
+          "title": "Enterprise Sales Executive (SLED)",
+          "url": "https://careers.datadoghq.com/detail/7426752/?gh_jid=7426752"
+        },
+        {
+          "id": "7435209",
+          "title": "Enterprise Customer Success Manager",
+          "url": "https://careers.datadoghq.com/detail/7435209/?gh_jid=7435209"
+        },
+        {
+          "id": "7436312",
+          "title": "Enterprise Customer Success Manager",
+          "url": "https://careers.datadoghq.com/detail/7436312/?gh_jid=7436312"
+        },
+        {
+          "id": "7439145",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7439145/?gh_jid=7439145"
+        },
+        {
+          "id": "7439149",
+          "title": "Strategic Account Executive, Public Sector Japan, FED",
+          "url": "https://careers.datadoghq.com/detail/7439149/?gh_jid=7439149"
+        },
+        {
+          "id": "7439152",
+          "title": "Strategic Account Executive, Public Sector Japan, SLED",
+          "url": "https://careers.datadoghq.com/detail/7439152/?gh_jid=7439152"
+        },
+        {
+          "id": "7439569",
+          "title": "Strategic Account Executive, Public Sector Japan, FED",
+          "url": "https://careers.datadoghq.com/detail/7439569/?gh_jid=7439569"
+        },
+        {
+          "id": "7439573",
+          "title": "Strategic Account Executive, Public Sector Japan, SLED",
+          "url": "https://careers.datadoghq.com/detail/7439573/?gh_jid=7439573"
+        },
+        {
+          "id": "7442122",
+          "title": "Strategic Account Executive (Hong Kong Market)",
+          "url": "https://careers.datadoghq.com/detail/7442122/?gh_jid=7442122"
+        },
+        {
+          "id": "7452669",
+          "title": "Commercial Sales Engineer - Boston",
+          "url": "https://careers.datadoghq.com/detail/7452669/?gh_jid=7452669"
+        },
+        {
+          "id": "7453034",
+          "title": "Strategic Account Executive (SLED)",
+          "url": "https://careers.datadoghq.com/detail/7453034/?gh_jid=7453034"
+        },
+        {
+          "id": "7453039",
+          "title": "Enterprise Sales Executive (SLED)",
+          "url": "https://careers.datadoghq.com/detail/7453039/?gh_jid=7453039"
+        },
+        {
+          "id": "7463727",
+          "title": "Commercial Account Executive (Indonesia Market)",
+          "url": "https://careers.datadoghq.com/detail/7463727/?gh_jid=7463727"
+        },
+        {
+          "id": "7463765",
+          "title": "Commercial Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7463765/?gh_jid=7463765"
+        },
+        {
+          "id": "7463769",
+          "title": "Manager, Commercial Sales",
+          "url": "https://careers.datadoghq.com/detail/7463769/?gh_jid=7463769"
+        },
+        {
+          "id": "7463989",
+          "title": "Manager, Commercial Sales",
+          "url": "https://careers.datadoghq.com/detail/7463989/?gh_jid=7463989"
+        },
+        {
+          "id": "7465857",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/7465857/?gh_jid=7465857"
+        },
+        {
+          "id": "7466155",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/7466155/?gh_jid=7466155"
+        },
+        {
+          "id": "7476847",
+          "title": "Mid-Market Account Executive (DACH)",
+          "url": "https://careers.datadoghq.com/detail/7476847/?gh_jid=7476847"
+        },
+        {
+          "id": "7487353",
+          "title": "Enterprise Sales Engineer - UK",
+          "url": "https://careers.datadoghq.com/detail/7487353/?gh_jid=7487353"
+        },
+        {
+          "id": "7496207",
+          "title": "Staff Visual Designer, Design Lab",
+          "url": "https://careers.datadoghq.com/detail/7496207/?gh_jid=7496207"
+        },
+        {
+          "id": "7496237",
+          "title": "Manager II, Premier Support Engineering - EMEA",
+          "url": "https://careers.datadoghq.com/detail/7496237/?gh_jid=7496237"
+        },
+        {
+          "id": "7515110",
+          "title": "Strategic Account Executive (Vietnam Market)",
+          "url": "https://careers.datadoghq.com/detail/7515110/?gh_jid=7515110"
+        },
+        {
+          "id": "7516279",
+          "title": "Senior Sales Engineer - Key Accounts",
+          "url": "https://careers.datadoghq.com/detail/7516279/?gh_jid=7516279"
+        },
+        {
+          "id": "7526356",
+          "title": "Field CTO (Japan)",
+          "url": "https://careers.datadoghq.com/detail/7526356/?gh_jid=7526356"
+        },
+        {
+          "id": "7529852",
+          "title": "Manager I, Engineering - AI Platform - Training & Serving",
+          "url": "https://careers.datadoghq.com/detail/7529852/?gh_jid=7529852"
+        },
+        {
+          "id": "7530418",
+          "title": "Mid-Market Sales (Nordics/CEE)",
+          "url": "https://careers.datadoghq.com/detail/7530418/?gh_jid=7530418"
+        },
+        {
+          "id": "7536402",
+          "title": "Datadog for Startups Founding Engineering Lead",
+          "url": "https://careers.datadoghq.com/detail/7536402/?gh_jid=7536402"
+        },
+        {
+          "id": "7554877",
+          "title": "Senior Security Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/7554877/?gh_jid=7554877"
+        },
+        {
+          "id": "7555575",
+          "title": "Senior Corporate Development Lead, AI",
+          "url": "https://careers.datadoghq.com/detail/7555575/?gh_jid=7555575"
+        },
+        {
+          "id": "7558666",
+          "title": "Senior Sourcer",
+          "url": "https://careers.datadoghq.com/detail/7558666/?gh_jid=7558666"
+        },
+        {
+          "id": "7560494",
+          "title": "Manager I, Engineering - Applied AI - Frontier Agentic Models",
+          "url": "https://careers.datadoghq.com/detail/7560494/?gh_jid=7560494"
+        },
+        {
+          "id": "7560815",
+          "title": "Senior Sourcer",
+          "url": "https://careers.datadoghq.com/detail/7560815/?gh_jid=7560815"
+        },
+        {
+          "id": "7582679",
+          "title": "Principal Partner Manager - Channels (GSI)",
+          "url": "https://careers.datadoghq.com/detail/7582679/?gh_jid=7582679"
+        },
+        {
+          "id": "7582681",
+          "title": "Senior Partner Manager - Channels (Security)",
+          "url": "https://careers.datadoghq.com/detail/7582681/?gh_jid=7582681"
+        },
+        {
+          "id": "7583609",
+          "title": "Senior Director, Product Management - Platforms",
+          "url": "https://careers.datadoghq.com/detail/7583609/?gh_jid=7583609"
+        },
+        {
+          "id": "7584250",
+          "title": "Principal Partner Manager - Channels (GSI)",
+          "url": "https://careers.datadoghq.com/detail/7584250/?gh_jid=7584250"
+        },
+        {
+          "id": "7586019",
+          "title": "Manager I, Engineering - OrgStore Blueprint",
+          "url": "https://careers.datadoghq.com/detail/7586019/?gh_jid=7586019"
+        },
+        {
+          "id": "7590670",
+          "title": "Enterprise Sales Executive (Vietnam Market)",
+          "url": "https://careers.datadoghq.com/detail/7590670/?gh_jid=7590670"
+        },
+        {
+          "id": "7591735",
+          "title": "Strategic Account Executive (UKI) - Public Sector",
+          "url": "https://careers.datadoghq.com/detail/7591735/?gh_jid=7591735"
+        },
+        {
+          "id": "7599334",
+          "title": "Enterprise Account Executive (UKI) - Public Sector",
+          "url": "https://careers.datadoghq.com/detail/7599334/?gh_jid=7599334"
+        },
+        {
+          "id": "7627531",
+          "title": "Senior Product Solutions Architect - AI Agent",
+          "url": "https://careers.datadoghq.com/detail/7627531/?gh_jid=7627531"
+        },
+        {
+          "id": "7645709",
+          "title": "Strategic Account Executive (FED)",
+          "url": "https://careers.datadoghq.com/detail/7645709/?gh_jid=7645709"
+        },
+        {
+          "id": "7650367",
+          "title": "Recruiter II, Business Recruiting",
+          "url": "https://careers.datadoghq.com/detail/7650367/?gh_jid=7650367"
+        },
+        {
+          "id": "7658810",
+          "title": "Director, Technical Account Management ",
+          "url": "https://careers.datadoghq.com/detail/7658810/?gh_jid=7658810"
+        },
+        {
+          "id": "7683226",
+          "title": "Commercial Sales Engineer (AMER - West)",
+          "url": "https://careers.datadoghq.com/detail/7683226/?gh_jid=7683226"
+        },
+        {
+          "id": "7683726",
+          "title": "Partner Solutions Architect (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/7683726/?gh_jid=7683726"
+        },
+        {
+          "id": "7703288",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/7703288/?gh_jid=7703288"
+        },
+        {
+          "id": "7703553",
+          "title": "Field CTO (Japan)",
+          "url": "https://careers.datadoghq.com/detail/7703553/?gh_jid=7703553"
+        },
+        {
+          "id": "7721005",
+          "title": "Enterprise Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/7721005/?gh_jid=7721005"
+        },
+        {
+          "id": "7722122",
+          "title": "Partner Solutions Architect (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/7722122/?gh_jid=7722122"
+        },
+        {
+          "id": "7728298",
+          "title": "People Solutions Coordinator (NYC)",
+          "url": "https://careers.datadoghq.com/detail/7728298/?gh_jid=7728298"
+        },
+        {
+          "id": "7729887",
+          "title": "Head of Enterprise Sales, Japan",
+          "url": "https://careers.datadoghq.com/detail/7729887/?gh_jid=7729887"
+        },
+        {
+          "id": "7730200",
+          "title": "Head of Enterprise Sales, Japan",
+          "url": "https://careers.datadoghq.com/detail/7730200/?gh_jid=7730200"
+        },
+        {
+          "id": "7743369",
+          "title": "Staff Software Engineer - Logs Observability Pipelines ",
+          "url": "https://careers.datadoghq.com/detail/7743369/?gh_jid=7743369"
+        },
+        {
+          "id": "7763117",
+          "title": "Senior Product Manager - Network Path",
+          "url": "https://careers.datadoghq.com/detail/7763117/?gh_jid=7763117"
+        },
+        {
+          "id": "7777798",
+          "title": "Staff Application Security Engineer",
+          "url": "https://careers.datadoghq.com/detail/7777798/?gh_jid=7777798"
+        },
+        {
+          "id": "7785319",
+          "title": "Mid Market Account Executive",
+          "url": "https://careers.datadoghq.com/detail/7785319/?gh_jid=7785319"
+        },
+        {
+          "id": "7785350",
+          "title": "Senior Product Manager - Data Agent",
+          "url": "https://careers.datadoghq.com/detail/7785350/?gh_jid=7785350"
+        },
+        {
+          "id": "7787715",
+          "title": "Manager I, Technical Account Management - Chicago/Denver",
+          "url": "https://careers.datadoghq.com/detail/7787715/?gh_jid=7787715"
+        },
+        {
+          "id": "7792033",
+          "title": "Senior Sales Engineer - Brazil",
+          "url": "https://careers.datadoghq.com/detail/7792033/?gh_jid=7792033"
+        },
+        {
+          "id": "7793359",
+          "title": "Senior Staff Visual Designer, Design Lab",
+          "url": "https://careers.datadoghq.com/detail/7793359/?gh_jid=7793359"
+        },
+        {
+          "id": "7800409",
+          "title": "Manager, Mid Market - Brazil",
+          "url": "https://careers.datadoghq.com/detail/7800409/?gh_jid=7800409"
+        },
+        {
+          "id": "7806043",
+          "title": "Sales Development Representative",
+          "url": "https://careers.datadoghq.com/detail/7806043/?gh_jid=7806043"
+        },
+        {
+          "id": "7806117",
+          "title": "Sales Development Representative",
+          "url": "https://careers.datadoghq.com/detail/7806117/?gh_jid=7806117"
+        },
+        {
+          "id": "7807783",
+          "title": "Services Architect 3 - Denver",
+          "url": "https://careers.datadoghq.com/detail/7807783/?gh_jid=7807783"
+        },
+        {
+          "id": "7815616",
+          "title": "Senior Platform Security Engineer",
+          "url": "https://careers.datadoghq.com/detail/7815616/?gh_jid=7815616"
+        },
+        {
+          "id": "7834545",
+          "title": "Technical Account Manager 2 - São Paulo",
+          "url": "https://careers.datadoghq.com/detail/7834545/?gh_jid=7834545"
+        },
+        {
+          "id": "7843331",
+          "title": "GTM Strategy and Operations Associate",
+          "url": "https://careers.datadoghq.com/detail/7843331/?gh_jid=7843331"
+        },
+        {
+          "id": "7857714",
+          "title": "Enterprise Sales Engineer - Rockies",
+          "url": "https://careers.datadoghq.com/detail/7857714/?gh_jid=7857714"
+        },
+        {
+          "id": "7858788",
+          "title": "Commercial Account Executive - LATAM (Portuguese Speaking) - Denver",
+          "url": "https://careers.datadoghq.com/detail/7858788/?gh_jid=7858788"
+        },
+        {
+          "id": "7868421",
+          "title": "Enterprise Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/7868421/?gh_jid=7868421"
+        },
+        {
+          "id": "7868711",
+          "title": "Partner Manager - Channels ",
+          "url": "https://careers.datadoghq.com/detail/7868711/?gh_jid=7868711"
+        },
+        {
+          "id": "7874990",
+          "title": "People Systems Developer",
+          "url": "https://careers.datadoghq.com/detail/7874990/?gh_jid=7874990"
+        },
+        {
+          "id": "7894188",
+          "title": "Manager II, Premier Support Engineering",
+          "url": "https://careers.datadoghq.com/detail/7894188/?gh_jid=7894188"
+        },
+        {
+          "id": "7904634",
+          "title": "Senior Sales Engineer - Majors (UK/Nordics/Netherlands)",
+          "url": "https://careers.datadoghq.com/detail/7904634/?gh_jid=7904634"
+        },
+        {
+          "id": "7905276",
+          "title": "Senior Commercial Counsel",
+          "url": "https://careers.datadoghq.com/detail/7905276/?gh_jid=7905276"
+        },
+        {
+          "id": "7917340",
+          "title": "Senior Sales Engineer - Majors (East)",
+          "url": "https://careers.datadoghq.com/detail/7917340/?gh_jid=7917340"
+        },
+        {
+          "id": "7919037",
+          "title": "Commercial Account Executive (Hong Kong Market)",
+          "url": "https://careers.datadoghq.com/detail/7919037/?gh_jid=7919037"
+        },
+        {
+          "id": "7926141",
+          "title": "Partner Solutions Architect",
+          "url": "https://careers.datadoghq.com/detail/7926141/?gh_jid=7926141"
+        },
+        {
+          "id": "7927485",
+          "title": "Recruiter, GTM",
+          "url": "https://careers.datadoghq.com/detail/7927485/?gh_jid=7927485"
+        },
+        {
+          "id": "7939294",
+          "title": "Manager II, Services Architect",
+          "url": "https://careers.datadoghq.com/detail/7939294/?gh_jid=7939294"
+        },
+        {
+          "id": "7947683",
+          "title": "Senior Platform Product Manager - AI SDLC Trusted Throughput",
+          "url": "https://careers.datadoghq.com/detail/7947683/?gh_jid=7947683"
+        },
+        {
+          "id": "7947742",
+          "title": "Manager I, Engineering - Data Visualization Explorations",
+          "url": "https://careers.datadoghq.com/detail/7947742/?gh_jid=7947742"
+        },
+        {
+          "id": "7958663",
+          "title": "Engineering Manager I, Threat Detection",
+          "url": "https://careers.datadoghq.com/detail/7958663/?gh_jid=7958663"
+        },
+        {
+          "id": "7959705",
+          "title": "Manager I, Engineering - Husky",
+          "url": "https://careers.datadoghq.com/detail/7959705/?gh_jid=7959705"
+        },
+        {
+          "id": "7959962",
+          "title": "Senior Software Engineer - REDAPL Graph Engine",
+          "url": "https://careers.datadoghq.com/detail/7959962/?gh_jid=7959962"
+        },
+        {
+          "id": "7959966",
+          "title": "Senior Software Engineer - REDAPL Graph Engine",
+          "url": "https://careers.datadoghq.com/detail/7959966/?gh_jid=7959966"
+        },
+        {
+          "id": "7959967",
+          "title": "Senior Software Engineer - REDAPL Graph Engine",
+          "url": "https://careers.datadoghq.com/detail/7959967/?gh_jid=7959967"
+        },
+        {
+          "id": "7960450",
+          "title": "Senior Manager, Product Solutions Architecture",
+          "url": "https://careers.datadoghq.com/detail/7960450/?gh_jid=7960450"
+        },
+        {
+          "id": "7961297",
+          "title": "Partner Technology Solutions Engineer",
+          "url": "https://careers.datadoghq.com/detail/7961297/?gh_jid=7961297"
+        },
+        {
+          "id": "7964141",
+          "title": "Staff Applied Scientist - Agentic Interfaces",
+          "url": "https://careers.datadoghq.com/detail/7964141/?gh_jid=7964141"
+        },
+        {
+          "id": "7965428",
+          "title": "Manager I, Engineering - AI Platform - Evaluation & Annotation",
+          "url": "https://careers.datadoghq.com/detail/7965428/?gh_jid=7965428"
+        },
+        {
+          "id": "7966795",
+          "title": "Distinguished Architect, AI",
+          "url": "https://careers.datadoghq.com/detail/7966795/?gh_jid=7966795"
+        },
+        {
+          "id": "7967871",
+          "title": "Partner Solutions Architect (Brazil)",
+          "url": "https://careers.datadoghq.com/detail/7967871/?gh_jid=7967871"
+        },
+        {
+          "id": "7974511",
+          "title": "Staff GenAI Engineer - Application Performance Monitoring (APM)",
+          "url": "https://careers.datadoghq.com/detail/7974511/?gh_jid=7974511"
+        },
+        {
+          "id": "7976683",
+          "title": "Senior Partner Manager - Channels",
+          "url": "https://careers.datadoghq.com/detail/7976683/?gh_jid=7976683"
+        },
+        {
+          "id": "7977644",
+          "title": "Partner Solutions Architect (Colombia)",
+          "url": "https://careers.datadoghq.com/detail/7977644/?gh_jid=7977644"
+        },
+        {
+          "id": "7982225",
+          "title": "Technical Account Manager 2 - Madrid",
+          "url": "https://careers.datadoghq.com/detail/7982225/?gh_jid=7982225"
+        },
+        {
+          "id": "7982288",
+          "title": "Product Manager II, AI & Data Security",
+          "url": "https://careers.datadoghq.com/detail/7982288/?gh_jid=7982288"
+        },
+        {
+          "id": "7982373",
+          "title": "Senior Partner Manager - Channels",
+          "url": "https://careers.datadoghq.com/detail/7982373/?gh_jid=7982373"
+        },
+        {
+          "id": "7984184",
+          "title": "Senior Partner Manager - Channels",
+          "url": "https://careers.datadoghq.com/detail/7984184/?gh_jid=7984184"
+        },
+        {
+          "id": "7984962",
+          "title": "Staff Applied Scientist - Dashboards",
+          "url": "https://careers.datadoghq.com/detail/7984962/?gh_jid=7984962"
+        },
+        {
+          "id": "7984983",
+          "title": "Principal Partner Program Manager - Datadog Partner Network Solution Provider Program",
+          "url": "https://careers.datadoghq.com/detail/7984983/?gh_jid=7984983"
+        },
+        {
+          "id": "7984985",
+          "title": "Director, Security Channels (North America)",
+          "url": "https://careers.datadoghq.com/detail/7984985/?gh_jid=7984985"
+        },
+        {
+          "id": "7985840",
+          "title": "Senior Developer Advocate - Modern App Development",
+          "url": "https://careers.datadoghq.com/detail/7985840/?gh_jid=7985840"
+        },
+        {
+          "id": "7989348",
+          "title": "Staff Product Designer, APM",
+          "url": "https://careers.datadoghq.com/detail/7989348/?gh_jid=7989348"
+        },
+        {
+          "id": "7993551",
+          "title": "Senior Software Engineer - Streaming Platform ",
+          "url": "https://careers.datadoghq.com/detail/7993551/?gh_jid=7993551"
+        },
+        {
+          "id": "7996907",
+          "title": "Senior Services Architect, Security-Cloud SIEM",
+          "url": "https://careers.datadoghq.com/detail/7996907/?gh_jid=7996907"
+        },
+        {
+          "id": "7997198",
+          "title": "Partner Solutions Architect (Pan-EMEA GSI)",
+          "url": "https://careers.datadoghq.com/detail/7997198/?gh_jid=7997198"
+        },
+        {
+          "id": "7997846",
+          "title": "Federal Support Engineer 3",
+          "url": "https://careers.datadoghq.com/detail/7997846/?gh_jid=7997846"
+        },
+        {
+          "id": "8002771",
+          "title": "Senior Financial Systems Analyst",
+          "url": "https://careers.datadoghq.com/detail/8002771/?gh_jid=8002771"
+        },
+        {
+          "id": "8003073",
+          "title": "Field Marketing Manager",
+          "url": "https://careers.datadoghq.com/detail/8003073/?gh_jid=8003073"
+        },
+        {
+          "id": "8003080",
+          "title": "Deal Desk Analyst - US West",
+          "url": "https://careers.datadoghq.com/detail/8003080/?gh_jid=8003080"
+        },
+        {
+          "id": "8003181",
+          "title": "Datadog for Startups - Forward Deployed Engineering Lead",
+          "url": "https://careers.datadoghq.com/detail/8003181/?gh_jid=8003181"
+        },
+        {
+          "id": "8003531",
+          "title": "Regional Manager, Sales Engineering - Public Sector",
+          "url": "https://careers.datadoghq.com/detail/8003531/?gh_jid=8003531"
+        },
+        {
+          "id": "8003977",
+          "title": "Partner Solutions Architect (GSI) - AMER East",
+          "url": "https://careers.datadoghq.com/detail/8003977/?gh_jid=8003977"
+        },
+        {
+          "id": "8007589",
+          "title": "Staff Software Engineer - Security Agent",
+          "url": "https://careers.datadoghq.com/detail/8007589/?gh_jid=8007589"
+        },
+        {
+          "id": "8007598",
+          "title": "Staff Software Engineer - Security Agent",
+          "url": "https://careers.datadoghq.com/detail/8007598/?gh_jid=8007598"
+        },
+        {
+          "id": "8007606",
+          "title": "Staff Software Engineer - Security Agent",
+          "url": "https://careers.datadoghq.com/detail/8007606/?gh_jid=8007606"
+        },
+        {
+          "id": "8010585",
+          "title": "Director, Technical Program Management - Technical Solutions Operations",
+          "url": "https://careers.datadoghq.com/detail/8010585/?gh_jid=8010585"
+        },
+        {
+          "id": "8011158",
+          "title": "Product Strategy and Corporate Development Lead, AI",
+          "url": "https://careers.datadoghq.com/detail/8011158/?gh_jid=8011158"
+        },
+        {
+          "id": "8012549",
+          "title": "Product Manager II, AI & Data Security",
+          "url": "https://careers.datadoghq.com/detail/8012549/?gh_jid=8012549"
+        },
+        {
+          "id": "8014851",
+          "title": "Manager I, Technical Support Engineering",
+          "url": "https://careers.datadoghq.com/detail/8014851/?gh_jid=8014851"
+        },
+        {
+          "id": "8021535",
+          "title": "Strategic Account Executive (FED)",
+          "url": "https://careers.datadoghq.com/detail/8021535/?gh_jid=8021535"
+        },
+        {
+          "id": "8023763",
+          "title": "Group Product Manager - Code Security",
+          "url": "https://careers.datadoghq.com/detail/8023763/?gh_jid=8023763"
+        },
+        {
+          "id": "8024670",
+          "title": "Manager, Strategic Sourcing, AI Infrastructure & Services",
+          "url": "https://careers.datadoghq.com/detail/8024670/?gh_jid=8024670"
+        },
+        {
+          "id": "8024708",
+          "title": "HRIS Manager",
+          "url": "https://careers.datadoghq.com/detail/8024708/?gh_jid=8024708"
+        },
+        {
+          "id": "8024863",
+          "title": "Group Product Manager - Bring Your Own Cloud",
+          "url": "https://careers.datadoghq.com/detail/8024863/?gh_jid=8024863"
+        },
+        {
+          "id": "8026831",
+          "title": "Technical Account Manager 2 - West",
+          "url": "https://careers.datadoghq.com/detail/8026831/?gh_jid=8026831"
+        },
+        {
+          "id": "8026835",
+          "title": "Technical Account Manager 2 - Boston",
+          "url": "https://careers.datadoghq.com/detail/8026835/?gh_jid=8026835"
+        },
+        {
+          "id": "8028422",
+          "title": "Senior Product Manager - Application Performance Monitoring",
+          "url": "https://careers.datadoghq.com/detail/8028422/?gh_jid=8028422"
+        },
+        {
+          "id": "8030214",
+          "title": "Senior Sales Engineer - Public Sector (UK)",
+          "url": "https://careers.datadoghq.com/detail/8030214/?gh_jid=8030214"
+        },
+        {
+          "id": "8030324",
+          "title": "Director, Product Management - Cloud Security and Shared Capabilities",
+          "url": "https://careers.datadoghq.com/detail/8030324/?gh_jid=8030324"
+        },
+        {
+          "id": "8030598",
+          "title": "Manager I, Applied AI - Distilled Models",
+          "url": "https://careers.datadoghq.com/detail/8030598/?gh_jid=8030598"
+        },
+        {
+          "id": "8031007",
+          "title": "Manager I, Engineering - Change Experience Platform",
+          "url": "https://careers.datadoghq.com/detail/8031007/?gh_jid=8031007"
+        },
+        {
+          "id": "8035351",
+          "title": "Enterprise Customer Success Manager (German Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8035351/?gh_jid=8035351"
+        },
+        {
+          "id": "8035492",
+          "title": "Senior Software Engineer - Streaming Platform Client",
+          "url": "https://careers.datadoghq.com/detail/8035492/?gh_jid=8035492"
+        },
+        {
+          "id": "8041182",
+          "title": "Recruiter II, Business Recruiting",
+          "url": "https://careers.datadoghq.com/detail/8041182/?gh_jid=8041182"
+        },
+        {
+          "id": "8041622",
+          "title": "Gerente Comercial de Sucesso do Cliente",
+          "url": "https://careers.datadoghq.com/detail/8041622/?gh_jid=8041622"
+        },
+        {
+          "id": "8042600",
+          "title": "Sales Development Representative",
+          "url": "https://careers.datadoghq.com/detail/8042600/?gh_jid=8042600"
+        },
+        {
+          "id": "8043036",
+          "title": "Strategic Account Executive (SLED)",
+          "url": "https://careers.datadoghq.com/detail/8043036/?gh_jid=8043036"
+        },
+        {
+          "id": "8043560",
+          "title": "Staff Engineer - Data Semantics",
+          "url": "https://careers.datadoghq.com/detail/8043560/?gh_jid=8043560"
+        },
+        {
+          "id": "8045964",
+          "title": "Senior Applied Scientist - Behavior AI",
+          "url": "https://careers.datadoghq.com/detail/8045964/?gh_jid=8045964"
+        },
+        {
+          "id": "8046392",
+          "title": "Technical Account Manager - East",
+          "url": "https://careers.datadoghq.com/detail/8046392/?gh_jid=8046392"
+        },
+        {
+          "id": "8047666",
+          "title": "Manager, Sales Field Enablement, APJ",
+          "url": "https://careers.datadoghq.com/detail/8047666/?gh_jid=8047666"
+        },
+        {
+          "id": "8048106",
+          "title": "Regional Manager, Sales Engineering - UK",
+          "url": "https://careers.datadoghq.com/detail/8048106/?gh_jid=8048106"
+        },
+        {
+          "id": "8048588",
+          "title": "Manager I, Engineering - Code Coverage",
+          "url": "https://careers.datadoghq.com/detail/8048588/?gh_jid=8048588"
+        },
+        {
+          "id": "8050591",
+          "title": "Director, Engineering - Digital Experience Monitoring",
+          "url": "https://careers.datadoghq.com/detail/8050591/?gh_jid=8050591"
+        },
+        {
+          "id": "8051068",
+          "title": "Manager I, Engineering - Source Code Integration",
+          "url": "https://careers.datadoghq.com/detail/8051068/?gh_jid=8051068"
+        },
+        {
+          "id": "8051616",
+          "title": "Engineering Compensation Partner",
+          "url": "https://careers.datadoghq.com/detail/8051616/?gh_jid=8051616"
+        },
+        {
+          "id": "8052114",
+          "title": "Enterprise Customer Success Manager - Chicago",
+          "url": "https://careers.datadoghq.com/detail/8052114/?gh_jid=8052114"
+        },
+        {
+          "id": "8052118",
+          "title": "Software Engineering Intern (Summer)",
+          "url": "https://careers.datadoghq.com/detail/8052118/?gh_jid=8052118"
+        },
+        {
+          "id": "8053714",
+          "title": "Commercial Sales Engineer 2 (AMER - West)",
+          "url": "https://careers.datadoghq.com/detail/8053714/?gh_jid=8053714"
+        },
+        {
+          "id": "8054420",
+          "title": "Head of Competitive Intelligence",
+          "url": "https://careers.datadoghq.com/detail/8054420/?gh_jid=8054420"
+        },
+        {
+          "id": "8054774",
+          "title": "Senior Enterprise Customer Success Manager",
+          "url": "https://careers.datadoghq.com/detail/8054774/?gh_jid=8054774"
+        },
+        {
+          "id": "8054902",
+          "title": "Senior Enterprise Customer Success Manager",
+          "url": "https://careers.datadoghq.com/detail/8054902/?gh_jid=8054902"
+        },
+        {
+          "id": "8059382",
+          "title": "Director, Commercial Sales",
+          "url": "https://careers.datadoghq.com/detail/8059382/?gh_jid=8059382"
+        },
+        {
+          "id": "8060821",
+          "title": "Manager I, Engineering - APM Serverless",
+          "url": "https://careers.datadoghq.com/detail/8060821/?gh_jid=8060821"
+        },
+        {
+          "id": "8065187",
+          "title": "Staff Product Manager, Observability Data Platforms",
+          "url": "https://careers.datadoghq.com/detail/8065187/?gh_jid=8065187"
+        },
+        {
+          "id": "8065192",
+          "title": "Senior Product Manager - Observability Data Platform",
+          "url": "https://careers.datadoghq.com/detail/8065192/?gh_jid=8065192"
+        },
+        {
+          "id": "8074318",
+          "title": "Manager I, Engineering - Observability Pipelines (OP)",
+          "url": "https://careers.datadoghq.com/detail/8074318/?gh_jid=8074318"
+        },
+        {
+          "id": "8074700",
+          "title": "Senior Partner Manager - Channels (Indian GSI)",
+          "url": "https://careers.datadoghq.com/detail/8074700/?gh_jid=8074700"
+        },
+        {
+          "id": "8075664",
+          "title": "Employment Counsel - AMER",
+          "url": "https://careers.datadoghq.com/detail/8075664/?gh_jid=8075664"
+        },
+        {
+          "id": "8077142",
+          "title": "Senior Product Manager - Fleet and Lifecycle Management",
+          "url": "https://careers.datadoghq.com/detail/8077142/?gh_jid=8077142"
+        },
+        {
+          "id": "8077474",
+          "title": "Enterprise Customer Success Manager - East",
+          "url": "https://careers.datadoghq.com/detail/8077474/?gh_jid=8077474"
+        },
+        {
+          "id": "8078805",
+          "title": "Commercial Account Executive (Portugal)",
+          "url": "https://careers.datadoghq.com/detail/8078805/?gh_jid=8078805"
+        },
+        {
+          "id": "8080601",
+          "title": "Commercial Sales Engineer 2 (Sao Paulo)",
+          "url": "https://careers.datadoghq.com/detail/8080601/?gh_jid=8080601"
+        },
+        {
+          "id": "8080606",
+          "title": "Mid-Market Sales Engineer (Sao Paulo)",
+          "url": "https://careers.datadoghq.com/detail/8080606/?gh_jid=8080606"
+        },
+        {
+          "id": "8080628",
+          "title": "Commercial Sales Engineer (Spanish-Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8080628/?gh_jid=8080628"
+        },
+        {
+          "id": "8082007",
+          "title": "Senior Partner Manager - Channels (UKI)",
+          "url": "https://careers.datadoghq.com/detail/8082007/?gh_jid=8082007"
+        },
+        {
+          "id": "8082391",
+          "title": "Team Lead, Strategic Sourcing (IT, SaaS, Hardware)",
+          "url": "https://careers.datadoghq.com/detail/8082391/?gh_jid=8082391"
+        },
+        {
+          "id": "8083563",
+          "title": "Manager I, Premier Support Engineering - Denver",
+          "url": "https://careers.datadoghq.com/detail/8083563/?gh_jid=8083563"
+        },
+        {
+          "id": "8083862",
+          "title": "Lead Designer",
+          "url": "https://careers.datadoghq.com/detail/8083862/?gh_jid=8083862"
+        },
+        {
+          "id": "8088095",
+          "title": "Sales Engineer - Enterprise",
+          "url": "https://careers.datadoghq.com/detail/8088095/?gh_jid=8088095"
+        },
+        {
+          "id": "8090275",
+          "title": "Sales Engineer - Enterprise",
+          "url": "https://careers.datadoghq.com/detail/8090275/?gh_jid=8090275"
+        },
+        {
+          "id": "8091868",
+          "title": "Program Manager - Community Content and Events (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/8091868/?gh_jid=8091868"
+        },
+        {
+          "id": "8091967",
+          "title": "Indirect Tax Manager",
+          "url": "https://careers.datadoghq.com/detail/8091967/?gh_jid=8091967"
+        },
+        {
+          "id": "8092004",
+          "title": "Senior Product Manager - Bits Agent Builder",
+          "url": "https://careers.datadoghq.com/detail/8092004/?gh_jid=8092004"
+        },
+        {
+          "id": "8094106",
+          "title": "Staff Software Engineer - Corporate Development",
+          "url": "https://careers.datadoghq.com/detail/8094106/?gh_jid=8094106"
+        },
+        {
+          "id": "8094111",
+          "title": "Senior Software Engineer - Incident Insights & Readiness",
+          "url": "https://careers.datadoghq.com/detail/8094111/?gh_jid=8094111"
+        },
+        {
+          "id": "8094179",
+          "title": "Partner Solutions Architect (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/8094179/?gh_jid=8094179"
+        },
+        {
+          "id": "8094188",
+          "title": "Senior Platform Security Engineer",
+          "url": "https://careers.datadoghq.com/detail/8094188/?gh_jid=8094188"
+        },
+        {
+          "id": "8094219",
+          "title": "Manager I, Engineering - Security Libraries",
+          "url": "https://careers.datadoghq.com/detail/8094219/?gh_jid=8094219"
+        },
+        {
+          "id": "8094924",
+          "title": "Program Manager, AI and Developer Community Content and Events",
+          "url": "https://careers.datadoghq.com/detail/8094924/?gh_jid=8094924"
+        },
+        {
+          "id": "8095166",
+          "title": "Senior Software Engineer - Bazel Tools",
+          "url": "https://careers.datadoghq.com/detail/8095166/?gh_jid=8095166"
+        },
+        {
+          "id": "8095826",
+          "title": "Technical Escalations Engineer II (Revenue and Cost Management) - APJ",
+          "url": "https://careers.datadoghq.com/detail/8095826/?gh_jid=8095826"
+        },
+        {
+          "id": "8095963",
+          "title": "Partner Solutions Architect (Pan-EMEA GSI)",
+          "url": "https://careers.datadoghq.com/detail/8095963/?gh_jid=8095963"
+        },
+        {
+          "id": "8096105",
+          "title": "Mid Market Account Executive - Benelux",
+          "url": "https://careers.datadoghq.com/detail/8096105/?gh_jid=8096105"
+        },
+        {
+          "id": "8096181",
+          "title": "Technical Support Engineer 2, Premier - Sao Paulo",
+          "url": "https://careers.datadoghq.com/detail/8096181/?gh_jid=8096181"
+        },
+        {
+          "id": "8096323",
+          "title": "Executive Assistant II - Paris",
+          "url": "https://careers.datadoghq.com/detail/8096323/?gh_jid=8096323"
+        },
+        {
+          "id": "8096400",
+          "title": "Recruiter, Enterprise Sales",
+          "url": "https://careers.datadoghq.com/detail/8096400/?gh_jid=8096400"
+        },
+        {
+          "id": "8097533",
+          "title": "Technical Support Engineer 3, Premier - Sao Paulo",
+          "url": "https://careers.datadoghq.com/detail/8097533/?gh_jid=8097533"
+        },
+        {
+          "id": "8098863",
+          "title": "Director, Engineering",
+          "url": "https://careers.datadoghq.com/detail/8098863/?gh_jid=8098863"
+        },
+        {
+          "id": "8098939",
+          "title": "Engineering Manager I, Commercial Audit",
+          "url": "https://careers.datadoghq.com/detail/8098939/?gh_jid=8098939"
+        },
+        {
+          "id": "8099069",
+          "title": "Senior People Business Partner",
+          "url": "https://careers.datadoghq.com/detail/8099069/?gh_jid=8099069"
+        },
+        {
+          "id": "8100001",
+          "title": "Senior Staff Product Designer, Design Lab",
+          "url": "https://careers.datadoghq.com/detail/8100001/?gh_jid=8100001"
+        },
+        {
+          "id": "8102624",
+          "title": "Senior Software Engineer - Action Platform",
+          "url": "https://careers.datadoghq.com/detail/8102624/?gh_jid=8102624"
+        },
+        {
+          "id": "8102794",
+          "title": "Manager I, Engineering - Sensitive Data Scanner",
+          "url": "https://careers.datadoghq.com/detail/8102794/?gh_jid=8102794"
+        },
+        {
+          "id": "8103045",
+          "title": "Developer Engagement Lead",
+          "url": "https://careers.datadoghq.com/detail/8103045/?gh_jid=8103045"
+        },
+        {
+          "id": "8103585",
+          "title": "Manager II, Engineering - Observability Pipelines",
+          "url": "https://careers.datadoghq.com/detail/8103585/?gh_jid=8103585"
+        },
+        {
+          "id": "8104969",
+          "title": "Emerging Talent Recruiter, Engineering",
+          "url": "https://careers.datadoghq.com/detail/8104969/?gh_jid=8104969"
+        },
+        {
+          "id": "8105372",
+          "title": "Staff Software Engineer - Corporate Development",
+          "url": "https://careers.datadoghq.com/detail/8105372/?gh_jid=8105372"
+        },
+        {
+          "id": "8105684",
+          "title": "Senior Sales Engineer - Bay Area",
+          "url": "https://careers.datadoghq.com/detail/8105684/?gh_jid=8105684"
+        },
+        {
+          "id": "8108241",
+          "title": "Product Management Intern",
+          "url": "https://careers.datadoghq.com/detail/8108241/?gh_jid=8108241"
+        },
+        {
+          "id": "8108349",
+          "title": "Senior Manager, Enterprise Customer Success",
+          "url": "https://careers.datadoghq.com/detail/8108349/?gh_jid=8108349"
+        },
+        {
+          "id": "8108378",
+          "title": "Manager I, Engineering - Code Security",
+          "url": "https://careers.datadoghq.com/detail/8108378/?gh_jid=8108378"
+        },
+        {
+          "id": "8109441",
+          "title": "Technical Support Engineer 2, Premier - NYC (Japanese Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8109441/?gh_jid=8109441"
+        },
+        {
+          "id": "8113116",
+          "title": "Senior Capture Manager",
+          "url": "https://careers.datadoghq.com/detail/8113116/?gh_jid=8113116"
+        },
+        {
+          "id": "8113520",
+          "title": "Enterprise Sales Executive",
+          "url": "https://careers.datadoghq.com/detail/8113520/?gh_jid=8113520"
+        },
+        {
+          "id": "8113562",
+          "title": "Regional Manager, Sales Engineering - Public Sector",
+          "url": "https://careers.datadoghq.com/detail/8113562/?gh_jid=8113562"
+        },
+        {
+          "id": "8113654",
+          "title": "Senior Product Marketing Manager",
+          "url": "https://careers.datadoghq.com/detail/8113654/?gh_jid=8113654"
+        },
+        {
+          "id": "8114161",
+          "title": "Software Engineering Intern",
+          "url": "https://careers.datadoghq.com/detail/8114161/?gh_jid=8114161"
+        },
+        {
+          "id": "8114186",
+          "title": "Software Engineering Intern",
+          "url": "https://careers.datadoghq.com/detail/8114186/?gh_jid=8114186"
+        },
+        {
+          "id": "8115033",
+          "title": "Senior Product Manager - Journey Monitoring",
+          "url": "https://careers.datadoghq.com/detail/8115033/?gh_jid=8115033"
+        },
+        {
+          "id": "8119493",
+          "title": "Staff Engineer - Data Platform Experience",
+          "url": "https://careers.datadoghq.com/detail/8119493/?gh_jid=8119493"
+        },
+        {
+          "id": "8119496",
+          "title": "Staff Engineer - Data Platform Experience",
+          "url": "https://careers.datadoghq.com/detail/8119496/?gh_jid=8119496"
+        },
+        {
+          "id": "8119837",
+          "title": "Coordinator, Emerging Talent Recruiting",
+          "url": "https://careers.datadoghq.com/detail/8119837/?gh_jid=8119837"
+        },
+        {
+          "id": "8119973",
+          "title": "Senior Product Manager - Business Analysis ",
+          "url": "https://careers.datadoghq.com/detail/8119973/?gh_jid=8119973"
+        },
+        {
+          "id": "8121553",
+          "title": "Senior Product Marketing Manager - Incident Response",
+          "url": "https://careers.datadoghq.com/detail/8121553/?gh_jid=8121553"
+        },
+        {
+          "id": "8122915",
+          "title": "Field Marketing Manager (North Central)",
+          "url": "https://careers.datadoghq.com/detail/8122915/?gh_jid=8122915"
+        },
+        {
+          "id": "8126596",
+          "title": "Senior Sales Engineer - Majors (West)",
+          "url": "https://careers.datadoghq.com/detail/8126596/?gh_jid=8126596"
+        },
+        {
+          "id": "8127768",
+          "title": "Manager I, Engineering - Applied AI/ML Product Analytics Suite",
+          "url": "https://careers.datadoghq.com/detail/8127768/?gh_jid=8127768"
+        },
+        {
+          "id": "8127916",
+          "title": "Senior Partner Marketing Manager - Cloud & Channel",
+          "url": "https://careers.datadoghq.com/detail/8127916/?gh_jid=8127916"
+        },
+        {
+          "id": "8128182",
+          "title": "Services Architect 3 - Paris/London",
+          "url": "https://careers.datadoghq.com/detail/8128182/?gh_jid=8128182"
+        },
+        {
+          "id": "8128450",
+          "title": "Staff Engineer - Cloud Networks",
+          "url": "https://careers.datadoghq.com/detail/8128450/?gh_jid=8128450"
+        },
+        {
+          "id": "8128764",
+          "title": "Senior Enablement Program Manager, Support Engineering",
+          "url": "https://careers.datadoghq.com/detail/8128764/?gh_jid=8128764"
+        },
+        {
+          "id": "8128810",
+          "title": "Manager, Internal Product Analytics",
+          "url": "https://careers.datadoghq.com/detail/8128810/?gh_jid=8128810"
+        },
+        {
+          "id": "8129799",
+          "title": "IT Support Technician Intern",
+          "url": "https://careers.datadoghq.com/detail/8129799/?gh_jid=8129799"
+        },
+        {
+          "id": "8130003",
+          "title": "Senior ABM Marketing Manager",
+          "url": "https://careers.datadoghq.com/detail/8130003/?gh_jid=8130003"
+        },
+        {
+          "id": "8130580",
+          "title": "Commercial & Mid-Market Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/8130580/?gh_jid=8130580"
+        },
+        {
+          "id": "8131949",
+          "title": "Commercial & Mid-Market Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/8131949/?gh_jid=8131949"
+        },
+        {
+          "id": "8131985",
+          "title": "Commercial & Mid-Market Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/8131985/?gh_jid=8131985"
+        },
+        {
+          "id": "8132294",
+          "title": "Sales Revenue Analyst - NYC",
+          "url": "https://careers.datadoghq.com/detail/8132294/?gh_jid=8132294"
+        },
+        {
+          "id": "8134425",
+          "title": "Enablement Operations Manager, Technical Solutions",
+          "url": "https://careers.datadoghq.com/detail/8134425/?gh_jid=8134425"
+        },
+        {
+          "id": "8136510",
+          "title": "Director, Enterprise Sales Engineering - US Central",
+          "url": "https://careers.datadoghq.com/detail/8136510/?gh_jid=8136510"
+        },
+        {
+          "id": "8136512",
+          "title": "Director, Enterprise Sales Engineering - US East",
+          "url": "https://careers.datadoghq.com/detail/8136512/?gh_jid=8136512"
+        },
+        {
+          "id": "8137139",
+          "title": "Head of Global Executive Support",
+          "url": "https://careers.datadoghq.com/detail/8137139/?gh_jid=8137139"
+        },
+        {
+          "id": "8137579",
+          "title": "Director, GTM Enablement Operations",
+          "url": "https://careers.datadoghq.com/detail/8137579/?gh_jid=8137579"
+        },
+        {
+          "id": "8137729",
+          "title": "Social Media Manager",
+          "url": "https://careers.datadoghq.com/detail/8137729/?gh_jid=8137729"
+        },
+        {
+          "id": "8138342",
+          "title": "Commercial & Mid-Market Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/8138342/?gh_jid=8138342"
+        },
+        {
+          "id": "8138482",
+          "title": "Technical Escalations Engineer II (RUM) - APJ",
+          "url": "https://careers.datadoghq.com/detail/8138482/?gh_jid=8138482"
+        },
+        {
+          "id": "8139132",
+          "title": "Senior Creative Operations & Production Manager",
+          "url": "https://careers.datadoghq.com/detail/8139132/?gh_jid=8139132"
+        },
+        {
+          "id": "8139161",
+          "title": "Principal CRO and Web Analyst",
+          "url": "https://careers.datadoghq.com/detail/8139161/?gh_jid=8139161"
+        },
+        {
+          "id": "8139190",
+          "title": "Partner Marketing Manager",
+          "url": "https://careers.datadoghq.com/detail/8139190/?gh_jid=8139190"
+        },
+        {
+          "id": "8139277",
+          "title": "Staff Engineer, Compute",
+          "url": "https://careers.datadoghq.com/detail/8139277/?gh_jid=8139277"
+        },
+        {
+          "id": "8139279",
+          "title": "Staff Engineer, Compute",
+          "url": "https://careers.datadoghq.com/detail/8139279/?gh_jid=8139279"
+        },
+        {
+          "id": "8139662",
+          "title": "Developer Advocate - Service Management",
+          "url": "https://careers.datadoghq.com/detail/8139662/?gh_jid=8139662"
+        },
+        {
+          "id": "8141240",
+          "title": "Senior Security Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/8141240/?gh_jid=8141240"
+        },
+        {
+          "id": "8141243",
+          "title": "Senior Security Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/8141243/?gh_jid=8141243"
+        },
+        {
+          "id": "8141489",
+          "title": "Sales Development Representative (Israel)",
+          "url": "https://careers.datadoghq.com/detail/8141489/?gh_jid=8141489"
+        },
+        {
+          "id": "8141670",
+          "title": "Senior Technical Program Manager",
+          "url": "https://careers.datadoghq.com/detail/8141670/?gh_jid=8141670"
+        },
+        {
+          "id": "8141790",
+          "title": "Regional Marketing Content Manager - LATAM",
+          "url": "https://careers.datadoghq.com/detail/8141790/?gh_jid=8141790"
+        },
+        {
+          "id": "8142150",
+          "title": "Senior Sales Engineer - Paris",
+          "url": "https://careers.datadoghq.com/detail/8142150/?gh_jid=8142150"
+        },
+        {
+          "id": "8142217",
+          "title": "Senior Sales Engineer - NorthCentral",
+          "url": "https://careers.datadoghq.com/detail/8142217/?gh_jid=8142217"
+        },
+        {
+          "id": "8143729",
+          "title": "Product Management Intern",
+          "url": "https://careers.datadoghq.com/detail/8143729/?gh_jid=8143729"
+        },
+        {
+          "id": "8143849",
+          "title": "Senior Accounts Receivable Analyst",
+          "url": "https://careers.datadoghq.com/detail/8143849/?gh_jid=8143849"
+        },
+        {
+          "id": "8144018",
+          "title": "Technical Program Manager II",
+          "url": "https://careers.datadoghq.com/detail/8144018/?gh_jid=8144018"
+        },
+        {
+          "id": "8144607",
+          "title": "Enterprise Sales Engineer - FED",
+          "url": "https://careers.datadoghq.com/detail/8144607/?gh_jid=8144607"
+        },
+        {
+          "id": "8144628",
+          "title": "Senior Sales Engineer - FED",
+          "url": "https://careers.datadoghq.com/detail/8144628/?gh_jid=8144628"
+        },
+        {
+          "id": "8144783",
+          "title": "Corporate Communications Senior Manager, Executive Communications Programs",
+          "url": "https://careers.datadoghq.com/detail/8144783/?gh_jid=8144783"
+        },
+        {
+          "id": "8144946",
+          "title": "Senior Forward Deployed Engineer, Feature Flags",
+          "url": "https://careers.datadoghq.com/detail/8144946/?gh_jid=8144946"
+        },
+        {
+          "id": "8146986",
+          "title": "Manager, Customer Success - Boston",
+          "url": "https://careers.datadoghq.com/detail/8146986/?gh_jid=8146986"
+        },
+        {
+          "id": "8147235",
+          "title": "Senior Manager, Channels",
+          "url": "https://careers.datadoghq.com/detail/8147235/?gh_jid=8147235"
+        },
+        {
+          "id": "8147489",
+          "title": "Commercial Account Executive - LATAM (Portuguese Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8147489/?gh_jid=8147489"
+        },
+        {
+          "id": "8147614",
+          "title": "Enterprise Customer Success Manager",
+          "url": "https://careers.datadoghq.com/detail/8147614/?gh_jid=8147614"
+        },
+        {
+          "id": "8147740",
+          "title": "Enterprise Customer Success Manager (French Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8147740/?gh_jid=8147740"
+        },
+        {
+          "id": "8147903",
+          "title": "Enterprise Customer Success Manager - Denver",
+          "url": "https://careers.datadoghq.com/detail/8147903/?gh_jid=8147903"
+        },
+        {
+          "id": "8148092",
+          "title": "Senior Enablement Program Manager, Sales Engineering",
+          "url": "https://careers.datadoghq.com/detail/8148092/?gh_jid=8148092"
+        },
+        {
+          "id": "8152975",
+          "title": "Sales Development Representative (Africa)",
+          "url": "https://careers.datadoghq.com/detail/8152975/?gh_jid=8152975"
+        },
+        {
+          "id": "8154643",
+          "title": "Technical Escalations Engineer 2 (Revenue and Cost Management) - US-East",
+          "url": "https://careers.datadoghq.com/detail/8154643/?gh_jid=8154643"
+        },
+        {
+          "id": "8155867",
+          "title": "Strategic Account Executive (Higher Education)",
+          "url": "https://careers.datadoghq.com/detail/8155867/?gh_jid=8155867"
+        },
+        {
+          "id": "8157360",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/8157360/?gh_jid=8157360"
+        },
+        {
+          "id": "8161455",
+          "title": "Developer Advocate - Service Management EMEA",
+          "url": "https://careers.datadoghq.com/detail/8161455/?gh_jid=8161455"
+        },
+        {
+          "id": "8163359",
+          "title": "Executive Assistant II",
+          "url": "https://careers.datadoghq.com/detail/8163359/?gh_jid=8163359"
+        },
+        {
+          "id": "8163361",
+          "title": "Executive Assistant II",
+          "url": "https://careers.datadoghq.com/detail/8163361/?gh_jid=8163361"
+        },
+        {
+          "id": "8164122",
+          "title": "Mid-Market Sales Engineer",
+          "url": "https://careers.datadoghq.com/detail/8164122/?gh_jid=8164122"
+        },
+        {
+          "id": "8164133",
+          "title": "Curriculum Manager",
+          "url": "https://careers.datadoghq.com/detail/8164133/?gh_jid=8164133"
+        },
+        {
+          "id": "8164181",
+          "title": "Senior Applied Scientist",
+          "url": "https://careers.datadoghq.com/detail/8164181/?gh_jid=8164181"
+        },
+        {
+          "id": "8164588",
+          "title": "Senior Partner Manager - Channels (Security)",
+          "url": "https://careers.datadoghq.com/detail/8164588/?gh_jid=8164588"
+        },
+        {
+          "id": "8166231",
+          "title": "Senior Partner Manager - Channels (Security)",
+          "url": "https://careers.datadoghq.com/detail/8166231/?gh_jid=8166231"
+        },
+        {
+          "id": "8167729",
+          "title": "Partner Marketing Manager - LATAM",
+          "url": "https://careers.datadoghq.com/detail/8167729/?gh_jid=8167729"
+        },
+        {
+          "id": "8170070",
+          "title": "Curriculum Manager (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/8170070/?gh_jid=8170070"
+        },
+        {
+          "id": "8170639",
+          "title": "Senior Field Enablement Manager",
+          "url": "https://careers.datadoghq.com/detail/8170639/?gh_jid=8170639"
+        },
+        {
+          "id": "8171303",
+          "title": "GTM Strategy/Operations Associate",
+          "url": "https://careers.datadoghq.com/detail/8171303/?gh_jid=8171303"
+        },
+        {
+          "id": "8172855",
+          "title": "Senior Applied Scientist - AI Platform",
+          "url": "https://careers.datadoghq.com/detail/8172855/?gh_jid=8172855"
+        },
+        {
+          "id": "8172864",
+          "title": "Director, Sales Engineering - ASEAN",
+          "url": "https://careers.datadoghq.com/detail/8172864/?gh_jid=8172864"
+        },
+        {
+          "id": "8173840",
+          "title": "Senior Security Engineer, Vulnerability Management",
+          "url": "https://careers.datadoghq.com/detail/8173840/?gh_jid=8173840"
+        },
+        {
+          "id": "8173897",
+          "title": "Manager I, Engineering - Cloud FinOps",
+          "url": "https://careers.datadoghq.com/detail/8173897/?gh_jid=8173897"
+        },
+        {
+          "id": "8173964",
+          "title": "Manager, Field Enablement EMEA",
+          "url": "https://careers.datadoghq.com/detail/8173964/?gh_jid=8173964"
+        },
+        {
+          "id": "8174361",
+          "title": "Field Enablement Manager, Sales Enablement",
+          "url": "https://careers.datadoghq.com/detail/8174361/?gh_jid=8174361"
+        },
+        {
+          "id": "8174661",
+          "title": "Field Enablement Manager - Amsterdam",
+          "url": "https://careers.datadoghq.com/detail/8174661/?gh_jid=8174661"
+        },
+        {
+          "id": "8175708",
+          "title": "Office Operations Associate",
+          "url": "https://careers.datadoghq.com/detail/8175708/?gh_jid=8175708"
+        },
+        {
+          "id": "8177097",
+          "title": "Commercial Sales Engineer (Bahasa Indonesia-speaking)",
+          "url": "https://careers.datadoghq.com/detail/8177097/?gh_jid=8177097"
+        },
+        {
+          "id": "8177270",
+          "title": "Marketing Operations Associate",
+          "url": "https://careers.datadoghq.com/detail/8177270/?gh_jid=8177270"
+        },
+        {
+          "id": "8179647",
+          "title": "GTM Strategy/Operations Associate - New York",
+          "url": "https://careers.datadoghq.com/detail/8179647/?gh_jid=8179647"
+        },
+        {
+          "id": "8179766",
+          "title": "Manager I, Engineering - Coordination Systems Storage",
+          "url": "https://careers.datadoghq.com/detail/8179766/?gh_jid=8179766"
+        },
+        {
+          "id": "8180459",
+          "title": "Senior Compliance Specialist",
+          "url": "https://careers.datadoghq.com/detail/8180459/?gh_jid=8180459"
+        },
+        {
+          "id": "8180585",
+          "title": "Senior Sales Engineer - Key Accounts (AMER - East)",
+          "url": "https://careers.datadoghq.com/detail/8180585/?gh_jid=8180585"
+        },
+        {
+          "id": "8180681",
+          "title": "Principal Growth Marketing Manager - SEO/GEO",
+          "url": "https://careers.datadoghq.com/detail/8180681/?gh_jid=8180681"
+        },
+        {
+          "id": "8181440",
+          "title": "Applied Science Intern",
+          "url": "https://careers.datadoghq.com/detail/8181440/?gh_jid=8181440"
+        },
+        {
+          "id": "8184643",
+          "title": "Strategic Account Executive",
+          "url": "https://careers.datadoghq.com/detail/8184643/?gh_jid=8184643"
+        },
+        {
+          "id": "8185652",
+          "title": "Web Content Engineering & AI Visibility Lead",
+          "url": "https://careers.datadoghq.com/detail/8185652/?gh_jid=8185652"
+        },
+        {
+          "id": "8185903",
+          "title": "Sales Engineer 2 (Customer Success) - Denver",
+          "url": "https://careers.datadoghq.com/detail/8185903/?gh_jid=8185903"
+        },
+        {
+          "id": "8186274",
+          "title": "Manager, Customer Success (Spanish Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8186274/?gh_jid=8186274"
+        },
+        {
+          "id": "8186361",
+          "title": "Customer Success Associate (Spanish Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8186361/?gh_jid=8186361"
+        },
+        {
+          "id": "8186363",
+          "title": "Customer Success Associate (Portuguese Speaking)",
+          "url": "https://careers.datadoghq.com/detail/8186363/?gh_jid=8186363"
+        },
+        {
+          "id": "8187141",
+          "title": "Manager, Commercial Sales",
+          "url": "https://careers.datadoghq.com/detail/8187141/?gh_jid=8187141"
+        },
+        {
+          "id": "8188985",
+          "title": "Director, Enterprise Customer Success",
+          "url": "https://careers.datadoghq.com/detail/8188985/?gh_jid=8188985"
+        },
+        {
+          "id": "8189660",
+          "title": "Legal Operations Manager",
+          "url": "https://careers.datadoghq.com/detail/8189660/?gh_jid=8189660"
+        },
+        {
+          "id": "8191005",
+          "title": "Manager, Commercial Sales - LATAM (Portuguese Speaking) - Boston",
+          "url": "https://careers.datadoghq.com/detail/8191005/?gh_jid=8191005"
+        },
+        {
+          "id": "8191288",
+          "title": "Manager, Mid Market Sales",
+          "url": "https://careers.datadoghq.com/detail/8191288/?gh_jid=8191288"
+        },
+        {
+          "id": "8195697",
+          "title": "Director, Enterprise Sales",
+          "url": "https://careers.datadoghq.com/detail/8195697/?gh_jid=8195697"
+        },
+        {
+          "id": "8195860",
+          "title": "Manager, Customer Success - Dublin (Israel/Iberia)",
+          "url": "https://careers.datadoghq.com/detail/8195860/?gh_jid=8195860"
+        },
+        {
+          "id": "8195864",
+          "title": "Customer Success Manager - Dublin",
+          "url": "https://careers.datadoghq.com/detail/8195864/?gh_jid=8195864"
+        },
+        {
+          "id": "8196248",
+          "title": "Director, Enterprise Sales",
+          "url": "https://careers.datadoghq.com/detail/8196248/?gh_jid=8196248"
+        },
+        {
+          "id": "8196718",
+          "title": "Senior Director, Product Marketing",
+          "url": "https://careers.datadoghq.com/detail/8196718/?gh_jid=8196718"
+        },
+        {
+          "id": "8196977",
+          "title": "Principal, Brand Editorial",
+          "url": "https://careers.datadoghq.com/detail/8196977/?gh_jid=8196977"
+        },
+        {
+          "id": "8197674",
+          "title": "Senior Deal Desk Analyst",
+          "url": "https://careers.datadoghq.com/detail/8197674/?gh_jid=8197674"
+        },
+        {
+          "id": "8197852",
+          "title": "Product Manager ll – Code Intelligence",
+          "url": "https://careers.datadoghq.com/detail/8197852/?gh_jid=8197852"
+        },
+        {
+          "id": "8200728",
+          "title": "Commercial Account Executive (Benelux)",
+          "url": "https://careers.datadoghq.com/detail/8200728/?gh_jid=8200728"
+        },
+        {
+          "id": "8202086",
+          "title": "Legal Operations Analyst",
+          "url": "https://careers.datadoghq.com/detail/8202086/?gh_jid=8202086"
+        },
+        {
+          "id": "8202699",
+          "title": "Staff Software Engineer - Frontend",
+          "url": "https://careers.datadoghq.com/detail/8202699/?gh_jid=8202699"
+        },
+        {
+          "id": "8203657",
+          "title": "Research Science Intern (PhD)",
+          "url": "https://careers.datadoghq.com/detail/8203657/?gh_jid=8203657"
+        },
+        {
+          "id": "8203733",
+          "title": "Principal GSI Partner Manager - Accenture (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/8203733/?gh_jid=8203733"
+        },
+        {
+          "id": "8204056",
+          "title": " Partner Solutions Architect (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/8204056/?gh_jid=8204056"
+        },
+        {
+          "id": "8204065",
+          "title": "Major Account Manager (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/8204065/?gh_jid=8204065"
+        },
+        {
+          "id": "8204163",
+          "title": "Sales Engineer (Customer Success)",
+          "url": "https://careers.datadoghq.com/detail/8204163/?gh_jid=8204163"
+        },
+        {
+          "id": "8204554",
+          "title": "FP&A Analyst",
+          "url": "https://careers.datadoghq.com/detail/8204554/?gh_jid=8204554"
+        },
+        {
+          "id": "8206747",
+          "title": "Customer Success Manager",
+          "url": "https://careers.datadoghq.com/detail/8206747/?gh_jid=8206747"
+        },
+        {
+          "id": "8206923",
+          "title": "Customer Success Manager",
+          "url": "https://careers.datadoghq.com/detail/8206923/?gh_jid=8206923"
+        },
+        {
+          "id": "8210153",
+          "title": "Regional Director - Enterprise Sales",
+          "url": "https://careers.datadoghq.com/detail/8210153/?gh_jid=8210153"
+        },
+        {
+          "id": "8210323",
+          "title": "Regional Director - Enterprise Sales",
+          "url": "https://careers.datadoghq.com/detail/8210323/?gh_jid=8210323"
+        },
+        {
+          "id": "8211078",
+          "title": "Manager, Commercial Sales Engineering (Sao Paulo)",
+          "url": "https://careers.datadoghq.com/detail/8211078/?gh_jid=8211078"
+        },
+        {
+          "id": "8211090",
+          "title": "Commercial Sales Engineer (Sao Paulo)",
+          "url": "https://careers.datadoghq.com/detail/8211090/?gh_jid=8211090"
+        },
+        {
+          "id": "8211563",
+          "title": "People Solutions Coordinator - Paris",
+          "url": "https://careers.datadoghq.com/detail/8211563/?gh_jid=8211563"
+        },
+        {
+          "id": "8212114",
+          "title": "Manager II, Engineering - Database Monitoring (AI)",
+          "url": "https://careers.datadoghq.com/detail/8212114/?gh_jid=8212114"
+        },
+        {
+          "id": "8213715",
+          "title": "Manager I, Engineering - Code Intelligence",
+          "url": "https://careers.datadoghq.com/detail/8213715/?gh_jid=8213715"
+        },
+        {
+          "id": "8214090",
+          "title": "Senior Manager, Sponsorship Sales — Global Conferences",
+          "url": "https://careers.datadoghq.com/detail/8214090/?gh_jid=8214090"
+        },
+        {
+          "id": "8219989",
+          "title": "Principal GSI Partner Manager - Accenture (EMEA)",
+          "url": "https://careers.datadoghq.com/detail/8219989/?gh_jid=8219989"
+        },
+        {
+          "id": "8220277",
+          "title": "Mid Market Account Executive (Italy)",
+          "url": "https://careers.datadoghq.com/detail/8220277/?gh_jid=8220277"
+        },
+        {
+          "id": "8222279",
+          "title": "Customer Success Associate (Commercial Accounts)",
+          "url": "https://careers.datadoghq.com/detail/8222279/?gh_jid=8222279"
+        },
+        {
+          "id": "8223272",
+          "title": "Global Safety & Security Manager",
+          "url": "https://careers.datadoghq.com/detail/8223272/?gh_jid=8223272"
+        },
+        {
+          "id": "8223819",
+          "title": "Senior Software Engineer - CI/CD Security",
+          "url": "https://careers.datadoghq.com/detail/8223819/?gh_jid=8223819"
+        },
+        {
+          "id": "8223855",
+          "title": "Senior Design Manager - Design Systems",
+          "url": "https://careers.datadoghq.com/detail/8223855/?gh_jid=8223855"
+        },
+        {
+          "id": "8223858",
+          "title": "Manager, Business Recruiting - Enterprise Sales",
+          "url": "https://careers.datadoghq.com/detail/8223858/?gh_jid=8223858"
+        },
+        {
+          "id": "8224963",
+          "title": "Global Safety & Security Manager",
+          "url": "https://careers.datadoghq.com/detail/8224963/?gh_jid=8224963"
+        },
+        {
+          "id": "8226275",
+          "title": "Senior Product Manager - Feature Flagging",
+          "url": "https://careers.datadoghq.com/detail/8226275/?gh_jid=8226275"
+        },
+        {
+          "id": "8226522",
+          "title": "Manager 2, Technical Enablement Management",
+          "url": "https://careers.datadoghq.com/detail/8226522/?gh_jid=8226522"
+        },
+        {
+          "id": "8230456",
+          "title": "Senior Sales Engineer - New England",
+          "url": "https://careers.datadoghq.com/detail/8230456/?gh_jid=8230456"
+        },
+        {
+          "id": "8230663",
+          "title": "Senior Application Security Engineer",
+          "url": "https://careers.datadoghq.com/detail/8230663/?gh_jid=8230663"
+        },
+        {
+          "id": "8231811",
+          "title": "Senior Business Systems Analyst",
+          "url": "https://careers.datadoghq.com/detail/8231811/?gh_jid=8231811"
+        },
+        {
+          "id": "8234190",
+          "title": "People Business Partner",
+          "url": "https://careers.datadoghq.com/detail/8234190/?gh_jid=8234190"
+        }
+      ]
+    }
+  ]
+}

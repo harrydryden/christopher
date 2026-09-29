@@ -27,7 +27,7 @@ import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
-const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example", "acme.wd1.myworkdayjobs.com"];
+const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "api.ashbyhq.com", "pager.example", "acme.wd1.myworkdayjobs.com"];
 
 /** A real PNG, because the logo capture sniffs the bytes and refuses anything that is not one. */
 function pngBytes(length = 400): Buffer {
@@ -981,6 +981,39 @@ describe("functional review regressions", () => {
     expect(stillQueued).toHaveLength(0);
   }, 120_000);
 
+  it("reads a changed second SmartRecruiters page even when the first response is unchanged", async () => {
+    const posting = (id: string) => ({ id, name: `Operations ${id}`, location: { fullLocation: "London, UK" } });
+    const firstPage = Array.from({ length: 100 }, (_, i) => posting(`first-${i}`));
+    let later = posting("later-old");
+    server.setRoutes({ "api.smartrecruiters.com": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/v1/companies/orbital/postings": req => {
+        const offset = Number(new URL(req.url ?? "/", "https://api.smartrecruiters.com").searchParams.get("offset") ?? "0");
+        return { body: { offset, limit: 100, totalFound: 101, content: offset === 0 ? firstPage : [later] } };
+      },
+    } });
+    const [company] = await db.insert(schema.companies).values({ name: "Orbital", domain: "orbital.example", homepageUrl: "https://www.orbital.example/" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "smartrecruiters",
+      url: "https://jobs.smartrecruiters.com/orbital", apiUrl: "https://api.smartrecruiters.com/v1/companies/orbital/postings", atsSlug: "orbital", status: "active" }).returning();
+    let scanNumber = 0;
+    const fetcher = Object.create(deps.fetcher) as WorkerDeps["fetcher"];
+    fetcher.fetchText = async (url, init) => {
+      const response = await deps.fetcher.fetchText(url, init);
+      return url.includes("offset=0") ? { ...response, contentHash: sha1(response.body), unchanged: scanNumber > 1 } : response;
+    };
+    const withFetcher = { ...deps, fetcher };
+    const scan = async () => { scanNumber++; return _scanSourceForTests(withFetcher, company!, source!, await deps.settings(), null); };
+    expect((await scan()).postingsFound).toBe(101);
+    later = posting("later-new");
+    now = new Date(now.getTime() + 86_400_000);
+    const changed = await scan();
+    expect(changed).toMatchObject({ status: "ok", postingsFound: 101 });
+    const [newRole] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:later-new"));
+    expect(newRole?.title).toBe("Operations later-new");
+    const [oldRole] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:later-old"));
+    expect(oldRole).toMatchObject({ status: "open", missingScans: 1 });
+  }, 60_000);
+
   it("queues description snapshots without AI", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
@@ -1176,6 +1209,151 @@ describe("HTML extraction completion", () => {
     expect(existing).toMatchObject({ status: "open", missingScans: 0 });
     const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
     expect(current!.recipe).toBeNull();
+  });
+  it("accepts a browser shell only before a verified capture and treats later empty captures as partial", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    const shell = { html: '<main><div id="jobs-app">Loading…</div></main>', url: listingUrl };
+    const twoRoles = { html: '<main><a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a></main>', url: listingUrl };
+    const oneRole = { html: '<main><a href="/jobs/one">Operations Manager</a></main>', url: listingUrl };
+    const explicitEmpty = { html: '<main><div class="jobs-empty">There are currently no open positions.</div></main>', url: "https://www.acme.example/jobs" };
+    const capture = (listingPages: Array<{ html: string; url: string }>) => ({ html: listingPages.at(-1)!.html,
+      finalUrl: listingPages.at(-1)!.url, listingPages, requests: [], status: 200, incomplete: false });
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: shell.html } } });
+    const render = vi.fn()
+      .mockResolvedValueOnce(capture([shell, twoRoles]))
+      .mockResolvedValueOnce(capture([shell]))
+      .mockResolvedValueOnce(capture([oneRole, shell]))
+      .mockResolvedValueOnce(capture([oneRole, explicitEmpty]));
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    const scan = async () => _scanSourceForTests(withBrowser, company, source, await deps.settings(), null);
+
+    expect(await scan()).toMatchObject({ status: "ok", postingsFound: 2 });
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toMatch(/failed|partial/); // no verified capture cannot be complete
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("partial");
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("partial");
+    expect(render).toHaveBeenCalledTimes(4);
+    const [omitted] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/two"));
+    expect(omitted).toMatchObject({ status: "open", missingScans: 0 });
+  }, 60_000);
+  it("follows HTTP and rendered head next links after browser captures before completing the listing", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    const secondUrl = `${listingUrl}?page=2`;
+    const firstShell = '<head><link rel="next" href="?page=2"></head><main id="jobs-app">Loading…</main>';
+    const secondShell = '<main id="jobs-app">Loading…</main>';
+    const firstCapture = '<main><a href="/jobs/one">Operations Manager</a></main>';
+    const secondCapture = '<head><link rel="next" href="?page=3"></head><main><a href="/jobs/two">Operations Lead</a></main>';
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: firstShell },
+      "/listing?page=2": { body: secondShell },
+      "/listing?page=3": { body: '<main><a href="/jobs/three">Operations Director</a></main>' },
+    } });
+    const render = vi.fn(async (url: string) => {
+      const html = url === secondUrl ? secondCapture : firstCapture;
+      return { html, finalUrl: url, listingPages: [{ html, url }], requests: [], status: 200, incomplete: false };
+    });
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    const result = await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null);
+    expect(result).toMatchObject({ status: "ok", postingsFound: 3 });
+    expect(render.mock.calls.map(([url]) => url)).toEqual([listingUrl, secondUrl]);
+    expect((await db.select().from(schema.jobs)).map(job => job.url).sort()).toEqual([
+      "https://www.acme.example/jobs/one",
+      "https://www.acme.example/jobs/three",
+      "https://www.acme.example/jobs/two",
+    ]);
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: firstShell },
+      "/listing?page=2": { body: secondShell },
+      "/listing?page=3": { status: 404, body: "Not found" },
+    } });
+    expect((await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null)).status).toBe("partial");
+    const [unverified] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/three"));
+    expect(unverified).toMatchObject({ status: "open", missingScans: 0 });
+  }, 60_000);
+  it("continues from a second browser-captured page without fetching that page twice", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    const secondUrl = `${listingUrl}?page=2`;
+    const firstCapture = '<head><link rel="next" href="?page=2"></head><main><a href="/jobs/one">Operations Manager</a></main>';
+    const secondCapture = '<head><link rel="next" href="?page=3"></head><main><a href="/jobs/two">Operations Lead</a></main>';
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<head><link rel="next" href="?page=2"></head><main id="jobs-app">Loading…</main>' },
+      "/listing?page=2": { status: 404, body: "Already captured by the browser" },
+      "/listing?page=3": { body: '<main><a href="/jobs/three">Operations Director</a></main>' },
+    } });
+    const render = vi.fn(async () => ({ html: secondCapture, finalUrl: secondUrl,
+      listingPages: [{ html: firstCapture, url: listingUrl }, { html: secondCapture, url: secondUrl }],
+      requests: [], status: 200, incomplete: false }));
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "ok", postingsFound: 3 });
+    expect(render).toHaveBeenCalledTimes(1);
+  }, 60_000);
+  it("marks an explicit cross-origin next page partial even when the current page has a role", async () => {
+    const { company, source } = await htmlFixture();
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<head><link rel="next" href="https://outside.example/jobs?page=2"></head><main><a href="/jobs/one">Operations Manager</a></main>' },
+    } });
+    const result = await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+    expect(result).toMatchObject({ status: "partial", postingsFound: 1 });
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("explicit next page outside this source");
+  });
+  it("keeps a model-extracted listing partial when an external next page is not traversable", async () => {
+    const { company, source } = await htmlFixture();
+    await db.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, title: "Previous role", normalizedTitle: "previous role",
+      url: "https://www.acme.example/previous-role", externalKey: "url:https://www.acme.example/previous-role" });
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<head><link rel="next" href="https://outside.example/listing?page=2"></head><main><article><a href="/opening-2026-1">Operations Manager</a></article></main>' },
+    } });
+    const extractPostings = vi.fn().mockResolvedValue({ postings: [
+      { title: "Operations Manager", url: "https://www.acme.example/opening-2026-1" },
+    ], dropped: 0, recipe: { version: 1, listItem: "article", title: "a", link: "a" } });
+    const modelDeps = { ...deps, browser: null, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    expect(await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 1 });
+    expect(extractPostings).toHaveBeenCalledTimes(1);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("explicit next page outside this source");
+    const [previous] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/previous-role"));
+    expect(previous).toMatchObject({ status: "open", missingScans: 0 });
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
+    expect(current!.recipe).toBeNull();
+  });
+  it("keeps model recovery partial when an expansion control remains unvisited", async () => {
+    const { company, source } = await htmlFixture();
+    const markup = '<main><article><a href="/opening-2026-1">Operations Manager</a></article><button><span>Load more</span></button></main>';
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: markup },
+    } });
+    const extractPostings = vi.fn().mockResolvedValue({ postings: [
+      { title: "Operations Manager", url: "https://www.acme.example/opening-2026-1" },
+    ], dropped: 0, recipe: { version: 1, listItem: "article", title: "a", link: "a" } });
+    const modelDeps = { ...deps, browser: null, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    expect(await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 1 });
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("expansion control but browser rendering is unavailable");
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
+    expect(current!.recipe).toBeNull();
+
+    const render = vi.fn(async () => ({ html: markup, finalUrl: source.url, listingPages: [{ html: markup, url: source.url }],
+      requests: [], status: 200, incomplete: false }));
+    const withBrowser = { ...modelDeps, browser: { render } as unknown as WorkerDeps["browser"] };
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 1 });
+    const [renderedScan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(renderedScan!.error).toContain("final browser capture still has an expansion control");
   });
   it("marks a known visible model omission partial and preserves the omitted role", async () => {
     const { company, source } = await htmlFixture();
@@ -1380,28 +1558,68 @@ it("files role-type and seniority suggestions from the latest scan evidence", as
   expect(await db.select().from(schema.filterSuggestions)).toHaveLength(rows.length);
 }, 120_000);
 
-it("reuses the last browser render while a load-more listing's first page is unchanged", async () => {
+it("refreshes expanded roles when page one is unchanged and preserves roles after a partial render", async () => {
   const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
   const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
-  const page = '<a href="/jobs/one">Operations Manager</a><button>Load more</button>';
+  const page = '<a href="/jobs/one">Operations Manager</a><button><span>Load more</span></button>';
   server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page } } });
-  const render = vi.fn(async () => ({ html: '<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a>', finalUrl: "https://www.acme.example/listing", requests: [], status: 200 }));
-  const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
-  const scan = async () => _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null);
+  const capture = (html: string, incomplete = false) => ({ html, finalUrl: "https://www.acme.example/listing", requests: [], status: 200, incomplete });
+  const render = vi.fn()
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a>'))
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a><a href="/jobs/three">Operations Analyst</a>'))
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/three">Operations Analyst</a>', true))
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/three">Operations Analyst</a>', true));
+  // Force the fetcher's real unchanged-body signal, even though this small fake page would not
+  // normally enter its large-body revalidation cache. Only page one is unchanged.
+  let scanNumber = 0;
+  const fetcher = Object.create(deps.fetcher) as WorkerDeps["fetcher"];
+  fetcher.fetchText = async (url, init) => {
+    const response = await deps.fetcher.fetchText(url, init);
+    return url === source!.url ? { ...response, contentHash: sha1(response.body), unchanged: scanNumber > 1 } : response;
+  };
+  const withBrowser = { ...deps, fetcher, browser: { render } as unknown as WorkerDeps["browser"] };
+  const scan = async () => { scanNumber++; return _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null); };
 
   expect((await scan()).postingsFound).toBe(2);
   expect(render).toHaveBeenCalledTimes(1);
   now = new Date(now.getTime() + 86_400_000);
-  expect((await scan()).postingsFound).toBe(2);
-  expect(render).toHaveBeenCalledTimes(1); // same first page: capture reused, no render
-  server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page.replace("Manager", "Manager (Hybrid)") } } });
+  expect((await scan()).postingsFound).toBe(3);
+  expect(render).toHaveBeenCalledTimes(2); // page one did not change; later capture added a role
+  expect((await db.select().from(schema.jobs)).map(job => job.title)).toContain("Operations Analyst");
   now = new Date(now.getTime() + 86_400_000);
-  await scan();
-  expect(render).toHaveBeenCalledTimes(2); // first page changed: render again
-  now = new Date(now.getTime() + 8 * 86_400_000);
-  await scan();
-  expect(render).toHaveBeenCalledTimes(3); // a week on, refresh regardless
+  expect((await scan()).status).toBe("partial");
+  now = new Date(now.getTime() + 86_400_000);
+  expect((await scan()).status).toBe("partial");
+  expect(render).toHaveBeenCalledTimes(4);
+  const [missingFromPartial] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/two"));
+  expect(missingFromPartial).toMatchObject({ status: "open", missingScans: 0 });
 }, 120_000);
+
+it("renders a nested load-more control and never closes roles when expansion is incomplete", async () => {
+  const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+  const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
+  await db.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id, title: "Existing role", normalizedTitle: "existing role",
+    url: "https://www.acme.example/jobs/old", externalKey: "url:https://www.acme.example/jobs/old" });
+  server.setRoutes({ "www.acme.example": {
+    "/robots.txt": { body: "User-agent: *\nAllow: /" },
+    "/listing": { body: '<main><a href="/jobs/new">Operations Manager</a><button><span>Load more</span></button></main>' },
+  } });
+  const render = vi.fn(async () => ({ html: '<main><a href="/jobs/new">Operations Manager</a></main>',
+    finalUrl: "https://www.acme.example/listing", requests: [], status: 200, incomplete: true }));
+  const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+  for (let i = 0; i < 2; i++) {
+    expect((await _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null)).status).toBe("partial");
+    now = new Date(now.getTime() + 86_400_000);
+  }
+  expect(render).toHaveBeenCalledTimes(2);
+  // The same first page remains partial when browser rendering is unavailable.
+  for (let i = 0; i < 2; i++) {
+    expect((await _scanSourceForTests(deps, company!, source!, await deps.settings(), null)).status).toBe("partial");
+    now = new Date(now.getTime() + 86_400_000);
+  }
+  const [existing] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/old"));
+  expect(existing).toMatchObject({ status: "open", missingScans: 0 });
+}, 60_000);
 
 it("discards a late scan when its source has been disabled", async () => {
   await setGate({});
@@ -1769,12 +1987,9 @@ describe("what a scan asks for and when", () => {
     expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(3);
   }, 120_000);
 
-  it("reuses the listing behind an unchanged large board, and still needs two misses to close", async () => {
-    // A listing over the cache's per-entry limit was re-downloaded and re-parsed every day because
-    // nothing was kept to revalidate it with. The reuse below is only ever the same bytes read
-    // again: an unchanged board lists every role it listed yesterday, so nothing is missing from
-    // it, nothing closes on it that a re-parse would not have closed, and two consecutive
-    // successful misses are still what closes a role.
+  it("refetches an unchanged first feed response when secondary indexes also shape the listing", async () => {
+    // Greenhouse's first response contains identities, but later department/office indexes shape
+    // the posting fields. Its unchanged validator cannot stand for the whole mapped listing.
     await setGate({});
     const filler = (n: number) => ({
       id: 5_000_000 + n, title: `Systems Technician ${n}`, updated_at: "2026-08-01T09:00:00Z",
@@ -1809,22 +2024,21 @@ describe("what a scan asks for and when", () => {
     expect(first.fetchedBytes).toBeGreaterThan(512 * 1024);
     expect(first.revalidated).toBe(0);
 
-    // The next day, with the board untouched.
+    // The next day, with the first response untouched, the worker revalidates it and then obtains
+    // a body to map alongside fresh secondary indexes. No old full-listing snapshot is substituted.
     now = new Date(now.getTime() + 86_400_000);
     expect((await scan()).status).toBe("ok");
     const second = await latestScan(created!.id);
     expect(second.postingsFound).toBe(902);
-    expect(second.requests).toBe(1);
+    expect(second.requests).toBe(4);
     expect(second.revalidated).toBe(1);
-    expect(second.fetchedBytes).toBe(0);
+    expect(second.fetchedBytes).toBeGreaterThan(512 * 1024);
     expect(second.closedCount).toBe(0);
-    const afterReuse = await db.select().from(schema.jobs);
-    expect(afterReuse).toHaveLength(902);
-    // Every stored role was in the reused listing, so none of them even counts as missing.
-    expect(afterReuse.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+    const afterRead = await db.select().from(schema.jobs);
+    expect(afterRead).toHaveLength(902);
+    expect(afterRead.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
 
-    // With nothing to reuse — pruned, unreadable, or written by a scan of some other listing — the
-    // scan asks again without the validators rather than inventing an observation.
+    // A pruned snapshot has the same safe behaviour: ask again without the validators.
     await db.update(schema.scans).set({ rawSnapshot: null }).where(eq(schema.scans.sourceId, created!.id));
     now = new Date(now.getTime() + 86_400_000);
     expect((await scan()).status).toBe("ok");
@@ -1846,18 +2060,47 @@ describe("what a scan asks for and when", () => {
     expect(missedOnce!.status).toBe("open");
     expect(missedOnce!.missingScans).toBe(1);
 
-    // The day after that the board is unchanged again, so this scan is served from the snapshot
-    // the shortened listing wrote. The second miss is a real one and the role closes on it.
+    // The day after that the first response is unchanged again. It is refetched and mapped with
+    // fresh indexes; this second complete miss may close the role.
     now = new Date(now.getTime() + 86_400_000);
     expect((await scan()).status).toBe("ok");
     const fourth = await latestScan(created!.id);
+    expect(fourth.requests).toBe(4);
     expect(fourth.revalidated).toBe(1);
-    expect(fourth.fetchedBytes).toBe(0);
+    expect(fourth.fetchedBytes).toBeGreaterThan(512 * 1024);
     expect(fourth.closedCount).toBe(1);
     const [closed] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
     expect(closed!.status).toBe("closed");
     expect(closed!.closedAt).toBeInstanceOf(Date);
   }, 180_000);
+
+  it("reuses a complete single-response Ashby snapshot when that response is unchanged", async () => {
+    const apiUrl = "https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true";
+    const body = { jobs: [
+      { id: "role-1", title: "Operations Lead", jobUrl: "https://jobs.ashbyhq.com/acme/role-1", isListed: true },
+      { id: "role-2", title: "Operations Analyst", jobUrl: "https://jobs.ashbyhq.com/acme/role-2", isListed: true },
+    ] };
+    server.setRoutes({ "api.ashbyhq.com": { "/posting-api/job-board/acme?includeCompensation=true": { body } } });
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "ashby", url: "https://jobs.ashbyhq.com/acme", apiUrl, atsSlug: "acme", status: "active" }).returning();
+    let scanNumber = 0;
+    const fetcher = Object.create(deps.fetcher) as WorkerDeps["fetcher"];
+    fetcher.fetchText = async (url, init) => {
+      const response = await deps.fetcher.fetchText(url, init);
+      if (url !== apiUrl) return response;
+      return scanNumber > 1
+        ? { ...response, body: "", contentHash: sha1(response.body), unchanged: true, revalidated: true }
+        : { ...response, contentHash: sha1(response.body) };
+    };
+    const withFetcher = { ...deps, fetcher };
+    const scan = async () => { scanNumber++; return _scanSourceForTests(withFetcher, company!, source!, await deps.settings(), null); };
+    expect((await scan()).postingsFound).toBe(2);
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("ok");
+    const reused = await latestScan(source!.id);
+    expect(reused).toMatchObject({ postingsFound: 2, requests: 1, revalidated: 1, fetchedBytes: 0 });
+    expect((await db.select().from(schema.jobs)).every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+  }, 60_000);
 
   it("rewrites no job row on an unchanged board, and only the row that moved when one does", async () => {
     await setGate({});

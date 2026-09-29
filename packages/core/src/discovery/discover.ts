@@ -357,15 +357,33 @@ function isExplicitCompleteListingLink(link: HarvestedLink, pageUrl: string, ctx
   }
 }
 
+/** The probe's original company URL, carried through landing and complete-listing hops. */
+function crossedDomainFromProbe(via: string | undefined, pageUrl: string): boolean {
+  const source = via?.match(/\bprobe_(?:path|subdomain|original) (https?:\/\/\S+)/)?.[1];
+  return Boolean(source && !sameDomain(source, pageUrl));
+}
+
+/** Spend the next hop on a site's stated full listing before equally scored team or culture pages. */
+function rankedOnwardLinks(links: HarvestedLink[], pageUrl: string, ctx: DiscoveryContext): Array<{ link: HarvestedLink; score: number }> {
+  const ranked = rankLinks(links, pageUrl, ctx, link => normalizeUrl(link.href) !== normalizeUrl(pageUrl), 0.5);
+  const complete = ranked.filter(({ link }) => isExplicitCompleteListingLink(link, pageUrl, ctx));
+  const others = ranked.filter(({ link }) => !isExplicitCompleteListingLink(link, pageUrl, ctx));
+  const seen = new Set<string>();
+  return [...complete, ...others].filter(({ link }) => {
+    const key = normalizeUrl(link.href);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 4);
+}
+
 /** Look for ATS references in a page's text, its links, and (optionally) its network requests. */
 function collectAtsFromPage(run: Run, ctx: DiscoveryContext, html: string, pageUrl: string, links: HarvestedLink[], via?: string): void {
   const evidenceSuffix = via ? [`via ${via}`] : [];
   // A sitemap URL can redirect through external recruitment infrastructure. That is useful as a
   // candidate, but weaker than an ATS slug linked from a page reached through first-party
   // navigation: sitemaps can contain stale or syndicated job URLs.
-  const landingSource = via?.match(/^landing\s+(\S+)/)?.[1];
-  const probeRedirectedOffDomain = Boolean(via?.includes("probe_") && landingSource && !sameDomain(pageUrl, landingSource));
-  const weakMethod = via === "sitemap" ? "ats_sitemap" : probeRedirectedOffDomain ? "ats_probe" : undefined;
+  const weakMethod = via === "sitemap" ? "ats_sitemap" : crossedDomainFromProbe(via, pageUrl) ? "ats_probe" : undefined;
   const linkMethod = weakMethod ?? "ats_link";
   const textMethod = weakMethod ?? "ats_script";
   for (const link of links) {
@@ -399,11 +417,21 @@ async function renderAndScan(run: Run, ctx: DiscoveryContext, url: string, via?:
   run.say(`rendered ${url} (${requests.length} requests)`);
   for (const request of requests) {
     const spec = ctx.resolveSpec(request);
-    if (spec) run.add({ spec, method: "ats_network", evidence: [`network request from ${url}: ${request}`, ...(via ? [`via ${via}`] : [])] });
+    if (spec) run.add({ spec, method: crossedDomainFromProbe(via, page.url) ? "ats_probe" : "ats_network",
+      evidence: [`network request from ${page.url}: ${request}`, ...(via ? [`via ${via}`] : []),
+        ...(crossedDomainFromProbe(via, page.url) ? ["probe redirected outside the company's domain"] : [])] });
   }
   const links = harvestLinks(page.html, page.url);
   collectAtsFromPage(run, ctx, page.html, page.url, links, via);
   return page;
+}
+
+function addExplicitEmptyCandidate(run: Run, url: string, via: string | undefined, rendered: boolean): void {
+  const crossed = crossedDomainFromProbe(via, url);
+  run.addPage(url, crossed ? "landing" : "listing_empty",
+    [`explicit no-openings state on ${rendered ? "rendered " : ""}${url}`,
+      ...(via ? [`via ${via}`] : []),
+      ...(crossed ? ["probe redirected outside the company's domain; empty state requires confirmation"] : [])], []);
 }
 
 /** Inspect one candidate page: is it a listing, a landing page, or neither? */
@@ -430,7 +458,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
   let postings = safeExtract(ctx, html, finalUrl);
   if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
     run.say(`${finalUrl} is an explicitly empty listing`);
-    run.addPage(finalUrl, "listing_empty", [`explicit no-openings state on ${finalUrl}`], []);
+    addExplicitEmptyCandidate(run, finalUrl, via, false);
     return;
   }
   if (postings.length < 3 && ctx.render && shouldRenderCandidate(html, finalUrl, via)) {
@@ -442,7 +470,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       postings = safeExtract(ctx, html, finalUrl);
       if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
         run.say(`${finalUrl} is an explicitly empty listing after rendering`);
-        run.addPage(finalUrl, "listing_empty", [`explicit no-openings state on rendered ${finalUrl}`], []);
+        addExplicitEmptyCandidate(run, finalUrl, via, true);
         return;
       }
     }
@@ -458,7 +486,8 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
     const [complete] = rankLinks(links, finalUrl, ctx, (link) => isExplicitCompleteListingLink(link, finalUrl, ctx));
     if (complete) {
       run.say(`${finalUrl} has featured roles; ${depth > 0 ? "checking" : "cannot check"} complete listing ${complete.link.href}`);
-      if (depth > 0) await inspectPage(run, ctx, complete.link.href, depth - 1, `complete listing from ${finalUrl}`);
+      if (depth > 0) await inspectPage(run, ctx, complete.link.href, depth - 1,
+        `complete listing from ${finalUrl}${via ? ` via ${via}` : ""}`);
       // The page's own wording says these cards are a subset. It remains a confirmation fallback
       // even when following the declared full listing fails or produces an ATS candidate that is
       // later rejected during verification; a verified full-page candidate naturally outranks it.
@@ -478,7 +507,8 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       run.addPage(finalUrl, "landing", [...evidence, `${dominantAts.count} of ${postings.length} posting links point to the same ${dominantAts.spec.type} board`], postings);
       return;
     }
-    run.addPage(finalUrl, method, evidence, postings);
+    run.addPage(finalUrl, crossedDomainFromProbe(via, finalUrl) ? "landing" : method,
+      crossedDomainFromProbe(via, finalUrl) ? [...evidence, "probe redirected outside the company's domain"] : evidence, postings);
     return;
   }
 
@@ -486,13 +516,16 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
   let looksLikeLanding = false;
 
   if (depth > 0) {
-    const onward = rankLinks(links, finalUrl, ctx, (link) => normalizeUrl(link.href) !== normalizeUrl(finalUrl), 0.5).slice(0, 4);
+    const onward = rankedOnwardLinks(links, finalUrl, ctx);
     if (onward.length > 0) {
       looksLikeLanding = true;
       run.say(`${finalUrl} looks like a landing page; following ${onward.length} link(s)`);
       for (const { link } of onward) {
         if (ctx.resolveSpec(link.href)) continue; // already captured as an ATS candidate
-        await inspectPage(run, ctx, link.href, depth - 1, `landing ${finalUrl}${via ? ` via ${via}` : ""}`);
+        await inspectPage(run, ctx, link.href, depth - 1,
+          isExplicitCompleteListingLink(link, finalUrl, ctx)
+            ? `complete listing from ${finalUrl}${via ? ` via ${via}` : ""}`
+            : `landing ${finalUrl}${via ? ` via ${via}` : ""}`);
       }
       if (run.candidates.size > candidatesBeforeHops) return;
     }
@@ -520,7 +553,12 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
     }
   }
 
-  if (looksLikeLanding && run.candidates.size === candidatesBeforeHops) {
+  // The site's own full-listing link is useful for human review even when its client-driven
+  // rows could not be verified. Keep the link's provenance and landing confidence; the link
+  // alone is never evidence for automatic acceptance.
+  if (via?.startsWith("complete listing from ") && run.candidates.size === candidatesBeforeHops) {
+    run.addPage(finalUrl, "landing", [`explicit complete-listing link ${via}; no postings verified`]);
+  } else if (looksLikeLanding && run.candidates.size === candidatesBeforeHops) {
     run.addPage(finalUrl, "landing", [`careers landing page, no listing within one hop`]);
   }
 }
@@ -747,10 +785,6 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
       await visit(link.href, "homepage link (off-domain)");
       if (await run.hasResolvableCandidate()) break;
     }
-    // Bundles are a comparatively expensive fallback on modern sites. Inspect the explicit
-    // careers links first so a page that directly exposes its board is not starved by a row of
-    // framework chunks under the same request and time budgets.
-    if (!(await run.hasResolvableCandidate())) await scanBundles(run, ctx, links, home.url);
   } else {
     run.say(`could not fetch the homepage ${normalized}; probing careers paths, subdomains, sitemaps and ATS boards directly`);
   }
@@ -781,7 +815,16 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
 
   if (!(await run.hasResolvableCandidate())) {
     const origin = new URL(baseUrl).origin;
+    const original = new URL(normalized);
+    const redirected = new URL(baseUrl);
+    // A public homepage may redirect to a product app on another subdomain. Keep the submitted
+    // company's own origin in the probe set; its /jobs path may point to the careers site even
+    // when the app's rendered homepage has no careers navigation at all.
+    const originalOrigin = original.hostname.replace(/^www\./, "") !== redirected.hostname.replace(/^www\./, "")
+      && sameDomain(original.origin, redirected.origin)
+      ? original.origin : null;
     const priorityProbes = [
+      ...(originalOrigin ? [`${originalOrigin}/careers`, `${originalOrigin}/jobs`] : []),
       `${origin}/careers`, `https://careers.${domain}/`,
       `${origin}/jobs`, `https://jobs.${domain}/`,
       `${origin}/join-us`, `https://join.${domain}/`,
@@ -801,7 +844,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
         run.say(`${misses} probes in a row found nothing; stopping path probes`);
         break;
       }
-      await visit(url, new URL(url).origin === origin ? "probe_path" : "probe_subdomain");
+      await visit(url, `${new URL(url).origin === origin ? "probe_path" : originalOrigin && new URL(url).origin === originalOrigin ? "probe_original" : "probe_subdomain"} ${url}`);
       if (run.isMissing(url)) misses++;
       else if (run.statusOf(url) !== undefined) misses = 0;
     }
@@ -810,6 +853,13 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   if (!(await run.hasResolvableCandidate()) && run.budgetLeft()) {
     const origin = new URL(baseUrl).origin;
     for (const url of await scanSitemaps(run, ctx, origin)) await visit(url, "sitemap");
+  }
+
+  // A homepage can expose eight framework bundles before its own careers path is checked. Under
+  // the production fetch cap that spends half the crawl on opaque assets, so inspect explicit
+  // navigation, bounded paths and sitemaps first; bundles remain a fallback for hidden ATS URLs.
+  if (home && !(await run.hasResolvableCandidate()) && run.budgetLeft()) {
+    await scanBundles(run, ctx, links, home.url);
   }
 
   if (!(await run.hasResolvableCandidate()) && home && ctx.ai?.chooseCareersLinks && run.budgetLeft()) {

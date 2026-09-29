@@ -1,0 +1,48 @@
+{
+  "capturedAt": "2026-09-29T14:15:33.455152+00:00",
+  "method": "Independent unauthenticated first-party Eightfold API GET; metadata only; no AVA adapter or model involved",
+  "checks": [
+    {
+      "url": "https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com&start=0&num=100",
+      "status": 200,
+      "rawSha256": "a0ac5f52b94c036951f2262da9cdc6ae90d6ffb1fb547238e3c747d9db5a66bc",
+      "requestedNum": 100,
+      "start": 0,
+      "reportedCount": 475,
+      "positionsReturned": 10,
+      "positionIds": [
+        "790318592572",
+        "790318582740",
+        "790318484737",
+        "790318463791",
+        "790318444762",
+        "790318169445",
+        "790317752468",
+        "790317664425",
+        "790317114067",
+        "790316464180"
+      ]
+    },
+    {
+      "url": "https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com&start=10&num=100",
+      "status": 200,
+      "rawSha256": "2c4af274e387ea0b2d5827e4f414a67074e197f725fad0e45859c6d6537d9c3f",
+      "requestedNum": 100,
+      "start": 10,
+      "reportedCount": 475,
+      "positionsReturned": 10,
+      "positionIds": [
+        "790316279087",
+        "790316283146",
+        "790298014263",
+        "790318676145",
+        "790317912743",
+        "790318648433",
+        "790318653296",
+        "790318596466",
+        "790318652466",
+        "790318618279"
+      ]
+    }
+  ]
+}

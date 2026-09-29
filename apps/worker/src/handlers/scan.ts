@@ -283,14 +283,17 @@ async function scanSource(
   const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
     // Only the first request of a scan is the listing itself; a description, a departments index or
     // a second listing page says nothing about whether the board as a whole moved, so only this one
-    // asks to be revalidated and only this one may be answered from the last snapshot.
+    // asks to be revalidated. HTML never reuses the full listing from this first-page signal.
     const isListing = requests === 0;
     spend();
     let response = await baseCtx.fetchText(url, isListing ? { ...init, revalidateLargeBody: true } : init);
     count(response);
     if (isListing) listingHash = response.contentHash;
     if (isListing && response.unchanged) {
-      const stored = await lastOkSnapshot();
+      // Reuse the whole listing only when the adapter explicitly proves that its first response
+      // contains every posting and mapped field. A paged feed's first page says nothing about later
+      // pages, even if its bytes are identical to yesterday's.
+      const stored = ats.getAdapter(source.type).completeFromFirstResponse ? await lastOkSnapshot() : null;
       if (stored && stored.postings.length > 0 && stored.listingHash && stored.listingHash === response.contentHash) throw new ListingUnchanged(stored);
       // Nothing to reuse: a 304 left no body, so ask again without the validators.
       if (!response.body) {
@@ -1039,7 +1042,7 @@ interface CachedHtmlPage {
   postings: RawPosting[];
   /** Hash of the page as plain HTTP served it, before any browser render. */
   httpHash?: string;
-  /** When a browser last rendered this page; a reused capture carries it forward. */
+  /** When a browser rendered this page, kept with the snapshot for provenance. */
   renderedAt?: string;
 }
 
@@ -1058,6 +1061,7 @@ interface HtmlScanOutcome {
   incomplete?: boolean;
   incompleteReason?: string;
   traversed?: boolean;
+  nextPageUrl?: string;
 }
 
 /**
@@ -1088,7 +1092,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
       pages.push({ url, contentHash: page.contentHash, postings: page.postings, httpHash: page.httpHash, renderedAt: page.renderedAt });
       incomplete ||= page.incomplete ?? false;
       incompleteReason ??= page.incompleteReason;
-      url = page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
+      url = page.nextPageUrl ?? (page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url));
       if (pages.reduce((n, p) => n + p.postings.length, 0) >= 500 && url) { incomplete = true; break; }
     } catch (error) {
       if (pages.length === 0) throw error;
@@ -1116,19 +1120,10 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
 
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
   const httpHash = supplied ? undefined : sha1(html.replace(/\s+/g, " "));
-  const wantsRender = !supplied && ctx.render && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)));
-  // A server-rendered list with a "load more" control was rendered every scan
-  // to reach the rest of it. When the first page is byte-identical to the one
-  // behind the last render, the rest has not moved either: reuse that capture
-  // and skip the browser, but never for more than a week, and never for a
-  // JavaScript shell (zero postings over HTTP), whose static markup says
-  // nothing about what the board lists today.
-  const RENDER_TTL_MS = 7 * 86_400_000;
-  if (wantsRender && postings.length > 0 && cached?.httpHash && cached.httpHash === httpHash && cached.renderedAt && cached.postings.length >= postings.length
-      && deps.now().getTime() - new Date(cached.renderedAt).getTime() < RENDER_TTL_MS) {
-    log.debug("reusing last render: first page unchanged", { url: spec.url, renderedAt: cached.renderedAt });
-    return { postings: cached.postings, method: "http", dropped: 0, contentHash: cached.contentHash, unchanged: true, html, finalUrl, httpHash, renderedAt: cached.renderedAt };
-  }
+  const expansionPending = !supplied && !ats.nextListingPage(html, finalUrl) && ats.hasListingExpansionControl(html, finalUrl);
+  const wantsRender = !supplied && ctx.render && (postings.length === 0 || expansionPending);
+  // The first HTTP page cannot prove that later browser-expanded pages are unchanged. Render
+  // every scan that needs expansion; a cached full listing could miss a new role for days.
   if (wantsRender) {
     // Through the scan's context, not the browser directly, so a render counts as a request and
     // its bytes against this scan like any other fetch.
@@ -1141,18 +1136,49 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     const outcomes: HtmlScanOutcome[] = [];
     let incomplete = rendered.incomplete ?? false;
     let incompleteReason = incomplete ? BROWSER_PAGINATION_INCOMPLETE : undefined;
-    for (const capture of captures) {
+    // Browser controls may not expose a document-head rel=next link to the renderer. Keep
+    // explicit HTTP and rendered next links, then resume the ordinary page traversal from the
+    // first page the browser has not already captured. A later capture may itself point onward.
+    const capturedUrls = new Set([finalUrl, ...captures.map(capture => capture.url)].map(url => new URL(url).href));
+    const nextPageUrl = [{ html, url: finalUrl }, ...captures]
+      .map(page => ats.nextListingPage(page.html, page.url))
+      .find(next => next !== null && !capturedUrls.has(new URL(next).href)) ?? undefined;
+    if ([{ html, url: finalUrl }, ...captures].some(page => ats.hasUnfollowableListingContinuation(page.html, page.url))) {
+      incomplete = true;
+      incompleteReason ??= "Listing has an explicit next page outside this source; the remaining roles could not be verified.";
+    }
+    for (const [index, capture] of captures.entries()) {
       try {
         const outcome = await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture);
+        // A later empty capture cannot prove that the previously seen roles were the whole
+        // listing. A sole explicit empty state is different: it is verified by the HTML helper.
+        if (outcome.postings.length === 0 && captures.length > 1 && (outcomes.length > 0 || index < captures.length - 1)) {
+          incomplete = true;
+          incompleteReason ??= "A browser listing capture was empty after or before a populated capture; this scan cannot close roles.";
+        }
         outcomes.push(outcome);
         incomplete ||= outcome.incomplete ?? false;
         incompleteReason ??= outcome.incompleteReason;
       }
-      catch (error) { if (!outcomes.length) throw error; incomplete = true; }
+      catch (error) {
+        // Some renderers capture a JavaScript shell before the client populates it. Continue only
+        // when another capture may establish real postings or an explicit empty listing. Never
+        // treat an unverified shell alone, or one after confirmed postings, as a complete scan.
+        if (!outcomes.length && index < captures.length - 1 && error instanceof SourceFetchError && error.kind === "parse") continue;
+        if (!outcomes.length) throw error;
+        incomplete = true;
+        incompleteReason ??= `Browser listing capture ${index + 1} could not be verified: ${(error as Error).message}`.slice(0, 1000);
+      }
+    }
+    const lastCapture = captures.at(-1)!;
+    if (!ats.nextListingPage(lastCapture.html, lastCapture.url)
+        && ats.hasListingExpansionControl(lastCapture.html, lastCapture.url)) {
+      incomplete = true;
+      incompleteReason ??= "The final browser capture still has an expansion control; the remaining roles could not be verified.";
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
       contentHash: capturesHash(captures), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
-      incompleteReason: incomplete ? incompleteReason ?? BROWSER_PAGINATION_INCOMPLETE : undefined, traversed: true };
+      incompleteReason: incomplete ? incompleteReason ?? BROWSER_PAGINATION_INCOMPLETE : undefined, traversed: true, nextPageUrl };
 
   }
 
@@ -1160,9 +1186,15 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   const unchanged = contentHash === cached?.contentHash;
 
   if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
-  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
+  const unfollowableContinuation = ats.hasUnfollowableListingContinuation(html, finalUrl);
+  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash,
+    incomplete: expansionPending || unfollowableContinuation,
+    incompleteReason: expansionPending ? "Listing has an expansion control but browser rendering is unavailable; this scan cannot close roles."
+      : unfollowableContinuation ? "Listing has an explicit next page outside this source; the remaining roles could not be verified." : undefined };
   if (ats.isExplicitEmptyListing(html, finalUrl)) {
-    return { postings: [], method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
+    return { postings: [], method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash,
+      incomplete: unfollowableContinuation,
+      incompleteReason: unfollowableContinuation ? "Listing has an explicit next page outside this source; the remaining roles could not be verified." : undefined };
   }
   if (unchanged || !deps.ai.enabled) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
@@ -1187,12 +1219,16 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     const url = normalisePostingUrl(posting.url);
     return visibleUrls.has(url) && !modelUrls.has(url);
   });
-  const incomplete = compact.truncated || omittedVisiblePrevious.length > 0;
+  const incomplete = compact.truncated || omittedVisiblePrevious.length > 0 || expansionPending || unfollowableContinuation;
   const incompleteReason = compact.truncated
     ? "Model extraction used a truncated listing representation; this scan cannot prove the complete set of postings."
     : omittedVisiblePrevious.length > 0
       ? `Model extraction omitted ${omittedVisiblePrevious.length} previously observed posting URL(s) still visible on the listing; this scan cannot close roles.`
-      : undefined;
+      : expansionPending
+        ? "Listing has an expansion control but browser rendering is unavailable; this scan cannot close roles."
+        : unfollowableContinuation
+          ? "Listing has an explicit next page outside this source; the remaining roles could not be verified."
+          : undefined;
 
   let recipe: HtmlRecipe | undefined;
   if (extraction.recipe && !incomplete) {

@@ -1,5 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { validateReferenceSnapshot, type ReferencePostingSnapshot } from "./live-acceptance-postings";
 import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
 import { resolveLiveAcceptanceConcurrency, runLiveAcceptanceCase, summariseLiveAcceptance, liveAcceptanceVerdict, type LiveAcceptanceResult } from "./live-acceptance";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
@@ -33,6 +35,25 @@ async function main() {
   if (!selected.length) throw new Error("no manifest cases selected");
   const unknown = ids?.filter(id => !LIVE_ACCEPTANCE_CASES.some(item => item.id === id)) ?? [];
   if (unknown.length) throw new Error(`unknown case id(s): ${unknown.join(", ")}`);
+
+  const references = new Map<string, ReferencePostingSnapshot>();
+  const referencePath = valueAfter(args, "--posting-references");
+  if (args.includes("--posting-references") && !referencePath) throw new Error("--posting-references requires a JSON path");
+  if (referencePath) {
+    const path = resolve(referencePath);
+    const document = JSON.parse(await readFile(path, "utf8")) as { snapshots?: unknown };
+    if (!Array.isArray(document.snapshots)) throw new Error("Posting references must contain a snapshots array");
+    for (const value of document.snapshots) {
+      const snapshot = validateReferenceSnapshot(value);
+      if (references.has(snapshot.caseId)) throw new Error(`Duplicate posting reference: ${snapshot.caseId}`);
+      if (!LIVE_ACCEPTANCE_CASES.some(item => item.id === snapshot.caseId)) throw new Error(`Unknown posting reference: ${snapshot.caseId}`);
+      if (snapshot.rawPath) {
+        const raw = await readFile(resolve(dirname(path), snapshot.rawPath));
+        if (createHash("sha256").update(raw).digest("hex") !== snapshot.rawSha256) throw new Error(`Posting reference raw hash mismatch: ${snapshot.caseId}`);
+      }
+      references.set(snapshot.caseId, snapshot);
+    }
+  }
 
   const results: LiveAcceptanceResult[] = [];
   const fetcher = new PoliteFetcher({
@@ -68,7 +89,7 @@ async function main() {
         chooseCareersLinks: async (input: Parameters<typeof ai.chooseCareersLinks>[0]) => (await ai.chooseCareersLinks(input, { refType: "live_acceptance_case", refId: item.id })) ?? [],
         classifyPage: async (input: Parameters<typeof ai.classifyPage>[0]) => (await ai.classifyPage(input, { refType: "live_acceptance_case", refId: item.id })) ?? { kind: "other" as const, confidence: 0 },
       } : undefined;
-      const result = await runLiveAcceptanceCase(item, { discoveryOnly, fetcher, browser, ai: hooks });
+      const result = await runLiveAcceptanceCase(item, { discoveryOnly, fetcher, browser, ai: hooks, reference: references.get(item.id), referenceRawHashVerified: Boolean(references.get(item.id)?.rawPath) });
       results[index] = result;
     }
   });
@@ -78,9 +99,9 @@ async function main() {
     await browser?.close();
   }
   const metrics = summariseLiveAcceptance(selected, results);
-  const acceptance = liveAcceptanceVerdict(selected, metrics);
+  const acceptance = liveAcceptanceVerdict(selected, metrics, LIVE_ACCEPTANCE_CASES.map(item => item.id));
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     mode: discoveryOnly ? "discovery_only" : "discovery_and_extraction",
     concurrency: {
@@ -102,10 +123,15 @@ async function main() {
     } : { enabled: false, skipCode: "ai_not_requested", calls: [] },
     limitations: [
       "This is a live observation, so role counts and pages can change during the run.",
+      "Extraction starts from each labelled source, independently of discovery. Completion is not an end-to-end success or posting-recall claim.",
+      "HTML diagnostics traverse HTTP/browser listings and reject unverified empty results; they do not exercise the worker cache, learned recipes or AI extraction recovery.",
+      "Machine-enumerated posting references produce diagnostic comparisons only; they do not qualify human-reviewed full-site recall/precision.",
       "A null metric means the required independent label does not exist; it is not a pass.",
       `${browserEnabled ? "Production BrowserRenderer fallback is enabled" : "Browser fallback is disabled"}; ${aiEnabled ? "production A1/A2 AI fallback is enabled under the reported process-local cap" : "AI fallback is disabled"}; no database or account data is read or written.`,
       aiEnabled ? "AI costs are computed from provider-reported token usage and checked repository pricing; they are not an invoice or provider-side spending limit." : "No paid model request is made without --ai and an explicit --ai-max-usd cap.",
     ],
+    scope: { selectedCaseIds: selected.map(item => item.id), requiredCaseIds: LIVE_ACCEPTANCE_CASES.map(item => item.id), fullCorpusSelected: selected.length === LIVE_ACCEPTANCE_CASES.length },
+    postingReferences: referencePath ? { path: referencePath, snapshots: [...references.values()] } : null,
     acceptance,
     metrics,
     cases: selected.map(item => ({ manifest: item, result: results.find(result => result.id === item.id) })),

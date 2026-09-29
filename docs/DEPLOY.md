@@ -445,9 +445,19 @@ job holds them to the registry (`scripts/check-evaluation-reports.ts`):
   run graded the shipped prompts. No live run can happen in CI, so by default this is a warning
   (the job still passes, and its log says `warning: Every committed report at the shipped prompt
   set … is marked unverified`). With `AVA_EVAL_GATE_REQUIRE_VERIFIED` set to anything but empty,
-  `0` or `false`, it is a failure: set it where a release must be vouched for by a live run, for
-  example `AVA_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts`
-  before promoting a prompt change. The pull-request CI job does not set it.
+  `0` or `false`, it is a failure. The Release workflow now runs
+  `AVA_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts` on the exact
+  commit whose main-branch CI passed; both web and worker identity checks depend on that job. It
+  requires a published, passing, verified CV replay at the shipped prompt set, and the newest replay
+  must be verified so the evaluated routes cannot point at a newer fixture. The current committed
+  replay is marked unverified, so release qualification remains red until a live report is
+  reviewed and committed. The pull-request CI job still permits an explicitly unverified fixture
+  while checking prompt identity and replay health.
+
+This workflow verifies external web and worker deployments after main-branch CI. It does not
+control Vercel or Render auto-deploy; a provider may deploy the commit before qualification runs.
+Preventing delivery of an unqualified commit requires provider-side promotion or deployment
+protection configured and verified separately.
 
 `docs/evaluations/cv-replay/report.json` is that report. It is written by the replay command:
 

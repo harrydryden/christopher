@@ -15,6 +15,8 @@ const KIND_LABELS: Record<HealthItemKind, string> = {
   no_source: "no source",
   blocked: "blocked",
   failing: "failing",
+  suspect_empty: "empty scan",
+  partial: "partial scan",
   rediscovery: "proposal",
 };
 const KIND_TONES: Record<HealthItemKind, Tone> = {
@@ -23,6 +25,8 @@ const KIND_TONES: Record<HealthItemKind, Tone> = {
   no_source: "red",
   blocked: "red",
   failing: "amber",
+  suspect_empty: "amber",
+  partial: "amber",
   rediscovery: "blue",
 };
 
@@ -114,7 +118,7 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
             <Button type="submit" size="sm">Use this source</Button>
           </form>
         )}
-        {company && (item.kind === "failing" || item.kind === "blocked" || item.kind === "no_source") && (
+        {company && (item.kind === "failing" || item.kind === "blocked" || item.kind === "no_source" || item.kind === "suspect_empty" || item.kind === "partial") && (
           <form action={rediscoverCompany.bind(null, company.id)}>
             <Button type="submit" size="sm" disabled={unverified} title={verifyTitle}>Re-discover</Button>
           </form>
@@ -131,7 +135,7 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
         )}
       </div>
 
-      {company && (item.kind === "needs_confirmation" || item.kind === "no_source") && (
+      {company && (item.kind === "needs_confirmation" || item.kind === "no_source" || item.kind === "suspect_empty" || item.kind === "partial") && (
         <PasteUrl companyId={company.id} unverified={unverified} />
       )}
     </li>

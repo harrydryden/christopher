@@ -1,6 +1,7 @@
 import { Card } from "@/components/Card";
 import { Checkbox } from "@/components/Field";
 import { LibraryImportForm } from "@/components/LibraryImportForm";
+import { LibraryImportReading } from "@/components/LibraryImportReading";
 import { acceptLibraryImport, dismissLibraryImport, retryLibraryImport } from "@/app/actions/library-import";
 import { proposedDates, type LibraryImportView } from "@/lib/library-import";
 
@@ -20,30 +21,9 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
     <div className="grid gap-5">
       {imports.map(view => (
         <Card key={view.id} title={view.headline}>
-          {view.state === "reading" && !view.stalled && (
-            <p role="status" className="text-14 text-muted">
-              Reading your document (a minute or two)…
-            </p>
-          )}
-
-          {/* Long past the point where anything could still be running. Nothing but the handler
-              ever moves this row on, so the card stops implying one is coming and offers the way
-              out — without which the document sits here for ever and its own fingerprint refuses
-              the same upload again. */}
-          {view.state === "reading" && view.stalled && (
-            <div className="grid gap-3">
-              <p role="status" className="text-14 text-warn">
-                This is taking longer than usual. Dismiss it to import it again.
-              </p>
-              <LibraryImportForm
-                action={dismissLibraryImport.bind(null, view.id)}
-                submitLabel="Dismiss"
-                pendingLabel="Dismissing…"
-                className="contents"
-                variant="ghost"
-              />
-            </div>
-          )}
+          {/* The deadline is local to this card: it changes after fifteen minutes even when the
+              worker never writes a row and the ten-minute signature poll has stopped. */}
+          {view.state === "reading" && <LibraryImportReading id={view.id} createdAtMs={view.createdAt.getTime()} initialStalled={view.stalled} />}
 
           {view.state === "failed" && (
             <div className="grid gap-3">

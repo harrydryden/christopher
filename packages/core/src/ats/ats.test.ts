@@ -578,6 +578,27 @@ describe("HTML extraction", () => {
       "Benefits Lead", "Feed Engineer", "Position with identifier",
     ]);
   });
+  it("rejects help, policy and abuse-report links without excluding similarly named professions", () => {
+    // Reduced from live Automattic, Siemens and Zapier pages on 29 September 2026.
+    const html = `<main>
+      <a href="https://wordpress.com/abuse/?report_url=https%3A%2F%2Fautomattic.com%2Fwork-with-us%2Fjobs%2F">Report this content</a>
+      <a href="https://wordpress.com/abuse/?report_url=https%3A%2F%2Fautomattic.com%2Fwork-with-us%2Fjobs%2F">Site Reliability Engineer</a>
+      <a href="https://www.siemens.com/global/en/company/jobs/faq.html">FAQs &amp; Support</a>
+      <a href="https://www.siemens.com/global/en/company/jobs/accommodation-for-disability.html">Review Accommodations for Disability</a>
+      <a href="https://zapier.com/jobs/working-on-diversity-and-inclusivity">DIBE is part of our DNA</a>
+      <a href="https://zapier.com/jobs/zapier-code-of-conduct">code of conduct</a>
+      <a href="https://zapier.com/jobs/our-commitment-to-applicants">Our commitment to applicants</a>
+      <a href="/jobs/support-engineer">Support Engineer</a>
+      <a href="/careers/accessibility-engineer">Accessibility Engineer</a>
+      <a href="/jobs/compliance-policy-officer">Compliance/Policy Officer</a>
+      <a href="https://career5.successfactors.eu/sfcareer/jobreqcareer?jobId=123">Policy Officer</a>
+      <a href="/jobs/detail?reqId=456">Support Engineer II</a>
+    </main>`;
+    const pageUrl = "https://acme.example/careers/";
+    const expected = ["Support Engineer", "Accessibility Engineer", "Compliance/Policy Officer", "Policy Officer", "Support Engineer II"];
+    expect(findJobLinks(html, pageUrl).map(link => link.text)).toEqual(expected);
+    expect(extractPostingsFromHtml(html, pageUrl).map(posting => posting.title)).toEqual(expected);
+  });
   it("excludes global header navigation while preserving a role link in an article header", () => {
     const html = `<header><a href="/careers/company-overview/">Company overview</a></header>
       <article class="opening-card"><header><a href="/jobs/123">Engineer</a></header></article>`;

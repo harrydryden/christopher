@@ -50,7 +50,12 @@ export async function saveCatalogueCompany(companyId: string, _previous: ActionR
     await tx.update(companies)
       .set({ homepageUrl, domain, ...(changed ? { faviconUrl: null } : {}), ...(name ? { name } : {}) })
       .where(eq(companies.id, id));
-    if (changed) await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl }, tx);
+    if (changed) {
+      await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl }, tx);
+      // A running discovery may still hold the former homepage. Its completion fence refuses
+      // that result; this queued follow-up checks the corrected one after it has finished.
+      await enqueue("discover", { companyId: id, homepageUrl, reason: "manual" }, tx);
+    }
   });
   revalidateCatalogue(id);
   return { ok: true };

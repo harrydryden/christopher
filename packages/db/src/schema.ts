@@ -905,7 +905,8 @@ export const applications = pgTable("applications", {
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
   jobTitle: text("job_title").notNull(),
   companyName: text("company_name").notNull(),
-  appliedOn: text("applied_on").notNull(),
+  /** Only a known submission has this date; later status updates need not invent one. */
+  appliedOn: text("applied_on"),
   /** Null when the stage was set from the roles table and no CV was submitted through us. */
   pdfBase64: text("pdf_base64"),
   status: text("status", { enum: APPLICATION_STATUSES }).notNull().default("applied"),

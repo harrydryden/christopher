@@ -127,6 +127,16 @@ async function discoverCompany(task: Task, deps: WorkerDeps, runCtx?: RunContext
 async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$inferSelect, runId: string, result: DiscoveryResult): Promise<unknown> {
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as Db);
+  // Discovery can spend minutes on the network. An administrator may correct this shared
+  // company's homepage meanwhile; a result found on the old site must never become its source.
+  const [current] = await tx.select({ homepageUrl: schema.companies.homepageUrl }).from(schema.companies)
+    .where(eq(schema.companies.id, company.id)).for("update").limit(1);
+  if (!current || current.homepageUrl !== company.homepageUrl) {
+    await tx.update(schema.discoveryRuns)
+      .set({ status: "failed", finishedAt: deps.now(), error: "Company homepage changed during discovery; the new homepage will be checked separately" })
+      .where(eq(schema.discoveryRuns.id, runId));
+    return { skipped: "homepage changed" };
+  }
   // Replace a placeholder name (the raw domain or its label) with the first real one we learn,
   // from the homepage title or the verified careers feed. A name the site gave us is kept.
   const patch: Partial<typeof schema.companies.$inferInsert> = {};

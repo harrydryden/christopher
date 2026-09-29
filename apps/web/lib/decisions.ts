@@ -106,7 +106,7 @@ export async function restoreDismissedApplications(tx: Tx, userId: string, jobId
  * decision row each, one `decided` event each, and the same tasks — and all or nothing: a role that
  * is not this account's writes nothing at all, and is refused with `notFound`.
  */
-export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists."): Promise<void> {
+export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists."): Promise<Array<{ jobId: string; id: string }>> {
   const ids = [...new Set(jobIds)].sort();
   const now = new Date();
 
@@ -141,7 +141,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
     }
     await tx.insert(jobEvents).values(ids.map(jobId => ({ jobId, userId, type: "decided" as const, payload: { decision: null } })));
     await enqueue("synthesize_profile", { userId, force: true }, tx);
-    return;
+    return [];
   }
 
   await tx.update(userJobs).set({ archivedAt: null, updatedAt: now })
@@ -170,4 +170,5 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
   if (reason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
   await enqueue("synthesize_profile", { userId, force: false }, tx);
   await queueFilterSuggestionsOnCrossing(tx, userId, before);
+  return insertedRows.map(row => ({ jobId: row.job_id, id: row.id }));
 }

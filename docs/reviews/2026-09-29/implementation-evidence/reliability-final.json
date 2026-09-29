@@ -1,0 +1,43 @@
+{
+  "date": "2026-09-29",
+  "runtime": "Node 22.18.0",
+  "database": "dedicated ava_reliability test database",
+  "readOnlyUndoAudit": {
+    "currentUiPaths": {
+      "bulkUndo": "undoDecisionsIfCurrent receives every selected standing decision ID",
+      "panelReset": "undoDecisionIfCurrent receives the rendered row's standing decision ID",
+      "recentUndo": "undoDecisionIfCurrent receives the saved decision ID",
+      "result": "No current RolesTable Undo or Reset path calls unguarded decide(null) or decideRoles(null)"
+    },
+    "transactionFence": "Bulk action locks account-role rows in sorted order, compares every standing decision ID, and calls recordDecisions only after all match; one mismatch rolls back the whole operation.",
+    "residual": "Resolved: all four public decision actions reject runtime null before database writes, including the two token-returning exports. Only conditional Undo actions can reverse a decision; they compare the expected standing decision ID under the account-role lock."
+  },
+  "focusedTests": [
+    {
+      "suite": "apps/worker/src/e2e.test.ts",
+      "filter": "HTML extraction completion|unextractable HTML",
+      "result": "10 passed, 70 skipped"
+    },
+    {
+      "suite": "packages/core/src/ats/ats.test.ts",
+      "filter": "rejects help, policy and abuse-report links",
+      "result": "1 passed, 84 skipped"
+    },
+    {
+      "suite": "apps/web/app/actions/decisions.integration.test.ts",
+      "result": "16 passed; regression submits runtime null to all four public decision actions for both newer standing decisions and an undecided role, verifying decisions, events and tasks remain unchanged"
+    },
+    {
+      "suite": "apps/web/app/actions/decisions.integration.test.ts, applications.integration.test.ts, pool-discipline.integration.test.ts, actions.integration.test.ts",
+      "result": "105 passed after legacy Undo callers moved to conditional actions"
+    },
+    {
+      "suite": "apps/web/app/server-actions-auth.integration.test.ts",
+      "result": "158 passed"
+    },
+    {
+      "suite": "apps/web/components/RolesTable.test.tsx",
+      "result": "20 passed"
+    }
+  ]
+}

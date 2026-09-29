@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-29T13:00:57.986Z",
+  "mode": "discovery_and_extraction",
+  "concurrency": {
+    "cases": 1,
+    "source": "explicit",
+    "productionShape": true,
+    "note": "Serial case execution avoids charging a case's 45-second discovery budget for time queued behind the shared browser or AI lane."
+  },
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "ai": {
+    "enabled": false,
+    "skipCode": "ai_not_requested",
+    "calls": []
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback is disabled; no database or account data is read or written.",
+    "No paid model request is made without --ai and an explicit --ai-max-usd cap."
+  ],
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "labelled automatic discovery agreement is 33.3%, below 80%",
+      "3 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured"
+    ]
+  },
+  "metrics": {
+    "total": 3,
+    "sourceLabelled": 3,
+    "sourceMatches": 2,
+    "sourceMismatches": 1,
+    "labelledAutomaticMatchesAt085": 1,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 3,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0.3333333333333333,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "automattic",
+        "company": "Automattic",
+        "homepageUrl": "https://automattic.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://automattic.com/work-with-us/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Automattic states that legitimate openings are published on its company-owned careers site; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://automattic.com/work-with-us/",
+          "https://automattic.com/work-with-us/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "automattic",
+        "company": "Automattic",
+        "startedAt": "2026-09-29T12:59:33.207Z",
+        "durationMs": 12056,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://automattic.com/work-with-us/jobs/",
+          "confidence": 0.85,
+          "fetches": 4,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://automattic.com/work-with-us/jobs/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "siemens",
+        "company": "Siemens",
+        "homepageUrl": "https://www.siemens.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Siemens' company-owned Careers Marketplace publishes the searchable external-jobs listing; the previous Workday-shaped candidate was invalid.",
+        "sourceEvidenceUrls": [
+          "https://jobs.siemens.com/",
+          "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "siemens",
+        "company": "Siemens",
+        "startedAt": "2026-09-29T12:59:45.263Z",
+        "durationMs": 39870,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.siemens.com/en-gb/company/jobs/",
+          "confidence": 0.5,
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "zapier",
+        "company": "Zapier",
+        "homepageUrl": "https://zapier.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://zapier.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Zapier's company-owned jobs page links its current openings; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://zapier.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "zapier",
+        "company": "Zapier",
+        "startedAt": "2026-09-29T13:00:25.133Z",
+        "durationMs": 32828,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://zapier.com/jobs",
+          "confidence": 0.5,
+          "fetches": 16,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

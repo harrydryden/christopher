@@ -817,12 +817,13 @@ describe("private and local destinations", () => {
   });
 
   it("guards every hop without a host map too, with the address policy deciding what is public", async () => {
-    // The page is on 127.0.0.1, which this test's policy treats as public; the service is on
-    // 127.0.0.2, which it does not. That is the production shape: a public page redirecting inward.
-    const service = await internalService("127.0.0.2");
+    // The page is on 127.0.0.1, which this test's policy treats as public. The redirect points
+    // to 127.0.0.2, which it does not. No server needs to bind that loopback alias (macOS does not
+    // configure it by default); a broken guard would return a network error, failing this test.
+    const inward = "http://127.0.0.2:9/secret";
     const page = http.createServer((req, res) => {
       if (req.url === "/robots.txt") { res.writeHead(404); return res.end(); }
-      res.writeHead(302, { location: service.url() });
+      res.writeHead(302, { location: inward });
       res.end();
     });
     await new Promise<void>(resolve => page.listen(0, "127.0.0.1", resolve));
@@ -832,8 +833,7 @@ describe("private and local destinations", () => {
       const error = await f.fetchText(`http://127.0.0.1:${port}/careers`).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(PrivateAddressError);
       expect((error as Error).message).toContain("127.0.0.2");
-      expect(service.hits).toEqual([]);
-    } finally { await new Promise<void>(resolve => page.close(() => resolve())); await service.close(); }
+    } finally { await new Promise<void>(resolve => page.close(() => resolve())); }
   });
 });
 

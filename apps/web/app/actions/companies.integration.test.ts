@@ -521,6 +521,24 @@ it("brings an add from the Discover tab back to it, with the notice or the refus
   await expect(addCompanies(many)).rejects.toThrow("redirect:/suggestions?error=");
 });
 
+it("reports each homepage outcome for a bulk add on Discover", async () => {
+  const form = urls("https://fresh-bulk.example\nhttps://fresh-bulk.example\nnot a homepage\nhttps://acme.example");
+  form.set("returnTo", "/suggestions");
+  form.set("bulk", "1");
+  let redirectTo = "";
+  try { await addCompanies(form); } catch (error) { redirectTo = String(error); }
+  expect(redirectTo).toMatch(/^Error: redirect:\/suggestions\?added=2/);
+  const params = new URL(redirectTo.replace(/^Error: redirect:/, ""), "https://example.test").searchParams;
+  expect(JSON.parse(params.get("results")!)).toEqual([
+    ["https://fresh-bulk.example", "Added and followed"],
+    ["https://fresh-bulk.example", "Duplicate domain in this list"],
+    ["not a homepage", "Invalid homepage"],
+    ["https://acme.example", "Added and followed"],
+  ]);
+  const [created] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "fresh-bulk.example"));
+  expect(created).toBeDefined();
+});
+
 it("sorts the companies list in SQL by each whitelisted column, both ways", async () => {
   const [a, b, c] = (await alreadyFollowing(first.id, 3, "sorted")) as [string, string, string];
   const [bSource] = await database.insert(schema.careerSources).values({ companyId: b, type: "greenhouse", url: "https://boards.greenhouse.io/b", status: "active" }).returning();

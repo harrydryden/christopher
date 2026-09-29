@@ -6,6 +6,12 @@ workspace, sharing and application tracking). Every friction statement below was
 and every recommendation names the machinery it should reuse. Where a figure or a claim is inferred
 rather than read it is marked **[inferred]**.*
 
+## Current implementation contract — 29 September 2026
+
+The six job statements below remain the framework. The dated **Today** paragraphs and recommendation tables describe the original review, not the current implementation. See [the forensic baseline](reviews/2026-09-29/JTBD-READINESS.md) and [the development contract](reviews/2026-09-29/IMPLEMENTATION-90.md) for current evidence and acceptance.
+
+Setup now means **confirmed account → chosen keywords and locations → one active followed company → first complete successful scan**. Profile text and the evidence Library improve later work but do not block monitoring. Empty results distinguish missing preferences, no active companies, queued work, source attention and a successful check. A previous success does not hide a current source problem. Health and Learning have direct navigation. This supersedes the earlier five-step/three-company recommendation below.
+
 ## How to read this
 
 Each journey is framed as a job to be done: what the person is trying to accomplish, what "done"

@@ -65,6 +65,12 @@ function plan(over: Record<string, unknown> = {}) {
 const validated = () => validateLibraryProposal(DOCUMENT, plan()).proposal;
 
 describe("validateLibraryProposal", () => {
+  it("does not turn an explicitly ended role into a current job when the model says current", () => {
+    const wrong = plan({ employment: [{ ...plan().employment[0], current: true }] });
+    const { proposal } = validateLibraryProposal(DOCUMENT, wrong);
+    expect(proposal.employment[0]).toMatchObject({ startDate: "2020-03", endDate: "2022-06", current: false });
+  });
+
   it("keeps what the document says, with the ids the accept controls name items by", () => {
     const { proposal, dropped } = validateLibraryProposal(DOCUMENT, plan());
 
@@ -171,7 +177,7 @@ describe("validateLibraryProposal", () => {
     expect(proposal.employment[0]).toMatchObject({ startDate: "", endDate: "2022-06" });
   });
 
-  it("refuses a date it could not have read as a date, and clears an end date on a current job", () => {
+  it("refuses a date it could not have read as a date, and rejects current when the heading ends the job", () => {
     const { proposal } = validateLibraryProposal(DOCUMENT, plan({
       employment: [
         { ...plan().employment[0], startDate: "March 2020", endDate: "2022", current: false, responsibilities: [] },
@@ -181,7 +187,29 @@ describe("validateLibraryProposal", () => {
     }));
 
     expect(proposal.employment[0]).toMatchObject({ startDate: "", endDate: "2022" });
-    expect(proposal.employment[1]).toMatchObject({ startDate: "2017", endDate: "", current: true });
+    expect(proposal.employment[1]).toMatchObject({ startDate: "2017", endDate: "2020", current: false });
+  });
+
+  it("keeps a current role only when its own heading explicitly says Present", () => {
+    const document = "Director, Acme Logistics, Mar 2020 – Present\nLed a team of thirty";
+    const { proposal } = validateLibraryProposal(document, plan({
+      employment: [{ ...plan().employment[0], company: "Acme Logistics", title: "Director",
+        quote: "Director, Acme Logistics, Mar 2020 – Present", startDate: "2020-03",
+        endDate: null, current: true, responsibilities: [] }],
+      education: [], skills: [],
+    }));
+    expect(proposal.employment[0]).toMatchObject({ startDate: "2020-03", endDate: "", current: true });
+  });
+
+  it("does not mistake Current in a job title for an ongoing date range", () => {
+    const document = "Current Account Manager, Acme Logistics, Mar 2020\nLed a team of thirty";
+    const { proposal } = validateLibraryProposal(document, plan({
+      employment: [{ ...plan().employment[0], company: "Acme Logistics", title: "Current Account Manager",
+        quote: "Current Account Manager, Acme Logistics, Mar 2020", startDate: "2020-03",
+        endDate: null, current: true, responsibilities: [] }],
+      education: [], skills: [],
+    }));
+    expect(proposal.employment[0]).toMatchObject({ startDate: "2020-03", endDate: "", current: false });
   });
 
   it("drops a skill and a qualification the document does not support", () => {

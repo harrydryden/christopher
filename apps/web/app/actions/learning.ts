@@ -3,14 +3,14 @@
 import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { filterSuggestions, tagVocabulary, type FilterSuggestion, type User } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
 import { describeFilterSuggestion, extractSuggestionValue } from "@/lib/filterSuggestions";
-import { getSettings, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
+import { getSettings, getSettingsFor, setUserSetting, saveSettingsAndGateLocked } from "@/lib/settings";
 import { actionError, fail, zUuid, type ActionResult } from "@/lib/validation";
 import { refuseOn, revalidate } from "@/lib/action-helpers";
 
@@ -142,43 +142,44 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
   if (!parsedId.success) return fail("Suggestion not found.");
   const id = parsedId.data;
   try {
-    const [suggestion] = await db().select().from(filterSuggestions).where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id))).limit(1);
-    if (!suggestion || suggestion.status !== "pending") return fail("That suggestion has already been settled.");
-
-    const settings = await getSettings();
-    const extracted = extractSuggestionValue(suggestion);
-    const before = await countRolesInTable(user.id);
-
-    const field = GATE_FIELD_FOR[suggestion.type];
-    if (field && extracted.kind === "term") {
-      await saveSettingsAndGate(user.id, { gate: { ...settings.gate, [field]: [...new Set([...(settings.gate[field] ?? []), extracted.term])] } });
-    } else if (suggestion.type === "hide_threshold") {
-      // Automatic score hiding is retired. A suggestion stored before that is resolved rather than
-      // applied, so Accept on a stale page settles it instead of failing.
-      await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
-      // The Roles page's suggestions strip shows pending suggestions too.
-      revalidate("/learning", "/");
-      return { ok: true, message: "Settled: hiding roles by score is retired." };
-    } else if (suggestion.type === "pause_company") {
-      // A pause names one of the account's followed companies by id; a suggestion that names none
-      // (stored before the id was kept, or by a model that made one up) settles nothing.
-      if (extracted.kind !== "company") return fail("This suggestion does not name a company you follow. Reject it and pause the company from Companies instead.");
-      if (!(await setSubscriptionStatus(db(), user.id, extracted.companyId, "paused"))) return fail("You no longer follow that company, so there is nothing to pause.");
-    }
-
-    // The gate save above already re-evaluated the table, or queued the pass that will.
-    await db().update(filterSuggestions).set({ status: "accepted", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
-    revalidate("/learning", "/settings", "/");
-
-    if (suggestion.type === "pause_company") return { ok: true, message: "Paused that company; its roles stop arriving." };
-    const admitted = Math.max(0, (await countRolesInTable(user.id)) - before);
-    const term = extracted.kind === "term" ? `“${extracted.term}”` : describeFilterSuggestion(suggestion).toLowerCase();
-    return {
-      ok: true,
-      message: admitted > 0
-        ? `Added ${term}. Admitted ${admitted} ${admitted === 1 ? "role" : "roles"}.`
-        : `Added ${term}. No stored role matched it yet; the table updates as the re-evaluation runs.`,
-    };
+    const result = await db().transaction(async tx => {
+      // This is the same lock used by a manual gate save. Read the gate only after taking it, so
+      // accepting two terms from separate tabs cannot replace the first with a stale whole gate.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${user.id}`}))`);
+      const [suggestion] = await tx.select().from(filterSuggestions)
+        .where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id))).for("update").limit(1);
+      if (!suggestion || suggestion.status !== "pending") return fail("That suggestion has already been settled.");
+      const extracted = extractSuggestionValue(suggestion);
+      const field = GATE_FIELD_FOR[suggestion.type];
+      if (field) {
+        if (extracted.kind !== "term") return fail("This suggestion has no usable term. Reject it instead.");
+        const settings = await getSettingsFor(user.id, tx as unknown as ReturnType<typeof db>);
+        const before = await countRolesInTable(user.id, tx as unknown as ReturnType<typeof db>);
+        await saveSettingsAndGateLocked(tx, user.id, { gate: { ...settings.gate, [field]: [...new Set([...(settings.gate[field] ?? []), extracted.term])] } });
+        const admitted = Math.max(0, (await countRolesInTable(user.id, tx as unknown as ReturnType<typeof db>)) - before);
+        await tx.update(filterSuggestions).set({ status: "accepted", resolvedAt: new Date() })
+          .where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id), eq(filterSuggestions.status, "pending")));
+        const term = `“${extracted.term}”`;
+        return { ok: true as const, message: admitted > 0
+          ? `Added ${term}. Admitted ${admitted} ${admitted === 1 ? "role" : "roles"}.`
+          : `Added ${term}. No stored role matched it yet; the table updates as the re-evaluation runs.` };
+      }
+      if (suggestion.type === "hide_threshold") {
+        await tx.update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() })
+          .where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id), eq(filterSuggestions.status, "pending")));
+        return { ok: true as const, message: "Settled: hiding roles by score is retired." };
+      }
+      if (suggestion.type === "pause_company") {
+        if (extracted.kind !== "company") return fail("This suggestion does not name a company you follow. Reject it and pause the company from Companies instead.");
+        if (!(await setSubscriptionStatus(tx as unknown as ReturnType<typeof db>, user.id, extracted.companyId, "paused"))) return fail("You no longer follow that company, so there is nothing to pause.");
+        await tx.update(filterSuggestions).set({ status: "accepted", resolvedAt: new Date() })
+          .where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id), eq(filterSuggestions.status, "pending")));
+        return { ok: true as const, message: "Paused that company; its roles stop arriving." };
+      }
+      return fail(`Cannot accept ${describeFilterSuggestion(suggestion)}.`);
+    });
+    if (result.ok) revalidate("/learning", "/settings", "/");
+    return result;
   } catch (error) {
     return actionError(error, "Could not accept that suggestion. Please try again.");
   }
@@ -202,7 +203,11 @@ export async function rejectFilterSuggestion(suggestionId: string): Promise<void
   const parsed = zUuid().safeParse(suggestionId);
   if (!parsed.success) refuseOn("/learning", "That suggestion has already been settled.");
   const id = parsed.data;
-  await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id)));
+  await db().transaction(async tx => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${user.id}`}))`);
+    await tx.update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() })
+      .where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id), eq(filterSuggestions.status, "pending")));
+  });
   // The Roles page's suggestions strip lists pending suggestions and dismisses from there.
   revalidate("/learning", "/");
 }

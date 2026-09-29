@@ -15,7 +15,7 @@ import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
-import { cvBuildQuote } from "@/lib/cv-quote";
+import { cvBuildQuote, cvQuoteLine } from "@/lib/cv-quote";
 import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -341,6 +341,27 @@ export async function manageCvs(_prev: ActionResult, form: FormData): Promise<Ac
   return ok();
 }
 
+/** Price the exact pasted advert before a person can request this build. No draft is written. */
+export async function quoteCvBuild(jobId: string, description: string): Promise<
+  { ok: true; line: string; refusal: string | null } | { ok: false; error: string }
+> {
+  const user = await requireVerifiedUser();
+  try {
+    const id = zUuid().parse(jobId);
+    const text = description.trim();
+    if (!text) return { ok: false, error: "Paste an advert before checking its price." };
+    if (text.length > 60_000) return { ok: false, error: "Keep the job description under 60,000 characters." };
+    const [role] = await db().select({ id: jobs.id }).from(userJobs).innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+      .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id))).limit(1);
+    if (!role) throw new UserFacingError("Role not found.");
+    const quote = await cvBuildQuote(user.id, id, new Date(), { description: text });
+    return { ok: true, line: cvQuoteLine(quote), refusal: quote.refusal };
+  } catch (error) {
+    const result = actionError(error, "Could not check this estimate. Try again.");
+    return { ok: false, error: result.ok ? "Could not check this estimate. Try again." : result.error };
+  }
+}
+
 export async function requestCv(
   _prev: ActionResult,
   form: FormData,
@@ -473,7 +494,7 @@ export async function requestCv(
         await tx.insert(applications).values({
           userId: user.id, jobId: id, cvId: null, pdfBase64: null,
           jobTitle: row.job.title, companyName: row.company,
-          appliedOn: new Date().toISOString().slice(0, 10), status: "applying", notes: "",
+          appliedOn: null, status: "applying", notes: "",
           history: [{ status: "applying", at: new Date().toISOString(), notes: "" }],
         });
       return draft!.id;

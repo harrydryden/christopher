@@ -13,6 +13,10 @@ import type { ActionResult } from "@/lib/validation";
 const actions = vi.hoisted(() => ({
   decide: vi.fn(),
   decideRoles: vi.fn(),
+  decideWithUndoToken: vi.fn(),
+  decideRolesWithUndoTokens: vi.fn(),
+  undoDecisionIfCurrent: vi.fn(),
+  undoDecisionsIfCurrent: vi.fn(),
   archiveRoles: vi.fn(),
   roleDetails: vi.fn(),
 }));
@@ -53,13 +57,120 @@ let root: Root;
 let container: HTMLElement;
 const scrolled = vi.fn();
 beforeEach(() => {
+  sessionStorage.clear();
   for (const action of Object.values(actions)) action.mockReset();
+  actions.decideWithUndoToken.mockImplementation(async (jobId: string, decision: string, reason: string) => {
+    const result = await actions.decide(jobId, decision, reason);
+    return result.ok ? { ok: true, decisionId: jobId } : result;
+  });
+  actions.undoDecisionIfCurrent.mockImplementation((jobId: string) => actions.decide(jobId, null, ""));
+  actions.decideRolesWithUndoTokens.mockImplementation(async (ids: string[], decision: string, reason: string) => {
+    const result = await actions.decideRoles(ids, decision, reason);
+    return result.ok ? { ok: true, decisionIds: Object.fromEntries(ids.map(id => [id, id])) } : result;
+  });
+  actions.undoDecisionsIfCurrent.mockImplementation((expected: Array<{ jobId: string }>) => actions.decideRoles(expected.map(item => item.jobId), null, ""));
   actions.roleDetails.mockResolvedValue({ ok: false, error: "Could not load this role." });
   scrolled.mockReset();
   Element.prototype.scrollIntoView = scrolled;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("keeps several successful decisions available across filtered table remounts and retains a failed Undo", async () => {
+  const scoped = (key: string, rows: RoleRowVM[]) => act(() => root.render(
+    <RolesTable key={key} rows={rows} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing to review</p>} />
+  ));
+  actions.decideWithUndoToken.mockImplementation(async (jobId: string) => ({ ok: true, decisionId: jobId }));
+  scoped("first", [FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  scoped("filtered", [SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  scoped("empty", []);
+  expect(container.querySelectorAll('[aria-label^="Undo Shortlisted"]')).toHaveLength(2);
+  expect(text()).toContain("Shortlisted Head of Operations");
+  expect(text()).toContain("Shortlisted Operations Manager");
+
+  actions.undoDecisionIfCurrent.mockResolvedValueOnce({ ok: false, error: "The decision changed. Reload and retry." });
+  await act(async () => { container.querySelector<HTMLButtonElement>(`[aria-label="Undo Shortlisted Head of Operations at Meridian"]`)!.click(); });
+  expect(text()).toContain("Could not undo");
+  expect(text()).toContain("The decision changed. Reload and retry.");
+  expect(container.querySelectorAll('[aria-label^="Undo Shortlisted"]')).toHaveLength(2);
+  expect(actions.undoDecisionIfCurrent).toHaveBeenCalledWith(FIRST.id, FIRST.id);
+
+  actions.undoDecisionIfCurrent.mockResolvedValueOnce({ ok: true });
+  await act(async () => { container.querySelector<HTMLButtonElement>(`[aria-label="Undo Shortlisted Head of Operations at Meridian"]`)!.click(); });
+  expect(container.querySelectorAll('[aria-label^="Undo Shortlisted"]')).toHaveLength(1);
+  expect(text()).toContain("Shortlisted Operations Manager");
+});
+
+it("does not expose another account's recent decisions in the same browser tab", async () => {
+  actions.decideWithUndoToken.mockResolvedValue({ ok: true, decisionId: FIRST.id });
+  act(() => root.render(<RolesTable rows={[FIRST]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  act(() => root.render(<RolesTable key="other-account" rows={[]} companies={COMPANIES} keyboard historyScope="person-2" emptyState={<p>Nothing</p>} />));
+  expect(text()).not.toContain("Head of Operations");
+  expect(container.querySelector('[aria-label^="Undo Shortlisted"]')).toBeNull();
+});
+
+it("rejects older tokenless Undo history and offers a reload of the latest role state", () => {
+  sessionStorage.setItem("ava:role-undo:person-1", JSON.stringify([{ jobId: FIRST.id, text: "Shortlisted Head of Operations", revision: "old" }]));
+  act(() => root.render(<RolesTable rows={[]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  expect(text()).toContain("Older Undo entries cannot be checked against the latest decision");
+  expect(button("Reload roles")).toBeTruthy();
+  expect(container.querySelector('button[aria-label^="Undo Shortlisted"]')).toBeNull();
+  expect(actions.undoDecisionIfCurrent).not.toHaveBeenCalled();
+});
+
+it("keeps a visible shortlisted row and its history when a stale Undo is refused", async () => {
+  const decided: RoleRowVM = { ...FIRST, workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: FIRST.id, decision: "apply", reason: "", createdLabel: "just now", createdTitle: "now" } };
+  const entry = { jobId: FIRST.id, text: "Shortlisted Head of Operations at Meridian", revision: "rev-1", decisionId: FIRST.id };
+  sessionStorage.setItem(`ava:role-undo-revision:person-1:${FIRST.id}`, entry.revision);
+  sessionStorage.setItem("ava:role-undo:person-1", JSON.stringify([entry]));
+  actions.undoDecisionIfCurrent.mockResolvedValue({ ok: false, error: "This decision changed in another tab. Reload roles before trying again." });
+  act(() => root.render(<RolesTable rows={[decided]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+
+  await act(async () => { container.querySelector<HTMLButtonElement>(`[aria-label="Undo ${entry.text}"]`)!.click(); });
+  expect(titles()).toEqual([FIRST.title]);
+  expect(text()).toContain("This decision changed in another tab");
+  expect(container.querySelector(`[aria-label="Undo ${entry.text}"]`)).not.toBeNull();
+  expect(actions.undoDecisionIfCurrent).toHaveBeenCalledWith(FIRST.id, FIRST.id);
+});
+
+it("keeps a bulk selection intact when one token changed and sends every expected decision id", async () => {
+  const decided = (row: RoleRowVM): RoleRowVM => ({ ...row, workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: row.id, decision: "apply", reason: "", createdLabel: "just now", createdTitle: "now" } });
+  actions.undoDecisionsIfCurrent.mockResolvedValue({ ok: false, error: "A selected decision changed in another tab. Reload roles before trying again." });
+  act(() => root.render(<RolesTable rows={[decided(FIRST), decided(SECOND)]} companies={COMPANIES}
+    keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  act(() => container.querySelector<HTMLInputElement>(`input[aria-label="Select ${FIRST.title} at Meridian"]`)!.click());
+  act(() => container.querySelector<HTMLInputElement>(`input[aria-label="Select ${SECOND.title} at Meridian"]`)!.click());
+  await act(async () => { button("Undo").click(); });
+  expect(actions.undoDecisionsIfCurrent).toHaveBeenCalledWith([
+    { jobId: FIRST.id, decisionId: FIRST.id }, { jobId: SECOND.id, decisionId: SECOND.id },
+  ]);
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+  expect(text()).toContain("2 selected");
+  expect(text()).toContain("A selected decision changed in another tab");
+  expect(actions.decideRoles).not.toHaveBeenCalled();
+});
+
+it("uses the standing decision token when Reset is pressed in a review panel", async () => {
+  const decided: RoleRowVM = { ...FIRST, workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: FIRST.id, decision: "apply", reason: "", createdLabel: "just now", createdTitle: "now" } };
+  actions.undoDecisionIfCurrent.mockResolvedValue({ ok: true });
+  act(() => root.render(<RolesTable rows={[decided]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  act(() => button(FIRST.title).click());
+  await act(async () => { button("Reset").click(); });
+  expect(actions.undoDecisionIfCurrent).toHaveBeenCalledWith(FIRST.id, FIRST.id);
+  expect(actions.decide).not.toHaveBeenCalled();
 });
 afterEach(() => {
   act(() => root.unmount());

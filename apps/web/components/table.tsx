@@ -29,7 +29,7 @@ export function TR({ children, className = "", highlighted = false }: { children
 
 export function TH({ children, className = "", ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th scope="col" className={`ds-pixel border-b-2 border-line px-3 py-2 text-9 tracking-th text-muted ${className}`} {...rest}>
+    <th scope="col" className={`border-b-2 border-line px-3 py-2 text-13 font-semibold text-muted ${className}`} {...rest}>
       {children}
     </th>
   );

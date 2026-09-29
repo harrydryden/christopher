@@ -8,7 +8,7 @@ import { getCvWorkStatus } from "@/lib/work-status";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
-import { dueLine, nextStep } from "@/lib/application-dates";
+import { nextStep } from "@/lib/application-dates";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { cvQuoteLine } from "@/lib/cv-quote";
 import {
@@ -16,10 +16,10 @@ import {
   listPipeline,
   pipelineCompany,
   pipelineCvQuotes,
-  pipelineDueCount,
   pipelineFilter,
   PIPELINE_FILTERS,
   PIPELINE_FILTER_LABELS,
+  type PipelineFocus,
 } from "@/lib/queries/applications";
 
 export const dynamic = "force-dynamic";
@@ -51,19 +51,20 @@ async function pricedQuotes(userId: string, rows: Parameters<typeof pipelineCvQu
 export default async function ApplicationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string | string[]; page?: string; job?: string; company?: string }>;
+  searchParams: Promise<{ filter?: string | string[]; page?: string; job?: string; company?: string; stage?: string; focus?: string }>;
 }) {
   const user = await requireUser();
-  const { filter: requestedFilter, page, job: requestedJob, company: requestedCompany } = await searchParams;
+  const { filter: requestedFilter, page, job: requestedJob, company: requestedCompany, stage: requestedStage, focus: requestedFocus } = await searchParams;
   const filter = pipelineFilter(requestedFilter);
+  const stage = ROLE_STAGES.find((value) => value === requestedStage && value !== "matched");
+  const focus: PipelineFocus | undefined = requestedFocus === "due" || requestedFocus === "overdue" ? requestedFocus : undefined;
   const job = z.string().uuid().safeParse(requestedJob).success ? requestedJob : undefined;
   // The company page links here with its own id; an id the catalogue does not know is no filter.
   const company = z.string().uuid().safeParse(requestedCompany).success ? await pipelineCompany(requestedCompany!) : null;
   const now = new Date();
   // What the table holds, and what it owes this week. Both are scoped to the company a link names.
-  const [result, due, cvWork] = await Promise.all([
-    listPipeline(user.id, { filter, page, company: company ?? undefined }),
-    pipelineDueCount(user.id, { company: company ?? undefined, now }),
+  const [result, cvWork] = await Promise.all([
+    listPipeline(user.id, { filter, page, company: company ?? undefined, stage, focus, now }),
     getCvWorkStatus(user.id),
   ]);
   // What a build would cost, for the rows on this page, so the price is beside the button rather
@@ -89,10 +90,11 @@ export default async function ApplicationsPage({
       return hint ? [[row.key, hint] as const] : [];
     }),
   );
-  const dueNote = dueLine(due);
-  const empty = EMPTY[filter]!;
+  const empty = focus ? { title: focus === "overdue" ? "No overdue steps" : "No steps due this week", description: "Add a dated next step to an application to see it here." }
+    : stage ? { title: `No ${ROLE_STAGE_LABELS[stage].toLowerCase()} roles` } : EMPTY[filter]!;
+  const linkTo = (values: Record<string, string>) => `/applications?${new URLSearchParams({ ...values, ...(company ? { company: company.id } : {}) })}`;
   const segmentHref = (segment: string) =>
-    `/applications?${new URLSearchParams({ filter: segment, ...(company ? { company: company.id } : {}) })}`;
+    linkTo({ filter: segment });
   const buildingRows = result.rows.filter((row) => row.cv?.status === "queued" || row.cv?.status === "generating");
   const building = buildingRows.length > 0;
   // A CV that is ready while its optional improvement still runs: the page keeps following it, so
@@ -119,22 +121,27 @@ export default async function ApplicationsPage({
         {STRIP_STAGES.map((stage, index) => (
           <Fragment key={stage}>
             {index > 0 && <span className="text-muted" aria-hidden="true"> · </span>}
-            <span className={result.stages[stage] ? "text-fg" : "text-muted"}>
+            <Link prefetch={false} href={linkTo({ filter: "all", stage })} aria-current={stage === requestedStage && !focus ? "page" : undefined}
+              className={`inline-flex min-h-11 items-center underline-offset-2 hover:underline ${result.stages[stage] ? "text-fg" : "text-muted"}`}>
               {ROLE_STAGE_LABELS[stage]} <span className="tabular-nums">{result.stages[stage]}</span>
-            </span>
+            </Link>
           </Fragment>
         ))}
       </p>
       {/* A hint, like the stale one: the product sends nothing, it only reads differently here. */}
-      {dueNote && <p className="text-13 text-muted">{dueNote}</p>}
+      <nav aria-label="Next steps" className="flex flex-wrap gap-3 text-13">
+        <Link prefetch={false} href={linkTo({ filter: "all", focus: "due" })} aria-current={focus === "due" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Due this week ({result.due})</Link>
+        <Link prefetch={false} href={linkTo({ filter: "all", focus: "overdue" })} aria-current={focus === "overdue" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Overdue ({result.overdue})</Link>
+        {(focus || stage) && <Link prefetch={false} href={linkTo({ filter })} className="inline-flex min-h-11 items-center underline">Clear view</Link>}
+      </nav>
       {/* The same shape as the roles tabs: links, so the segment is in the URL and shareable. */}
       <nav aria-label="Application progress" className="mb-4 flex flex-wrap gap-2">
         {PIPELINE_FILTERS.map((segment) => (
           <Link prefetch={false}
             key={segment}
             href={segmentHref(segment)}
-            aria-current={segment === filter ? "page" : undefined}
-            className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${segment === filter ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}
+            aria-current={segment === filter && !focus && !stage ? "page" : undefined}
+            className={`ds-pixel inline-flex min-h-11 items-center border-2 px-3 py-2 text-11 no-underline ${segment === filter && !focus && !stage ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}
           >
             {PIPELINE_FILTER_LABELS[segment]} <span className="ml-1 tabular-nums">{result.counts[segment]}</span>
           </Link>
@@ -145,7 +152,7 @@ export default async function ApplicationsPage({
         <AutoRefresh scope="cv" initialVersion={cvWork.version} message={building ? buildingMessage : improvingMessage} />
       )}
       <ApplicationsTable
-        key={`${filter}:${result.page}:${company?.id ?? ""}`}
+        key={`${filter}:${stage ?? ""}:${focus ?? ""}:${result.page}:${company?.id ?? ""}`}
         rows={result.rows}
         openKey={job}
         quotes={quotes}
@@ -159,7 +166,7 @@ export default async function ApplicationsPage({
           page={result.page}
           total={result.total}
           path="/applications"
-          params={{ filter, ...(company ? { company: company.id } : {}) }}
+          params={{ filter, ...(stage ? { stage } : {}), ...(focus ? { focus } : {}), ...(company ? { company: company.id } : {}) }}
           label="Application pages"
         />
       )}

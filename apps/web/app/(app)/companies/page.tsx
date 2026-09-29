@@ -78,8 +78,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
           description="Follow a company to see its matching roles here."
           action={<Link prefetch={false} href="/suggestions" className={buttonLinkClass("primary")}>Discover companies</Link>}
         />
-      ) : (
-        <Table>
+      ) : (<>
+        <div className="hidden md:block"><Table>
           <THead>
             <tr>
               <SortTH label="Company" sortKey="company" order={order} />
@@ -165,7 +165,40 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
               </TR>
             ))}
           </TBody>
-        </Table>
+        </Table></div>
+        <div className="grid gap-3 md:hidden" aria-label="Tracked companies">
+          {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, discovering, discoveryState, needsSource, lastDiscovery }) => (
+            <article key={company.id} className="min-w-0 border-2 border-line p-4">
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <Link prefetch={false} href={`/companies/${company.id}`} className="flex min-h-11 items-center gap-2 font-semibold text-fg underline">
+                    <CompanyFavicon {...companyIcon(company)} /><span className="min-w-0 truncate">{company.name}</span>
+                  </Link>
+                  <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block min-h-11 truncate py-2 text-12 text-muted underline">{company.domain}</a>
+                </div>
+                <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
+                  extra="refresh" running={discoveryState === "running"} blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-12">
+                {needsSource && !discovering && subscription.status === "active" ? <Badge tone="amber">no careers source</Badge>
+                  : <Badge tone={companyStatusTone(subscription.status)}>{subscription.status}</Badge>}
+                {sourceType && <Badge tone="neutral">{sourceType}</Badge>}
+                {discovering && <span className="text-info">{discoveryState === "running" ? "Discovering…" : "Discovery queued"}</span>}
+              </div>
+              {needsSource && !discovering && subscription.status === "active" && <p className="mt-2 text-13 text-muted">
+                {lastDiscovery === "not_found" ? "Careers source not found." : lastDiscovery === "needs_confirmation" ? "Careers source needs confirming." : "No careers source yet."}{" "}
+                <Link prefetch={false} href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</Link>
+              </p>}
+              <p className="mt-2 text-12 text-muted">{lastScan ? `${scanStatusLabel(lastScan.status)} ${relativeTime(lastScan.startedAt, now)}` : needsSource ? "Waiting for a source" : "Never scanned"}</p>
+              <div className="mt-3 grid grid-cols-3 gap-2 border-t border-line-faint pt-3 text-center text-12">
+                <Link prefetch={false} href={`/companies/${company.id}#roles`} className="min-h-11 underline"><strong className="block text-16">{openRoles}</strong>Open</Link>
+                <Link prefetch={false} href={`/companies/${company.id}?view=auto-matched#roles`} className="min-h-11 underline"><strong className="block text-16">{reviewRoles}</strong>Review</Link>
+                <Link prefetch={false} href={`/companies/${company.id}?view=user-shortlisted#roles`} className="min-h-11 underline"><strong className="block text-16">{shortlistedRoles}</strong>Shortlisted</Link>
+              </div>
+            </article>
+          ))}
+        </div>
+      </>
       )}
     </div>
   );

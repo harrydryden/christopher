@@ -73,10 +73,14 @@ function gateFingerprint(gate: GateSettings): string {
  * saves arrive before it starts, because it reads the settings when it runs; a save made while a
  * pass is already running queues the next one, so no change is ever left unapplied.
  */
-export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>, options: { rescore?: boolean } = {}): Promise<void> {
-  await db().transaction(async (tx) => {
-    // One save per account at a time, so the queued-pass check below cannot race another save.
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${userId}`}))`);
+/** Use inside a transaction holding the account's settings lock. Keeping the gate pass here lets
+ * suggestion acceptance merge its term and settle its row atomically with an ordinary settings save. */
+export async function saveSettingsAndGateLocked(
+  tx: Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0],
+  userId: string,
+  entries: Partial<UserSettings>,
+  options: { rescore?: boolean } = {},
+): Promise<void> {
     const before = await getSettingsFor(userId, tx as unknown as Writer);
     for (const [key, value] of Object.entries(entries)) {
       if (!isUserSettingsKey(key)) throw new Error(`Not a user setting: ${key}`);
@@ -94,5 +98,12 @@ export async function saveSettingsAndGate(userId: string, entries: Partial<UserS
       await enqueue("reevaluate_gate", payload, tx);
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
     if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
+}
+
+export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>, options: { rescore?: boolean } = {}): Promise<void> {
+  await db().transaction(async (tx) => {
+    // One save per account at a time, including a suggestion accept or reject.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${userId}`}))`);
+    await saveSettingsAndGateLocked(tx, userId, entries, options);
   });
 }

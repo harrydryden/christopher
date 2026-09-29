@@ -18,7 +18,7 @@ export interface SuggestionChip {
 
 /**
  * Filter suggestions where the person already is. Both kinds land in the last card of the Learning
- * page, which is not in the sidebar; this is the same accept and reject, one line above the table
+ * page; this is the same accept and reject, in a compact disclosure above the table
  * they change, and it says what accepting admitted.
  */
 const SAVE_FAILED = "Could not save. Reload and retry.";
@@ -56,23 +56,23 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
   const fromScans = pending.length > 0 && pending.every(item => item.fromScans);
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-2 border-line-muted px-3 py-2 text-13">
-      {pending.length > 0 && <>
-        <span className="text-muted">
-          {pending.length} {pending.length === 1 ? "suggestion" : "suggestions"} {fromScans ? "from your scans" : "for your filters"}:
-        </span>
-        {pending.map(item => (
-          <span key={item.id} className="flex items-center gap-1.5" title={item.description}>
-            <span className="text-fg">{item.term}</span>
-            <button type="button" disabled={pendingId !== null} onClick={() => accept(item)} className="text-12 text-muted underline hover:text-fg disabled:opacity-40">Accept</button>
-            <button type="button" disabled={pendingId !== null} onClick={() => dismiss(item)} className="text-12 text-muted underline hover:text-fg disabled:opacity-40">Dismiss</button>
-          </span>
-        ))}
-      </>}
+    <div className="mb-4 border-2 border-line-muted px-3 text-13">
+      {pending.length > 0 && <details>
+        <summary className="min-h-11 cursor-pointer py-3 text-muted">
+          {pending.length} {pending.length === 1 ? "filter suggestion" : "filter suggestions"}{fromScans ? " from your scans" : " to review"}
+        </summary>
+        <div className="space-y-2 pb-3">
+          {pending.map(item => <div key={item.id} className="flex flex-wrap items-center gap-x-3 border-t border-line-faint" title={item.description}>
+            <span className="min-w-0 break-words text-fg">{item.term}</span>
+            <button type="button" disabled={pendingId !== null} onClick={() => accept(item)} className="min-h-11 px-1 text-13 text-muted underline hover:text-fg disabled:opacity-40">Accept</button>
+            <button type="button" disabled={pendingId !== null} onClick={() => dismiss(item)} className="min-h-11 px-1 text-13 text-muted underline hover:text-fg disabled:opacity-40">Dismiss</button>
+          </div>)}
+          <a href="/learning" className="inline-flex min-h-11 items-center text-13 text-muted underline hover:text-fg">All suggestions</a>
+        </div>
+      </details>}
       {pendingId !== null && <span className="text-muted"><Monogram size={16} searching title="Saving" /></span>}
-      {message && <span role="status" aria-live="polite" className="text-fg">{message}</span>}
-      {error && <span role="status" aria-live="polite" className="text-danger">{error}</span>}
-      <a href="/learning" className="ml-auto text-12 text-muted underline hover:text-fg">All suggestions</a>
+      {message && <p role="status" aria-live="polite" className="py-3 text-fg">{message}</p>}
+      {error && <p role="alert" className="py-3 text-danger">{error}</p>}
     </div>
   );
 }

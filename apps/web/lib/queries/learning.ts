@@ -8,8 +8,8 @@ import { extractSuggestionValue } from "@/lib/filterSuggestions";
  * what "Admitted 9 roles" counts: `saveSettingsAndGate` runs the re-evaluation but returns nothing,
  * and the number a person cares about is what appeared in their table, not what was written.
  */
-export async function countRolesInTable(userId: string): Promise<number> {
-  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(userJobs)
+export async function countRolesInTable(userId: string, writer: Pick<ReturnType<typeof db>, "select"> = db()): Promise<number> {
+  const [row] = await writer.select({ n: sql<number>`count(*)::int` }).from(userJobs)
     .where(and(eq(userJobs.userId, userId), eq(userJobs.inTable, true), isNull(userJobs.archivedAt)));
   return row?.n ?? 0;
 }

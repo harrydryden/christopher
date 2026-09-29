@@ -25,7 +25,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { revalidatePath } from "next/cache";
-import { archiveRoles, decide, decideRoles, roleDetails } from "./decisions";
+import { archiveRoles, decide, decideRoles, decideWithUndoToken, decideRolesWithUndoTokens, undoDecisionIfCurrent, undoDecisionsIfCurrent, roleDetails } from "./decisions";
 
 const DESCRIPTION = [
   "Head of Operations at a community health provider.",
@@ -94,6 +94,14 @@ async function role(decision: "apply" | null = "apply") {
 }
 
 const saveLibrary = () => database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: LIBRARY });
+
+async function currentToken(jobId: string): Promise<{ jobId: string; decisionId: string }> {
+  const rows = await database.select({ id: schema.decisions.id, superseded: schema.decisions.superseded })
+    .from(schema.decisions).where(eq(schema.decisions.jobId, jobId));
+  const standing = rows.find(row => !row.superseded);
+  if (!standing) throw new Error(`No standing decision for ${jobId}`);
+  return { jobId, decisionId: standing.id };
+}
 
 async function detailsFor(jobId: string) {
   const result = await roleDetails(jobId);
@@ -201,11 +209,14 @@ describe("what a decision revalidates", () => {
 
   it("revalidates the pages that show a decision on every success path of decide", async () => {
     const job = await role(null);
-    for (const [decision, reason] of [["apply", ""], ["skip", "Wrong location"], [null, ""]] as const) {
+    for (const [decision, reason] of [["apply", ""], ["skip", "Wrong location"]] as const) {
       revalidated.mockClear();
       expect(await decide(job.id, decision, reason)).toEqual({ ok: true });
       expect(revalidated.mock.calls).toEqual(DECIDED_PAGES);
     }
+    revalidated.mockClear();
+    expect(await undoDecisionIfCurrent(job.id, (await currentToken(job.id)).decisionId)).toEqual({ ok: true });
+    expect(revalidated.mock.calls).toEqual(DECIDED_PAGES);
   });
 
   it("revalidates nothing when decide refuses, so the table knows to put the row back", async () => {
@@ -219,7 +230,7 @@ describe("what a decision revalidates", () => {
     const ids = [(await role(null)).id, (await role(null)).id];
     const runs = [
       () => decideRoles(ids, "skip", "Not interested"),
-      () => decideRoles(ids, null, ""),
+      async () => undoDecisionsIfCurrent(await Promise.all(ids.map(currentToken))),
       () => archiveRoles(ids, true),
       () => archiveRoles(ids, false),
     ];
@@ -238,10 +249,100 @@ describe("a reversed skip", () => {
   it("queues the role's score again, since a skipped role is left out of scoring", async () => {
     const job = await role(null);
     const scores = async () => (await database.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).map(task => task.payload);
-    expect(await decide(job.id, "skip", "Too junior")).toEqual({ ok: true });
+    const saved = await decideWithUndoToken(job.id, "skip", "Too junior");
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) throw new Error(saved.error);
     expect(await scores()).toEqual([]);
-    expect(await decide(job.id, null, "")).toEqual({ ok: true });
+    expect(await undoDecisionIfCurrent(job.id, saved.decisionId)).toEqual({ ok: true });
     expect(await scores()).toEqual([{ userId: user.id, jobId: job.id }]);
+  });
+});
+
+describe("recent Undo tokens", () => {
+  it("rejects tokenless Undo through all four public decision actions without touching a newer decision", async () => {
+    const ids = [(await role(null)).id, (await role(null)).id];
+    const saved = await decideRolesWithUndoTokens(ids, "apply", "");
+    if (!saved.ok) throw new Error(saved.error);
+    const newer = await decideWithUndoToken(ids[0]!, "skip", "Wrong location");
+    if (!newer.ok) throw new Error(newer.error);
+    const undecided = (await role(null)).id;
+
+    const beforeDecisions = await database.select().from(schema.decisions);
+    const beforeEvents = await database.select().from(schema.jobEvents);
+    const beforeTasks = await database.select().from(schema.tasks);
+    const singleRefusal = { ok: false, error: "This Undo needs the latest decision. Reload roles and use Undo there." };
+    const groupRefusal = { ok: false, error: "This Undo needs the latest decisions. Reload roles and use Undo there." };
+    const runtimeNull = null as unknown as "apply";
+    expect(await decide(ids[0]!, null, "")).toEqual(singleRefusal);
+    expect(await decideRoles(ids, null, "")).toEqual(groupRefusal);
+    expect(await decideWithUndoToken(ids[0]!, runtimeNull, "")).toEqual(singleRefusal);
+    expect(await decideRolesWithUndoTokens(ids, runtimeNull, "")).toEqual(groupRefusal);
+    expect(await decide(undecided, null, "")).toEqual(singleRefusal);
+    expect(await decideRoles([undecided], null, "")).toEqual(groupRefusal);
+    expect(await decideWithUndoToken(undecided, runtimeNull, "")).toEqual(singleRefusal);
+    expect(await decideRolesWithUndoTokens([undecided], runtimeNull, "")).toEqual(groupRefusal);
+    expect(await database.select().from(schema.decisions)).toEqual(beforeDecisions);
+    expect(await database.select().from(schema.jobEvents)).toEqual(beforeEvents);
+    expect(await database.select().from(schema.tasks)).toEqual(beforeTasks);
+    const standing = await database.select({ jobId: schema.decisions.jobId, id: schema.decisions.id })
+      .from(schema.decisions).where(eq(schema.decisions.superseded, false));
+    expect(new Map(standing.map(row => [row.jobId, row.id]))).toEqual(new Map([
+      [ids[0], newer.decisionId], [ids[1], saved.decisionIds[ids[1]!]],
+    ]));
+  });
+
+  it("refuses an older tab's Undo after a newer decision and reverses only the exact standing row", async () => {
+    const job = await role(null);
+    const first = await decideWithUndoToken(job.id, "apply", "Strong match");
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.error);
+    const second = await decideWithUndoToken(job.id, "skip", "Wrong location");
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error(second.error);
+    expect(first.decisionId).not.toBe(second.decisionId);
+
+    expect(await undoDecisionIfCurrent(job.id, first.decisionId)).toEqual({
+      ok: false, error: "This decision changed in another tab. Reload roles before trying again.",
+    });
+    const standing = await database.select().from(schema.decisions)
+      .where(eq(schema.decisions.id, second.decisionId));
+    expect(standing[0]).toMatchObject({ decision: "skip", superseded: false });
+
+    expect(await undoDecisionIfCurrent(job.id, second.decisionId)).toEqual({ ok: true });
+    const after = await database.select().from(schema.decisions).where(eq(schema.decisions.id, second.decisionId));
+    expect(after[0]!.superseded).toBe(true);
+  });
+
+  it("returns one standing decision token per role from a bulk save", async () => {
+    const ids = [(await role(null)).id, (await role(null)).id];
+    const saved = await decideRolesWithUndoTokens(ids, "apply", "");
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) throw new Error(saved.error);
+    expect(Object.keys(saved.decisionIds).sort()).toEqual([...ids].sort());
+    expect(new Set(Object.values(saved.decisionIds)).size).toBe(2);
+  });
+
+  it("rejects the whole bulk Undo if one of two decisions changed, then undoes both current tokens", async () => {
+    const ids = [(await role(null)).id, (await role(null)).id];
+    const first = await decideRolesWithUndoTokens(ids, "apply", "");
+    if (!first.ok) throw new Error(first.error);
+    const changed = await decideWithUndoToken(ids[1]!, "skip", "Wrong location");
+    if (!changed.ok) throw new Error(changed.error);
+    const old = ids.map(jobId => ({ jobId, decisionId: first.decisionIds[jobId]! }));
+
+    expect(await undoDecisionsIfCurrent(old)).toEqual({
+      ok: false, error: "A selected decision changed in another tab. Reload roles before trying again.",
+    });
+    const standing = await database.select({ jobId: schema.decisions.jobId, id: schema.decisions.id, decision: schema.decisions.decision })
+      .from(schema.decisions).where(eq(schema.decisions.superseded, false));
+    expect(new Map(standing.map(row => [row.jobId, { id: row.id, decision: row.decision }]))).toEqual(new Map([
+      [ids[0], { id: first.decisionIds[ids[0]!], decision: "apply" }],
+      [ids[1], { id: changed.decisionId, decision: "skip" }],
+    ]));
+
+    expect(await undoDecisionsIfCurrent([{ jobId: ids[0]!, decisionId: first.decisionIds[ids[0]!]! },
+      { jobId: ids[1]!, decisionId: changed.decisionId }])).toEqual({ ok: true });
+    expect(await database.select().from(schema.decisions).where(eq(schema.decisions.superseded, false))).toEqual([]);
   });
 });
 
@@ -263,7 +364,7 @@ describe("one decision writer", () => {
 
   it("leaves the same rows deciding a role alone as deciding it as a group of one", async () => {
     const [alone, grouped] = [await role(null), await role(null)];
-    for (const [decision, reason] of [["apply", "Strong match"], ["skip", "Too junior"], [null, ""]] as const) {
+    for (const [decision, reason] of [["apply", "Strong match"], ["skip", "Too junior"]] as const) {
       await database.execute(sql`truncate tasks`);
       expect(await decide(alone.id, decision, reason)).toEqual({ ok: true });
       const one = await leftBehind(alone.id);
@@ -271,5 +372,11 @@ describe("one decision writer", () => {
       expect(await decideRoles([grouped.id], decision, reason)).toEqual({ ok: true });
       expect(await leftBehind(grouped.id)).toEqual(one);
     }
+    await database.execute(sql`truncate tasks`);
+    expect(await undoDecisionIfCurrent(alone.id, (await currentToken(alone.id)).decisionId)).toEqual({ ok: true });
+    const one = await leftBehind(alone.id);
+    await database.execute(sql`truncate tasks`);
+    expect(await undoDecisionsIfCurrent([await currentToken(grouped.id)])).toEqual({ ok: true });
+    expect(await leftBehind(grouped.id)).toEqual(one);
   });
 });

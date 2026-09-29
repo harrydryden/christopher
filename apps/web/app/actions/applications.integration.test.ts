@@ -36,7 +36,7 @@ vi.mock("@/lib/cv-pdf", async (original) => {
 
 import { revalidatePath } from "next/cache";
 import { manageRoleCv, recordApplication, setRoleStage, updateApplication } from "./applications";
-import { decide, decideRoles } from "./decisions";
+import { decide, decideRoles, undoDecisionIfCurrent, undoDecisionsIfCurrent } from "./decisions";
 import { pipelineRowForJob } from "@/lib/queries/applications";
 import { finaliseCvDraft, requestCv, saveCvLibrary } from "./cv";
 import { GET as cvRedirect } from "@/app/(app)/cv/route";
@@ -122,13 +122,27 @@ it("creates the role's application row on the first status set from the table, t
   expect(rows[0]!.status).toBe("interview");
   expect(rows[0]!.history.map((entry) => entry.status)).toEqual(["applied", "interview"]);
 
-  // The stage means nothing without a date once something has been submitted, and a status this
-  // build does not know is not a status.
-  expect((await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "", notes: "" }))).ok).toBe(false);
+  // Clearing the optional field removes a date known to be wrong without changing the stage.
+  expect((await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "", notes: "" }))).ok).toBe(true);
+  expect((await applicationsOf())[0]!.appliedOn).toBeNull();
+  // An unknown status and an impossible date remain invalid.
   expect((await setRoleStage(job.id, { ok: true }, form({ status: "hired", appliedOn: "2026-09-03" }))).ok).toBe(false);
   expect((await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-02-30" }))).ok).toBe(false);
   expect((await setRoleStage(crypto.randomUUID(), { ok: true }, form({ status: "applied", appliedOn: "2026-09-03" })))).toEqual({ ok: false, error: "Role not found." });
   expect(await applicationsOf()).toHaveLength(1);
+});
+
+it("records an applying or later stage without inventing a submission date", async () => {
+  const { job } = await fixture();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applying" }))).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.appliedOn).toBeNull();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", on: "2026-09-10" }))).toEqual({ ok: true });
+  const [row] = await applicationsOf();
+  expect(row!.appliedOn).toBeNull();
+  expect(row!.history.at(-1)).toMatchObject({ status: "interview", on: "2026-09-10" });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied" }))).toEqual({ ok: false, error: "Enter the date you applied." });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", confirm: "1" }))).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.appliedOn).toBe("2026-09-03");
 });
 
 it("dates each entry and keeps what the role owes next on the row", async () => {
@@ -458,6 +472,11 @@ async function moreRoles(companyId: string, count: number) {
 }
 const activeDecisions = (jobId: string) => database.select().from(schema.decisions)
   .where(and(eq(schema.decisions.userId, user.id), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false)));
+async function currentToken(jobId: string): Promise<{ jobId: string; decisionId: string }> {
+  const [standing] = await activeDecisions(jobId);
+  if (!standing) throw new Error(`No standing decision for ${jobId}`);
+  return { jobId, decisionId: standing.id };
+}
 const suggestFilterTasks = () => database.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_filters"));
 
 it("puts the application back where it stood when a dismissal is undone, so both pages agree", async () => {
@@ -466,14 +485,15 @@ it("puts the application back where it stood when a dismissal is undone, so both
   expect(await decide(job.id, "skip", "Pressed by mistake")).toEqual({ ok: true });
   expect((await applicationsOf())[0]!.status).toBe("withdrawn");
 
-  expect(await decide(job.id, null, "")).toEqual({ ok: true });
+  const token = await currentToken(job.id);
+  expect(await undoDecisionIfCurrent(job.id, token.decisionId)).toEqual({ ok: true });
   const [restored] = await applicationsOf();
   expect(restored!.status).toBe("interview");
   expect(restored!.history.map((entry) => entry.status)).toEqual(["interview", "withdrawn", "interview"]);
   expect(restored!.history.at(-1)).toMatchObject({ notes: "Dismissal undone on Roles" });
   expect((await pipelineRowForJob(user.id, job.id))!.stage).toBe("in_process");
   // Undoing again finds nothing of the dismissal's to put back.
-  expect(await decide(job.id, null, "")).toEqual({ ok: true });
+  expect(await undoDecisionIfCurrent(job.id, token.decisionId)).toMatchObject({ ok: false });
   expect((await applicationsOf())[0]!.history).toHaveLength(3);
 });
 
@@ -481,7 +501,8 @@ it("leaves a withdrawal made on Applications alone when a decision is undone on 
   const { job } = await fixture();
   expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
   expect(await setRoleStage(job.id, { ok: true }, form({ status: "withdrawn", appliedOn: "2026-09-03", notes: "Dismissed from Roles", confirm: "1" }))).toEqual({ ok: true });
-  expect(await decide(job.id, null, "")).toEqual({ ok: true });
+  const token = await currentToken(job.id);
+  expect(await undoDecisionIfCurrent(job.id, token.decisionId)).toEqual({ ok: true });
   const [row] = await applicationsOf();
   expect(row!.status).toBe("withdrawn");
   expect(row!.history.map((entry) => entry.status)).toEqual(["applied", "withdrawn"]);
@@ -492,7 +513,7 @@ it("restores, on a group undo, only the applications the group's dismissal withd
   const [other] = await moreRoles(company.id, 1);
   expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
   expect(await decideRoles([job.id, other!.id], "skip", "Not this quarter")).toEqual({ ok: true });
-  expect(await decideRoles([job.id, other!.id], null, "")).toEqual({ ok: true });
+  expect(await undoDecisionsIfCurrent(await Promise.all([job.id, other!.id].map(currentToken)))).toEqual({ ok: true });
   const rows = await applicationsOf();
   expect(rows).toHaveLength(1);
   expect(rows[0]!.status).toBe("applied");
@@ -544,10 +565,10 @@ it("queues filter suggestions when decisions cross a fifth, and not on a re-deci
   await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.type, "suggest_filters"));
 
   // Undo eleven to ten, then re-decide at ten, then edit that decision: the count never rises.
-  expect(await decide(roles[10]!.id, null, "")).toEqual({ ok: true });
+  expect(await undoDecisionIfCurrent(roles[10]!.id, (await currentToken(roles[10]!.id)).decisionId)).toEqual({ ok: true });
   expect(await decide(roles[0]!.id, "skip", "Changed my mind")).toEqual({ ok: true });
   expect(await decide(roles[0]!.id, "skip", "Changed my mind, and why")).toEqual({ ok: true });
-  expect(await decideRoles([roles[1]!.id, roles[2]!.id], null, "")).toEqual({ ok: true });
+  expect(await undoDecisionsIfCurrent(await Promise.all([roles[1]!.id, roles[2]!.id].map(currentToken)))).toEqual({ ok: true });
   expect((await suggestFilterTasks()).filter((task) => task.status === "queued")).toHaveLength(0);
   // Back up across ten again is a real crossing, and queues again.
   expect(await decideRoles([roles[1]!.id, roles[2]!.id, roles[11]!.id], "apply", "")).toEqual({ ok: true });

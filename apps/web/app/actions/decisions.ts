@@ -13,7 +13,7 @@ import { cvBuildQuote, cvQuoteButtonLine } from "@/lib/cv-quote";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { fetchArchiveNotes, fetchRoleDetails, locationReasonText, type CvQuoteVM, type RoleDetailsVM } from "@/lib/queries/jobs";
 import { getSettingsFor } from "@/lib/settings";
-import { recordDecisions } from "@/lib/decisions";
+import { lockRoleView, recordDecisions } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { SKIP_REASON_REQUIRED } from "@/lib/decision-reason";
 import { refuseOn, revalidate } from "@/lib/action-helpers";
@@ -112,12 +112,12 @@ function revalidateDecided(): void {
 }
 
 /**
- * Record (or edit) a decision on a role, or undo it when `decision` is null — `recordDecisions`
- * for one role, behind this account's authentication. Undoing a dismissal also puts back the application the
- * dismissal withdrew.
+ * Record (or edit) a decision on a role. Older clients may still send null for Undo; reject it
+ * because a tokenless request could erase a newer decision made in another tab.
  */
 export async function decide(jobId: string, decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
   const user = await requireUser();
+  if (decision === null) return fail("This Undo needs the latest decision. Reload roles and use Undo there.");
   const parsed = DecideSchema.safeParse({ jobId, decision, reason });
   if (!parsed.success) return fail(parsed.error.issues.find((issue) => issue.path[0] === "reason")?.message ?? "Invalid request.");
   const input = parsed.data;
@@ -129,6 +129,41 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
     return actionError(err, "Could not save your decision. Please try again.");
   }
 
+  revalidateDecided();
+  return ok();
+}
+
+/** A decision made from Roles returns the exact standing row its recent Undo must compare. */
+export async function decideWithUndoToken(jobId: string, decision: "apply" | "skip", reason: string): Promise<{ ok: true; decisionId: string } | { ok: false; error: string }> {
+  const user = await requireUser();
+  if (decision === null) return { ok: false, error: "This Undo needs the latest decision. Reload roles and use Undo there." };
+  const parsed = DecideSchema.safeParse({ jobId, decision, reason });
+  if (!parsed.success) return { ok: false, error: parsed.error.issues.find(issue => issue.path[0] === "reason")?.message ?? "Invalid request." };
+  try {
+    const rows = await db().transaction(tx => recordDecisions(tx, user.id, [parsed.data.jobId], decision, parsed.data.reason.trim(), "Role not found."));
+    revalidateDecided();
+    return { ok: true, decisionId: rows[0]!.id };
+  } catch (error) {
+    const failure = actionError(error, "Could not save your decision. Please try again.");
+    return failure.ok ? { ok: false, error: "Could not save your decision. Please try again." } : failure;
+  }
+}
+
+/** The role lock serialises this comparison with decisions in every tab and on Applications. */
+export async function undoDecisionIfCurrent(jobId: string, expectedDecisionId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = z.object({ jobId: zUuid(), expectedDecisionId: zUuid() }).safeParse({ jobId, expectedDecisionId });
+  if (!parsed.success) return fail("This Undo is out of date. Reload roles to review the latest decision.");
+  try {
+    await db().transaction(async tx => {
+      if (!await lockRoleView(tx, user.id, parsed.data.jobId)) throw new UserFacingError("Role not found.");
+      const [standing] = await tx.select({ id: decisions.id }).from(decisions)
+        .where(and(eq(decisions.userId, user.id), eq(decisions.jobId, parsed.data.jobId), eq(decisions.superseded, false)));
+      if (standing?.id !== parsed.data.expectedDecisionId)
+        throw new UserFacingError("This decision changed in another tab. Reload roles before trying again.");
+      await recordDecisions(tx, user.id, [parsed.data.jobId], null, "", "Role not found.");
+    });
+  } catch (error) { return actionError(error, "Could not undo your decision. Please try again."); }
   revalidateDecided();
   return ok();
 }
@@ -204,13 +239,15 @@ const DecideGroupSchema = z
   .refine((v) => v.decision !== "skip" || v.reason.trim().length > 0, { message: SKIP_REASON_REQUIRED, path: ["reason"] });
 
 /**
- * Decide a group of roles at once with one shared reason, or undo the group when `decision` is null.
+ * Decide a group of roles at once with one shared reason. Older clients may still send null for
+ * Undo; reject it because a tokenless request could erase newer decisions made in another tab.
  * The same writer as `decide` (`recordDecisions`), so the result is exactly what the same roles
  * decided one at a time would leave behind. All or nothing: a role that is not this account's, or a
  * group skip without a reason, writes nothing at all rather than leaving part of the group saved.
  */
 export async function decideRoles(jobIds: string[], decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
   const user = await requireUser();
+  if (decision === null) return fail("This Undo needs the latest decisions. Reload roles and use Undo there.");
   const parsed = DecideGroupSchema.safeParse({ jobIds, decision, reason });
   if (!parsed.success) {
     const reasonIssue = parsed.error.issues.find((issue) => issue.path[0] === "reason");
@@ -225,6 +262,50 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
     return actionError(error, "Could not save your decisions. Please try again.");
   }
 
+  revalidateDecided();
+  return ok();
+}
+
+/** The bulk toolbar gets one exact Undo token per saved role. */
+export async function decideRolesWithUndoTokens(jobIds: string[], decision: "apply" | "skip", reason: string): Promise<{ ok: true; decisionIds: Record<string, string> } | { ok: false; error: string }> {
+  const user = await requireUser();
+  if (decision === null) return { ok: false, error: "This Undo needs the latest decisions. Reload roles and use Undo there." };
+  const parsed = DecideGroupSchema.safeParse({ jobIds, decision, reason });
+  if (!parsed.success) {
+    const reasonIssue = parsed.error.issues.find(issue => issue.path[0] === "reason");
+    return { ok: false, error: reasonIssue?.message ?? `Select between 1 and ${MAX_GROUP_DECISION} roles.` };
+  }
+  try {
+    const rows = await db().transaction(tx => recordDecisions(tx, user.id, parsed.data.jobIds, decision, parsed.data.reason.trim()));
+    revalidateDecided();
+    return { ok: true, decisionIds: Object.fromEntries(rows.map(row => [row.jobId, row.id])) };
+  } catch (error) {
+    const failure = actionError(error, "Could not save your decisions. Please try again.");
+    return failure.ok ? { ok: false, error: "Could not save your decisions. Please try again." } : failure;
+  }
+}
+
+/** All selected decisions must still be standing; one stale token reverses none of them. */
+export async function undoDecisionsIfCurrent(expected: Array<{ jobId: string; decisionId: string }>): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = z.array(z.object({ jobId: zUuid(), decisionId: zUuid() })).min(1).max(MAX_GROUP_DECISION).safeParse(expected);
+  if (!parsed.success || new Set(parsed.data.map(item => item.jobId)).size !== parsed.data.length)
+    return fail(`Select between 1 and ${MAX_GROUP_DECISION} different decided roles.`);
+  const ids = parsed.data.map(item => item.jobId).sort();
+  const wanted = new Map(parsed.data.map(item => [item.jobId, item.decisionId]));
+  try {
+    await db().transaction(async tx => {
+      // Every decision writer takes these same account-role locks. Sort before taking any lock to
+      // match recordDecisions and keep concurrent bulk operations deadlock-free.
+      for (const id of ids) if (!await lockRoleView(tx, user.id, id)) throw new UserFacingError("A selected role no longer exists.");
+      const standing = await tx.select({ jobId: decisions.jobId, id: decisions.id }).from(decisions)
+        .where(and(eq(decisions.userId, user.id), inArray(decisions.jobId, ids), eq(decisions.superseded, false)));
+      const current = new Map(standing.map(row => [row.jobId, row.id]));
+      if (ids.some(id => current.get(id) !== wanted.get(id)))
+        throw new UserFacingError("A selected decision changed in another tab. Reload roles before trying again.");
+      await recordDecisions(tx, user.id, ids, null, "");
+    });
+  } catch (error) { return actionError(error, "Could not undo the selected decisions. Please try again."); }
   revalidateDecided();
   return ok();
 }

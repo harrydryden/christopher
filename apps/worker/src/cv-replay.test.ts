@@ -142,12 +142,14 @@ it("lays the command's routes over the deployment's, field by field", () => {
     .toEqual({ "cv.review": { model: "claude-sonnet-5", effort: "medium" }, "cv.author": { effort: "xhigh" } });
 });
 
-it("keeps the replay transaction's own timeouts through a rebuild longer than a lease renewal interval", async () => {
+it("keeps the replay transaction's own timeouts without operation-lease renewal", async () => {
   const draft = await publishedDraft();
   const settings: Record<string, string> = {};
   deps.leaseRenewEveryMs = 50;
   try {
-    // The scripted client holds each audit batch 200ms, so the rebuild spans several renewal intervals.
+    // Replay runs inside a rollback-only transaction. Its operation lease is uncommitted and
+    // intentionally never renews; the short configured interval must not let a renewal's SET LOCAL
+    // timeouts leak into the transaction while the real build runs.
     const { report } = await replayCvDraft(deps, draft.id, {
       client: createScriptedAiClient({ barrierMs: 200 }).client, source: "live",
       inspect: async tx => {
@@ -156,9 +158,6 @@ it("keeps the replay transaction's own timeouts through a rebuild longer than a 
       },
     });
     expect(report.outcome).toBe("published");
-    // Several renewal intervals. (The fixture's gap is too small for the optional improvement, so
-    // the rebuild is one audit round, not two.)
-    expect(report.wallMs).toBeGreaterThan(2 * 50);
   } finally {
     deps.leaseRenewEveryMs = undefined;
   }

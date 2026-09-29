@@ -46,7 +46,7 @@ export default async function SettingsPage() {
             word the defaults happen to carry, so nothing is ever scanned against a choice nobody made. */}
         <p className="mb-3 text-14 text-muted">{GATE_SENTENCE}</p>
         {/* The Keywords and Location cards both save the gate. */}
-        <SettingsForm action={saveGate}>
+        <SettingsForm successMessage="Saved." action={saveGate}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Seniority keywords (title only)</span>
             <textarea name="seniorityKeywords" rows={2} defaultValue={(settings.gate.seniorityKeywords ?? []).join("\n")} placeholder="Head, Director, VP, Chief" className={inputClass} />
@@ -66,7 +66,7 @@ export default async function SettingsPage() {
       </div>
 
       <Card title="Match fields">
-        <SettingsForm action={saveMatchFields}>
+        <SettingsForm successMessage="Saved." action={saveMatchFields}>
           <div className="flex flex-wrap gap-4">
             {(["title", "department", "description"] as const).map((f) => (
               <label key={f} className={checkboxClass}>
@@ -80,7 +80,7 @@ export default async function SettingsPage() {
 
       <div id="location">
       <Card title="Location filter">
-        <SettingsForm action={saveGate}>
+        <SettingsForm successMessage="Saved." action={saveGate}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Allowed locations</span>
             <textarea name="locationTerms" rows={2} defaultValue={gateChosen ? settings.gate.locationTerms.join("\n") : ""} placeholder="London, UK" className={inputClass} />
@@ -94,9 +94,9 @@ export default async function SettingsPage() {
       </div>
 
       <div id="seed-profile">
-      <Card title="Seed profile">
+      <Card title="What work are you looking for?">
         <p className="mb-2 text-14 text-muted">The starting point for your preference profile; it is never overwritten.</p>
-        <SettingsForm action={saveSeedProfileSetting}>
+        <SettingsForm successMessage="Saved." action={saveSeedProfileSetting}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>What you are looking for</span>
             <textarea name="seedProfile" rows={5} maxLength={5000} defaultValue={settings.seedProfile} placeholder="e.g. Operations leadership in London or remote, at a company past Series B. Nothing below £90k, nothing that needs five days in an office." className={inputClass} />
@@ -106,7 +106,7 @@ export default async function SettingsPage() {
       </div>
 
       <Card title="Table">
-        <SettingsForm action={saveTableSettings}>
+        <SettingsForm successMessage="Saved." action={saveTableSettings}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={labelClass}>
               <span className={fieldLabelClass}>Show closed roles for (days)</span>
@@ -117,7 +117,7 @@ export default async function SettingsPage() {
       </Card>
 
       <Card title="Company suggestions">
-        <SettingsForm action={saveSuggestionSettings}>
+        <SettingsForm successMessage="Saved." action={saveSuggestionSettings}>
           <label className={checkboxClass}>
             <input type="checkbox" name="suggestionsEnabled" value="1" defaultChecked={settings.suggestionsEnabled} className="h-4 w-4" />
             Weekly company suggestions and source checks
@@ -125,14 +125,14 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
-      <SettingsForm action={saveCvAppearance}>
+      <SettingsForm successMessage="Saved." action={saveCvAppearance}>
         <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
       </SettingsForm>
 
       <p className="text-14 text-muted">Writing preferences are on the <a href="/library" className="text-fg underline">Library</a> page.</p>
 
       <Card title="CV model">
-        <SettingsForm action={saveCvModel}>
+        <SettingsForm successMessage="Saved." action={saveCvModel}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>CV model</span>
             <ModelSelect name="cvModel" value={settings.cvModel} className={selectClass} />
@@ -146,7 +146,7 @@ export default async function SettingsPage() {
           You have used {formatUsd(budget.spentUsd)} of your {formatUsd(budget.limitUsd)} this month; it resets on the 1st.
           {budget.countingSince && <> Counting since {shortDate(budget.countingSince)}.</>}
         </p>
-        <SettingsForm action={saveAiBudget}>
+        <SettingsForm successMessage="Saved." action={saveAiBudget}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Monthly AI budget (USD)</span>
             <input name="aiBudgetUsd" type="number" min={0} max={admin ? MAX_ACCOUNT_AI_BUDGET_USD : Math.max(MAX_MEMBER_AI_BUDGET_USD, budget.limitUsd)} step={1} defaultValue={budget.limitUsd} className={fieldClass} />

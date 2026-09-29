@@ -1,0 +1,4 @@
+shipped prompt set: e06dce7dc560; 2 committed report(s); a verified report is required (AVA_EVAL_GATE_REQUIRE_VERIFIED)
+note: docs/evaluations/cv-replay/report.json: at the shipped prompt set e06dce7dc560, marked unverified (no live run behind its grade).
+note: docs/evaluations/cv-tailoring-contrast/report.json: graded at an unrecorded prompt set, marked unverified; it does not vouch for e06dce7dc560.
+error: No verified, published, passing CV replay report is at the shipped prompt set e06dce7dc560. Record and replay a live build before qualifying a release (docs/DEPLOY.md, "Evaluation reports and the prompt set").

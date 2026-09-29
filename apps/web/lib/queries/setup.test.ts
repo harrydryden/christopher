@@ -51,7 +51,7 @@ const library = (entries: Array<{ kind: "experience" | "education" | "skill"; he
   name: "Test Candidate",
   contact: "London",
   profile: "",
-  entries: entries.map((entry, index) => ({ id: `e${index}`, status: "active" as const, details: "Did the work", ...entry })),
+  entries: entries.map((entry, index) => ({ id: `e${index}`, status: "active" as const, details: "Did the work", confirmedResponsibilities: ["Owned delivery"], ...entry })),
 });
 
 it("reports a fresh account as nothing done at all", async () => {
@@ -63,9 +63,10 @@ it("reports a fresh account as nothing done at all", async () => {
     companiesFollowed: 0,
     libraryFilled: false,
     dismissedAt: null,
+    monitoring: { activeCompanies: 0, successfulCompanies: 0, attentionCompanies: 0, pendingCompanies: 0, lastSuccessAt: null },
   });
   const checklist = buildSetupChecklist(facts);
-  expect(checklist.summary).toBe("0 of 5 done");
+  expect(checklist.summary).toBe("0 of 4 done");
   expect(checklist.nextStep?.id).toBe("email");
 });
 
@@ -83,13 +84,13 @@ it("flips each step as its own fact changes, and counts nobody else's rows", asy
     .where(eq(schema.userSettings.key, "seedProfile"));
   expect(await setupStatus(user.id)).toMatchObject({ seedProfileWritten: true });
 
-  await followCompany(user.id, "one.example");
+  const first = await followCompany(user.id, "one.example");
   await followCompany(user.id, "two.example");
   // An archived subscription is not a company this account follows; another account's is not either.
   await followCompany(user.id, "three.example", "archived");
   await followCompany(other.id, "four.example");
   expect(await setupStatus(user.id)).toMatchObject({ companiesFollowed: 2, libraryFilled: false });
-  expect(buildSetupChecklist(await setupStatus(user.id)).steps[3]).toMatchObject({ done: false, progress: "2 of 3" });
+  expect(buildSetupChecklist(await setupStatus(user.id)).steps[2]).toMatchObject({ done: true, progress: "2 following" });
 
   await followCompany(user.id, "five.example", "paused");
   expect(await setupStatus(user.id)).toMatchObject({ companiesFollowed: 3 });
@@ -101,9 +102,11 @@ it("flips each step as its own fact changes, and counts nobody else's rows", asy
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 2, content: library([{ kind: "skill", heading: "Tools" }, { kind: "experience", heading: "Director · Acme" }]) });
   expect(await setupStatus(user.id)).toMatchObject({ libraryFilled: true });
 
+  expect(buildSetupChecklist(await setupStatus(user.id)).complete).toBe(false);
+  await database.insert(schema.careerSources).values({ companyId: first.id, type: "html", url: "https://one.example/jobs", lastOkScanAt: new Date("2026-09-29T08:00:00Z") });
   const checklist = buildSetupChecklist(await setupStatus(user.id));
   expect(checklist.complete).toBe(true);
-  expect(checklist.summary).toBe("5 of 5 done");
+  expect(checklist.summary).toBe("4 of 4 done");
   expect(checklist.nextStep).toBeNull();
 
   // Every fact belongs to one account: the other one has done none of it.
@@ -145,4 +148,32 @@ it("reads every fact in one statement, and only this account's", async () => {
   expect(reads.n).toBe(1);
   expect(facts).toMatchObject({ gateChosen: true, seedProfileWritten: true, companiesFollowed: 1, dismissedAt: null });
   expect(await setupStatus(other.id)).toMatchObject({ gateChosen: false, companiesFollowed: 1, dismissedAt: "2026-09-01T00:00:00.000Z" });
+});
+
+
+it("distinguishes queued discovery, partial results and a complete empty scan without borrowing another account's success", async () => {
+  await setting(user.id, "gate", { includeKeywords: ["operations"] });
+  const company = await followCompany(user.id, "watch.example");
+  const another = await followCompany(other.id, "other.example");
+  await database.insert(schema.careerSources).values({ companyId: another.id, type: "html", url: "https://other.example/jobs", lastOkScanAt: new Date() });
+  expect((await setupStatus(user.id)).monitoring).toMatchObject({ activeCompanies: 1, successfulCompanies: 0, attentionCompanies: 1, pendingCompanies: 0 });
+  const [task] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, status: "queued" }).returning();
+  expect((await setupStatus(user.id)).monitoring).toMatchObject({ attentionCompanies: 0, pendingCompanies: 1 });
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, task!.id));
+  const [source] = await database.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://watch.example/jobs" }).returning();
+  await database.insert(schema.scans).values({ sourceId: source!.id, status: "partial", startedAt: new Date("2026-09-29T08:00:00Z"), finishedAt: new Date("2026-09-29T08:01:00Z") });
+  expect((await setupStatus(user.id)).monitoring).toMatchObject({ attentionCompanies: 1, successfulCompanies: 0, pendingCompanies: 0 });
+  await database.insert(schema.scans).values({ sourceId: source!.id, status: "ok", postingsFound: 0, startedAt: new Date("2026-09-29T09:00:00Z"), finishedAt: new Date("2026-09-29T09:01:00Z") });
+  await database.update(schema.careerSources).set({ lastOkScanAt: new Date("2026-09-29T09:01:00Z") }).where(eq(schema.careerSources.id, source!.id));
+  const facts = await setupStatus(user.id);
+  expect(facts.monitoring).toMatchObject({ attentionCompanies: 0, successfulCompanies: 1 });
+  expect(buildSetupChecklist(facts).notice.state).toBe("complete");
+});
+
+it("does not call inactive or unconfirmed experience usable Library evidence", async () => {
+  const content = library([{ kind: "experience", heading: "Delivery" }]);
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: { ...content, entries: content.entries.map(e => ({ ...e, confirmedResponsibilities: [] })) } });
+  expect((await setupStatus(user.id)).libraryFilled).toBe(false);
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 2, content: { ...content, entries: content.entries.map(e => ({ ...e, status: "inactive" })) } });
+  expect((await setupStatus(user.id)).libraryFilled).toBe(false);
 });

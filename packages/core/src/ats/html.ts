@@ -5,7 +5,8 @@ import { extractJsonLdPostings } from "./jsonld";
 import { isAtsHost } from "./common";
 
 const JOB_PATH_RE =
-  /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-details?|joblisting)\/|[?&](?:gh_jid|jobId|job_id|reqId|requisitionId)=/i;
+  /\/(?:jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-details?|joblisting)\//i;
+const JOB_QUERY_KEYS = new Set(["gh_jid", "jobid", "job_id", "reqid", "requisitionid"]);
 
 /** A link label saying it leads to the complete listing: "All jobs", "Search roles", "View open positions". */
 export const COMPLETE_LISTING_LABEL =
@@ -14,10 +15,12 @@ export const COMPLETE_LISTING_LABEL =
 // These are listing, subscription or careers-content destinations, never posting-detail slugs.
 // Exact segment matching preserves genuine titles such as `/jobs/benefits-lead`.
 const NON_DETAIL_LAST_SEGMENT_RE =
-  /^(?:search|listings?|all-jobs?|open-jobs?|feed|rss|compatibility|emerging-talent|benefits?|teams?|locations?)$/i;
+  /^(?:search|listings?|all-jobs?|open-jobs?|feed|rss|compatibility|emerging-talent|benefits?|teams?|locations?|faqs?|support|help|legal|privacy|terms|polic(?:y|ies)|accessibility|code-of-conduct|accommodations?(?:-for-disability)?|(?:our-)?commitment-to-(?:applicants|candidates)|(?:working-on-)?diversity-and-inclus(?:ion|ivity))$/i;
 
 const NAV_TEXT_RE =
   /^(careers?|jobs?|all (?:jobs|roles|openings|positions)|view all(?: jobs| roles| openings)?|see (?:all|open) (?:jobs|roles|positions|openings)|open (?:roles|positions|jobs)|apply(?: now)?|learn more|read more|find out more|back(?: to .*)?|home|search|our team|join us|join the team|next|previous|more|show more|load more|view openings|browse jobs|filter|sort|menu|close)$/i;
+const POLICY_LINK_TEXT_RE =
+  /^(?:report (?:this|a) (?:content|page)|(?:faqs?|frequently asked questions)(?:\s*(?:&|and)\s*support)?|(?:review\s+)?accommodations? for disability|(?:our\s+)?code of conduct|(?:our\s+)?commitment to applicants?)$/i;
 
 const LOCATION_HINT_RE =
   /(remote|hybrid|on-?site|,\s*[A-Z]{2}\b|,\s*(?:UK|USA|US|UAE)\b|london|new york|san francisco|berlin|paris|amsterdam|dublin|singapore|sydney|toronto|austin|seattle|boston|chicago|denver|los angeles|washington|manchester|edinburgh|cambridge|oxford|bristol|leeds|glasgow|tel aviv|bangalore|tokyo|madrid|barcelona|munich|zurich|stockholm|copenhagen|milan|lisbon|warsaw|dubai|costa mesa|irvine|el segundo|reston|arlington)/i;
@@ -82,27 +85,29 @@ function looksLikeTitle(text: string): boolean {
   if (t.length < 2 || t.length > 120) return false;
   if (!/\p{L}/u.test(t)) return false;
   if (NAV_TEXT_RE.test(t)) return false;
+  if (POLICY_LINK_TEXT_RE.test(t)) return false;
   return true;
 }
 
 function isJobHref(url: string, pageUrl: string): boolean {
+  let u: URL;
   try {
-    if (isAtsHost(new URL(url).hostname)) return true;
+    u = new URL(url);
   } catch {
     return false;
   }
-  if (!JOB_PATH_RE.test(url)) return false;
+  // Query values may contain a whole `/jobs/` URL (for example an abuse report's report_url).
+  // Only the destination's own pathname or a named requisition parameter can identify a job.
+  const jobQuery = [...u.searchParams.keys()].some(key => JOB_QUERY_KEYS.has(key.toLowerCase()));
+  if (!isAtsHost(u.hostname) && !JOB_PATH_RE.test(u.pathname) && !jobQuery) return false;
   const norm = normalizeUrl(url);
   if (norm === normalizeUrl(pageUrl)) return false;
-  try {
-    // A bare listing root such as /careers or /jobs is not a job detail page.
-    const u = new URL(url);
-    const segs = u.pathname.split("/").filter(Boolean);
-    if (segs.length <= 1 && !u.search) return false;
-    if (NON_DETAIL_LAST_SEGMENT_RE.test(segs.at(-1) ?? "")) return false;
-  } catch {
-    return false;
-  }
+  // Exact topic slugs are navigation/content pages, not a profession containing the same word.
+  // Strip .html for company sites which publish both postings and help articles as HTML files.
+  const segs = u.pathname.split("/").filter(Boolean);
+  const last = (segs.at(-1) ?? "").replace(/\.html?$/i, "");
+  if (segs.length <= 1 && !u.search) return false;
+  if (NON_DETAIL_LAST_SEGMENT_RE.test(last)) return false;
   return true;
 }
 

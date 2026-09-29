@@ -2,8 +2,8 @@
  * The facts behind the setup checklist, read for one account.
  *
  * Every step is derived from a row that already exists — a confirmed address, a stored `gate`, a
- * seed profile, followed companies, a saved Library — so setup has no state of its own beyond the
- * `setupDismissedAt` marker read here with the rest. The shaping (labels, links, "2 of 5 done") is
+ * followed companies and a complete successful scan — so setup has no state of its own beyond the
+ * `setupDismissedAt` marker read here with the rest. The shaping (labels, links, "2 of 4 done") is
  * in `lib/setup.ts`, which touches no database.
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -11,7 +11,7 @@ import { resolveUserSettings } from "@ava/core";
 import { companySubscriptions, cvLibraries, userSettings, users } from "@ava/db/schema";
 import { needsEmailConfirmation } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { CHOOSE_GATE_SENTENCE, type SetupFacts } from "@/lib/setup";
+import { CHOOSE_GATE_SENTENCE, type MonitoringFacts, type SetupFacts } from "@/lib/setup";
 import { UserFacingError } from "@/lib/validation";
 
 /** The account's own setting rows the checklist reads. Read from `user_settings` alone: a stray
@@ -58,8 +58,36 @@ export async function setupStatus(userId: string): Promise<SetupFacts> {
       )`,
       // The count alone, so a long Library is never pulled across to answer "is it filled?".
       experiences: sql<number | null>`(
-        select (select count(*)::int from jsonb_array_elements(${cvLibraries.content} -> 'entries') entry where entry ->> 'kind' = 'experience')
+        select (select count(*)::int from jsonb_array_elements(${cvLibraries.content} -> 'entries') entry
+          where entry ->> 'kind' = 'experience' and coalesce(entry ->> 'status', 'active') = 'active'
+          and length(trim(coalesce(entry ->> 'details', ''))) > 0
+          and jsonb_array_length(coalesce(entry -> 'confirmedResponsibilities', '[]'::jsonb)) > 0)
         from ${cvLibraries} where ${cvLibraries.userId} = ${userId} order by ${cvLibraries.version} desc limit 1
+      )`,
+      // A company is counted once, irrespective of the number of sources. A successful shared
+      // source is already useful when followed: gate membership is evaluated on follow/save.
+      monitoring: sql<MonitoringFacts>`(
+        select json_build_object(
+          'activeCompanies', count(*)::int,
+          'successfulCompanies', count(*) filter (where source.last_ok is not null)::int,
+          'attentionCompanies', count(*) filter (where source.needs_attention or (source.sources = 0 and not work.pending))::int,
+          'pendingCompanies', count(*) filter (where work.pending)::int,
+          'lastSuccessAt', max(source.last_ok))
+        from company_subscriptions cs
+        cross join lateral (
+          select exists(select 1 from tasks t where t.payload->>'companyId' = cs.company_id::text
+            and t.type in ('discover', 'scan_company') and t.status in ('queued', 'running')) as pending
+        ) work
+        cross join lateral (
+          select count(*)::int as sources, max(src.last_ok_scan_at) as last_ok,
+            coalesce(bool_or(src.status in ('needs_confirmation', 'blocked', 'failing')
+              or latest.status in ('failed', 'partial', 'suspect_empty')), false) as needs_attention
+          from career_sources src
+          left join lateral (select s.status from scans s where s.source_id = src.id
+            and s.finished_at is not null order by s.started_at desc, s.id desc limit 1) latest on true
+          where src.company_id = cs.company_id and src.status <> 'disabled'
+        ) source
+        where cs.user_id = ${userId} and cs.status = 'active'
       )`,
     })
     .from(users)
@@ -75,5 +103,6 @@ export async function setupStatus(userId: string): Promise<SetupFacts> {
     companiesFollowed: Number(row?.followed ?? 0),
     libraryFilled: Number(row?.experiences ?? 0) > 0,
     dismissedAt: settings.setupDismissedAt,
+    monitoring: row?.monitoring ?? { activeCompanies: 0, successfulCompanies: 0, attentionCompanies: 0, pendingCompanies: 0, lastSuccessAt: null },
   };
 }

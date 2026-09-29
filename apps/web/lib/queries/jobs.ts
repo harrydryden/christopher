@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { companyIcon } from "@/lib/company-icon";
 import { relativeTime } from "@/lib/format";
 import { readClampedPage } from "@/lib/queries/paging";
+import { STATUS_VALUES, SORT_KEYS, type StatusFilter, type SortKey } from "@/lib/roles-filter-options";
 
 export interface RoleCompany {
   id: string;
@@ -135,14 +136,11 @@ export async function fetchArchiveNotes(userId: string, jobId: string, recent = 
 // ordering they ask for happen in SQL (`rolesQuery`).
 // ---------------------------------------------------------------------------
 
-export const STATUS_VALUES = ["new", "active", "closed"] as const;
-export type StatusFilter = (typeof STATUS_VALUES)[number];
+export { STATUS_VALUES, SORT_KEYS } from "@/lib/roles-filter-options";
+export type { StatusFilter, SortKey } from "@/lib/roles-filter-options";
 
 export const DECISION_VALUES = ["inbox", "all", "undecided", "apply", "skip"] as const;
 export type DecisionFilter = (typeof DECISION_VALUES)[number];
-
-export const SORT_KEYS = ["status", "fit", "company", "liveFor", "firstSeen", "title", "location", "decided"] as const;
-export type SortKey = (typeof SORT_KEYS)[number];
 
 export type SortDir = "asc" | "desc";
 

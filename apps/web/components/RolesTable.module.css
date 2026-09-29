@@ -1,0 +1,44 @@
+/* One semantic table and one set of controls; the same cells become a readable card on phones. */
+@media (max-width: 767px) {
+  .cards :global(table),
+  .cards :global(tbody),
+  .cards :global(tbody > tr),
+  .cards :global(tbody > tr > td) {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .cards :global(thead) { display: none; }
+
+  .roleRow {
+    display: flex !important;
+    flex-wrap: wrap;
+    width: auto !important;
+    margin: 0.75rem;
+    border: 2px solid var(--line);
+    background: var(--bg);
+  }
+
+  .roleRow > :global(td) { padding: 0.4rem 0.75rem; }
+  .roleSelect { order: 0; width: 50% !important; }
+  .roleAction { order: 1; width: 50% !important; text-align: right; }
+  .roleCompany { order: 2; }
+  .roleTitle { order: 3; max-width: none; }
+  .roleLocation { order: 4; width: 55% !important; overflow-wrap: anywhere; }
+  .roleFit { order: 5; width: 45% !important; }
+
+  .roleRow button,
+  .roleRow a,
+  .reviewRow button,
+  .reviewRow a {
+    min-height: 44px;
+  }
+
+  .roleRow button,
+  .roleRow a { display: inline-flex; align-items: center; }
+  .roleRow .roleTitle button { white-space: normal; }
+  .reviewRow { width: auto !important; margin: -0.75rem 0.75rem 0.75rem; border: 2px solid var(--line); border-top: 0; }
+  .reviewRow > :global(td) { padding: 0.75rem; }
+  .reviewRow a { display: inline-flex; align-items: center; }
+}

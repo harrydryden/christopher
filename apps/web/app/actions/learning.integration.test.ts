@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
-import { createTestDb } from "@/test/db";
+import { createTestDb, TEST_DATABASE_URL } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
@@ -102,4 +102,47 @@ it("revalidates the Roles page whenever the strip above its table settles a sugg
   revalidated.mockClear();
   await rejectFilterSuggestion(dismissed.id);
   expect(revalidated.mock.calls).toEqual([["/learning"], ["/"]]);
+});
+
+it("merges simultaneous accepted terms under the settings lock and never rejects one afterwards", async () => {
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "gate", value: {
+    includeKeywords: ["operations"], seniorityKeywords: [], excludeKeywords: [], locationTerms: [], includeRemote: true, matchFields: ["title"],
+  } });
+  const suggestions = await database.insert(schema.filterSuggestions).values([
+    { userId: user.id, type: "keyword_include", value: { term: "strategy" }, rationale: "" },
+    { userId: user.id, type: "keyword_include", value: { term: "finance" }, rationale: "" },
+  ]).returning();
+  const observer = createDb(TEST_DATABASE_URL, { max: 1 });
+  const holder = await pool.connect();
+  let accepted: Promise<Awaited<ReturnType<typeof acceptFilterSuggestionWithReport>>[]> | null = null;
+  try {
+    await holder.query("begin");
+    await holder.query("select pg_advisory_xact_lock(hashtext($1))", [`settings:${user.id}`]);
+    accepted = Promise.all(suggestions.map(row => acceptFilterSuggestionWithReport(row.id)));
+    // Wait until both requests have reached the same lock. The old implementation read the gate
+    // before reaching it, so this interleaving used to overwrite one accepted term.
+    const deadline = Date.now() + 5_000;
+    let waiters = 0;
+    while (Date.now() < deadline) {
+      const result = await observer.db.execute<{ n: number }>(sql`select count(*)::int as n from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock' and query like '%pg_advisory_xact_lock%'`);
+      waiters = Number(result.rows[0]?.n ?? 0);
+      if (waiters >= 2) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(waiters).toBeGreaterThanOrEqual(2);
+    await holder.query("commit");
+    expect((await accepted).map(result => result.ok)).toEqual([true, true]);
+  } finally {
+    await holder.query("rollback").catch(() => {});
+    holder.release();
+    await observer.pool.end();
+    if (accepted) await accepted.catch(() => {});
+  }
+  const [gate] = await database.select().from(schema.userSettings)
+    .where(sql`user_id = ${user.id} and key = 'gate'`);
+  expect([...(gate!.value as { includeKeywords: string[] }).includeKeywords].sort()).toEqual(["finance", "operations", "strategy"]);
+  await rejectFilterSuggestion(suggestions[0]!.id);
+  expect((await database.select({ status: schema.filterSuggestions.status }).from(schema.filterSuggestions)
+    .where(sql`id = ${suggestions[0]!.id}`))[0]!.status).toBe("accepted");
 });

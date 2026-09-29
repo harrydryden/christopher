@@ -1166,7 +1166,7 @@ export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanI
 import { SOURCE_FAILING_AFTER } from "@ava/core";
 export { SOURCE_FAILING_AFTER };
 
-export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "rediscovery";
+export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "suspect_empty" | "partial" | "rediscovery";
 
 /** Where each kind sits in the list: what stops everything first, proposals last. */
 const KIND_ORDER: Record<HealthItemKind, number> = {
@@ -1174,8 +1174,10 @@ const KIND_ORDER: Record<HealthItemKind, number> = {
   needs_confirmation: 1,
   blocked: 2,
   failing: 3,
-  no_source: 4,
-  rediscovery: 5,
+  suspect_empty: 4,
+  partial: 5,
+  no_source: 6,
+  rediscovery: 7,
 };
 
 export interface HealthCandidate {
@@ -1217,6 +1219,10 @@ export function healthItemHeadline(item: HealthItem): string {
       return "The board is refusing our requests";
     case "failing":
       return `Failed ${item.source?.consecutiveFailures ?? 0} ${item.source?.consecutiveFailures === 1 ? "scan" : "scans"} in a row`;
+    case "suspect_empty":
+      return "The careers listing unexpectedly returned no roles";
+    case "partial":
+      return "The careers listing was not read completely";
     case "rediscovery":
       return "Discovery found another careers page";
   }
@@ -1235,6 +1241,10 @@ export function healthItemDetail(item: HealthItem): string {
       return item.reason ?? "The site refused our requests, which no retry undoes.";
     case "failing":
       return item.reason ?? `A source is marked failing after ${SOURCE_FAILING_AFTER} failed scans in a row.`;
+    case "suspect_empty":
+      return item.reason ?? "The last complete listing had roles; this empty result cannot close them. Check this careers page.";
+    case "partial":
+      return item.reason ?? "Some roles may be missing from this scan. No unseen roles were closed.";
     case "rediscovery":
       return "A source is already scanning, so this one waits for a follower to judge it. Any of them can.";
   }
@@ -1298,7 +1308,7 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
 
   const ids = followed.map((company) => company.id);
   if (ids.length) {
-    const [sourceRows, runRows] = await Promise.all([
+    const [sourceRows, runRows, scanRows] = await Promise.all([
       db()
         .select({
           id: careerSources.id,
@@ -1321,15 +1331,26 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
         .from(discoveryRuns)
         .where(inArray(discoveryRuns.companyId, ids))
         .orderBy(discoveryRuns.companyId, desc(discoveryRuns.startedAt)),
+      // A later failed request does not prove the earlier incomplete listing has recovered. Only
+      // another complete `ok` observation clears this attention, or disabling the source does.
+      db()
+        .selectDistinctOn([scans.sourceId], { sourceId: scans.sourceId, status: scans.status, error: scans.error })
+        .from(scans)
+        .innerJoin(careerSources, eq(careerSources.id, scans.sourceId))
+        .where(and(inArray(careerSources.companyId, ids), inArray(scans.status, ["ok", "partial", "suspect_empty"])))
+        .orderBy(scans.sourceId, desc(scans.startedAt), desc(scans.id)),
     ]);
 
     const runByCompany = new Map(runRows.map((row) => [row.companyId, row]));
+    const scanBySource = new Map(scanRows.map((row) => [row.sourceId, row]));
     const found: Array<HealthItem & { sortName: string }> = [];
     for (const company of followed) {
       const sources = sourceRows.filter((source) => source.companyId === company.id);
       const unconfirmed = sources.find((source) => source.status === "needs_confirmation");
       const blocked = sources.find((source) => source.status === "blocked");
       const failing = sources.find((source) => source.status === "failing");
+      const suspectEmpty = sources.find((source) => (source.status === "active" || source.status === "failing") && scanBySource.get(source.id)?.status === "suspect_empty");
+      const partial = sources.find((source) => (source.status === "active" || source.status === "failing") && scanBySource.get(source.id)?.status === "partial");
       const working = sources.some((source) => source.status === "active" || source.status === "failing");
       const run = runByCompany.get(company.id);
       const candidates = run?.status === "needs_confirmation" ? readHealthCandidates(run.candidates) : [];
@@ -1343,8 +1364,10 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
       else if (proposal && !working) add("needs_confirmation", { runId: proposal.id, candidates });
       else if (blocked) add("blocked", { source: blocked });
       else if (failing) add("failing", { source: failing });
-      else if (!working) add("no_source", {});
       else if (proposal) add("rediscovery", { runId: proposal.id, candidates });
+      else if (suspectEmpty) add("suspect_empty", { source: suspectEmpty, reason: scanBySource.get(suspectEmpty.id)?.error ?? null });
+      else if (partial) add("partial", { source: partial, reason: scanBySource.get(partial.id)?.error ?? null });
+      else if (!working) add("no_source", {});
     }
 
     // What the worker last recorded about a board that is refusing us or failing, so the item
@@ -1396,6 +1419,9 @@ const countHealthItemsForMonth = cache(async (userId: string, monthStart: number
         and (
           exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('needs_confirmation', 'blocked', 'failing'))
           or not exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('active', 'failing'))
+          or exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('active', 'failing')
+            and (select sc.status from scans sc where sc.source_id = s.id and sc.status in ('ok', 'partial', 'suspect_empty')
+              order by sc.started_at desc, sc.id desc limit 1) in ('partial', 'suspect_empty'))
           or exists (
             select 1 from discovery_runs r
             where r.company_id = c.id

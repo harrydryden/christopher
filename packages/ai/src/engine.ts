@@ -1812,7 +1812,7 @@ export class AiEngine {
        * a shortlist is what someone hoped for, an acceptance is what they chose, and a rejection
        * is evidence about fit rather than about their preferences.
        */
-      outcomes?: Array<{ title: string; company: string; status: string; appliedOn: string }>;
+      outcomes?: Array<{ title: string; company: string; status: string; appliedOn: string | null }>;
     },
     ref: Ref = {},
   ): Promise<{ markdown: string; openQuestions: Array<{ id: string; question: string }> } | null> {
@@ -1825,7 +1825,7 @@ export class AiEngine {
       input.outcomes?.length
         ? "Outcomes the person reached, which weigh more than a decision: an accepted offer is what they want, a rejection is a signal about fit.\n" +
           P.wrap("outcomes", input.outcomes.slice(0, 50)
-            .map(outcome => `- [${outcome.status}] ${outcome.title} @ ${outcome.company} (applied ${outcome.appliedOn})`).join("\n"))
+            .map(outcome => `- [${outcome.status}] ${outcome.title} @ ${outcome.company}${outcome.appliedOn ? ` (applied ${outcome.appliedOn})` : ""}`).join("\n"))
         : "",
       input.disagreements?.length
         ? P.wrap(

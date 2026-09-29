@@ -53,6 +53,7 @@ import { pageNumber } from "@/components/Pagination";
 
 export const PIPELINE_FILTERS = ["active", "closed", "all"] as const;
 export type PipelineFilter = (typeof PIPELINE_FILTERS)[number];
+export type PipelineFocus = "due" | "overdue";
 
 export const PIPELINE_FILTER_LABELS: Record<PipelineFilter, string> = {
   active: "Active",
@@ -87,7 +88,7 @@ export interface PipelineCv {
 export interface PipelineApplication {
   id: string;
   status: ApplicationStatus;
-  appliedOn: string;
+  appliedOn: string | null;
   cvId: string | null;
   notes: string;
   /** `at` is when the entry was saved; `on` is the day it is about, when the person gave one. */
@@ -125,6 +126,8 @@ export interface PipelinePage {
   counts: Record<PipelineFilter, number>;
   /** The same reading one stage at a time, for the strip in the page's header. */
   stages: Record<RoleStage, number>;
+  due: number;
+  overdue: number;
 }
 
 /** The catalogue company a `?company=` link names: shared data, so it is read without an account. */
@@ -216,6 +219,13 @@ const STAGE_RANK_CASE = sql.raw(
   `case stage ${ROLE_STAGES.map((stage, rank) => `when '${stage}' then ${rank}`).join(" ")} else ${ROLE_STAGES.length} end`,
 );
 
+/** A due date only belongs to a live next step, never a settled outcome or an empty note. */
+function dueOnSql(status: AnyColumn, nextAction: AnyColumn, nextActionOn: AnyColumn): SQL {
+  const settled = sql.raw(SETTLED_STATUSES.map((value) => `'${value}'`).join(", "));
+  return sql`case when btrim(coalesce(${nextAction}, '')) <> '' and ${status} not in (${settled})
+    then ${nextActionOn} else null end`;
+}
+
 /** Company names compare the way `cvRoleKey` compares them: case- and whitespace-insensitive. */
 function sameCompanyName(column: AnyColumn, name: string): SQL {
   const normalise = (value: SQL | AnyColumn) => sql`lower(btrim(regexp_replace(${value}, '[[:space:]]+', ' ', 'g')))`;
@@ -240,6 +250,7 @@ function roleIndex(userId: string, company?: PipelineCompany) {
       // A role archived by a narrowed gate has neither a decision nor an application, so the
       // view's own last change is what is left to date it by.
       updatedAt: sql<Date>`coalesce(greatest(${decisions.createdAt}, ${applicationMovedAtSql}, ${currentCv.createdAt}), ${userJobs.updatedAt})`.as("updated_at"),
+      dueOn: sql<string | null>`${dueOnSql(applications.status, applications.nextAction, applications.nextActionOn)}`.as("due_on"),
     })
     .from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
@@ -272,6 +283,7 @@ function legacyIndex(userId: string, company?: PipelineCompany) {
       movedAt: sql<Date>`${applicationMovedAtSql}`.as("moved_at"),
       createdAt: applications.createdAt,
       id: applications.id,
+      dueOn: sql<string | null>`${dueOnSql(applications.status, applications.nextAction, applications.nextActionOn)}`.as("due_on"),
     })
     .from(applications)
     .where(and(
@@ -281,7 +293,7 @@ function legacyIndex(userId: string, company?: PipelineCompany) {
     ))
     .as("legacy_app_rows");
   const application = db()
-    .selectDistinctOn([applicationRows.key], { key: applicationRows.key, stage: applicationRows.stage, movedAt: applicationRows.movedAt })
+    .selectDistinctOn([applicationRows.key], { key: applicationRows.key, stage: applicationRows.stage, movedAt: applicationRows.movedAt, dueOn: applicationRows.dueOn })
     .from(applicationRows)
     .orderBy(applicationRows.key, desc(applicationRows.createdAt), desc(applicationRows.id))
     .as("legacy_app");
@@ -312,13 +324,14 @@ function pipelineIndex(userId: string, company?: PipelineCompany): SQL {
   const role = roleIndex(userId, company);
   const { application, draft } = legacyIndex(userId, company);
   return sql`
-    select 'role' as source, role_index."key" as key, role_index."stage" as stage, role_index."updated_at" as updated_at
+    select 'role' as source, role_index."key" as key, role_index."stage" as stage, role_index."updated_at" as updated_at, role_index."due_on" as due_on
       from ${role}
     union all
     select 'legacy' as source,
            coalesce(legacy_app."key", legacy_cv."key") as key,
            coalesce(legacy_app."stage", 'applying') as stage,
-           greatest(coalesce(legacy_app."moved_at", to_timestamp(0)), coalesce(legacy_cv."created_at", to_timestamp(0))) as updated_at
+           greatest(coalesce(legacy_app."moved_at", to_timestamp(0)), coalesce(legacy_cv."created_at", to_timestamp(0))) as updated_at,
+           legacy_app."due_on" as due_on
       from ${application} full join ${draft} on legacy_app."key" = legacy_cv."key"`;
 }
 
@@ -364,22 +377,9 @@ export async function pipelineDueCount(
 ): Promise<number> {
   const now = options.now ?? new Date();
   const horizon = new Date(Date.parse(`${todayDay(now)}T00:00:00.000Z`) + DUE_WITHIN_DAYS * 86_400_000).toISOString().slice(0, 10);
-  const settled = sql.raw(SETTLED_STATUSES.map((status) => `'${status}'`).join(", "));
-  const company = options.company;
-  const [row] = await db()
-    .select({ n: sql<number>`count(*)::int` })
-    .from(applications)
-    .where(and(
-      eq(applications.userId, userId),
-      sql`btrim(coalesce(${applications.nextAction}, '')) <> ''`,
-      sql`${applications.nextActionOn} is not null and ${applications.nextActionOn} <= ${horizon}`,
-      sql`${applications.status} not in (${settled})`,
-      company
-        ? sql`(exists (select 1 from ${jobs} due_job where due_job.id = ${applications.jobId} and due_job.company_id = ${company.id})
-            or (${withoutRoleView(userId, applications.jobId)} and ${sameCompanyName(applications.companyName, company.name)}))`
-        : undefined,
-    ));
-  return Number(row?.n ?? 0);
+  const result = await db().execute<{ n: number }>(sql`
+    select count(*)::int as n from (${pipelineIndex(userId, options.company)}) idx where due_on <= ${horizon}`);
+  return Number(result.rows[0]?.n ?? 0);
 }
 
 /** Rows this account is pursuing that the catalogue still knows about: the ordinary case. */
@@ -445,7 +445,7 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
       ? {
           id: row.applicationId,
           status: row.applicationStatus as ApplicationStatus,
-          appliedOn: row.appliedOn ?? "",
+          appliedOn: row.appliedOn,
           cvId: row.applicationCvId,
           notes: row.notes ?? "",
           history: row.history ?? [],
@@ -616,28 +616,39 @@ export async function pipelineCompany(companyId: string): Promise<PipelineCompan
  */
 export async function listPipeline(
   userId: string,
-  options: { filter?: PipelineFilter; page?: string | number; company?: PipelineCompany } = {},
+  options: { filter?: PipelineFilter; page?: string | number; company?: PipelineCompany; stage?: RoleStage; focus?: PipelineFocus; now?: Date } = {},
 ): Promise<PipelinePage> {
   const filter = options.filter ?? "active";
   const wanted = STAGES_BY_FILTER[filter];
   const wantedList = sql.raw(wanted.map((stage) => `'${stage}'`).join(", "));
+  const today = todayDay(options.now);
+  const horizon = new Date(Date.parse(`${today}T00:00:00.000Z`) + DUE_WITHIN_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const focusWhere = options.focus === "overdue" ? sql`and due_on < ${today}`
+    : options.focus === "due" ? sql`and due_on <= ${horizon}` : sql``;
+  const stageWhere = options.stage ? sql`and stage = ${options.stage}` : sql``;
   const asked = pageNumber(options.page === undefined ? undefined : String(options.page));
   // One statement, and the index evaluated once: the per-stage counts and the page's keys both
   // read the same `idx`, and a page past the end is clamped in SQL exactly as it is below, so the
   // keys are the ones the counts page to. Counts first and keys second used to cost two round
   // trips and two evaluations of the whole index.
-  const read = await db().execute<{ kind: "count" | "key"; stage: string | null; n: number | null; source: string | null; key: string | null }>(sql`
+  const read = await db().execute<{ kind: "count" | "key" | "due"; stage: string | null; n: number | null; source: string | null; key: string | null }>(sql`
     with idx as (${pipelineIndex(userId, options.company)}),
     counts as (select stage, count(*)::int as n from idx group by stage),
-    wanted as (select coalesce(sum(n), 0)::int as total from counts where stage in (${wantedList})),
+    wanted as (select count(*)::int as total from idx where stage in (${wantedList}) ${stageWhere} ${focusWhere}),
     page_keys as (
-      select source, key, row_number() over (order by ${STAGE_RANK_CASE}, updated_at desc, key) as ord
+      select source, key, row_number() over (order by ${options.focus ? sql`due_on asc,` : sql``} ${STAGE_RANK_CASE}, updated_at desc, key) as ord
       from idx
-      where stage in (${wantedList})
-      order by ${STAGE_RANK_CASE}, updated_at desc, key
+      where stage in (${wantedList}) ${stageWhere} ${focusWhere}
+      order by ${options.focus ? sql`due_on asc,` : sql``} ${STAGE_RANK_CASE}, updated_at desc, key
       limit ${PAGE_SIZE}
       offset (greatest(1, least(${asked}::int, ceil((select total from wanted) / ${PAGE_SIZE}::numeric)::int)) - 1) * ${PAGE_SIZE})
     select 'count' as kind, stage, n, null::text as source, null::text as key, 0::bigint as ord from counts
+    union all
+    select 'due' as kind, 'selected' as stage, total as n, null::text, null::text, 0::bigint from wanted
+    union all
+    select 'due' as kind, 'due' as stage, count(*)::int as n, null::text, null::text, 0::bigint from idx where due_on <= ${horizon}
+    union all
+    select 'due' as kind, 'overdue' as stage, count(*)::int as n, null::text, null::text, 0::bigint from idx where due_on < ${today}
     union all
     select 'key' as kind, null, null, source, key, ord from page_keys
     order by kind, ord`);
@@ -649,10 +660,12 @@ export async function listPipeline(
     if ((ACTIVE_ROLE_STAGES as readonly RoleStage[]).includes(stage)) counts.active += stageCounts[stage];
     else if ((CLOSED_ROLE_STAGES as readonly RoleStage[]).includes(stage)) counts.closed += stageCounts[stage];
   }
-  const total = wanted.reduce((sum, stage) => sum + stageCounts[stage], 0);
+  const due = Number(read.rows.find((row) => row.kind === "due" && row.stage === "due")?.n ?? 0);
+  const overdue = Number(read.rows.find((row) => row.kind === "due" && row.stage === "overdue")?.n ?? 0);
+  const total = Number(read.rows.find((row) => row.kind === "due" && row.stage === "selected")?.n ?? 0);
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const page = Math.min(asked, pageCount);
-  if (total === 0) return { rows: [], page, pageCount, total, counts, stages: stageCounts };
+  if (total === 0) return { rows: [], page, pageCount, total, counts, stages: stageCounts, due, overdue };
   const keys = { rows: read.rows.flatMap((row) => (row.kind === "key" && row.key !== null ? [{ source: row.source!, key: row.key }] : [])) };
   const order = keys.rows.map((row) => row.key);
   const [roles, legacy] = await Promise.all([
@@ -663,7 +676,7 @@ export async function listPipeline(
   // The index decided the order; a key it listed that hydration cannot find changed underneath
   // this read and is left out rather than rendered half-empty.
   const rows = await withBuildProgress(userId, order.flatMap((key) => (hydrated.has(key) ? [hydrated.get(key)!] : [])));
-  return { rows, page, pageCount, total, counts, stages: stageCounts };
+  return { rows, page, pageCount, total, counts, stages: stageCounts, due, overdue };
 }
 
 /**

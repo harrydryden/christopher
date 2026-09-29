@@ -34,9 +34,9 @@ const STRIP_LIMIT = 5;
  */
 async function Setup({ userId }: { userId: string }) {
   const checklist = buildSetupChecklist(await setupStatus(userId));
-  if (checklist.complete) return null;
   const counts = await fetchRoleCounts(userId);
   if (Object.values(counts).every((n) => n === 0)) return <SetupChecklist checklist={checklist} variant="explanation" />;
+  if (checklist.complete) return null;
   return checklist.dismissed ? null : <SetupChecklist checklist={checklist} variant="card" />;
 }
 

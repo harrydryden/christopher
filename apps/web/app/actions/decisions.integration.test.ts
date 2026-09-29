@@ -11,7 +11,7 @@ import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { aiBudgetWindowStart } from "@ava/core";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
 
@@ -246,15 +246,18 @@ describe("what a decision revalidates", () => {
 });
 
 describe("a reversed skip", () => {
-  it("queues the role's score again, since a skipped role is left out of scoring", async () => {
+  it("requests the role's score again, since a skipped role is left out of scoring", async () => {
     const job = await role(null);
-    const scores = async () => (await database.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).map(task => task.payload);
+    const scores = async () => (await database.select().from(schema.tasks).where(eq(schema.tasks.type, "admit_scores"))).map(task => task.payload);
     const saved = await decideWithUndoToken(job.id, "skip", "Too junior");
     expect(saved.ok).toBe(true);
     if (!saved.ok) throw new Error(saved.error);
     expect(await scores()).toEqual([]);
     expect(await undoDecisionIfCurrent(job.id, saved.decisionId)).toEqual({ ok: true });
-    expect(await scores()).toEqual([{ userId: user.id, jobId: job.id }]);
+    expect(await scores()).toEqual([expect.objectContaining({ userId: user.id, jobIds: [job.id], requestKey: expect.any(String) })]);
+    const [view] = await database.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, job.id)));
+    expect(view!.scoreState).toBe("requested");
+    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).toHaveLength(0);
   });
 });
 
@@ -353,6 +356,15 @@ describe("one decision writer", () => {
     const events = await database.select().from(schema.jobEvents).where(eq(schema.jobEvents.jobId, jobId)).orderBy(schema.jobEvents.at, schema.jobEvents.id);
     const tasks = await database.select().from(schema.tasks).orderBy(schema.tasks.type);
     const ids = new Map<string, string>([[jobId, "<job>"], ...rows.map((row, i) => [row.id, `<decision ${i}>`] as [string, string])]);
+    // Admission identity includes the role-ID hash, so equivalent requests for distinct fixture
+    // roles have distinct keys. Verify their binding before normalising that fixture identity.
+    for (const task of tasks.filter(row => row.type === "admit_scores")) {
+      expect(task.payload.userId).toBe(user.id);
+      expect(task.payload.jobIds).toEqual([jobId]);
+      expect(task.payload.onlyUnscored).toBeUndefined();
+      expect(task.dedupeKey).toBe(`admit_scores:${user.id}:${task.payload.requestKey}`);
+      ids.set(String(task.payload.requestKey), "<score request>");
+    }
     const plain = (value: unknown) => JSON.parse(JSON.stringify(value), (_key, v) => (typeof v === "string" ? [...ids].reduce((text, [id, name]) => text.replaceAll(id, name), v) : v));
     return {
       decisions: rows.map(({ decision, reason, jobTitle, companyName, jobLocation, jobDepartment, descriptionSnippet, fitScoreAtDecision, superseded }) =>

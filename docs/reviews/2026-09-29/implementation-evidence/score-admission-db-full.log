@@ -1,0 +1,23 @@
+
+> @ava/db@0.1.0 test /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+> vitest run
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+
+{"t":"2026-09-29T16:51:55.226Z","level":"warn","event":"database_pool_error","message":"terminating connection due to administrator command","code":"57P01"}
+{"t":"2026-09-29T16:51:55.291Z","level":"warn","event":"database_pool_error","message":"terminating connection due to administrator command","code":"57P01"}
+{"t":"2026-09-29T16:51:58.608Z","level":"warn","event":"migration_lock_retry","what":"the migration lock","attempt":1,"attempts":2}
+{"t":"2026-09-29T16:51:58.815Z","level":"warn","event":"migration_lock_retry","what":"the migrations","attempt":1,"attempts":3}
+{"t":"2026-09-29T16:51:58.956Z","level":"warn","event":"migration_lock_retry","what":"the migrations","attempt":1,"attempts":2}
+{"t":"2026-09-29T16:52:00.545Z","level":"info","event":"slow_database_query","durationMs":675,"statement":"truncate users restart identity cascade"}
+
+ Test Files  10 passed (10)
+      Tests  98 passed (98)
+   Start at  17:51:54
+   Duration  10.17s (tests 49%, import 46%, transform 5%)
+
+     Import  90 modules were evaluated 135 times · 4.33s total, 46% of tracked time
+             ~1.44s faster with isolate: false — shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation
+

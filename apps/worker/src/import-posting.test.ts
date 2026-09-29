@@ -175,8 +175,10 @@ it("stores the posting once for everyone and puts it in the asker's table whatev
   expect((await viewsFor(matching)).map(v => [v.jobId, v.inTable])).toEqual([[job!.id, true]]);
   expect(await viewsFor(missing)).toHaveLength(0);
 
-  const scoring = await tasksOfType("score_job");
-  expect(scoring.map(t => [(t.payload as { userId: string }).userId, t.priority])).toContainEqual([importer.id, 1]);
+  // The worker has no model key in this fixture: the pasted role stays visible, with an honest
+  // unavailable state instead of a futile per-role score task.
+  expect(await tasksOfType("score_job")).toHaveLength(0);
+  expect((await viewsFor(importer))[0]!.scoreState).toBe("unavailable");
   // The page carried its own description, so nothing has to go and read one.
   expect(await tasksOfType("fetch_description")).toHaveLength(0);
 });
@@ -264,7 +266,7 @@ it("puts an import back for when a host that asked us to wait will be read again
 
     // When the pace allows, the import that was put back stores the role as usual.
     await db.execute(sql`delete from host_pacing`);
-    await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, retry!.id));
+    await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, retry!.id));
     await queue.drain();
     expect(await db.select().from(schema.jobs)).toHaveLength(1);
     expect((await viewsFor(importer)).filter(v => v.inTable)).toHaveLength(1);

@@ -21,6 +21,7 @@ import { handleMonitorSource, handleExtractDocument, handleVerifyCompany } from 
 import { handleSuggestFromScans } from "./suggest-from-scans";
 import { handleCollectScoreBatch, handlePollScoreBatch } from "./score-batch";
 import { handleReencodeLogos } from "./reencode-logos";
+import { handleAdmitScores } from "../score-admission";
 
 export const handlers: HandlerMap = {
   extract_document: handleExtractDocument,
@@ -33,6 +34,7 @@ export const handlers: HandlerMap = {
   fetch_description: handleFetchDescription,
   import_posting: handleImportPosting,
   score_job: handleScoreJob,
+  admit_scores: handleAdmitScores,
   tag_reason: handleTagReason,
   synthesize_profile: handleSynthesizeProfile,
   suggest_filters: handleSuggestFilters,

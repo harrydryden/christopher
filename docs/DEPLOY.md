@@ -246,6 +246,8 @@ state such as `awaiting_evidence`; the corresponding interface must be live befo
 left at that checkpoint. A database missing migrations altogether is a different thing — the
 "every page 500s right after deploy" row below.
 
+**Score-admission transition (29 September 2026).** The `admit_scores` task is a new queue protocol. Its `requested` and `failed` view states and task type use existing text columns, so this transition adds no SQL enum migration. Before enabling the new web producer, every worker or serverless fallback that can claim from the shared queue must understand `admit_scores`; an old worker can claim and fail an unknown task. Stage compatible consumers first (or pause claims during a coordinated release), verify their release identities, then enable the producer. This is a protocol-specific exception to the lifecycle order above: review both requirements if a release also introduces a new CV checkpoint. On rollback, stop the new producer first and let compatible consumers drain outstanding admission requests before reverting them. Do not delete pending requests to make an older worker appear healthy. The local verification report does not certify this hosted rollout.
+
 **Caching and response headers.** Every signed-in page and RSC payload is `private, no-store`, and
 nothing per account may ever say `public`, `s-maxage` or `CDN-Cache-Control`: Next's `Vary` leaves
 out `Cookie`, so a cacheable page would be served to the next account. The one response the CDN

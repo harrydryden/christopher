@@ -1,5 +1,5 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@ava/db";
-import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
+import { defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
 import { getTableColumns, and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
@@ -294,32 +294,45 @@ export interface RoleDecisionVM {
 }
 
 /**
- * What a missing fit score means, in the words the table shows instead of one em dash.
+ * What a missing or previous fit score means in the table, review panel and export.
  *
- * A blank score covers five situations and the row could not tell them apart. The score handler
- * records which one it decided on this account's view of the role (`user_jobs.score_state`); this
- * is the only place that turns those five words into English, so the cell, the review panel and
- * anything else that reads a row say the same thing.
- *
- * `queued` is the one state that goes stale: the task may have been abandoned, so a queue entry
- * older than the score task's own deadline stops claiming that something is working on it. A score
- * that is present needs no sentence — the bar is the answer — and a row from before the column
- * existed has nothing recorded, which reads as never scored.
+ * The producer records `requested` before a worker can check AI availability or account budget.
+ * The worker records `queued` only after that admission. Neither means a model call is currently
+ * running: the batch collector and provider can wait much longer than one score task's deadline.
+ * A previous score stays visible while an update is pending or has failed. This is also the CSV's
+ * score-state wording, so exports and the review panel describe the same evidence.
  */
 export function scoreStateText(
   view: { fitScore: number | null; scoreState: ScoreState | null; scoreStateAt: Date | null },
-  now: Date = new Date(),
 ): string | null {
-  if (view.fitScore !== null) return null;
-  switch (view.scoreState) {
-    case "queued": {
-      const fresh = view.scoreStateAt !== null && now.getTime() - view.scoreStateAt.getTime() < deadlineFor("score_job");
-      return fresh ? "scoring…" : "not scored yet";
+  if (view.fitScore !== null) {
+    switch (view.scoreState) {
+      case "requested":
+      case "queued":
+        return "Previous score; update pending";
+      case "unavailable":
+        return "Previous score; AI update unavailable";
+      case "budget":
+        return "Previous score; update stopped: budget spent";
+      case "failed":
+        return "Previous score; update failed; review manually";
+      default:
+        return null;
     }
+  }
+  switch (view.scoreState) {
+    case "requested":
+      return "Score pending; review manually";
+    case "queued":
+      return "Waiting for scoring; review manually";
     case "budget":
       return "not scored: budget spent";
     case "unavailable":
       return "AI scoring unavailable; review manually";
+    case "failed":
+      return "Could not score; review manually";
+    case "scored":
+      return "No fit score returned; review manually";
     case "closed":
       return "closed";
     // The handler's own words: the role neither matches your filters nor is shortlisted, so it was
@@ -433,7 +446,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     seeded: row.job.seeded,
     fitScore: row.job.fitScore,
     scoreState: row.job.scoreState,
-    scoreStateText: scoreStateText(row.job, now),
+    scoreStateText: scoreStateText(row.job),
     fitVerdict: row.job.fitVerdict,
     fitRationale: row.job.fitRationale,
     keywordTerms: row.job.keywordTerms,

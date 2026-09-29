@@ -6,6 +6,7 @@
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { decisions, jobEvents, userJobs } from "@ava/db/schema";
+import { requestScores, type Db } from "@ava/db";
 import type { db } from "./db";
 import { enqueue, enqueueMany } from "./enqueue";
 import { UserFacingError } from "./validation";
@@ -127,7 +128,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
     await restoreDismissedApplications(tx, userId, unskipped);
     // A skipped role is left out of scoring (its score has no reader); undone, it needs one again.
     // The handler decides whether it is still in the table.
-    await enqueueMany("score_job", unskipped.map(jobId => ({ userId, jobId })), tx);
+    await requestScores(tx as unknown as Db, unskipped.map(jobId => ({ userId, jobId })), now, { priority: 1 });
     // A role the gate no longer admits was only in the table because a decision held it: the
     // gate's archive, stamped as such, so the view comes back by itself once the gate admits it.
     const drops = rows.filter(row => !row.inTable && !row.archivedAt).map(row => row.jobId);
@@ -165,7 +166,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
     from user_jobs v
     where v.user_id = ${userId}::uuid and v.job_id in (${idList(ids)})`);
 
-  if (decision === "apply") await enqueueMany("score_job", ids.map(jobId => ({ userId, jobId })), tx);
+  if (decision === "apply") await requestScores(tx as unknown as Db, ids.map(jobId => ({ userId, jobId })), now, { priority: 1 });
   if (decision === "skip") await withdrawLiveApplications(tx, userId, ids);
   if (reason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
   await enqueue("synthesize_profile", { userId, force: false }, tx);

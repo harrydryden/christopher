@@ -1059,7 +1059,7 @@ describe("functional review regressions", () => {
       .toHaveLength(beforeScoreTasks.length);
     const all = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
     expect(all.find((view) => view.jobId === scored.jobId)).toMatchObject({ fitScore: 87, scoreState: "scored" });
-    expect(all.find((view) => view.jobId === decided.jobId)?.scoreState).toBeNull();
+    expect(all.find((view) => view.jobId === decided.jobId)?.scoreState).toBe("decided");
     expect(all.find((view) => view.jobId === applied.jobId)?.scoreState).toBe("unavailable");
     expect(all.filter((view) => view.inTable && view.jobId !== scored.jobId && view.jobId !== decided.jobId)
       .every((view) => view.scoreState === "unavailable")).toBe(true);
@@ -2352,7 +2352,10 @@ describe("what a scan asks for and when", () => {
     // The listing carries no text, so every admitted role waits for its description.
     expect(await scores()).toEqual([]);
     expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(4);
-    await queue.drain();
+    // Use the configured-model fixture for the description arrival as well as the scan. The
+    // suite's ordinary no-key queue correctly refuses score work, obscuring this timing invariant.
+    const descriptions = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    for (const task of descriptions) await handleFetchDescription(task, aiDeps);
     const queued = await scores();
     expect(queued).toHaveLength(4);
     expect(new Set(queued).size).toBe(4);
@@ -2446,16 +2449,17 @@ describe("a description arriving", () => {
     const byKey = async (id: number) => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${id}`)))[0]!;
     const clear = (jobId: string) => db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, jobId));
     const perFollower = /user_jobs|user_settings|"tasks"|insert into "tasks"|decisions/;
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
 
     const followers = [await follow(company.id, 0, titleGate), await follow(company.id, 1, descriptionGate)];
     const engineer = await byKey(JOB_ENGINEER.id);
     await clear(engineer.id);
-    const few = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+    const few = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, aiDeps));
 
     // The same arrival again, now with 29 followers, 27 of them new to the role.
     for (let n = 2; n < 29; n++) followers.push(await follow(company.id, n, n % 3 === 0 ? descriptionGate : titleGate));
     await clear(engineer.id);
-    const many = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+    const many = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, aiDeps));
     expect(few).toBeGreaterThan(0);
     expect(many).toBe(few);
 
@@ -2479,7 +2483,8 @@ describe("a description arriving", () => {
     await db.update(schema.jobs).set({ descriptionHash: "an older text" }).where(eq(schema.jobs.id, manager!.id));
     await db.delete(schema.tasks);
 
-    await handleFetchDescription({ payload: { jobId: manager!.id } } as never, deps);
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    await handleFetchDescription({ payload: { jobId: manager!.id } } as never, aiDeps);
     const [view] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, manager!.id)));
     expect(view).toMatchObject({ fitScore: null, scoredAt: null, scoreState: "queued" });
     const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));

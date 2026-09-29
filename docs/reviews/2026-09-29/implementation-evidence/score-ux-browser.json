@@ -1,0 +1,36 @@
+{
+  "browser": "141.0.7390.37",
+  "playwright": "1.56.1",
+  "method": "375px viewport; computed font sizes doubled once after each DOM state, not native browser zoom",
+  "normal": {
+    "url": "http://localhost:3145/?tab=matched",
+    "viewport": 375,
+    "documentWidth": 375,
+    "priorText": "RenderPostgres Product Engineer2moLocation: Remote: United StatesRemoteFit: 72Previous score; update pendingReview",
+    "missingText": "RenderSoftware Engineer, Agent Auth Experience2moLocation: Remote: United StatesRemoteFit: AI scoring unavailable; review manuallyReview",
+    "fitWidth": 311,
+    "fitScrollWidth": 311,
+    "missingFitWidth": 311,
+    "missingFitScrollWidth": 311,
+    "statusFont": "12px"
+  },
+  "enlarged": {
+    "url": "http://localhost:3145/?tab=matched",
+    "viewport": 375,
+    "documentWidth": 375,
+    "priorText": "RenderPostgres Product Engineer2moLocation: Remote: United StatesRemoteFit: 72Previous score; update pendingReview",
+    "missingText": "RenderSoftware Engineer, Agent Auth Experience2moLocation: Remote: United StatesRemoteFit: AI scoring unavailable; review manuallyReview",
+    "fitWidth": 255,
+    "fitScrollWidth": 255,
+    "missingFitWidth": 255,
+    "missingFitScrollWidth": 255,
+    "statusFont": "24px"
+  },
+  "review": {
+    "text": "Postgres Product EngineerEngineering / Engineering · FullTimeSalary$204K - $280KWhy it matchedEngineerFit72Previous score; update pendingStrong fitPrevious local test estimateDescriptionBuild CVView vacancy ↗Website ↗Postgres Product EngineerRenderMatchedShortlistDismissArchive",
+    "statusFont": "24px",
+    "documentWidth": 375,
+    "viewport": 375
+  },
+  "errors": []
+}

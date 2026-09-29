@@ -34,6 +34,9 @@ export interface TaskPayloads {
    * the queue leaves it alone unless it is also marked `live`.
    */
   score_job: { userId: string; jobId: string; live?: boolean; background?: boolean };
+  /** Exact, bounded score requests. The worker checks its own model and account budget before
+   * creating score_job tasks; a view's mutable state is never the request ledger. */
+  admit_scores: { userId: string; jobIds: string[]; requestKey: string; background?: boolean; onlyUnscored?: boolean };
   /**
    * Batch scoring's collector: gathers the queued `score_job` work into one Message Batches
    * request. Shared work — it serves every account with roles waiting — so it names none.
@@ -115,7 +118,7 @@ export const GATE_REEVALUATION_VERSION = 1;
  * the lane cannot disagree about which types count.
  */
 export const INTERACTIVE_TASK_TYPES = [
-  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document",
+  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "import_library_document",
 ] as const satisfies readonly TaskType[];
 
 /** The shared daily scan and its fan-out: the scan lane's own work. */
@@ -136,6 +139,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   run_daily: { priority: 5, dedupe: () => "run_daily" },
   fetch_description: { priority: 4, dedupe: (p) => `fetch_description:${p.jobId}` },
   score_job: { priority: 4, dedupe: (p) => `score_job:${p.userId}:${p.jobId}` },
+  admit_scores: { priority: 1, dedupe: (p) => `admit_scores:${p.userId}:${p.requestKey}` },
   tag_reason: { priority: 1, dedupe: (p) => `tag_reason:${p.decisionId}` },
   synthesize_profile: { priority: 6, dedupe: (p) => `synthesize_profile:${p.userId}` },
   suggest_filters: { priority: 6, dedupe: (p) => `suggest_filters:${p.userId}` },

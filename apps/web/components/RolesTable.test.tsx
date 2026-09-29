@@ -180,6 +180,19 @@ afterEach(() => {
 function render(rows: RoleRowVM[]) {
   act(() => root.render(<RolesTable rows={rows} companies={COMPANIES} keyboard emptyState={<p>Nothing to review</p>} />));
 }
+
+it("keeps an earlier fit score visible beside an honest pending update in the row and review", () => {
+  const pending = { ...FIRST, scoreState: "requested" as const, scoreStateText: "Previous score; update pending" };
+  render([pending]);
+  const row = container.querySelector(`#role-row-${pending.id}`)!.closest("tr")!;
+  expect(row.textContent).toContain("72");
+  expect(row.textContent).toContain("Previous score; update pending");
+  act(() => button("Review").click());
+  const review = container.querySelector(`#role-review-${pending.id}`)!;
+  expect(review.textContent).toContain("72");
+  expect(review.textContent).toContain("Previous score; update pending");
+});
+
 const titles = () => [...container.querySelectorAll('tbody td[id^="role-row-"] button')].map(el => el.textContent);
 const text = () => container.textContent ?? "";
 const button = (label: string) => {

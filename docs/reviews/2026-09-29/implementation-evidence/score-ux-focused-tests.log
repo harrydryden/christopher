@@ -1,0 +1,38 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-09-29T16:48:57.007Z","level":"info","event":"slow_database_query","durationMs":348,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:48:57.432Z","level":"info","event":"slow_database_query","durationMs":385,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:48:57.772Z","level":"info","event":"slow_database_query","durationMs":318,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:48:58.122Z","level":"info","event":"slow_database_query","durationMs":325,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:48:58.543Z","level":"info","event":"slow_database_query","durationMs":406,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:48:59.091Z","level":"info","event":"slow_database_query","durationMs":533,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:48:59.807Z","level":"info","event":"slow_database_query","durationMs":694,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:00.167Z","level":"info","event":"slow_database_query","durationMs":332,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:00.761Z","level":"info","event":"slow_database_query","durationMs":462,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:01.191Z","level":"info","event":"slow_database_query","durationMs":407,"statement":"truncate companies, tasks, worker_events, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:49:01.475Z","level":"info","event":"slow_database_query","durationMs":274,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:01.801Z","level":"info","event":"slow_database_query","durationMs":313,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:02.256Z","level":"info","event":"slow_database_query","durationMs":441,"statement":"truncate companies, tasks, worker_events, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:49:02.747Z","level":"info","event":"slow_database_query","durationMs":447,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:03.458Z","level":"info","event":"slow_database_query","durationMs":691,"statement":"truncate companies, tasks, worker_events, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:49:03.901Z","level":"info","event":"slow_database_query","durationMs":359,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:04.190Z","level":"info","event":"slow_database_query","durationMs":271,"statement":"truncate companies, tasks, worker_events, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:49:05.920Z","level":"info","event":"slow_database_query","durationMs":299,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:49:10.714Z","level":"info","event":"slow_database_query","durationMs":436,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:49:11.649Z","level":"info","event":"slow_database_query","durationMs":298,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:49:12.695Z","level":"info","event":"slow_database_query","durationMs":535,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:49:13.306Z","level":"info","event":"slow_database_query","durationMs":473,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:49:14.364Z","level":"info","event":"slow_database_query","durationMs":266,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-09-29T16:49:15.457Z","level":"info","event":"slow_database_query","durationMs":578,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-09-29T16:49:16.141Z","level":"info","event":"slow_database_query","durationMs":571,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-09-29T16:49:16.758Z","level":"info","event":"slow_database_query","durationMs":495,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-09-29T16:49:17.228Z","level":"info","event":"slow_database_query","durationMs":426,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-09-29T16:49:17.832Z","level":"info","event":"slow_database_query","durationMs":289,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-09-29T16:49:18.393Z","level":"info","event":"slow_database_query","durationMs":433,"statement":"truncate users, companies restart identity cascade"}
+
+ Test Files  4 passed (4)
+      Tests  81 passed (81)
+   Start at  17:48:55
+   Duration  25.63s (tests 87%, import 7%, transform 4%, environment 2%)
+

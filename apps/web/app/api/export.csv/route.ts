@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
           liveFor(r.job, now).days,
           r.job.status,
           r.job.fitScore ?? "",
-          scoreStateText(r.job, now) ?? "",
+          scoreStateText(r.job) ?? "",
           roleStatus(r.job, r.decision),
           r.stage,
           r.decision?.reason ?? "",

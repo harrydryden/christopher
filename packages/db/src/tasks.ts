@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@ava/core";
 import type { Db } from "./client";
 import { tasks } from "./schema";
@@ -88,16 +89,16 @@ export async function enqueueStandard<T extends TaskType>(db: TaskWriter, type: 
  * The ids of the rows actually inserted: a deduplicated or promoted row is not one. When anything
  * was inserted or brought forward, a listening worker is woken in the same transaction.
  */
-async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean): Promise<string[]> {
+async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean): Promise<Array<{ id: string; payload: Record<string, unknown>; inserted: boolean }>> {
   if (!rows.length) return [];
   // A CV build's key lives in an index of its own, and one statement can promote against one index.
   const promoted = promote ? rows.filter(row => row.type !== "generate_cv") : [];
   const dropped = promote ? rows.filter(row => row.type === "generate_cv") : rows;
-  const ids: string[] = [];
+  const accepted: Array<{ id: string; payload: Record<string, unknown>; inserted: boolean }> = [];
   let written = false;
   if (dropped.length) {
-    const inserted = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id });
-    ids.push(...inserted.map(row => row.id));
+    const inserted = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id, payload: tasks.payload });
+    accepted.push(...inserted.map(row => ({ ...row, inserted: true })));
     written ||= inserted.length > 0;
   }
   if (promoted.length) {
@@ -109,18 +110,21 @@ async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean)
         // A promoted score is one somebody now waits on, so it stops being background work.
         set: {
           priority: sql`least(${tasks.priority}, excluded.priority)`, runAfter: sql`least(${tasks.runAfter}, excluded.run_after)`,
-          payload: sql`case when excluded.payload ? 'background' then ${tasks.payload} else ${tasks.payload} - 'background' end`,
+          payload: sql`case when ${tasks.type} = 'admit_scores'
+            then case when ${tasks.payload} ? 'background' and excluded.payload ? 'background'
+              then excluded.payload else excluded.payload - 'background' end
+            when excluded.payload ? 'background' then ${tasks.payload} else ${tasks.payload} - 'background' end`,
         },
         setWhere: sql`${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after
           or (${tasks.payload} ? 'background' and not excluded.payload ? 'background')`,
       })
-      .returning({ id: tasks.id, inserted: sql<boolean>`(xmax = 0)` });
-    ids.push(...upserted.filter(row => row.inserted).map(row => row.id));
+      .returning({ id: tasks.id, payload: tasks.payload, inserted: sql<boolean>`(xmax = 0)` });
+    accepted.push(...upserted);
     // A promoted row is work that can start sooner, which is worth a wake as much as a new one.
     written ||= upserted.length > 0;
   }
   if (written) await notifyTaskWorkers(db);
-  return ids;
+  return accepted;
 }
 
 /**
@@ -136,8 +140,8 @@ export async function enqueueTask(
   payload: Record<string, unknown>,
   options: EnqueueOptions = {},
 ): Promise<string | null> {
-  const [id] = await insertTasks(db, [{ ...options, type, payload }], options.promote === true);
-  return id ?? null;
+  const [row] = await insertTasks(db, [{ ...options, type, payload }], options.promote === true);
+  return row?.inserted ? row.id : null;
 }
 
 /**
@@ -163,20 +167,19 @@ export async function enqueueTasks(db: TaskWriter, rows: EnqueueRow[], chunkSize
   }
   let inserted = 0;
   for (let offset = 0; offset < batch.length; offset += chunkSize)
-    inserted += (await insertTasks(db, batch.slice(offset, offset + chunkSize), promote)).length;
+    inserted += (await insertTasks(db, batch.slice(offset, offset + chunkSize), promote)).filter(row => row.inserted).length;
   return inserted;
 }
 
 /**
- * Queue a score for each (account, role) and say so on the account's view, so the table reads
- * "scoring" rather than a blank it cannot tell from "not scored: budget spent". Through
- * `enqueueTasks`, so a listening worker is woken rather than left to its idle poll. A pair's
+ * Queue a score for each (account, role) admitted by the worker. Through
+ * `insertTasks`, so a listening worker is woken rather than left to its idle poll. A pair's
  * `priority` replaces the ordinary one; `promote` brings a waiting score up to it. `background`
  * marks the tasks for the batch collector (a rescore pass nobody waits on). Returns how many tasks
  * were inserted.
  */
 export async function queueScoring(
-  db: TaskWriter,
+  db: Db,
   pairs: ReadonlyArray<{ userId: string; jobId: string; priority?: number }>,
   now: Date,
   opts: { promote?: boolean; background?: boolean } = {},
@@ -184,12 +187,58 @@ export async function queueScoring(
   let queued = 0;
   for (let offset = 0; offset < pairs.length; offset += 250) {
     const batch = pairs.slice(offset, offset + 250);
-    queued += await enqueueTasks(db, batch.map(({ userId, jobId, priority }) =>
-      taskRow("score_job", opts.background ? { userId, jobId, background: true } : { userId, jobId },
-        priority === undefined ? {} : { priority })), 250, opts.promote);
-    await db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${now}
-      from jsonb_to_recordset(${JSON.stringify(batch.map(({ userId, jobId }) => ({ userId, jobId })))}::jsonb) as v("userId" uuid, "jobId" uuid)
-      where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
+    queued += await db.transaction(async tx => {
+      const accepted = await insertTasks(tx, batch.map(({ userId, jobId, priority }) =>
+        taskRow("score_job", opts.background ? { userId, jobId, background: true } : { userId, jobId },
+          priority === undefined ? {} : { priority })), opts.promote === true);
+      if (accepted.length) await tx.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${now}
+        from jsonb_to_recordset(${JSON.stringify(accepted.map(row => ({ userId: row.payload.userId, jobId: row.payload.jobId })))}::jsonb) as v("userId" uuid, "jobId" uuid)
+        where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
+      return accepted.filter(row => row.inserted).length;
+    });
+  }
+  return queued;
+}
+
+/**
+ * Record exact web-origin score requests without claiming a model is available. The request task
+ * is the durable ledger: a score result may change a view's state before admission runs. Callers
+ * may pass a transaction, in which case request, view state and wake-up commit together.
+ */
+export async function requestScores(
+  db: Db,
+  pairs: ReadonlyArray<{ userId: string; jobId: string }>,
+  now: Date,
+  opts: { priority?: number; background?: boolean; onlyUnscored?: boolean } = {},
+): Promise<number> {
+  const byUser = new Map<string, Set<string>>();
+  for (const { userId, jobId } of pairs) {
+    const jobs = byUser.get(userId) ?? new Set<string>();
+    jobs.add(jobId);
+    byUser.set(userId, jobs);
+  }
+  let queued = 0;
+  for (const [userId, ids] of byUser) {
+    const jobIds = [...ids].sort();
+    for (let offset = 0; offset < jobIds.length; offset += 250) {
+      const chunk = jobIds.slice(offset, offset + 250);
+      queued += await db.transaction(async tx => {
+        const requested = await tx.execute<{ job_id: string }>(sql`update user_jobs uj set score_state = 'requested', score_state_at = ${now}
+          where uj.user_id = ${userId}::uuid and uj.job_id in (${sql.join(chunk.map(id => sql`${id}::uuid`), sql`, `)})
+            and (${!opts.onlyUnscored} or (uj.fit_score is null and uj.scored_at is null))
+          returning uj.job_id`);
+        const actual = requested.rows.map(row => row.job_id).sort();
+        if (!actual.length) return 0;
+        const requestKey = createHash("sha1").update(JSON.stringify([actual, !!opts.onlyUnscored])).digest("hex");
+        const payload = { userId, jobIds: actual, requestKey,
+          ...(opts.background ? { background: true } : {}),
+          ...(opts.onlyUnscored ? { onlyUnscored: true } : {}) };
+        const admitted = await insertTasks(tx, [taskRow("admit_scores", payload, {
+          priority: opts.priority ?? (opts.background ? 4 : 1),
+        })], true);
+        return admitted.filter(row => row.inserted).length;
+      });
+    }
   }
   return queued;
 }

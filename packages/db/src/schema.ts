@@ -63,7 +63,7 @@ export const JOB_ORIGINS = ["scan", "user"] as const;
  * ran. The score handler records which one it decided. `decided` means the account skipped or
  * archived the role, so no score has a reader and none is asked for (a reversed skip queues one).
  */
-export const SCORE_STATES = ["queued", "scored", "closed", "budget", "unavailable", "ineligible", "decided"] as const;
+export const SCORE_STATES = ["requested", "queued", "scored", "closed", "budget", "unavailable", "failed", "ineligible", "decided"] as const;
 export type ScoreState = (typeof SCORE_STATES)[number];
 /**
  * Column enums whose values core decides are core's own lists, re-exported: where captured logo

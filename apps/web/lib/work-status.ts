@@ -26,12 +26,12 @@ function companyWorkWhere(userId: string) {
 }
 
 /** Scoring can finish after a company's scan has left the queue. Keep only this account's work
- * in the Roles poll, including a provider batch after its score_job rows have been handed off. */
+ * in the Roles poll, from worker admission through a provider batch hand-off. */
 function roleScoreWorkWhere(userId: string) {
   return and(
     inArray(tasks.status, ['queued', 'running']),
     or(
-      and(inArray(tasks.type, ['score_job', 'rescore_all']), sql`${tasks.payload}->>'userId' = ${userId}`),
+      and(inArray(tasks.type, ['admit_scores', 'score_job', 'rescore_all']), sql`${tasks.payload}->>'userId' = ${userId}`),
       and(eq(tasks.type, 'poll_score_batch'),
         sql`${tasks.payload} @> jsonb_build_object('items', jsonb_build_array(jsonb_build_object('userId', ${userId}::text)))`),
     ),
@@ -66,7 +66,7 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
  *
  * Every column the table renders, and how a change to it is seen here:
  * - the account's views (gate, archive, fit): `user_jobs.updated_at`, and the count for one added;
- * - a blank score's reason ("scoring…", "budget spent"): `user_jobs.score_state_at`, which moves
+ * - a score request's reason ("pending", "budget spent"): `user_jobs.score_state_at`, which moves
  *   with the state where `updated_at` does not;
  * - the posting's own fields and description: `jobs.updated_at`;
  * - closing and reopening, which a scan writes without touching `updated_at`: the closed count;

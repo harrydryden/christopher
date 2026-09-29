@@ -1,0 +1,16 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-09-29T17:03:50.427Z","level":"info","msg":"profile synthesised","data":{"userId":"908da33d-f337-4710-812f-77cf13ce4059","version":1,"decisions":1,"questions":0,"changed":true}}
+{"t":"2026-09-29T17:03:50.894Z","level":"info","msg":"scan suggestions filed","data":{"userId":"908da33d-f337-4710-812f-77cf13ce4059","titles":4,"unmatched":4,"inserted":1}}
+{"t":"2026-09-29T17:03:50.903Z","level":"info","msg":"scan suggestions filed","data":{"userId":"908da33d-f337-4710-812f-77cf13ce4059","titles":4,"unmatched":4,"inserted":0}}
+{"t":"2026-09-29T17:03:50.914Z","level":"info","msg":"scan suggestions filed","data":{"userId":"908da33d-f337-4710-812f-77cf13ce4059","titles":4,"unmatched":4,"inserted":1}}
+{"t":"2026-09-29T17:03:51.160Z","level":"info","msg":"profile synthesised","data":{"userId":"908da33d-f337-4710-812f-77cf13ce4059","version":2,"decisions":525,"questions":0,"changed":true}}
+{"t":"2026-09-29T17:03:51.277Z","level":"info","msg":"profile synthesised","data":{"userId":"908da33d-f337-4710-812f-77cf13ce4059","version":2,"decisions":0,"questions":0,"changed":false}}
+{"t":"2026-09-29T17:03:52.599Z","level":"info","msg":"slow database query","data":{"durationMs":341,"statement":"truncate tasks, companies, career_sources, jobs, scans, resource_leases, settings, user_settings, company_subscriptions,"}}
+
+ Test Files  2 passed (2)
+      Tests  30 passed (30)
+   Start at  18:03:47
+   Duration  8.64s (tests 78%, import 14%, transform 8%)
+

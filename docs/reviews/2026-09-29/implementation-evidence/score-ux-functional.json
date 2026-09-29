@@ -1,0 +1,74 @@
+{
+  "browser": "141.0.7390.37",
+  "playwright": "1.56.1",
+  "role": "0ce91711-e037-4d25-b319-a9111f0a2912",
+  "resetState": "unavailable",
+  "requested": {
+    "taskId": "4f6f4331-f282-4488-af03-8417703f8d36",
+    "createdAt": "2026-09-29T17:08:48.993Z",
+    "payload": {
+      "jobIds": [
+        "0ce91711-e037-4d25-b319-a9111f0a2912"
+      ],
+      "userId": "e5bd37f3-ca5c-4300-9e62-beed62d018ae",
+      "requestKey": "bbb6844b2d4ab4b1951b7f0188ab50dc3a0a3c80"
+    },
+    "row": "Render Software Engineer, Agent Auth Experience 2mo Location: Remote: United States REMOTE Fit: Score pending; review manually Build CV",
+    "url": "http://localhost:3145/?view=user-shortlisted"
+  },
+  "handler": {
+    "workerId": "score-ux-harness",
+    "taskId": "4f6f4331-f282-4488-af03-8417703f8d36",
+    "roleId": "0ce91711-e037-4d25-b319-a9111f0a2912",
+    "before": {
+      "score_state": "requested",
+      "fit_score": null
+    },
+    "taskClaimed": "running",
+    "ownershipFenced": true,
+    "handlerResult": {
+      "queued": 0,
+      "unavailable": 1,
+      "budget": 0,
+      "blockedUnavailable": 1,
+      "blockedBudget": 0,
+      "skipped": 0
+    },
+    "completed": true,
+    "after": {
+      "score_state": "unavailable",
+      "fit_score": null
+    },
+    "taskAfter": {
+      "status": "done",
+      "result": {
+        "budget": 0,
+        "queued": 0,
+        "skipped": 0,
+        "unavailable": 1,
+        "blockedBudget": 0,
+        "blockedUnavailable": 1
+      }
+    },
+    "aiCallsBefore": 0,
+    "aiCallsAfter": 0,
+    "scoreTasksForRole": 1
+  },
+  "startedAt": "2026-09-29T17:08:49.600Z",
+  "automaticRefresh": {
+    "ms": 9021,
+    "urlUnchanged": true,
+    "row": "Render Software Engineer, Agent Auth Experience 2mo Location: Remote: United States REMOTE Fit: AI scoring unavailable; review manually Build CV"
+  },
+  "csv": {
+    "status": 200,
+    "line": "Render,https://render.com/,\"Software Engineer, Agent Auth Experience\",Remote: United States,https://jobs.ashbyhq.com/render/8815f772-6895-4383-a9e5-6c7bdc2bf141,63,open,,AI scoring unavailable; review manually,user-shortlisted,shortlisted,,2026-09-29T16:00:34.162Z,2026-07-27T18:39:44.460Z,"
+  },
+  "finalView": {
+    "score_state": "unavailable",
+    "fit_score": null
+  },
+  "activeScoreTasks": 0,
+  "blockedExternalRequests": [],
+  "pageErrors": []
+}

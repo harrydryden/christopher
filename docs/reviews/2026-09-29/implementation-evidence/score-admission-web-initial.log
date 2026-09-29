@@ -1,0 +1,244 @@
+
+> @ava/web@0.1.0 test /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+> vitest run
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-09-29T16:52:52.538Z","level":"info","event":"slow_database_query","durationMs":495,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:52:56.074Z","level":"info","event":"slow_database_query","durationMs":297,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:52:58.497Z","level":"info","event":"slow_database_query","durationMs":607,"statement":"insert into jobs (company_id, source_id, external_key, title, normalized_title, url) select $1::uuid, $2::uuid, 'cap-' |"}
+{"t":"2026-09-29T16:52:59.034Z","level":"info","event":"slow_database_query","durationMs":537,"statement":"insert into user_jobs (user_id, job_id, keyword_matched, location_ok, in_table) select $1::uuid, j.id, true, true, true "}
+{"t":"2026-09-29T16:53:01.602Z","level":"info","event":"slow_database_query","durationMs":263,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:03.394Z","level":"info","event":"slow_database_query","durationMs":406,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:04.455Z","level":"info","event":"slow_database_query","durationMs":327,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:06.368Z","level":"info","event":"slow_database_query","durationMs":575,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:06.741Z","level":"info","event":"slow_database_query","durationMs":325,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:08.650Z","level":"info","event":"slow_database_query","durationMs":394,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:09.136Z","level":"info","event":"slow_database_query","durationMs":391,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:09.476Z","level":"info","event":"slow_database_query","durationMs":311,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:09.934Z","level":"info","event":"slow_database_query","durationMs":375,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:10.512Z","level":"info","event":"slow_database_query","durationMs":478,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:11.004Z","level":"info","event":"slow_database_query","durationMs":383,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:11.498Z","level":"info","event":"slow_database_query","durationMs":452,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:12.196Z","level":"info","event":"slow_database_query","durationMs":435,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:12.740Z","level":"info","event":"slow_database_query","durationMs":407,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:13.275Z","level":"info","event":"slow_database_query","durationMs":422,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:53:14.491Z","level":"info","event":"slow_database_query","durationMs":471,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+ ❯ app/actions/actions.integration.test.ts (61 tests | 1 failed) 25580ms
+   ❯ bulk decisions (2)
+     × decides 100 roles at once exactly as 100 single decisions would 222ms
+{"t":"2026-09-29T16:53:16.231Z","level":"info","event":"slow_database_query","durationMs":486,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:16.506Z","level":"info","event":"slow_database_query","durationMs":258,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:17.062Z","level":"info","event":"slow_database_query","durationMs":320,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:17.369Z","level":"info","event":"slow_database_query","durationMs":293,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:18.576Z","level":"info","event":"slow_database_query","durationMs":265,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:22.505Z","level":"info","event":"slow_database_query","durationMs":299,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:23.960Z","level":"info","event":"slow_database_query","durationMs":277,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:26.029Z","level":"info","event":"slow_database_query","durationMs":271,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-09-29T16:53:29.494Z","level":"info","event":"slow_database_query","durationMs":278,"statement":"truncate ai_calls, users restart identity cascade"}
+{"t":"2026-09-29T16:53:35.242Z","level":"info","event":"slow_database_query","durationMs":332,"statement":"truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_c"}
+{"t":"2026-09-29T16:53:35.523Z","level":"info","event":"slow_database_query","durationMs":258,"statement":"truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_c"}
+{"t":"2026-09-29T16:53:35.576Z","level":"info","event":"database_round_trip","ms":0.8,"samplesMs":[1.3,0.8,1.6],"endpoint":"other","region":null}
+{"t":"2026-09-29T16:53:35.892Z","level":"info","event":"slow_database_query","durationMs":300,"statement":"truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_c"}
+{"t":"2026-09-29T16:53:36.367Z","level":"info","event":"slow_database_query","durationMs":433,"statement":"truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_c"}
+{"t":"2026-09-29T16:53:36.442Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-09-29T16:53:36.564Z","level":"info","msg":"task start","taskId":"b1cd9fbd-5b11-4ad3-8d67-abe465f28a57","taskType":"run_daily","data":{"id":"b1cd9fbd-5b11-4ad3-8d67-abe465f28a57","type":"run_daily","attempt":1,"workerId":"vercel-cron-212c4644","commit":null,"readyWaitMs":129,"heapUsedMb":87,"heapLimitMb":4144,"rssMb":147}}
+{"t":"2026-09-29T16:53:36.577Z","level":"info","msg":"daily run started","taskId":"b1cd9fbd-5b11-4ad3-8d67-abe465f28a57","taskType":"run_daily","data":{"runId":"3e40a74a-c84c-407b-b7d3-828c5021d605","runDate":"2026-09-29","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-09-29T16:53:36.587Z","level":"info","msg":"scan run finalised","taskId":"b1cd9fbd-5b11-4ad3-8d67-abe465f28a57","taskType":"run_daily","data":{"runId":"3e40a74a-c84c-407b-b7d3-828c5021d605","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-09-29T16:53:36.588Z","level":"info","msg":"task done","taskId":"b1cd9fbd-5b11-4ad3-8d67-abe465f28a57","taskType":"run_daily","data":{"id":"b1cd9fbd-5b11-4ad3-8d67-abe465f28a57","type":"run_daily","ms":24,"heapUsedMb":88,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":147,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:36.816Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-09-29T16:53:36.897Z","level":"info","msg":"task start","taskId":"df9d5b49-dfe2-4bdb-893c-ed1a00b97735","taskType":"run_daily","data":{"id":"df9d5b49-dfe2-4bdb-893c-ed1a00b97735","type":"run_daily","attempt":1,"workerId":"vercel-cron-b7d20d98","commit":null,"readyWaitMs":88,"heapUsedMb":91,"heapLimitMb":4144,"rssMb":147}}
+{"t":"2026-09-29T16:53:36.942Z","level":"info","msg":"daily run started","taskId":"df9d5b49-dfe2-4bdb-893c-ed1a00b97735","taskType":"run_daily","data":{"runId":"7519100c-aa40-45de-9960-2da9a017254e","runDate":"2026-09-29","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-09-29T16:53:36.974Z","level":"info","msg":"scan run finalised","taskId":"df9d5b49-dfe2-4bdb-893c-ed1a00b97735","taskType":"run_daily","data":{"runId":"7519100c-aa40-45de-9960-2da9a017254e","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-09-29T16:53:36.975Z","level":"info","msg":"task done","taskId":"df9d5b49-dfe2-4bdb-893c-ed1a00b97735","taskType":"run_daily","data":{"id":"df9d5b49-dfe2-4bdb-893c-ed1a00b97735","type":"run_daily","ms":78,"heapUsedMb":92,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":147,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:37.241Z","level":"info","event":"slow_database_query","durationMs":259,"statement":"truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_c"}
+{"t":"2026-09-29T16:53:37.488Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-09-29T16:53:37.587Z","level":"info","msg":"task start","taskId":"3458c33d-eafd-4214-87b3-61969c183a8d","taskType":"run_daily","data":{"id":"3458c33d-eafd-4214-87b3-61969c183a8d","type":"run_daily","attempt":1,"workerId":"vercel-cron-3fe52ab8","commit":null,"readyWaitMs":109,"heapUsedMb":96,"heapLimitMb":4144,"rssMb":148}}
+{"t":"2026-09-29T16:53:37.596Z","level":"info","msg":"daily run started","taskId":"3458c33d-eafd-4214-87b3-61969c183a8d","taskType":"run_daily","data":{"runId":"5158ab54-a614-47c4-bbdf-3bdc722c9289","runDate":"2026-09-29","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-09-29T16:53:37.605Z","level":"info","msg":"scan run finalised","taskId":"3458c33d-eafd-4214-87b3-61969c183a8d","taskType":"run_daily","data":{"runId":"5158ab54-a614-47c4-bbdf-3bdc722c9289","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-09-29T16:53:37.606Z","level":"info","msg":"task done","taskId":"3458c33d-eafd-4214-87b3-61969c183a8d","taskType":"run_daily","data":{"id":"3458c33d-eafd-4214-87b3-61969c183a8d","type":"run_daily","ms":19,"heapUsedMb":96,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":148,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:37.851Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-09-29T16:53:37.895Z","level":"info","msg":"task start","taskId":"4d705ca7-0e51-419f-ac8f-1270b3153a13","taskType":"tag_reason","data":{"id":"4d705ca7-0e51-419f-ac8f-1270b3153a13","type":"tag_reason","attempt":1,"workerId":"vercel-cron-d695cafd","commit":null,"readyWaitMs":61,"heapUsedMb":99,"heapLimitMb":4144,"rssMb":141}}
+{"t":"2026-09-29T16:53:40.841Z","level":"warn","msg":"abandoned task failed after its deadline","taskId":"4d705ca7-0e51-419f-ac8f-1270b3153a13","taskType":"tag_reason","data":{"id":"4d705ca7-0e51-419f-ac8f-1270b3153a13","type":"tag_reason","error":"tag_reason exceeded its 3s deadline after 3s and was abandoned"}}
+{"t":"2026-09-29T16:53:40.846Z","level":"warn","msg":"task retry","taskId":"4d705ca7-0e51-419f-ac8f-1270b3153a13","taskType":"tag_reason","data":{"id":"4d705ca7-0e51-419f-ac8f-1270b3153a13","type":"tag_reason","error":"tag_reason exceeded its 3s deadline after 3s and was abandoned","ms":2951,"heapUsedMb":99,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":88,"rssDeltaMb":-53}}
+{"t":"2026-09-29T16:53:41.042Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-09-29T16:53:41.078Z","level":"info","msg":"task start","taskId":"f616e0e8-e0ae-4480-83c7-b6ddf6fd26bb","taskType":"tag_reason","data":{"id":"f616e0e8-e0ae-4480-83c7-b6ddf6fd26bb","type":"tag_reason","attempt":3,"workerId":"vercel-cron-1084c550","commit":null,"readyWaitMs":53,"heapUsedMb":90,"heapLimitMb":4144,"rssMb":100}}
+{"t":"2026-09-29T16:53:41.079Z","level":"warn","msg":"task failed","taskId":"f616e0e8-e0ae-4480-83c7-b6ddf6fd26bb","taskType":"tag_reason","data":{"id":"f616e0e8-e0ae-4480-83c7-b6ddf6fd26bb","type":"tag_reason","error":"tagging failed","ms":1,"heapUsedMb":90,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":100,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:41.082Z","level":"info","msg":"task start","taskId":"b7e6e6e5-3344-469c-8d5a-8e52ac06bf07","taskType":"run_daily","data":{"id":"b7e6e6e5-3344-469c-8d5a-8e52ac06bf07","type":"run_daily","attempt":1,"workerId":"vercel-cron-1084c550","commit":null,"readyWaitMs":44,"heapUsedMb":90,"heapLimitMb":4144,"rssMb":100}}
+{"t":"2026-09-29T16:53:41.084Z","level":"info","msg":"task done","taskId":"b7e6e6e5-3344-469c-8d5a-8e52ac06bf07","taskType":"run_daily","data":{"id":"b7e6e6e5-3344-469c-8d5a-8e52ac06bf07","type":"run_daily","ms":2,"heapUsedMb":91,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":100,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:41.446Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-09-29T16:53:41.675Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-09-29T16:53:41.719Z","level":"info","msg":"task start","taskId":"73b2284a-6bc6-4d0f-97d1-3f638fefbcab","taskType":"discover","data":{"id":"73b2284a-6bc6-4d0f-97d1-3f638fefbcab","type":"discover","attempt":1,"workerId":"vercel-cron-d6bfff7d","commit":null,"readyWaitMs":61,"heapUsedMb":97,"heapLimitMb":4144,"rssMb":107}}
+{"t":"2026-09-29T16:53:41.901Z","level":"info","msg":"discovery finished","taskId":"73b2284a-6bc6-4d0f-97d1-3f638fefbcab","taskType":"discover","data":{"company":"acme.example","outcome":"resolved","fetches":2,"best":"ats_link"}}
+{"t":"2026-09-29T16:53:41.904Z","level":"info","msg":"task done","taskId":"73b2284a-6bc6-4d0f-97d1-3f638fefbcab","taskType":"discover","data":{"id":"73b2284a-6bc6-4d0f-97d1-3f638fefbcab","type":"discover","ms":186,"heapUsedMb":93,"heapDeltaMb":-4,"heapLimitMb":4144,"rssMb":138,"rssDeltaMb":31}}
+{"t":"2026-09-29T16:53:41.906Z","level":"info","msg":"task start","taskId":"ec6c5bb9-997a-4f92-a68d-527e9f78a529","taskType":"run_daily","data":{"id":"ec6c5bb9-997a-4f92-a68d-527e9f78a529","type":"run_daily","attempt":1,"workerId":"vercel-cron-d6bfff7d","commit":null,"readyWaitMs":235,"heapUsedMb":93,"heapLimitMb":4144,"rssMb":138}}
+{"t":"2026-09-29T16:53:41.913Z","level":"info","msg":"daily run started","taskId":"ec6c5bb9-997a-4f92-a68d-527e9f78a529","taskType":"run_daily","data":{"runId":"e936d374-e029-4f45-a1ef-da621e6f32b9","runDate":"2026-09-29","companies":1,"logosQueued":0,"retired":0}}
+{"t":"2026-09-29T16:53:41.916Z","level":"info","msg":"task done","taskId":"ec6c5bb9-997a-4f92-a68d-527e9f78a529","taskType":"run_daily","data":{"id":"ec6c5bb9-997a-4f92-a68d-527e9f78a529","type":"run_daily","ms":10,"heapUsedMb":94,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":138,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:41.918Z","level":"info","msg":"task start","taskId":"07c497e6-8eab-4816-a243-0a507f3a138d","taskType":"scan_company","data":{"id":"07c497e6-8eab-4816-a243-0a507f3a138d","type":"scan_company","attempt":1,"workerId":"vercel-cron-d6bfff7d","commit":null,"readyWaitMs":28,"heapUsedMb":94,"heapLimitMb":4144,"rssMb":138}}
+{"t":"2026-09-29T16:53:42.082Z","level":"info","msg":"source scanned","taskId":"07c497e6-8eab-4816-a243-0a507f3a138d","taskType":"scan_company","data":{"company":"Acme Robotics","type":"greenhouse","status":"ok","postings":2,"new":2,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":566,"claimRequests":3,"claimRevalidated":0,"heapUsedMb":97,"ms":158}}
+{"t":"2026-09-29T16:53:42.092Z","level":"info","msg":"task done","taskId":"07c497e6-8eab-4816-a243-0a507f3a138d","taskType":"scan_company","data":{"id":"07c497e6-8eab-4816-a243-0a507f3a138d","type":"scan_company","ms":174,"heapUsedMb":98,"heapDeltaMb":4,"heapLimitMb":4144,"rssMb":140,"rssDeltaMb":2}}
+{"t":"2026-09-29T16:53:42.095Z","level":"info","msg":"task start","taskId":"fde63061-9637-4d0b-8b7c-9437e60ac37e","taskType":"fetch_description","data":{"id":"fde63061-9637-4d0b-8b7c-9437e60ac37e","type":"fetch_description","attempt":1,"workerId":"vercel-cron-d6bfff7d","commit":null,"readyWaitMs":43,"heapUsedMb":98,"heapLimitMb":4144,"rssMb":140}}
+{"t":"2026-09-29T16:53:42.115Z","level":"info","msg":"task done","taskId":"fde63061-9637-4d0b-8b7c-9437e60ac37e","taskType":"fetch_description","data":{"id":"fde63061-9637-4d0b-8b7c-9437e60ac37e","type":"fetch_description","ms":20,"heapUsedMb":99,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":140,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:42.118Z","level":"info","msg":"task start","taskId":"d24570ca-5216-4c3d-8393-738eaac504ea","taskType":"discover","data":{"id":"d24570ca-5216-4c3d-8393-738eaac504ea","type":"discover","attempt":1,"workerId":"vercel-cron-d6bfff7d","commit":null,"readyWaitMs":399,"heapUsedMb":99,"heapLimitMb":4144,"rssMb":140}}
+{"t":"2026-09-29T16:53:42.179Z","level":"info","msg":"logo capture failed","taskId":"d24570ca-5216-4c3d-8393-738eaac504ea","taskType":"discover","data":{"company":"Acme Robotics","error":"No usable icon found for acme.example","tried":3,"attempts":1,"nextAttemptAt":"2026-09-29T17:53:42.174Z"}}
+{"t":"2026-09-29T16:53:42.181Z","level":"info","msg":"task done","taskId":"d24570ca-5216-4c3d-8393-738eaac504ea","taskType":"discover","data":{"id":"d24570ca-5216-4c3d-8393-738eaac504ea","type":"discover","ms":64,"heapUsedMb":100,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":141,"rssDeltaMb":1}}
+{"t":"2026-09-29T16:53:42.383Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-29","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-09-29T16:53:42.470Z","level":"info","msg":"task start","taskId":"d88423ef-b8c1-4db2-a7d1-02d1d9834397","taskType":"run_daily","data":{"id":"d88423ef-b8c1-4db2-a7d1-02d1d9834397","type":"run_daily","attempt":1,"workerId":"vercel-cron-c954ab57","commit":null,"readyWaitMs":94,"heapUsedMb":76,"heapLimitMb":4144,"rssMb":130}}
+{"t":"2026-09-29T16:53:42.484Z","level":"info","msg":"daily run started","taskId":"d88423ef-b8c1-4db2-a7d1-02d1d9834397","taskType":"run_daily","data":{"runId":"0988a903-7aea-493b-a30f-6401bf500e1d","runDate":"2026-09-29","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-09-29T16:53:42.492Z","level":"info","msg":"scan run finalised","taskId":"d88423ef-b8c1-4db2-a7d1-02d1d9834397","taskType":"run_daily","data":{"runId":"0988a903-7aea-493b-a30f-6401bf500e1d","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-09-29T16:53:42.493Z","level":"info","msg":"task done","taskId":"d88423ef-b8c1-4db2-a7d1-02d1d9834397","taskType":"run_daily","data":{"id":"d88423ef-b8c1-4db2-a7d1-02d1d9834397","type":"run_daily","ms":23,"heapUsedMb":76,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":130,"rssDeltaMb":0}}
+{"t":"2026-09-29T16:53:44.058Z","level":"info","event":"slow_database_query","durationMs":288,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:45.056Z","level":"info","event":"slow_database_query","durationMs":693,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:45.636Z","level":"info","event":"slow_database_query","durationMs":379,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:46.005Z","level":"info","event":"slow_database_query","durationMs":324,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:46.960Z","level":"info","event":"slow_database_query","durationMs":317,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:47.787Z","level":"info","event":"slow_database_query","durationMs":261,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:48.173Z","level":"info","event":"slow_database_query","durationMs":327,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:49.737Z","level":"info","event":"slow_database_query","durationMs":265,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:50.484Z","level":"info","event":"slow_database_query","durationMs":638,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:51.903Z","level":"info","event":"slow_database_query","durationMs":303,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:52.432Z","level":"info","event":"slow_database_query","durationMs":456,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:53.572Z","level":"info","event":"slow_database_query","durationMs":946,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:54.518Z","level":"info","event":"slow_database_query","durationMs":393,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:54.946Z","level":"info","event":"slow_database_query","durationMs":295,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:55.412Z","level":"info","event":"slow_database_query","durationMs":396,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:56.185Z","level":"info","event":"slow_database_query","durationMs":660,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:56.721Z","level":"info","event":"slow_database_query","durationMs":301,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:57.146Z","level":"info","event":"slow_database_query","durationMs":367,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:57.843Z","level":"info","event":"slow_database_query","durationMs":326,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:58.653Z","level":"info","event":"slow_database_query","durationMs":508,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:53:59.007Z","level":"info","event":"slow_database_query","durationMs":336,"statement":"insert into \"tag_vocabulary\" (\"user_id\", \"tag\", \"description\", \"created_by\", \"accepted\", \"created_at\") values ($1, $2, $"}
+{"t":"2026-09-29T16:53:59.747Z","level":"info","event":"slow_database_query","durationMs":367,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:00.195Z","level":"info","event":"slow_database_query","durationMs":400,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:00.732Z","level":"info","event":"slow_database_query","durationMs":419,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:01.265Z","level":"info","event":"slow_database_query","durationMs":435,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:01.739Z","level":"info","event":"slow_database_query","durationMs":345,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:03.889Z","level":"info","event":"slow_database_query","durationMs":1021,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:54:04.388Z","level":"info","event":"slow_database_query","durationMs":432,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:54:04.865Z","level":"info","event":"slow_database_query","durationMs":399,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:54:05.168Z","level":"info","event":"slow_database_query","durationMs":270,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:54:11.897Z","level":"info","event":"slow_database_query","durationMs":265,"statement":"truncate users, login_attempts, companies, settings restart identity cascade"}
+{"t":"2026-09-29T16:54:14.071Z","level":"info","event":"slow_database_query","durationMs":657,"statement":"truncate users, login_attempts, companies, settings restart identity cascade"}
+{"t":"2026-09-29T16:54:17.295Z","level":"info","event":"slow_database_query","durationMs":333,"statement":"truncate users, login_attempts, companies, settings restart identity cascade"}
+{"t":"2026-09-29T16:54:18.378Z","level":"info","event":"slow_database_query","durationMs":257,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, login_attempts, users restart identity cascade"}
+{"t":"2026-09-29T16:54:23.069Z","level":"info","event":"slow_database_query","durationMs":289,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:29.039Z","level":"info","event":"slow_database_query","durationMs":467,"statement":"truncate ai_calls, ai_reservations, applications, cv_versions, cv_drafts, cv_libraries, companies, tasks, settings, user"}
+ ❯ app/actions/decisions.integration.test.ts (16 tests | 2 failed) 3040ms
+   ❯ a reversed skip (1)
+     × queues the role's score again, since a skipped role is left out of scoring 170ms
+   ❯ one decision writer (1)
+     × leaves the same rows deciding a role alone as deciding it as a group of one 185ms
+{"t":"2026-09-29T16:54:36.589Z","level":"info","event":"slow_database_query","durationMs":252,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-09-29T16:54:44.905Z","level":"info","event":"slow_database_query","durationMs":515,"statement":"truncate cv_drafts, users restart identity cascade"}
+{"t":"2026-09-29T16:54:46.911Z","level":"info","event":"slow_database_query","durationMs":261,"statement":"truncate cv_drafts, users restart identity cascade"}
+{"t":"2026-09-29T16:54:48.639Z","level":"info","event":"slow_database_query","durationMs":275,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:49.252Z","level":"info","event":"slow_database_query","durationMs":522,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:49.562Z","level":"info","event":"slow_database_query","durationMs":260,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-09-29T16:54:56.361Z","level":"info","event":"slow_database_query","durationMs":586,"statement":"truncate users, login_attempts, settings restart identity cascade"}
+{"t":"2026-09-29T16:54:58.317Z","level":"info","event":"slow_database_query","durationMs":331,"statement":"truncate users, login_attempts, settings restart identity cascade"}
+{"t":"2026-09-29T16:54:58.603Z","level":"info","event":"slow_database_query","durationMs":261,"statement":"truncate users, login_attempts, settings restart identity cascade"}
+{"t":"2026-09-29T16:54:58.937Z","level":"info","event":"slow_database_query","durationMs":330,"statement":"truncate users, login_attempts, settings restart identity cascade"}
+{"t":"2026-09-29T16:55:00.365Z","level":"info","event":"slow_database_query","durationMs":258,"statement":"truncate companies, tasks, ai_calls, user_settings, users restart identity cascade"}
+{"t":"2026-09-29T16:55:16.055Z","level":"info","event":"slow_database_query","durationMs":276,"statement":"truncate companies, tasks, decisions, applications, users restart identity cascade"}
+{"t":"2026-09-29T16:55:32.574Z","level":"info","event":"slow_database_query","durationMs":282,"statement":"truncate cv_libraries, users restart identity cascade"}
+{"t":"2026-09-29T16:55:33.243Z","level":"info","event":"slow_database_query","durationMs":355,"statement":"truncate cv_libraries, users restart identity cascade"}
+{"t":"2026-09-29T16:55:43.798Z","level":"info","event":"slow_database_query","durationMs":440,"statement":"truncate companies, tasks, users restart identity cascade"}
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  app/actions/actions.integration.test.ts > bulk decisions > decides 100 roles at once exactly as 100 single decisions would
+AssertionError: expected [ 'admit_scores', …(2) ] to deeply equal [ 'score_job', …(2) ]
+
+- Expected
++ Received
+
+  [
+-   "score_job",
++   "admit_scores",
+    "synthesize_profile",
+    "tag_reason",
+  ]
+
+ ❯ app/actions/actions.integration.test.ts:1066:29
+    1064|     const singleTaskTypes = [...new Set((await taskKeys()).map((task) …
+    1065|     // One decision is not a fifth: A8 is queued every fifth decision,…
+    1066|     expect(singleTaskTypes).toEqual(["score_job", "synthesize_profile"…
+       |                             ^
+    1067|     // Clear what the baseline wrote, so what follows is the group's o…
+    1068|     await database.execute(sql`delete from tasks`);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  app/actions/decisions.integration.test.ts > a reversed skip > queues the role's score again, since a skipped role is left out of scoring
+AssertionError: expected [] to deeply equal [ { …(2) } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "jobId": "c95ce2fd-6d17-4ad4-8aca-6616eb1cb6ec",
+-     "userId": "1e742b15-e15b-43aa-b085-fdacacc49695",
+-   },
+- ]
++ []
+
+ ❯ app/actions/decisions.integration.test.ts:257:28
+    255|     expect(await scores()).toEqual([]);
+    256|     expect(await undoDecisionIfCurrent(job.id, saved.decisionId)).toEq…
+    257|     expect(await scores()).toEqual([{ userId: user.id, jobId: job.id }…
+       |                            ^
+    258|   });
+    259| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  app/actions/decisions.integration.test.ts > one decision writer > leaves the same rows deciding a role alone as deciding it as a group of one
+AssertionError: expected { decisions: [ { …(9) } ], …(2) } to deeply equal { decisions: [ { …(9) } ], …(2) }
+
+- Expected
++ Received
+
+@@ -24,16 +24,16 @@
+        "userId": "41913024-c274-468b-a1d0-256351704511",
+      },
+    ],
+    "tasks": [
+      {
+-       "dedupeKey": "admit_scores:41913024-c274-468b-a1d0-256351704511:dd9b136bf487fef0a3723c3c6288e377a9b4d682",
++       "dedupeKey": "admit_scores:41913024-c274-468b-a1d0-256351704511:e716c786ecd6f10295d7938724e2a64513eb60c2",
+        "payload": {
+          "jobIds": [
+            "<job>",
+          ],
+-         "requestKey": "dd9b136bf487fef0a3723c3c6288e377a9b4d682",
++         "requestKey": "e716c786ecd6f10295d7938724e2a64513eb60c2",
+          "userId": "41913024-c274-468b-a1d0-256351704511",
+        },
+        "priority": 1,
+        "status": "queued",
+        "type": "admit_scores",
+
+ ❯ app/actions/decisions.integration.test.ts:373:44
+    371|       await database.execute(sql`delete from tasks`);
+    372|       expect(await decideRoles([grouped.id], decision, reason)).toEqua…
+    373|       expect(await leftBehind(grouped.id)).toEqual(one);
+       |                                            ^
+    374|     }
+    375|     await database.execute(sql`delete from tasks`);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed | 136 passed (138)
+      Tests  3 failed | 1237 passed (1240)
+   Start at  17:52:47
+   Duration  197.18s (tests 81%, import 15%, environment 2%, transform 2%)
+
+    Isolate  138 workers spawned · ~78ms startup each (spawn + environment, per file)
+             at least ~10.64s faster with isolate: false — reuses workers across files instead of one per file
+
+/Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @ava/web@0.1.0 test: `vitest run`
+Exit status 1

@@ -302,8 +302,8 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
           </div>
         </TD>
         <TD className={`${styles.roleFit} whitespace-nowrap`}>
-          <span className="md:hidden text-muted">Fit: </span>
-          {/* A blank score says which of its five causes it is, rather than one dash. */}
+          <span className="block md:hidden text-muted">Fit: </span>
+          {/* A missing or previous score carries its current update status. */}
           <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
         </TD>
         <TD className={`${styles.roleAction} text-right`}>

@@ -29,6 +29,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { schema, enqueueStandard, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@ava/db";
+import { admitScores } from "./score-admission";
 import { runMigrations } from "@ava/db/migrate";
 import {
   discovery,
@@ -171,7 +172,9 @@ async function main() {
             console.log(`added ${domain} (${created.id}) and followed it as ${user.email}`);
           } else {
             const settings = await deps.userSettings(user.id);
-            const outcome = await reevaluateGate(deps.db, user.id, settings, deps.now(), { companyId: company.id });
+            const outcome = await reevaluateGate(deps.db, user.id, settings, deps.now(), { companyId: company.id }, {
+              scoreCandidates: async (writer, pairs) => (await admitScores(deps, pairs, { db: writer, onlyUnscored: true, settings: new Map([[user.id, settings]]) })).queued,
+            });
             console.log(`already tracked: ${domain}; ${subscription.created || subscription.reactivated ? "now" : "already"} followed by ${user.email} (${outcome.created} matching roles added)`);
           }
         }

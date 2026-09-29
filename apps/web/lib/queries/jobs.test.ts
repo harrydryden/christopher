@@ -3,7 +3,7 @@ import { createDb, schema, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
-import { deadlineFor, ROLE_TABS, type RoleStatus } from "@ava/core";
+import { ROLE_TABS, type RoleStatus } from "@ava/core";
 import { ensureTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
 
@@ -236,27 +236,36 @@ describe("why a role is in the table", () => {
   });
 });
 
-describe("what a blank score means", () => {
+describe("what a score state means", () => {
   const scored = { fitScore: 72, scoreState: "scored" as const, scoreStateAt: new Date() };
   const now = new Date("2026-09-19T12:00:00Z");
   const queuedAt = (msAgo: number) => ({ fitScore: null, scoreState: "queued" as const, scoreStateAt: new Date(now.getTime() - msAgo) });
 
-  it("names each of the five states instead of one dash", () => {
-    // A score is its own answer; the sentence is only for a blank one.
-    expect(scoreStateText(scored, now)).toBeNull();
-    expect(scoreStateText({ ...scored, scoreState: null, scoreStateAt: null }, now)).toBeNull();
+  it("distinguishes a request from worker-admitted work without guessing from its age", () => {
+    expect(scoreStateText({ fitScore: null, scoreState: "requested", scoreStateAt: now })).toBe("Score pending; review manually");
+    expect(scoreStateText(queuedAt(5_000))).toBe("Waiting for scoring; review manually");
+    // A provider batch may wait much longer than one live score task's two-minute deadline.
+    expect(scoreStateText(queuedAt(2 * 60 * 60_000))).toBe("Waiting for scoring; review manually");
+    expect(scoreStateText({ fitScore: null, scoreState: "queued", scoreStateAt: null })).toBe("Waiting for scoring; review manually");
 
-    expect(scoreStateText(queuedAt(5_000), now)).toBe("scoring…");
-    // A queue entry older than the score task's own deadline has stopped meaning "any moment now".
-    expect(scoreStateText(queuedAt(deadlineFor("score_job") + 1), now)).toBe("not scored yet");
-    expect(scoreStateText({ fitScore: null, scoreState: "queued", scoreStateAt: null }, now)).toBe("not scored yet");
-
-    expect(scoreStateText({ fitScore: null, scoreState: "budget", scoreStateAt: now }, now)).toBe("not scored: budget spent");
-    expect(scoreStateText({ fitScore: null, scoreState: "unavailable", scoreStateAt: now }, now)).toBe("AI scoring unavailable; review manually");
-    expect(scoreStateText({ fitScore: null, scoreState: "closed", scoreStateAt: now }, now)).toBe("closed");
-    expect(scoreStateText({ fitScore: null, scoreState: "ineligible", scoreStateAt: now }, now)).toBe("not scored: outside your filters");
+    expect(scoreStateText({ fitScore: null, scoreState: "budget", scoreStateAt: now })).toBe("not scored: budget spent");
+    expect(scoreStateText({ fitScore: null, scoreState: "unavailable", scoreStateAt: now })).toBe("AI scoring unavailable; review manually");
+    expect(scoreStateText({ fitScore: null, scoreState: "failed", scoreStateAt: now })).toBe("Could not score; review manually");
+    expect(scoreStateText({ fitScore: null, scoreState: "scored", scoreStateAt: now })).toBe("No fit score returned; review manually");
+    expect(scoreStateText({ fitScore: null, scoreState: "closed", scoreStateAt: now })).toBe("closed");
+    expect(scoreStateText({ fitScore: null, scoreState: "ineligible", scoreStateAt: now })).toBe("not scored: outside your filters");
     // Rows from before the column existed have nothing recorded, which is not the same as waiting.
-    expect(scoreStateText({ fitScore: null, scoreState: null, scoreStateAt: null }, now)).toBe("not scored yet");
+    expect(scoreStateText({ fitScore: null, scoreState: null, scoreStateAt: null })).toBe("not scored yet");
+  });
+
+  it("keeps a previous score visible while describing an update's actual state", () => {
+    expect(scoreStateText(scored)).toBeNull();
+    expect(scoreStateText({ ...scored, scoreState: null, scoreStateAt: null })).toBeNull();
+    expect(scoreStateText({ ...scored, scoreState: "requested" })).toBe("Previous score; update pending");
+    expect(scoreStateText({ ...scored, scoreState: "queued" })).toBe("Previous score; update pending");
+    expect(scoreStateText({ ...scored, scoreState: "unavailable" })).toBe("Previous score; AI update unavailable");
+    expect(scoreStateText({ ...scored, scoreState: "budget" })).toBe("Previous score; update stopped: budget spent");
+    expect(scoreStateText({ ...scored, scoreState: "failed" })).toBe("Previous score; update failed; review manually");
   });
 
   it("carries the state and its words into the view model", () => {

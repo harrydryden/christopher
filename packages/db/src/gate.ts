@@ -2,7 +2,7 @@ import { compileGate, type AppSettings, type CompiledGate, type GateResult, type
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
-import { queueScoring } from "./tasks";
+import { requestScores } from "./tasks";
 
 export interface GateScope {
   /** One posting only (a description just arrived). */
@@ -147,6 +147,8 @@ export interface ReevaluateOptions {
    * without it every page runs on the `db` given.
    */
   eachPage?: <T>(work: (db: Db) => Promise<T>) => Promise<T>;
+  /** Worker callers supply their runtime admission. Web callers use durable neutral requests. */
+  scoreCandidates?: (db: Db, pairs: Array<{ userId: string; jobId: string }>, now: Date) => Promise<number>;
 }
 
 /**
@@ -220,7 +222,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     for (let offset = 0; offset < inserts.length; offset += 250) {
       await db.insert(schema.userJobs).values(inserts.slice(offset, offset + 250)).onConflictDoNothing();
     }
-    queuedForScoring += await queueScoring(db, scoring, now);
+    queuedForScoring += await (opts.scoreCandidates ?? ((writer, pairs, at) => requestScores(writer, pairs, at, { onlyUnscored: true })))(db, scoring, now);
     return rows.at(-1)!.id;
     });
     if (last === null) break;

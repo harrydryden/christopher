@@ -135,6 +135,38 @@ describe("getCompanyWorkStatus", () => {
     expect((await getRolesWorkStatus(a.id)).active).toBe(false);
   });
 
+  it("keeps Roles watching only its account through score admission and a terminal no-AI answer", async () => {
+    const [source] = await database.insert(schema.careerSources).values({ companyId: mine, type: "html", url: "https://mine.example/jobs" }).returning();
+    const [job] = await database.insert(schema.jobs).values({ companyId: mine, sourceId: source!.id,
+      externalKey: "admit-score", title: "Engineer", normalizedTitle: "engineer", url: "https://mine.example/jobs/admit-score" }).returning();
+    await database.insert(schema.userJobs).values({ userId: a.id, jobId: job!.id, keywordMatched: true, locationOk: true, inTable: true,
+      scoreState: "requested", scoreStateAt: new Date() });
+    const admission = await task("admit_scores", { userId: a.id, jobIds: [job!.id] });
+    const pending = await getRolesWorkStatus(a.id);
+    expect(pending.active).toBe(true);
+    expect((await getRolesWorkStatus(b.id)).active).toBe(false);
+
+    await database.transaction(async tx => {
+      await tx.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, admission.id));
+      await tx.update(schema.userJobs).set({ scoreState: "unavailable", scoreStateAt: new Date(Date.now() + 60_000) })
+        .where(eq(schema.userJobs.jobId, job!.id));
+    });
+    const finished = await getRolesWorkStatus(a.id);
+    expect(finished.active).toBe(false);
+    expect(finished.version).not.toBe(pending.version);
+  });
+
+  it("continues watching after admission hands the role to a score task", async () => {
+    const admission = await task("admit_scores", { userId: a.id, jobIds: ["role-1"] });
+    expect((await getRolesWorkStatus(a.id)).active).toBe(true);
+    await database.transaction(async tx => {
+      await tx.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, admission.id));
+      await tx.insert(schema.tasks).values({ type: "score_job", payload: { userId: a.id, jobId: "role-1" } });
+    });
+    expect((await getRolesWorkStatus(a.id)).active).toBe(true);
+    expect((await getRolesWorkStatus(b.id)).active).toBe(false);
+  });
+
   it("watches a future batch hand-off for its member without a fast unchanged poll", async () => {
     const score = await task("score_job", { userId: a.id, jobId: "role-1" });
     const baseline = await getRolesWorkStatus(a.id);

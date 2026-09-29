@@ -1063,7 +1063,7 @@ describe("bulk decisions", () => {
     expect((await decide(first, "apply", "Shared reason")).ok).toBe(true);
     const singleTaskTypes = [...new Set((await taskKeys()).map((task) => task.type))].sort();
     // One decision is not a fifth: A8 is queued every fifth decision, never on every one.
-    expect(singleTaskTypes).toEqual(["score_job", "synthesize_profile", "tag_reason"]);
+    expect(singleTaskTypes).toEqual(["admit_scores", "synthesize_profile", "tag_reason"]);
     // Clear what the baseline wrote, so what follows is the group's own work alone.
     await database.execute(sql`delete from tasks`);
     await database.execute(sql`delete from job_events`);
@@ -1086,14 +1086,19 @@ describe("bulk decisions", () => {
     expect(new Set(decided.map((event) => event.jobId))).toEqual(new Set(ids));
     expect(decided.every((event) => event.userId === user.id && event.payload.reason === "Shared reason")).toBe(true);
 
-    // Exactly the tasks the same roles decided one at a time would queue: one per role where the
-    // dedupe key names a role or a decision, one per account where it names the account.
+    // The same exact score intent as individual decisions, bounded in one account request.
+    // Tagging remains per decision; profile synthesis and suggestions remain per account.
     const tasks = await taskKeys();
     // The hundredth standing decision is a fifth, so the group queues the one A8 call those
     // hundred decisions taken one at a time would have queued (deduped by the account).
     expect([...new Set(tasks.map((task) => task.type))].sort()).toEqual([...singleTaskTypes, "suggest_filters"].sort());
-    expect(new Set(tasks.filter((task) => task.type === "score_job").map((task) => task.dedupeKey)))
-      .toEqual(new Set(ids.map((id) => `score_job:${user.id}:${id}`)));
+    const admissions = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "admit_scores"));
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0]!.payload.userId).toBe(user.id);
+    expect(admissions[0]!.payload.jobIds).toEqual([...ids].sort());
+    expect(admissions[0]!.payload.onlyUnscored).toBeUndefined();
+    expect(tasks.filter(task => task.type === "score_job")).toHaveLength(0);
+    expect((await database.select().from(schema.userJobs)).every(view => view.scoreState === "requested")).toBe(true);
     expect(new Set(tasks.filter((task) => task.type === "tag_reason").map((task) => task.dedupeKey)))
       .toEqual(new Set(active.map((row) => `tag_reason:${row.id}`)));
     expect(tasks.filter((task) => task.type === "synthesize_profile")).toHaveLength(1);

@@ -1,0 +1,391 @@
+{
+  "createdAt": "2026-09-29T17:17:00.937803+00:00",
+  "baseCommit": "b244d5f30cffb1d1e08c5c87eac616593d099355",
+  "branch": "codex/jtbd-90",
+  "node": "v22.18.0",
+  "webBuildId": "Ga8rtPUzagoURQYKOZDHl",
+  "scope": "Local scoring-admission, interface and diagnostic-harness checkpoint. No paid provider, real-user usability or hosted release acceptance.",
+  "results": {
+    "core": {
+      "passed": 708,
+      "files": 42
+    },
+    "db": {
+      "passed": 98,
+      "files": 10
+    },
+    "releaseHarness": {
+      "passed": 121,
+      "skipped": 0
+    },
+    "workerFull": {
+      "passed": 728,
+      "failed": 1,
+      "total": 729,
+      "files": 56,
+      "failure": "Immediate-due import test used JavaScript wall time; production code unchanged after full run."
+    },
+    "workerImportAfterTestClockFix": {
+      "passed": 14,
+      "failed": 0
+    },
+    "focusedAdmissionAndLearning": {
+      "passed": 30
+    },
+    "scanRaceFixtures": {
+      "passed": 2
+    },
+    "webFinal": {
+      "passed": 1240,
+      "files": 138
+    },
+    "typecheck": {
+      "workspacePackagesPassed": 5
+    },
+    "workerBuild": "passed",
+    "webBuild": "passed",
+    "browserAutoRefreshMs": 9000
+  },
+  "readiness": {
+    "J1": 83,
+    "J2": 77,
+    "J3": 85,
+    "J4": 83,
+    "J5": 85,
+    "J6": 85,
+    "J7": 80,
+    "J8": 83,
+    "J9": 70,
+    "jobsAt90": 0
+  },
+  "openLocalGaps": [
+    "Historical queued score views without active work need bounded reconciliation; new abandonment hooks do not replay old failures.",
+    "Continued large HTML listings still stage verified roles without positive-only incremental publication."
+  ],
+  "files": {
+    "apps/web/app/actions/actions.integration.test.ts": {
+      "sha256": "a7264a12937f2d197d62f2f29ec4dac4b0601d4be811030f8742e36f82eb3d61",
+      "bytes": 113943
+    },
+    "apps/web/app/actions/decisions.integration.test.ts": {
+      "sha256": "e6bb973eb39a1e72393d3192ae5d7cd011f44339dbb04c3cd73dfd22b2374f02",
+      "bytes": 21514
+    },
+    "apps/web/app/api/export.csv/route.ts": {
+      "sha256": "2ee171124c0bb811e8afe0e90d1780c3aa9bb6858ebb7ead4180af80269f7430",
+      "bytes": 4608
+    },
+    "apps/web/components/RoleWorkspace.tsx": {
+      "sha256": "5970d1db7e40b20300f132821dac3fa216ac485399274109a245b92fcaf3c354",
+      "bytes": 10212
+    },
+    "apps/web/components/RolesTable.module.css": {
+      "sha256": "7f339513d7addaed1fe733c5b50a4ea7461e1aa5e6b06e0404f6f45ac9d0ef72",
+      "bytes": 1619
+    },
+    "apps/web/components/RolesTable.test.tsx": {
+      "sha256": "e5d7228d137ed1c9f59db7990359d2594950d166ce65941adfcc023898a4fcc5",
+      "bytes": 26011
+    },
+    "apps/web/components/RolesTable.tsx": {
+      "sha256": "b5a3de419302a99af024e9fcccbc995215bb50a88467d3cd433aafade5efa07b",
+      "bytes": 55923
+    },
+    "apps/web/components/table.tsx": {
+      "sha256": "0e89292fcf4718139d9fc61d908fe16f547ae5bff0205542f84417b97123686b",
+      "bytes": 3109
+    },
+    "apps/web/lib/decisions.ts": {
+      "sha256": "074015be0f8768d6ac5f1fd3ddf04785d40aeace69932e44964b7301151747b2",
+      "bytes": 10381
+    },
+    "apps/web/lib/queries/health.test.ts": {
+      "sha256": "091776d102a2fabeb727fc3f0fb4fc6deba2fe7643bd0343dafda2da891ff2b1",
+      "bytes": 47334
+    },
+    "apps/web/lib/queries/health.ts": {
+      "sha256": "1899665f6d434a2b386cc69ab13a238c1228d81807cd626576ad376c5bea0224",
+      "bytes": 72330
+    },
+    "apps/web/lib/queries/jobs.test.ts": {
+      "sha256": "d589ef69b8ea72befda477a00ecfefca35c10063b928efd0d3716c7be759c9f7",
+      "bytes": 30872
+    },
+    "apps/web/lib/queries/jobs.ts": {
+      "sha256": "0defb7853b4c38687581130f1a07c3491d1285f9efd3c4ee3de684fe586b6b22",
+      "bytes": 37646
+    },
+    "apps/web/lib/work-status.test.ts": {
+      "sha256": "8f3c3a17e3ec939e2bf036a5a53601aeb0409baff58179b5af527a5ee99f2f9a",
+      "bytes": 18043
+    },
+    "apps/web/lib/work-status.ts": {
+      "sha256": "e3a752000e769bb0ea1178c413d15a7e7011ffcee8a2fec6df6abe98fd660f14",
+      "bytes": 10434
+    },
+    "apps/worker/src/cli.ts": {
+      "sha256": "fd6940ede7bc22ec972375a17ef9da788109fb3dafb383933d01197c73e39db4",
+      "bytes": 19390
+    },
+    "apps/worker/src/e2e.test.ts": {
+      "sha256": "3e62f635b586ed00826b2069d3a1a2ec2c922f0d06049dfa83b152273fbaba9b",
+      "bytes": 195356
+    },
+    "apps/worker/src/handlers/abandon.ts": {
+      "sha256": "847f6dbd86834ff20f32e30946847d4149e31cfdc543424066fa4220de041422",
+      "bytes": 11137
+    },
+    "apps/worker/src/handlers/description.ts": {
+      "sha256": "2000b790dc2a50d5104ee835858fbf4e37d73a701535d1b5a5cb84f56c881a61",
+      "bytes": 12397
+    },
+    "apps/worker/src/handlers/import-posting.ts": {
+      "sha256": "10f9f7c75991e2eea78ec0351dcc157de385d2df56db8938d4d2b12f09a2e693",
+      "bytes": 17536
+    },
+    "apps/worker/src/handlers/index.ts": {
+      "sha256": "e4badbd9769c48a003aa3b3fd383e2b51cd46b3f352e5c4beff739a09729af9e",
+      "bytes": 2396
+    },
+    "apps/worker/src/handlers/learning.ts": {
+      "sha256": "a0e39641e512d6f2c44599c3e07656c21678021ebec7682a034e9ebbce25c171",
+      "bytes": 34745
+    },
+    "apps/worker/src/handlers/scan.ts": {
+      "sha256": "f102da1fb6f25b8d0a1fa975b6930ba778e3bd9ad603475c7b246111574c93dd",
+      "bytes": 89566
+    },
+    "apps/worker/src/import-posting.test.ts": {
+      "sha256": "ec56cc0a5a09d77cc2dfc8c345bf3a071281ccc393571da38107021810b4a94f",
+      "bytes": 18986
+    },
+    "apps/worker/src/learning-signals.test.ts": {
+      "sha256": "9ee378e80efce57aa00c9a3b54bb8e087915c183425f1f7bcfeec3fbc3fb3cf7",
+      "bytes": 34796
+    },
+    "apps/worker/src/live-html-audit-budget.test.ts": {
+      "sha256": "7d09999f635b50fa585af76be01fd9142889d56df07b72f5a05d327992eacbd7",
+      "bytes": 565
+    },
+    "apps/worker/src/live-html-audit-budget.ts": {
+      "sha256": "e7b03905f35aca8920806fe318e8875f5fa8f80a5e67f2571569b7d0b19d3795",
+      "bytes": 297
+    },
+    "apps/worker/src/live-html-continuation.ts": {
+      "sha256": "af93b262dfc132162f9de2bec2445b2d5c0384603fb266f5ab8988805a0453ab",
+      "bytes": 13176
+    },
+    "apps/worker/src/score-admission.test.ts": {
+      "sha256": "de2813e41f06acb4e1cc57cad5caab9e23a33ef789ff563f6d3c7c7f826309bc",
+      "bytes": 12637
+    },
+    "apps/worker/src/score-admission.ts": {
+      "sha256": "2725b8c30eb953dbbd412fdd31d42335f6830c6f3c855ea9387b565820d68a4e",
+      "bytes": 6566
+    },
+    "docs/DEPLOY.md": {
+      "sha256": "3ae41d8289f13e1739de047a6d9e0c532eca4953836ed84a46b90e1874a23512",
+      "bytes": 78963
+    },
+    "docs/SPEC.md": {
+      "sha256": "0a23406ae664fce445d8a5a4f076adfcf48afad625b44731cdfd6df490c8dd49",
+      "bytes": 198925
+    },
+    "docs/reviews/2026-09-29/RESCORE-90.md": {
+      "sha256": "1beb3082f9b0f6768adcf5695b9a503248c77a77944ab5d5576004ff082ad5ec",
+      "bytes": 17624
+    },
+    "docs/reviews/2026-09-29/SCORE-ADMISSION-INDEPENDENT-REVIEW.md": {
+      "sha256": "d5c5a7d5b712b394dbbf5b7035293663317a233a6e9f4d321a85ee066e460128",
+      "bytes": 5560
+    },
+    "docs/reviews/2026-09-29/SCORE-ADMISSION-VERIFICATION.md": {
+      "sha256": "4c055b9cbc48396841b376f9b565d5d61166e2be1d9b2940c603a1560e94d329",
+      "bytes": 10232
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/SCORE-UX-BROWSER-CHECK.md": {
+      "sha256": "0bf1282feb79dc445bb86f8fb0dd5a207026ee6fd8d583824e23a83a473a76ca",
+      "bytes": 5951
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-core-final.log": {
+      "sha256": "e9a500f9e45b3eab381f4abfa929ac318a669d2a53d45859e55cd729bbc67c0d",
+      "bytes": 611
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-core-initial.log": {
+      "sha256": "594cf0ae332f7638e19b89412bfb5cee46fd43733e64e9d5e262be6eea12b9a5",
+      "bytes": 1482
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-db-full.log": {
+      "sha256": "ff51ed96b3d6aeb1e83a137d7d2cde21c72becd92888e6743e3ad0148cb29ab0",
+      "bytes": 1482
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-focused.log": {
+      "sha256": "271daf653e941b06fce651f141d842f1dd8e55033c767040a095aadde78058e0",
+      "bytes": 1550
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-import-final.log": {
+      "sha256": "abe991e3253f13f69a75cdda7b8e2723fd23d1863e1931b002640ca7c0b87032",
+      "bytes": 6870
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-release.log": {
+      "sha256": "b386fa3aec70a7c04dd61caf6d8b4232f5f8628332f1c6b818875956cbbb401b",
+      "bytes": 26983
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-scan-races.log": {
+      "sha256": "bc73cbcd9c5fff1390507617135e81a9a9d1298405005b60f71ace22aae1535e",
+      "bytes": 10573
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-types-final.log": {
+      "sha256": "75e3712cceb8a94dd2050bc0d72d99017273030a09c5870ed69a2835786171f0",
+      "bytes": 436
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-web-actions.log": {
+      "sha256": "0f753b95fc8e84fd966c8fa7b88e38255e3e3c022948603feb08c605cb7c5c0a",
+      "bytes": 7217
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-web-build.log": {
+      "sha256": "f4b374128bc6dcf2510687169367bd8a8716c05964e09090422a23a967b36a05",
+      "bytes": 4085
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-web-final.log": {
+      "sha256": "7a0555b1967ee83679a3f01738489bf1fc81677e05263d022cbfca6c2f86f4c0",
+      "bytes": 28752
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-web-initial.log": {
+      "sha256": "81e43282b4abf06d21b9d9185a35745ab5ffd15b682c4cc7ad648bf64d4cd300",
+      "bytes": 34070
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-worker-build.log": {
+      "sha256": "529a7c8e21c773f62a1f93762169ff8ad5eb0cbc23b9f5e82c7ce9de4b22972e",
+      "bytes": 158
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-admission-worker-full.log": {
+      "sha256": "a4889d5282de11ff8558f1aa26ad7708ea5149ec3eb26b9e024d08ae9cd782a5",
+      "bytes": 542600
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-admit-once.mts": {
+      "sha256": "2c2414fdc0c3b2161414bde82d80e504737c9cbce81361145f4b2d194f7c541d",
+      "bytes": 3405
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-browser.json": {
+      "sha256": "52a2cfb9973494eae688c376710dd7e5dbab246599eb26f28a1e953502cafdc5",
+      "bytes": 1665
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-final-formatter.log": {
+      "sha256": "0a359ae8cefe14d3e1688a895f9e07b240bab47c2ae956e70946f0327fae6336",
+      "bytes": 222
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-first-admission.json": {
+      "sha256": "237a31c76e78ed298b9f610e183a2de269f1d137b84dfcea4d6751f3376fec00",
+      "bytes": 789
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-first-request.json": {
+      "sha256": "63e3739f2683f4911c26a1e8fc3e6f7948b8fd2204c69273bcb35d9e7925f048",
+      "bytes": 880
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-focused-tests.log": {
+      "sha256": "9d0098179ffc8444420d4a071daf3fa990779facd348534e7bd36778894a4a3c",
+      "bytes": 5019
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-functional-browser.cjs": {
+      "sha256": "30c8b146d0bcf52dceee04359818fc9e8e1cf445c28fe35dd0b16ec268369683",
+      "bytes": 5613
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-functional-pending.png": {
+      "sha256": "3ae2adb3e7b9d500fc61e4e0823c9dc61a431fb69379fbe533bd61980f79ed11",
+      "bytes": 14381
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-functional-unavailable.png": {
+      "sha256": "fc2cb8f43b1f97dd58c5ebd918e0ee6ba6b8191be7179625c6256717d114e5bb",
+      "bytes": 14664
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-functional.json": {
+      "sha256": "68398f1df324a1b40ca0cc35b2d55d3e47c0659d5b5808f22447119dd34526ce",
+      "bytes": 2333
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-phone-viewport.png": {
+      "sha256": "924c973904390dc589d8286c039d065a39742b91f460b15b493d7e6e3f7c10a3",
+      "bytes": 28587
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-phone.png": {
+      "sha256": "b47f7abd1faec74e0d757c47e90e4d46f20789c6a6b182581f010c189bb17c2e",
+      "bytes": 280420
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-prior-row-text200.png": {
+      "sha256": "aad412a9d6344411247c55e6101f15c92340856906deaf8a33dd4fd5edd63751",
+      "bytes": 28700
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-requested-row.png": {
+      "sha256": "3ae2adb3e7b9d500fc61e4e0823c9dc61a431fb69379fbe533bd61980f79ed11",
+      "bytes": 14381
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-review-panel-text200.png": {
+      "sha256": "9bce7036677e469c187822649ce4554d98b93d018a25fc62ec7a41ca3d5df0fb",
+      "bytes": 86140
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-review-text200.png": {
+      "sha256": "c2800b5445551a2acd8a3f966e7d275b2a2b57799ac044a578d2ba7828f49775",
+      "bytes": 732602
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-text-enlargement.js": {
+      "sha256": "4e5e27bf5da95feb2cfa8b9757822b7053963f202ca4a2fb7c867441accd02fe",
+      "bytes": 1310
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-text200-viewport.png": {
+      "sha256": "580939bdb7e4a2ccc06ab850cb1d2f1469430e9b38e876036a06dbb8e852952c",
+      "bytes": 25733
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-text200.png": {
+      "sha256": "0acda7815ab76f8d681b75c01194ad9033009e85f4f9ebd1a7bb9081a1471b14",
+      "bytes": 667106
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-typecheck.log": {
+      "sha256": "c785fef87da89b8982df09acd29a83431f92949ffa910cccabb81b04497656e4",
+      "bytes": 132
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/score-ux-unavailable-row-text200.png": {
+      "sha256": "6786b5206e6f4900884269b2b70fdcd725d21b66dd6d16bff278ba189509c89a",
+      "bytes": 33017
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/source-audit/SIEMENS-LEASE-AND-DRIFT.md": {
+      "sha256": "c72181fdb9e5d0dd18ee96f1e8c21f6ef7036760838e2b0ce19a7fa18be863e0",
+      "bytes": 6543
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/source-audit/siemens-continuation-resume2.json": {
+      "sha256": "bbd1d4b2821dd94172278bfafd9ff19b74d4a48bbe8e0185d44c8b9eab45413f",
+      "bytes": 5853
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/work-status-score-refresh-test.log": {
+      "sha256": "d4a92bb5cc5822ad5c06ce4f413e7edf14c2d5795c744c0c46aabb8bfd25f791",
+      "bytes": 1560
+    },
+    "docs/reviews/2026-09-29/implementation-evidence/work-status-score-refresh-typecheck.log": {
+      "sha256": "c785fef87da89b8982df09acd29a83431f92949ffa910cccabb81b04497656e4",
+      "bytes": 132
+    },
+    "packages/core/src/tasks.test.ts": {
+      "sha256": "cea8537f15098c7f13b7725e20a03126a15fb5e1b76170e12ac96f17bd35a4d0",
+      "bytes": 5337
+    },
+    "packages/core/src/tasks.ts": {
+      "sha256": "36972e1b8bd117946df0acb842968af4c44ee973bd1a9bef296e4b287079404e",
+      "bytes": 17854
+    },
+    "packages/db/src/gate.ts": {
+      "sha256": "60bb56af95675e93c5ff82799466f892e75a5c6f0738f456eefa5f61b0620773",
+      "bytes": 15985
+    },
+    "packages/db/src/index.ts": {
+      "sha256": "6fe9037cb505b1760aeae2a36ac5ece3b1eae46f543b45c750a91d86c2ca2929",
+      "bytes": 4257
+    },
+    "packages/db/src/schema.ts": {
+      "sha256": "464a316a6b7843aae1b63d81aeafb2f5fbeac20f0f1d07aac338067d2de0acd4",
+      "bytes": 68210
+    },
+    "packages/db/src/tasks.ts": {
+      "sha256": "fb72a8dfe2ca10834c1ad8463b6599bce26fa942df308b71db07cff518c5e469",
+      "bytes": 12963
+    }
+  }
+}

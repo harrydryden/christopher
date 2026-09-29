@@ -1,6 +1,6 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
-import { schema, queueScoring, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
+import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -8,6 +8,7 @@ import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
 import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
 import { log } from "../log";
+import { admitScores } from "../score-admission";
 
 /** What a handler finishes with when its account has no room left for the call it was about to make. */
 const BUDGET_SKIP = { skipped: "account ai budget exceeded" } as const;
@@ -112,14 +113,6 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
     await markScoreState(deps, userId, jobId, "ineligible");
     return { done: { skipped: "role does not match and is not shortlisted" } };
   }
-  // Asked before any of the scoring evidence is gathered: an account with nothing left to spend
-  // skips this role, and the task finishes done rather than failing at the hold and retrying.
-  const scoreStop = await aiBudgetStop(deps, userId);
-  if (scoreStop) {
-    await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : "budget");
-    return { done: { skipped: scoreStop } };
-  }
-
   const preparedAt = deps.now();
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
   const profile = await latestProfileFor(deps.db, userId);
@@ -152,6 +145,24 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
     // predates the column and one queued by a scan that found nothing to re-read.
     await markScoreState(deps, userId, jobId, "scored");
     return { done: { skipped: "scoring inputs unchanged" } };
+  }
+  // A submitted provider batch already owns precisely these inputs. The per-role task may have
+  // been completed on hand-off, so a later admission can create another task; matching the batch
+  // fingerprint avoids a second model call while still admitting a genuinely changed profile.
+  const pendingBatch = await deps.db.execute(sql`select 1 from tasks t
+    where t.type = 'poll_score_batch' and t.status in ('queued', 'running')
+      and exists (select 1 from jsonb_array_elements(case
+        when jsonb_typeof(t.payload->'items') = 'array' then t.payload->'items'
+        else '[]'::jsonb end) item
+        where item->>'userId' = ${userId} and item->>'jobId' = ${jobId}
+          and item->>'fingerprint' = ${fingerprint}) limit 1`);
+  if (pendingBatch.rows.length) return { done: { skipped: "score already in provider batch" } };
+  // A matching stored score or submitted batch needs no new capacity. Only a new model request is
+  // refused for an unavailable provider or an account whose spend and live holds filled its month.
+  const scoreStop = await aiBudgetStop(deps, userId);
+  if (scoreStop) {
+    await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : "budget");
+    return { done: { skipped: scoreStop } };
   }
   return { prepared: { userId, jobId, input, fingerprint, profileVersion: profile?.version ?? null, preparedAt } };
 }
@@ -523,7 +534,11 @@ export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promis
       const settings = await deps.userSettings(id);
       return deps.db.transaction(async tx => {
         await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-        return reevaluateGate(tx as unknown as WorkerDeps["db"], id, settings, deps.now(), { companyId });
+        return reevaluateGate(tx as unknown as WorkerDeps["db"], id, settings, deps.now(), { companyId }, {
+          scoreCandidates: async (writer, pairs) => (await admitScores(deps, pairs, {
+            db: writer, onlyUnscored: true, settings: new Map([[id, settings]]),
+          })).queued,
+        });
       });
     });
     outcomes[id] = outcome;
@@ -564,9 +579,20 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
     .where(and(eq(schema.tasks.type, "rescore_all"), eq(schema.tasks.status, "done"),
       sql`${schema.tasks.payload}->>'userId' = ${userId}`, sql`${schema.tasks.result} ? 'queued'`))
     .orderBy(desc(schema.tasks.finishedAt)).limit(1);
-  if (last && (last.result as { inputsHash?: string } | null)?.inputsHash === inputsHash)
-    return { skipped: "scoring inputs unchanged since the last rescore" };
-  if (last?.finishedAt && deps.now().getTime() - last.finishedAt.getTime() < RESCORE_INTERVAL_MS) {
+  const sameInputs = !!last && (last.result as { inputsHash?: string } | null)?.inputsHash === inputsHash;
+  const retryable = sameInputs ? await deps.db.execute(sql`select 1 from user_jobs uj join jobs j on j.id = uj.job_id
+    where uj.user_id = ${userId}::uuid and j.status = 'open' and uj.archived_at is null
+      and uj.score_state in ('unavailable', 'budget', 'failed')
+      and (uj.in_table or exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
+        and d.superseded = false and d.decision = 'apply'))
+      and not exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
+        and d.superseded = false and d.decision = 'skip')
+      and not exists (select 1 from tasks t where t.type = 'score_job' and t.status in ('queued', 'running')
+        and t.payload->>'userId' = uj.user_id::text and t.payload->>'jobId' = uj.job_id::text)
+    limit 1`) : null;
+  const retryOnly = !!retryable?.rows.length;
+  if (sameInputs && !retryOnly) return { skipped: "scoring inputs unchanged since the last rescore" };
+  if (!retryOnly && last?.finishedAt && deps.now().getTime() - last.finishedAt.getTime() < RESCORE_INTERVAL_MS) {
     // Coalesced: one pass at the end of the hour picks up everything that changed within it, and
     // any other save in the hour folds into the same waiting row by its key.
     const retryAt = new Date(last.finishedAt.getTime() + RESCORE_INTERVAL_MS);
@@ -579,13 +605,29 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   const rows = await deps.db.select({ id: schema.userJobs.jobId, shortlisted }).from(schema.userJobs)
     .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), isNull(schema.userJobs.archivedAt),
-      sql`not ${skipped}`, sql`(${schema.userJobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
+      sql`not ${skipped}`, sql`(${schema.userJobs.inTable} or ${shortlisted})`,
+      sql`(${!retryOnly} or ${schema.userJobs.scoreState} in ('unavailable', 'budget', 'failed'))`)).orderBy(desc(shortlisted));
   // A shortlisted role's score is the one the person is waiting on: a background score already
   // queued for it is brought up to that priority rather than left where it was, and scored live.
   // The rest only reorder a table the person has already seen, so they are marked background and
   // go through the batch collector at half price even while scoring is live. Every role a new
   // profile version will re-score reads "scoring" until its turn comes.
-  const queued = await queueScoring(deps.db, rows.filter(row => row.shortlisted).map(row => ({ userId, jobId: row.id, priority: 1 })), deps.now(), { promote: true })
-    + await queueScoring(deps.db, rows.filter(row => !row.shortlisted).map(row => ({ userId, jobId: row.id })), deps.now(), { background: true });
+  let queued = 0;
+  let unavailable = 0;
+  let budget = 0;
+  for (const [shortlistedRows, options] of [
+    [rows.filter(row => row.shortlisted), { priority: 1 }],
+    [rows.filter(row => !row.shortlisted), { background: true }],
+  ] as const) {
+    for (let offset = 0; offset < shortlistedRows.length; offset += 250) {
+      const admitted = await admitScores(deps, shortlistedRows.slice(offset, offset + 250).map(row => ({ userId, jobId: row.id })), options);
+      queued += admitted.queued;
+      unavailable += admitted.blockedUnavailable;
+      budget += admitted.blockedBudget;
+    }
+  }
+  // A pass that could not create model work has not rescored these inputs. Omitting `queued` keeps
+  // the next request eligible when an operator configures AI or the account's budget resets.
+  if (!queued && (unavailable || budget)) return { skipped: unavailable ? "ai unavailable" : "account ai budget exceeded", unavailable, budget, inputsHash };
   return { queued, inputsHash };
 }

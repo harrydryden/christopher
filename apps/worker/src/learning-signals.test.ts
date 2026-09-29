@@ -18,6 +18,7 @@ import {
   handleReevaluateGate,
   handleRescoreAll,
   handleScoreJob,
+  prepareScoreJob,
   ModelAccessError,
   handleTagReason,
   handleSuggestFilters,
@@ -125,6 +126,7 @@ it("names every outcome of a scoring attempt on the view the table reads", async
   // This account's month is spent: refused, not queued, and the row says which.
   await db.update(schema.userJobs).set({ inTable: true });
   await db.insert(schema.userSettings).values({ userId, key: "aiBudgetUsd", value: 1 });
+  await db.insert(schema.userSettings).values({ userId, key: "seedProfile", value: "New profile for a fresh score." });
   await db.insert(schema.aiCalls).values({ userId, callSite: "A5", model: "fixture", costUsd: 1, at: now });
   deps.invalidateSettings();
   expect(await handleScoreJob(task({ userId, jobId: job.id }), scored)).toEqual({ skipped: "account ai budget exceeded" });
@@ -218,7 +220,7 @@ it("marks a view queued in the statement that queues its score, from the gate an
   const { job } = await seedRole({ view: false });
 
   // The gate admits the role and queues its score: the view says so from the moment it exists.
-  await handleReevaluateGate({ payload: { userId }, type: "reevaluate_gate", attempts: 1 } as never, deps);
+  await handleReevaluateGate({ payload: { userId }, type: "reevaluate_gate", attempts: 1 } as never, aiDeps({}));
   const admitted = await viewOf(job.id);
   expect(admitted.inTable).toBe(true);
   expect(admitted.scoreState).toBe("queued");
@@ -228,7 +230,7 @@ it("marks a view queued in the statement that queues its score, from the gate an
   // A new profile version re-scores everything in the table, and every row says it is waiting.
   await db.update(schema.userJobs).set({ scoreState: "scored", fitScore: 60 });
   await db.execute(sql`delete from tasks`);
-  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toMatchObject({ queued: 1 });
+  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, aiDeps({}))).toMatchObject({ queued: 1 });
   expect((await viewOf(job.id)).scoreState).toBe("queued");
 });
 
@@ -251,7 +253,7 @@ it("leaves skipped and archived roles out of a rescore pass, and marks its roles
     { userId, jobId: shortlisted.id, decision: "apply", reason: "", jobTitle: shortlisted.title, companyName: "Acme" },
   ]);
 
-  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toMatchObject({ queued: 2 });
+  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, aiDeps({}))).toMatchObject({ queued: 2 });
   const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
   expect(Object.fromEntries(queued.map(row => [(row.payload as { jobId: string }).jobId, row.payload]))).toEqual({
     // Nobody waits on the undecided role's new score: the batch collector takes it.
@@ -422,21 +424,21 @@ it("rescores an account's roles at most once an hour, and not at all when nothin
   const finish = async (result: unknown, finishedAt: Date) => {
     await db.insert(schema.tasks).values({ type: "rescore_all", payload: { userId, onlyInTable: true }, status: "done", result, finishedAt });
   };
-  const first = await handleRescoreAll(rescore, deps) as { queued: number; inputsHash: string };
+  const first = await handleRescoreAll(rescore, aiDeps({})) as { queued: number; inputsHash: string };
   expect(first.queued).toBe(1);
   await db.execute(sql`delete from tasks`);
   await finish(first, daysAgo(0.01));
 
   // Nothing it scores from has changed: no pass at all.
-  expect(await handleRescoreAll(rescore, deps)).toEqual({ skipped: "scoring inputs unchanged since the last rescore" });
+  expect(await handleRescoreAll(rescore, aiDeps({}))).toEqual({ skipped: "scoring inputs unchanged since the last rescore" });
 
   // The profile changed a quarter of an hour after the last pass: one pass, at the end of the hour.
   await db.insert(schema.preferenceProfiles).values({ userId, version: 1, markdown: "## Target roles\nLogistics", generatedAt: now });
-  const deferred = await handleRescoreAll(rescore, deps) as { skipped: string; retryAt: string };
+  const deferred = await handleRescoreAll(rescore, aiDeps({})) as { skipped: string; retryAt: string };
   expect(deferred.skipped).toBe("rescored within the hour");
   expect(new Date(deferred.retryAt).getTime()).toBe(daysAgo(0.01).getTime() + RESCORE_INTERVAL_MS);
   // A second save inside the hour coalesces into the same deferred pass.
-  await handleRescoreAll(rescore, deps);
+  await handleRescoreAll(rescore, aiDeps({}));
   const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "queued"));
   expect(queued).toHaveLength(1);
   expect(queued[0]!.runAfter.toISOString()).toBe(deferred.retryAt);
@@ -445,7 +447,7 @@ it("rescores an account's roles at most once an hour, and not at all when nothin
   // Past the hour, the changed profile is rescored.
   await db.execute(sql`delete from tasks`);
   await finish(first, daysAgo(1));
-  expect(await handleRescoreAll(rescore, deps)).toMatchObject({ queued: 1 });
+  expect(await handleRescoreAll(rescore, aiDeps({}))).toMatchObject({ queued: 1 });
 });
 
 // --- A8: suggestions a person can act on, and never the same one twice ----------------------
@@ -486,10 +488,47 @@ it("brings a shortlisted role's waiting score up to the shortlist's priority", a
   // A background score for the role is already waiting at the ordinary priority.
   const payload = { userId, jobId: job.id };
   await db.insert(schema.tasks).values({ type: "score_job", payload, dedupeKey: `score_job:${userId}:${job.id}`, priority: 5 });
-  await handleRescoreAll({ payload: { userId, onlyInTable: true }, type: "rescore_all", attempts: 1 } as never, deps);
+  await handleRescoreAll({ payload: { userId, onlyInTable: true }, type: "rescore_all", attempts: 1 } as never, aiDeps({}));
   const scores = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
   expect(scores).toHaveLength(1);
   expect(scores[0]!.priority).toBe(1);
+});
+
+it("uses an in-flight provider batch for identical score inputs, but scores changed inputs", async () => {
+  const { job } = await seedRole();
+  const scoreJob = vi.fn().mockResolvedValue({ score: 72, verdict: "possible", rationale: "Fits." });
+  const enabled = aiDeps({ scoreJob });
+  const prepared = await prepareScoreJob(enabled, userId, job.id);
+  expect("prepared" in prepared).toBe(true);
+  const fingerprint = "prepared" in prepared ? prepared.prepared.fingerprint : "";
+  // One malformed unrelated poll task must not break this account's score preparation.
+  await db.insert(schema.tasks).values({ type: "poll_score_batch", status: "queued", payload: { batchId: "malformed", items: {} } });
+  await db.insert(schema.tasks).values({ type: "poll_score_batch", status: "queued", payload: {
+    batchId: "pending-batch", items: [{ userId, jobId: job.id, fingerprint }],
+  } });
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), enabled)).toEqual({ skipped: "score already in provider batch" });
+  expect(scoreJob).not.toHaveBeenCalled();
+  await db.insert(schema.userSettings).values({ userId, key: "seedProfile", value: "Operations leader with a new focus." });
+  deps.invalidateSettings();
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), enabled)).toMatchObject({ score: 72 });
+  expect(scoreJob).toHaveBeenCalledTimes(1);
+});
+
+it("does not treat no-key or failed score work as a completed same-input rescore", async () => {
+  const { job } = await seedRole();
+  const rescore = { payload: { userId }, type: "rescore_all", attempts: 1 } as never;
+  const blocked = await handleRescoreAll(rescore, deps) as Record<string, unknown>;
+  expect(blocked).toMatchObject({ skipped: "ai unavailable", unavailable: 1 });
+  expect(blocked).not.toHaveProperty("queued");
+  expect(await handleRescoreAll(rescore, deps)).toMatchObject({ skipped: "ai unavailable" });
+  await db.insert(schema.tasks).values({ type: "rescore_all", payload: { userId }, status: "done", result: blocked, finishedAt: now });
+  const enabled = aiDeps({});
+  const first = await handleRescoreAll(rescore, enabled) as { queued: number; inputsHash: string };
+  expect(first.queued).toBe(1);
+  await db.insert(schema.tasks).values({ type: "rescore_all", payload: { userId }, status: "done", result: first, finishedAt: now });
+  await db.update(schema.tasks).set({ status: "failed" }).where(eq(schema.tasks.type, "score_job"));
+  await db.update(schema.userJobs).set({ scoreState: "failed" }).where(eq(schema.userJobs.jobId, job.id));
+  expect(await handleRescoreAll(rescore, enabled)).toMatchObject({ queued: 1 });
 });
 
 it("skips company suggestions whose own hold the account's budget refuses, rather than failing and retrying", async () => {

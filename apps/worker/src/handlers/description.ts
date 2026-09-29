@@ -1,10 +1,11 @@
-import { schema, queueScoring, archiveNonMatches, gateCompiler, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, type Task, type ViewUpdate } from "@ava/db";
+import { schema, archiveNonMatches, gateCompiler, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, type Task, type ViewUpdate } from "@ava/db";
 import { ats, extractMainText, sha1, stripHtml, type AppSettings } from "@ava/core";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { makeFetchContext } from "../context";
 import { loadUserSettingsMany } from "../settings";
 import { log } from "../log";
+import { admitScores } from "../score-admission";
 
 interface Payload {
   jobId: string;
@@ -81,7 +82,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
       await tx.update(schema.jobs).set({ descriptionFetchedAt: deps.now() }).where(eq(schema.jobs.id, job.id));
       // A new role's score waits for this task (the scan does not score what it is fetching text
       // for), so no text still means the gate runs and the role is scored on what there is.
-      await refreshFollowers(db, deps.now(), { ...job }, settings, false);
+      await refreshFollowers(deps, db, deps.now(), { ...job }, settings, false);
       return { jobId, stored: false };
     }
     const trimmed = text.slice(0, MAX_DESCRIPTION);
@@ -100,7 +101,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
         .where(and(eq(schema.userJobs.jobId, job.id), inArray(schema.userJobs.userId, followers.map(f => f.userId))));
     }
     await tx.insert(schema.jobEvents).values({ jobId: job.id, type: "description_fetched", payload: { chars: trimmed.length } });
-    await refreshFollowers(db, deps.now(), { ...job, ...extra, descriptionText: trimmed }, settings, changed);
+    await refreshFollowers(deps, db, deps.now(), { ...job, ...extra, descriptionText: trimmed }, settings, changed);
     return { jobId, stored: true, chars: trimmed.length, followers: followers.length };
   });
   // Idempotent and in a transaction of its own, like the scan's: once, for every follower.
@@ -118,6 +119,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
  * change just cleared.
  */
 async function refreshFollowers(
+  deps: WorkerDeps,
   db: WorkerDeps["db"],
   now: Date,
   job: Pick<typeof schema.jobs.$inferSelect, "id" | "title" | "department" | "descriptionText" | "location" | "locations" | "remote" | "status" | "addedBy">,
@@ -160,7 +162,8 @@ async function refreshFollowers(
   }
   await writeViewUpdates(db, updates, now);
   if (inserts.length) await db.insert(schema.userJobs).values(inserts).onConflictDoNothing();
-  await queueScoring(db, scoring.map(userId => ({ userId, jobId: job.id })), now);
+  for (let offset = 0; offset < scoring.length; offset += 250)
+    await admitScores(deps, scoring.slice(offset, offset + 250).map(userId => ({ userId, jobId: job.id })), { db, settings, onlyUnscored: true });
 }
 
 /**

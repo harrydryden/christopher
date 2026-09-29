@@ -1,0 +1,39 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-09-29T16:56:53.172Z","level":"info","event":"slow_database_query","durationMs":328,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:53.833Z","level":"info","event":"slow_database_query","durationMs":383,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:54.901Z","level":"info","event":"slow_database_query","durationMs":254,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:55.389Z","level":"info","event":"slow_database_query","durationMs":387,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:55.755Z","level":"info","event":"slow_database_query","durationMs":312,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:56.395Z","level":"info","event":"slow_database_query","durationMs":569,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:57.673Z","level":"info","event":"slow_database_query","durationMs":673,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:58.266Z","level":"info","event":"slow_database_query","durationMs":428,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:56:59.823Z","level":"info","event":"slow_database_query","durationMs":1091,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:00.359Z","level":"info","event":"slow_database_query","durationMs":455,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:00.979Z","level":"info","event":"slow_database_query","durationMs":264,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:01.321Z","level":"info","event":"slow_database_query","durationMs":270,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:01.912Z","level":"info","event":"slow_database_query","durationMs":348,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:02.215Z","level":"info","event":"slow_database_query","durationMs":255,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:03.471Z","level":"info","event":"slow_database_query","durationMs":256,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:06.240Z","level":"info","event":"slow_database_query","durationMs":300,"statement":"insert into \"jobs\" (\"id\", \"company_id\", \"source_id\", \"external_key\", \"title\", \"normalized_title\", \"url\", \"location\", \"lo"}
+{"t":"2026-09-29T16:57:06.716Z","level":"info","event":"slow_database_query","durationMs":403,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:07.715Z","level":"info","event":"slow_database_query","durationMs":741,"statement":"insert into jobs (company_id, source_id, external_key, title, normalized_title, url) select $1::uuid, $2::uuid, 'cap-' |"}
+{"t":"2026-09-29T16:57:08.432Z","level":"info","event":"slow_database_query","durationMs":716,"statement":"insert into user_jobs (user_id, job_id, keyword_matched, location_ok, in_table) select $1::uuid, j.id, true, true, true "}
+{"t":"2026-09-29T16:57:09.875Z","level":"info","event":"slow_database_query","durationMs":353,"statement":"select \"companies\".\"id\", \"companies\".\"name\", \"companies\".\"favicon_url\", \"companies\".\"logo_fetched_at\", \"companies\".\"home"}
+{"t":"2026-09-29T16:57:10.154Z","level":"info","event":"slow_database_query","durationMs":264,"statement":"select \"companies\".\"id\", \"companies\".\"name\", \"companies\".\"favicon_url\", \"companies\".\"logo_fetched_at\", \"companies\".\"home"}
+{"t":"2026-09-29T16:57:12.135Z","level":"info","event":"slow_database_query","durationMs":278,"statement":"select \"companies\".\"id\", \"companies\".\"name\", \"companies\".\"favicon_url\", \"companies\".\"logo_fetched_at\", \"companies\".\"home"}
+{"t":"2026-09-29T16:57:12.717Z","level":"info","event":"slow_database_query","durationMs":359,"statement":"select \"companies\".\"id\", \"companies\".\"name\", \"companies\".\"favicon_url\", \"companies\".\"logo_fetched_at\", \"companies\".\"home"}
+{"t":"2026-09-29T16:57:13.590Z","level":"info","event":"slow_database_query","durationMs":376,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:14.138Z","level":"info","event":"slow_database_query","durationMs":289,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:14.439Z","level":"info","event":"slow_database_query","durationMs":262,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:14.798Z","level":"info","event":"slow_database_query","durationMs":268,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:18.800Z","level":"info","event":"slow_database_query","durationMs":318,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:19.109Z","level":"info","event":"slow_database_query","durationMs":277,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-09-29T16:57:19.937Z","level":"info","event":"slow_database_query","durationMs":275,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+
+ Test Files  2 passed (2)
+      Tests  77 passed (77)
+   Start at  17:56:49
+   Duration  35.85s (tests 90%, import 6%, transform 4%)
+

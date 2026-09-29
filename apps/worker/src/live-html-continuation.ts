@@ -18,6 +18,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
 import { htmlSourceFingerprint } from "./html-scan-checkpoint";
+import { AUDIT_CLAIM_MS, canStartAuditClaim } from "./live-html-audit-budget";
 import { handleScanCompany } from "./handlers/scan";
 import { assertRunOwnership, claimTask, completeTask, deferTask, failTask, TaskDeferred } from "./queue";
 
@@ -106,18 +107,40 @@ async function main() {
     const otherSources = await deps.db.select({ id: schema.careerSources.id }).from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
     if (otherSources.length !== 1) throw new Error("Scratch company must have exactly one source");
 
-    let report: { source: string; database: string; claims: ClaimEvidence[] } = { source: SOURCE_URL, database: SCRATCH_DB, claims: [] };
+    let report: { source: string; database: string; claims: ClaimEvidence[]; stop?: { reason: string; at: string } } = { source: SOURCE_URL, database: SCRATCH_DB, claims: [] };
     try { if (outPath) report = JSON.parse(readFileSync(outPath, "utf8")) as typeof report; } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     if (report.source !== SOURCE_URL || report.database !== SCRATCH_DB || !Array.isArray(report.claims)) throw new Error("Existing evidence file names a different audit");
     const scriptStarted = Date.now();
-    for (let i = 0; i < claims && Date.now() - scriptStarted < Math.min(maxMinutes * 60_000, MAX_WALL_MS); i++) {
+    const wallBudgetMs = Math.min(maxMinutes * 60_000, MAX_WALL_MS);
+    const persist = () => {
+      if (!outPath) return;
+      const pending = `${outPath}.${process.pid}.tmp`;
+      writeFileSync(pending, JSON.stringify(report, null, 2) + "\n");
+      renameSync(pending, outPath);
+    };
+    // A previous invocation's stop does not describe this invocation.
+    delete report.stop;
+    for (let i = 0; i < claims; i++) {
+      if (!canStartAuditClaim(scriptStarted, Date.now(), wallBudgetMs)) {
+        report.stop = { reason: "insufficient_claim_headroom", at: new Date().toISOString() };
+        persist();
+        process.stdout.write(JSON.stringify(report.stop) + "\n");
+        break;
+      }
       const [progress] = await deps.db.select({ pages: sql<number>`count(*)::int` }).from(schema.htmlScanPages)
         .innerJoin(schema.htmlScanGenerations, eq(schema.htmlScanPages.generationId, schema.htmlScanGenerations.id))
         .where(eq(schema.htmlScanGenerations.sourceId, source.id));
       // A claim may add twenty pages. Refuse it before exceeding the caller's ceiling.
       if ((progress?.pages ?? 0) + 20 > maxPages) break;
+      // The database query can consume significant wall time. Check again immediately before claiming.
+      if (!canStartAuditClaim(scriptStarted, Date.now(), wallBudgetMs)) {
+        report.stop = { reason: "insufficient_claim_headroom", at: new Date().toISOString() };
+        persist();
+        process.stdout.write(JSON.stringify(report.stop) + "\n");
+        break;
+      }
       let task = await claimTask(deps.db, `source-audit-${process.pid}`, "scan");
       if (!task) {
         await new Promise(resolve => setTimeout(resolve, 1100));
@@ -125,10 +148,17 @@ async function main() {
       }
       if (!task) break;
       if (task.type !== "scan_company" || (task.payload as { companyId?: string }).companyId !== company.id) throw new Error("Scratch queue contains unexpected work");
+      if (!canStartAuditClaim(scriptStarted, Date.now(), wallBudgetMs)) {
+        // Claiming (including its retry wait) consumed the headroom. Release the untouched task.
+        if (!await deferTask(deps.db, task, new Date(Date.now() + 1000), task.result)) throw new Error("Lost task lease while releasing untouched audit claim");
+        report.stop = { reason: "insufficient_claim_headroom", at: new Date().toISOString() };
+        persist();
+        process.stdout.write(JSON.stringify(report.stop) + "\n");
+        break;
+      }
       const claimStarted = Date.now();
       const controller = new AbortController();
-      const remaining = Math.max(1, Math.min(180_000, maxMinutes * 60_000 - (claimStarted - scriptStarted)));
-      const timer = setTimeout(() => controller.abort(new Error("audit claim deadline")), remaining);
+      const timer = setTimeout(() => controller.abort(new Error("audit claim deadline")), AUDIT_CLAIM_MS);
       let listingFetchCalls = 0;
       let listingResponseBytes = 0;
       const fetchText = deps.fetcher.fetchText.bind(deps.fetcher);
@@ -168,11 +198,7 @@ async function main() {
         publishedJobs: published?.n ?? 0, taskStatus: currentTask?.status ?? "missing", scanStatus: latest?.status ?? null,
         scanPostings: latest?.postingsFound ?? null, sourceFingerprint: htmlSourceFingerprint(currentSource ?? source) };
       report.claims.push(evidence);
-      if (outPath) {
-        const pending = `${outPath}.${process.pid}.tmp`;
-        writeFileSync(pending, JSON.stringify(report, null, 2) + "\n");
-        renameSync(pending, outPath);
-      }
+      persist();
       process.stdout.write(JSON.stringify(evidence) + "\n");
       if (currentTask?.status === "done" || currentTask?.status === "failed") break;
     }

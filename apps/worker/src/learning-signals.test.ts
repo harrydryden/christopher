@@ -220,7 +220,7 @@ it("marks a view queued in the statement that queues its score, from the gate an
 
   // A new profile version re-scores everything in the table, and every row says it is waiting.
   await db.update(schema.userJobs).set({ scoreState: "scored", fitScore: 60 });
-  await db.execute(sql`truncate tasks`);
+  await db.execute(sql`delete from tasks`);
   expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toMatchObject({ queued: 1 });
   expect((await viewOf(job.id)).scoreState).toBe("queued");
 });
@@ -417,7 +417,7 @@ it("rescores an account's roles at most once an hour, and not at all when nothin
   };
   const first = await handleRescoreAll(rescore, deps) as { queued: number; inputsHash: string };
   expect(first.queued).toBe(1);
-  await db.execute(sql`truncate tasks`);
+  await db.execute(sql`delete from tasks`);
   await finish(first, daysAgo(0.01));
 
   // Nothing it scores from has changed: no pass at all.
@@ -436,7 +436,7 @@ it("rescores an account's roles at most once an hour, and not at all when nothin
   expect(queued.filter(row => row.type === "score_job")).toHaveLength(0);
 
   // Past the hour, the changed profile is rescored.
-  await db.execute(sql`truncate tasks`);
+  await db.execute(sql`delete from tasks`);
   await finish(first, daysAgo(1));
   expect(await handleRescoreAll(rescore, deps)).toMatchObject({ queued: 1 });
 });

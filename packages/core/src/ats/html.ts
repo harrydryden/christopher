@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { HtmlRecipe, RawPosting } from "../types";
-import { absoluteUrl, normalizeUrl } from "../normalize";
+import { absoluteUrl, looksRemote, normalizeUrl } from "../normalize";
 import { extractJsonLdPostings } from "./jsonld";
 import { isAtsHost } from "./common";
 
@@ -37,6 +37,7 @@ export interface JobLink {
   text: string;
   context: string;
   location?: string;
+  locations?: string[];
 }
 
 function cleanText(s: string | undefined | null): string {
@@ -154,8 +155,37 @@ function isJobHref(url: string, pageUrl: string): boolean {
 
 function containerOf($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]) {
   const node = $(el);
-  const container = node.closest("li, article, tr, .job, .position, .opening, [class*='job'], [class*='role'], [class*='posting']");
-  return container.length ? container : node.parent();
+  let cursor = node.parent();
+  let fallback = node;
+  for (let depth = 0; depth < 8 && cursor.length; depth++, cursor = cursor.parent()) {
+    const text = cleanText(cursor.text());
+    if (text.length > 500) break;
+    // A semantic article can contain a whole grid of jobs. Metadata in it belongs to this role
+    // only if it contains one distinct posting destination; duplicate links to that role are OK.
+    const destinations = new Set(cursor.find("a[href]").toArray().flatMap(anchor => {
+      const href = $(anchor).attr("href") ?? "";
+      const absolute = absoluteUrl(href, "https://listing.invalid/");
+      return absolute && isJobHref(absolute, "https://listing.invalid/") ? [normalizeUrl(absolute)] : [];
+    }));
+    if (destinations.size > 1) break;
+    if (destinations.size === 0) continue;
+    const tag = cursor.get(0)?.tagName?.toLowerCase();
+    const classes = cursor.attr("class") ?? "";
+    const card = tag === "li" || tag === "article" || tag === "tr"
+      || /(?:^|[-_\s])(?:job|role|position|opening|posting)(?:[-_\s]|$)/i.test(classes)
+      && !/(?:^|[-_\s])(?:title|link)(?:[-_\s]|$)/i.test(classes);
+    const location = cursor.is("[data-location]") || cursor.find(".location, .job-location, .loc, [itemprop='jobLocation'], [class*='location' i], [data-testid*='location' i], [data-location]").length > 0;
+    if (card || location) return cursor;
+    fallback = cursor;
+  }
+  return fallback;
+}
+
+function mergeLocationValues<T extends { location?: string; locations?: string[] }>(previous: T, location: string | undefined): void {
+  if (!location) return;
+  if (!previous.location) previous.location = location;
+  const values = new Set([...(previous.locations ?? []), previous.location, location].filter((value): value is string => !!value));
+  if (values.size > 1) previous.locations = [...values];
 }
 
 function isGlobalChrome($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]): boolean {
@@ -170,7 +200,7 @@ function isGlobalChrome($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI
 export function findJobLinks(html: string, pageUrl: string): JobLink[] {
   const $ = cheerio.load(html);
   const out: JobLink[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, JobLink>();
   $("a[href]").each((_, el) => {
     // Navigation paths often sit below `/careers/` and therefore resemble job-detail URLs. The
     // element's semantic container is stronger evidence than words such as "Benefits" or
@@ -184,17 +214,32 @@ export function findJobLinks(html: string, pageUrl: string): JobLink[] {
     if (!looksLikeTitle(text)) return;
     if (!isJobHref(abs, pageUrl)) return;
     const key = normalizeUrl(abs);
-    if (seen.has(key)) return;
-    seen.add(key);
     const container = containerOf($, el);
     const context = cleanText(container.text()).replace(text, "").slice(0, 160);
     // Prefer an explicit field on this posting card to flattened card prose, which can join a
     // location and department (for example "Remote US Core Services") into one false location.
-    const location = cleanText(container.attr("data-location")) || cleanText(container.find("[data-location]").first().attr("data-location"))
-      || cleanText(container.find(".location, .job-location, .loc, [itemprop='jobLocation']").first().text());
-    out.push({ url: abs, text, context, ...(location ? { location } : {}) });
+    const locationField = container.find(".location, .job-location, .loc, [itemprop='jobLocation'], [class*='location' i], [data-testid*='location' i]")
+      .toArray().map(field => cleanText($(field).text())).find(value => value.length > 0 && value.length <= 80);
+    const location = cleanText(container.attr("data-location")) || cleanText(container.find("[data-location]").first().attr("data-location")) || locationField;
+    const previous = seen.get(key);
+    if (previous) { mergeLocationValues(previous, location); return; }
+    const link: JobLink = { url: abs, text, context, ...(location ? { location } : {}) };
+    seen.set(key, link);
+    out.push(link);
   });
   return out;
+}
+
+/** A narrowly scoped distinct-role total, not page numbers or repeated location-row counts. */
+export function advertisedDistinctJobTotal(html: string): number | undefined {
+  const $ = cheerio.load(html);
+  const totals = $(".ais-Stats-text").toArray().flatMap(element => {
+    const match = cleanText($(element).text()).match(/^([\d,]+) jobs? available$/i);
+    if (!match) return [];
+    const count = Number(match[1]!.replaceAll(",", ""));
+    return Number.isSafeInteger(count) && count >= 0 && count <= 100_000 ? [count] : [];
+  });
+  return totals.length ? Math.max(...totals) : undefined;
 }
 
 function locationFromContext(context: string): string | undefined {
@@ -212,7 +257,7 @@ function locationFromContext(context: string): string | undefined {
 export function applyRecipe(html: string, pageUrl: string, recipe: HtmlRecipe): RawPosting[] {
   const $ = cheerio.load(html);
   const out: RawPosting[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, RawPosting>();
   $(recipe.listItem).each((_, el) => {
     const item = $(el);
     const titleEl = recipe.title === ":self" ? item : item.find(recipe.title).first();
@@ -223,11 +268,13 @@ export function applyRecipe(html: string, pageUrl: string, recipe: HtmlRecipe): 
     const url = absoluteUrl(href, pageUrl);
     if (!url) return;
     const key = normalizeUrl(url);
-    if (seen.has(key)) return;
-    seen.add(key);
     const location = recipe.location ? cleanText(item.find(recipe.location).first().text()) || undefined : undefined;
     const department = recipe.department ? cleanText(item.find(recipe.department).first().text()) || undefined : undefined;
-    out.push({ title, url, location, department, remote: location ? /remote/i.test(location) || undefined : undefined });
+    const previous = seen.get(key);
+    if (previous) { mergeLocationValues(previous, location); previous.remote ||= looksRemote(location) || undefined; return; }
+    const posting = { title, url, location, department, remote: looksRemote(location) || undefined };
+    seen.set(key, posting);
+    out.push(posting);
   });
   return out;
 }
@@ -271,11 +318,13 @@ export function extractPostingsFromHtml(html: string, pageUrl: string, recipe?: 
   if (jsonld.length > 0) return jsonld;
   return findJobLinks(html, pageUrl).map((link) => {
     const location = link.location ?? locationFromContext(link.context);
+    const remote = [location, ...(link.locations ?? [])].some(value => looksRemote(value)) || undefined;
     return {
       title: link.text,
       url: link.url,
       location,
-      remote: location ? /remote/i.test(location) || undefined : undefined,
+      ...(link.locations?.length ? { locations: link.locations } : {}),
+      remote,
     };
   });
 }

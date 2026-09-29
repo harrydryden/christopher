@@ -17,6 +17,7 @@ const KIND_LABELS: Record<HealthItemKind, string> = {
   failing: "failing",
   suspect_empty: "empty scan",
   partial: "partial scan",
+  incomplete_read: "incomplete read",
   rediscovery: "proposal",
 };
 const KIND_TONES: Record<HealthItemKind, Tone> = {
@@ -27,6 +28,7 @@ const KIND_TONES: Record<HealthItemKind, Tone> = {
   failing: "amber",
   suspect_empty: "amber",
   partial: "amber",
+  incomplete_read: "red",
   rediscovery: "blue",
 };
 
@@ -92,6 +94,10 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
         <p className="text-14">
           <Link prefetch={false} href="/settings#ai-budget" className="text-fg underline">Raise your monthly budget on Settings</Link>, or ask an administrator.
         </p>
+      )}
+
+      {item.kind === "incomplete_read" && company && (
+        <Link prefetch={false} href={`/companies/${company.id}`} className="inline-flex min-h-11 items-center text-14 font-semibold underline">Open company to Rescan</Link>
       )}
 
       {item.candidates.length > 0 && item.runId && (

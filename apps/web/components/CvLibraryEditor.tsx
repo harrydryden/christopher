@@ -82,6 +82,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const submitted = useRef<CvLibrary | null>(null);
   const submittedVersion = useRef<number | null>(null);
   const recoveryRef = useRef<Recovery | null>(null);
+  const recoveryHeading = useRef<HTMLHeadingElement | null>(null);
+  const recoveryFocused = useRef(false);
   const choiceRevision = useRef(0);
   const opened = useRef(false);
   const serialised = useMemo(() => JSON.stringify(value), [value]);
@@ -117,6 +119,16 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   // the next pass on its own. Asking again is cheap; a refused pass returns before any model call.
   const changedRows = evidence.entries.some(entry => entry.provisional);
   const unreviewed = version > 0 && !evidence.evaluating && evidence.entries.some(entry => entry.provisional || entry.source !== "model");
+
+  // The reload control disappears when its result becomes a conflict review. Put keyboard
+  // focus at the new section once, so Tab reaches Download and the choices rather than
+  // restarting at the page navigation. Re-rendering a choice must not steal focus back.
+  useEffect(() => {
+    if (!recovery) { recoveryFocused.current = false; return; }
+    if (recoveryFocused.current) return;
+    recoveryHeading.current?.focus();
+    recoveryFocused.current = true;
+  }, [recovery]);
 
   // What the form posted, for the moment it lands. `onSubmit` records it; this is the belt for
   // that brace, because a version left behind by a save makes the *next* save look obsolete.
@@ -362,7 +374,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       {notice && <span role="status" className="text-12 text-muted">{notice}</span>}
     </div>}
     {recovery && <section className="space-y-3 border-2 border-warn p-4" aria-labelledby="library-recovery-title">
-      <h2 id="library-recovery-title" className="ds-pixel text-12">Keep your original Library draft</h2>
+      <h2 id="library-recovery-title" ref={recoveryHeading} tabIndex={-1} className="ds-pixel scroll-mt-32 text-12 focus:outline-2 focus:outline-offset-2 focus:outline-line">Keep your original Library draft</h2>
       <p className="text-14">Your complete local draft from before the reload is still here. Download or copy it, then choose the wording for each conflict. The latest saved version stays unchanged until you press Save library.</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={buttonClass("secondary")} onClick={downloadOriginal}>Download original draft</button>

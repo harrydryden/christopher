@@ -114,7 +114,7 @@ it("re-evaluates and re-scores only when a save changes the gate", async () => {
   expect(await saveGate({ ok: true }, form({ includeKeywords: "chief of staff", locationTerms: "" }))).toEqual({ ok: true });
   expect(await database.select().from(schema.userJobs)).toHaveLength(3);
   expect(await taskTypes()).toContain("rescore_all");
-  await database.execute(sql`truncate tasks`);
+  await database.execute(sql`delete from tasks`);
   expect(await saveGate({ ok: true }, form({ includeKeywords: "chief of staff", locationTerms: "" }))).toEqual({ ok: true });
   expect(await taskTypes()).toEqual([]);
 });

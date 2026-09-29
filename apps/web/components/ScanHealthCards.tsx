@@ -15,7 +15,7 @@ export function ProblemScansCard({ title, rows, now, companyHref }: { title: str
   return (
     <Card title={title}>
       {rows.length === 0 ? (
-        <EmptyState title="No problem scans" description="Every scan in the last 7 days completed OK." />
+        <EmptyState title="No problem scans" description="No problem scans are recorded in the last 7 days." />
       ) : (
         <Table>
           <THead>

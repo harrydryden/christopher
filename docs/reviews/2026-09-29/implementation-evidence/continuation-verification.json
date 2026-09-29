@@ -1,0 +1,95 @@
+{
+  "generatedAt": "2026-09-29T15:26:27.048073+00:00",
+  "baselineCommit": "4a93828d8deb6b78187b26b4f06b23faef8ed202",
+  "scope": "Uncommitted implementation snapshot subsequently committed with this manifest; local verification, not hosted qualification.",
+  "results": {
+    "core": 687,
+    "ai": 184,
+    "db": 98,
+    "worker": 708,
+    "web": 1230,
+    "releaseHarness": 119,
+    "totalPassingTests": 3026,
+    "packageTypechecks": "all five passed",
+    "productionBuild": "passed"
+  },
+  "logs": {
+    "jtbd-core-tests-final.log": {
+      "sha256": "433899a7285da41dab795bb8aa383503ad3c86379700b5cb7db947a851894330",
+      "bytes": 555,
+      "location": "/tmp/jtbd-core-tests-final.log"
+    },
+    "jtbd-build-final.log": {
+      "sha256": "d4a4762725fb5956d4fbaa9f69f3fc702fdbf2580541d7eaf3914d92268b8c15",
+      "bytes": 4876,
+      "location": "/tmp/jtbd-build-final.log"
+    },
+    "jtbd-typecheck-final.log": {
+      "sha256": "281cd6042ec9566dac275f0be7f86269c7613fe15e9db66d5d1bb1b446863637",
+      "bytes": 542,
+      "location": "/tmp/jtbd-typecheck-final.log"
+    },
+    "jtbd-web-tests-final.log": {
+      "sha256": "6cc47c58a6a28d68870421062044e279c10db33afd3b26748edaa2dd1be1dc56",
+      "bytes": 53836,
+      "location": "/tmp/jtbd-web-tests-final.log"
+    },
+    "jtbd-worker-tests-clean.log": {
+      "sha256": "c85d923f865f88c6e65d51a04f691686b0dd9b806957d044656af8e6870243a9",
+      "bytes": 649443,
+      "location": "/tmp/jtbd-worker-tests-clean.log"
+    },
+    "jtbd-release-tests-db-final.log": {
+      "sha256": "d07be29d180c8ec0ef588835706dd507044e948b64df59de5ffae1255d9c3bfb",
+      "bytes": 26518,
+      "location": "/tmp/jtbd-release-tests-db-final.log"
+    }
+  },
+  "implementationSha256": {
+    "apps/web/app/(app)/health/page.tsx": "80e1553f44750f9eb66d668e1dbd918cce06372c922149a45ce48be1cabeaa00",
+    "apps/web/app/actions/decisions.integration.test.ts": "b9204be7f24e38415011bc6fe64a3fec46bca87b4f486a01036a200766a108c7",
+    "apps/web/app/actions/settings.integration.test.ts": "32cc46068ddd62706a748e2379cd1614cb544cc06b8d967a3a7c1d8ebb011a2a",
+    "apps/web/components/CvLibraryEditor.tsx": "fc5baa5044fb3d7f319d25d8df4cb904d0cba39e8d52a1a26055ed7f4e08e9cc",
+    "apps/web/components/EmploymentHistoryTable.module.css": "c965afbd490da10d675b6fed47808ec495b0dd5d0849fd580f0cfdc9b2829318",
+    "apps/web/components/EmploymentHistoryTable.tsx": "a8645cdfdd1e09457f51180f89d60d9d1606a1db111ab60e51d193380b56e254",
+    "apps/web/components/HealthItems.tsx": "a0d66b154cad017b46f612ca240d870f9dfd678ecce3e553e52009fc82aa6c6a",
+    "apps/web/components/HtmlScanProgressCard.tsx": "32a2102166b81521b2fe1615db1e8c9aec94ff20613aa606867474c1417a7ce0",
+    "apps/web/components/RolesTable.module.css": "73033c7b048d6f3b87e9b8abbc63ca9dea5c4364047026ad19ab9ee362d332c4",
+    "apps/web/components/RolesTable.tsx": "d9ce6aedf36d22fd0be9c2c504ebc5e1cb9e05e21ca4fba4e061701e9101f509",
+    "apps/web/components/ScanHealthCards.tsx": "1348d097158f1127c74b8ca470eaafb583c37a79cc87e39d2babeb722deee28c",
+    "apps/web/lib/queries/health.ts": "f94e3d2f80b67ea9e2ac2d89f703ef461c528b4946400a3a187bc155bd521f62",
+    "apps/web/lib/queries/html-scan-progress.test.ts": "b432b98c816a090a441bfb617dd7f1dd2687c0293001a65faf001eba7359416c",
+    "apps/web/lib/queries/html-scan-progress.ts": "ccae23c36308db88d2c95d895f8932cc78a51b667baa78b5dbba6734ddfad82c",
+    "apps/web/lib/work-status.test.ts": "ae2405defdd3fdd00269ba5119eee737c6b83654429b79ee830e1c1d8d082d33",
+    "apps/worker/src/browser.test.ts": "732661e9f5eb3224b1420b95efa7169af1a6cc05cb0dcda51eb75546e096a28b",
+    "apps/worker/src/browser.ts": "6df90cfe9188cef43b0874b851b84a612fe5b3b8b81463ab49f8530871283fa4",
+    "apps/worker/src/cv-build.test.ts": "12cecc60093284b200c44b03c6cc76fc923c7f4ce095be2234fe2c19444474a7",
+    "apps/worker/src/cv-replay.test.ts": "9aa8f0dceabd738f6a7ce41ef784cc7589e8d8908a8937d73571cedaa235c1a3",
+    "apps/worker/src/cv-tailoring.test.ts": "549075ae5c2760d73fe86a5af8540b0c3343f6801c96c59fe59c1f0c28bf26cc",
+    "apps/worker/src/e2e.test.ts": "cf29bcdd9260d5175ec817bb7f91f168f6e33459d6b452bdedc2e385c91c7006",
+    "apps/worker/src/handlers/scan.ts": "624c11077b5dbc66c0177310e5201dd301cc60c3d3b2555e5637c74a1149f879",
+    "apps/worker/src/html-scan-checkpoint.ts": "51ae5fe5c86f6845dae98d7dadd55cc116d4d9d82dc345ed54662d7633882de7",
+    "apps/worker/src/learning-signals.test.ts": "0099f3955a78873be275e13ea41c69d470912ab1ab16a7d0fe3fc3873efdccbb",
+    "apps/worker/src/listing-captures.test.ts": "73368fcee2ea2e490846ce44057b3f59eee42946e8b368fc624044885214d051",
+    "apps/worker/src/listing-captures.ts": "c48270457b156cc0f8c6ba9d90bd1d51ac920f07fe0c1581a86d23fe81ae46b8",
+    "apps/worker/src/live-acceptance-html.test.ts": "e9ced42b0f019363ab2d965bf926fd6f7caec09e04b8096b9461b29521816e87",
+    "apps/worker/src/live-acceptance-html.ts": "06fee94877e9435764f1899f16b1ef1a8c0be6d95216da95c7be006a26b4d412",
+    "apps/worker/src/live-html-continuation.ts": "d0348ddc9bd75e4491ecf04fe16c9c8fa912bb5db256474ac56f1db190db62ba",
+    "apps/worker/src/monitor-sample.test.ts": "02bf7a45fa39f43e1e984ce0808f6f79cf77d99a3518d72afae131fe281f29f9",
+    "apps/worker/src/queue.test.ts": "a25ceb1275b6c8220d73ce944f9a50b8a5e5db5f20b7bb8df4770f6c20ab455d",
+    "packages/core/src/ats/ats.test.ts": "c922676f4610d6ae0d5c59935389b637df618297f8ca118949dec6a2a62656c1",
+    "packages/core/src/ats/html.ts": "5d8705a0fa169264391f81be72bcff18b720274c5b51aff477aab36d93773505",
+    "packages/core/src/ats/index.ts": "5e81057ad4f18b196a19e8738ce016bc9bf0c13bd5c5e1740ad0c2a79d96320a",
+    "packages/core/src/types.ts": "5455025f75fbf50c7b44c7f0d9c9852276a3a59d72f4a45c18db057b3d7ca01b",
+    "packages/db/drizzle/0047_html_scan_continuation.sql": "663466c92e9b4d1368c4cadba28ad9264783bc148210d10b60355bb3bd9ffdf7",
+    "packages/db/drizzle/0048_html_scan_metrics.sql": "a605a0a58019cc60a0c659e39d4e3fb9647ecda6e3c5ee5706e0b043b688d60f",
+    "packages/db/drizzle/meta/_journal.json": "265d1c871f3616a0a2546e3e7b5f475092d8173474cbab04697da91b5a0e9f5b",
+    "packages/db/src/schema.ts": "bf1de41389d0041d128a91041e4dbe17c0fda101b7fef20fe88cca38fea91515",
+    "packages/db/src/task-dedupe.test.ts": "9535a690b6a367ed94ec4efe9b724b73be38a6f430443254944f4203509f81dc"
+  },
+  "limitations": [
+    "AI/database package results include separately recorded agent/tool runs; their raw log hashes are not included here.",
+    "No current paid-provider, human usability, full independent posting corpus or hosted continuity qualification.",
+    "Two initial worker runs failed on migration-incompatible fixture cleanup; the final clean run passed."
+  ]
+}

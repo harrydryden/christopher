@@ -74,7 +74,7 @@ describe("getCompanyWorkStatus", () => {
     expect((await status(a)).active).toBe(false);
     expect((await status(b)).active).toBe(true);
 
-    await database.execute(sql`truncate tasks`);
+    await database.execute(sql`delete from tasks`);
     await task("reevaluate_gate", { userId: a.id });
     expect((await status(a)).active).toBe(true);
     expect((await status(b)).active).toBe(false);

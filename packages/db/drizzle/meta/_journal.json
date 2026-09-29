@@ -316,6 +316,20 @@
       "when": 1791799200000,
       "tag": "0046_application_date_optional",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1791885600000,
+      "tag": "0047_html_scan_continuation",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1791972000000,
+      "tag": "0048_html_scan_metrics",
+      "breakpoints": true
     }
   ]
 }

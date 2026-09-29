@@ -1,0 +1,22 @@
+/* Switch the one set of required inputs into stacked jobs when the editor has
+   little room, including when enlarged text reduces the content column. */
+.employment { container-type: inline-size; }
+
+@container (max-width: 60em) {
+  .employment :global(table),
+  .employment :global(tbody),
+  .employment :global(tbody > tr),
+  .employment :global(tbody > tr > td) {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .employment :global(thead) { display: none; }
+  .employment :global(tbody > tr) { margin-bottom: 0.75rem; border: 2px solid var(--line-muted); }
+  .employment :global(tbody > tr:last-child) { margin-bottom: 0; }
+  .employment :global(tbody > tr > td) { padding: 0.4rem 0.75rem; text-align: left; }
+  .employment .fieldLabel, .employment .currentLabel { display: block; }
+  .employment :global(input:not([type="checkbox"])) { height: auto; min-height: 44px; }
+  .employment :global(label) { justify-content: flex-start; }
+}

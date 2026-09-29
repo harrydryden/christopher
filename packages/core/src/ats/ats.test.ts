@@ -3,7 +3,7 @@ import { createFakeFetchContext } from "../testing";
 import * as fx from "../fixtures";
 import { adapters, descriptionsFetchedPerPosting, fetchDescriptionFor, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { extractJsonLdPostings } from "./jsonld";
-import { applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, hasListingExpansionControl, hasUnfollowableListingContinuation, isExplicitEmptyListing, nextListingPage, validateRecipe } from "./html";
+import { advertisedDistinctJobTotal, applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, hasListingExpansionControl, hasUnfollowableListingContinuation, isExplicitEmptyListing, nextListingPage, validateRecipe } from "./html";
 import { IncompleteListingError, type FetchContext, type HtmlRecipe, type SourceFetchError, type SourceSpec } from "../types";
 import { INLINE_DESCRIPTIONS_MAX_BYTES } from "./common";
 
@@ -762,6 +762,47 @@ describe("HTML extraction", () => {
     expect(extractPostingsFromHtml(html, url)).toMatchObject([{ title: "Platform Engineer", location: "Remote US" }]);
     const visible = '<article class="job"><a href="/jobs/102">Analyst</a><span class="location">London, UK</span><span>Finance</span></article>';
     expect(extractPostingsFromHtml(visible, url)).toMatchObject([{ title: "Analyst", location: "London, UK" }]);
+  });
+  it("reads location siblings of a role-title anchor and merges duplicate posting locations", () => {
+    // Reduced from Stripe's public search results: one role URL appears in several location rows.
+    const rows = ["Remote in Canada", "Remote in United States", "London, United Kingdom"].map(location =>
+      `<li class="careers-role-result"><div class="careers-role-result__container">
+        <a class="careers-role-result__title" href="/careers/listing/aeo-and-geo-marketing-manager/7844214">AEO and GEO Marketing Manager</a>
+        <div class="careers-role-result__metadata"><p class="careers-role-result__metadata-team">Marketing</p>
+          <span class="careers-role-result__metadata-location"><span>${location}</span><span class="location-icon"></span></span>
+        </div></div></li>`).join("");
+    const html = `<main><ul>${rows}</ul></main>`;
+    const links = findJobLinks(html, "https://stripe.com/careers/search");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ text: "AEO and GEO Marketing Manager", location: "Remote in Canada",
+      locations: ["Remote in Canada", "Remote in United States", "London, United Kingdom"] });
+    const postings = extractPostingsFromHtml(html, "https://stripe.com/careers/search");
+    expect(postings).toMatchObject([{ title: "AEO and GEO Marketing Manager", location: "Remote in Canada",
+      locations: ["Remote in Canada", "Remote in United States", "London, United Kingdom"], remote: true }]);
+    const recipe = { version: 1 as const, listItem: "li.careers-role-result", title: "a.careers-role-result__title",
+      link: "a.careers-role-result__title", location: ".careers-role-result__metadata-location" };
+    expect(applyRecipe(html, "https://stripe.com/careers/search", recipe)[0]?.locations)
+      .toEqual(["Remote in Canada", "Remote in United States", "London, United Kingdom"]);
+    const localFirst = html.replaceAll("Remote in Canada", "London, United Kingdom").replaceAll("Remote in United States", "Work from home in Canada");
+    expect(extractPostingsFromHtml(localFirst, "https://stripe.com/careers/search")[0]).toMatchObject({
+      location: "London, United Kingdom", remote: true,
+      locations: ["London, United Kingdom", "Work from home in Canada"],
+    });
+  });
+  it("takes metadata from the nearest single-posting card, not a multi-job article", () => {
+    const html = `<article class="listing"><div class="job"><div class="title"><a href="/jobs/first">First Engineer</a></div>
+      <span class="location">London, UK</span></div><div class="job"><div class="title"><a href="/jobs/second">Second Engineer</a></div>
+      <span class="location">Berlin, Germany</span></div></article>`;
+    const postings = extractPostingsFromHtml(html, url);
+    expect(postings.map(posting => ({ title: posting.title, location: posting.location }))).toEqual([
+      { title: "First Engineer", location: "London, UK" },
+      { title: "Second Engineer", location: "Berlin, Germany" },
+    ]);
+  });
+  it("recognises a scoped distinct-job total but ignores location rows and generic counts", () => {
+    expect(advertisedDistinctJobTotal('<div class="ais-Stats"><span class="ais-Stats-text">414 jobs available</span></div>')).toBe(414);
+    expect(advertisedDistinctJobTotal('<p>20 results on this page, 5 distinct roles</p>')).toBeUndefined();
+    expect(advertisedDistinctJobTotal('<span class="ais-Stats-text">25 locations available</span>')).toBeUndefined();
   });
   it("compacts the DOM and lists every anchor for validation", () => {
     const { text, knownUrls, truncated } = compactDomForModel(fx.LISTING_PAGE_HTML, url);

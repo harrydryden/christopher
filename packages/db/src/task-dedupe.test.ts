@@ -16,7 +16,9 @@ import { activeTaskFor, enqueueTask } from "./tasks";
 
 const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
 beforeAll(() => runMigrations(db));
-beforeEach(() => db.execute(sql`truncate tasks`));
+// Scans and HTML continuation generations carry task foreign keys. This disposable fixture owns
+// no scan data, but Postgres still requires CASCADE when truncating a referenced parent table.
+beforeEach(() => db.execute(sql`truncate tasks cascade`));
 afterAll(() => pool.end());
 
 const key = "review_library:00000000-0000-4000-8000-000000000001";

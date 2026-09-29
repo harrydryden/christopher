@@ -54,7 +54,8 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await deps?.close(); });
 beforeEach(async () => {
-  await db.execute(sql`truncate tasks, applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations, worker_events`);
+  await db.execute(sql`delete from tasks`);
+  await db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations, worker_events`);
   deps.userSettings = (async () => ({ aiBudgetUsd: 1000, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
   deps.aiClient = undefined;
 });

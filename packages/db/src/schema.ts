@@ -327,6 +327,8 @@ export const scans = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     scanRunId: uuid("scan_run_id").references(() => scanRuns.id, { onDelete: "set null" }),
     sourceId: uuid("source_id").notNull().references(() => careerSources.id, { onDelete: "cascade" }),
+    /** The source is reconciled at most once by a retried or deferred company task. */
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
     startedAt: tsNow("started_at"),
     finishedAt: ts("finished_at"),
     status: text("status", { enum: SCAN_STATUSES }).notNull(),
@@ -336,6 +338,10 @@ export const scans = pgTable(
     closedCount: integer("closed_count").notNull().default(0),
     error: text("error"),
     durationMs: integer("duration_ms"),
+    /** Wall time from first page to completion; durationMs is active scan work across claims. */
+    elapsedMs: integer("elapsed_ms"),
+    /** False after an interrupted claim or source replacement; transfer counters are then null. */
+    metricsComplete: boolean("metrics_complete").notNull().default(true),
     /**
      * Bytes this scan actually transferred: the listing and every page it read, excluding a body the
      * fetcher served from its own cache after a 304 and including a browser render. `requests` and
@@ -349,6 +355,7 @@ export const scans = pgTable(
   (t) => [
     index("scans_source_started_idx").on(t.sourceId, t.startedAt),
     index("scans_run_idx").on(t.scanRunId),
+    uniqueIndex("scans_task_source_uidx").on(t.taskId, t.sourceId).where(sql`${t.taskId} is not null`),
     index("scans_started_idx").on(t.startedAt),
     // A source's last completed scan (the status strip), from the newest entry of this index alone:
     // no other index orders by finish, so the planner cannot walk the whole catalogue's scans instead.
@@ -710,6 +717,41 @@ export const tasks = pgTable(
     index("tasks_cv_running_user_idx").on(sql`(${t.payload}->>'userId')`).where(sql`${t.type} = 'generate_cv' and ${t.status} = 'running'`),
   ],
 );
+
+/** Durable, short-lived HTTP listing traversal. A task may leave and reclaim its lease between
+ * page batches; page evidence must therefore live independently of pruned scan snapshots. */
+export const htmlScanGenerations = pgTable("html_scan_generations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  taskId: uuid("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+  sourceId: uuid("source_id").notNull().references(() => careerSources.id, { onDelete: "cascade" }),
+  sourceFingerprint: text("source_fingerprint").notNull(),
+  nextUrl: text("next_url").notNull(),
+  startedAt: tsNow("started_at"),
+  expiresAt: ts("expires_at").notNull(),
+  restarts: integer("restarts").notNull().default(0),
+  bytesStored: integer("bytes_stored").notNull().default(0),
+  minAdvertised: integer("min_advertised").notNull().default(0),
+  requests: integer("requests").notNull().default(0),
+  fetchedBytes: integer("fetched_bytes").notNull().default(0),
+  revalidated: integer("revalidated").notNull().default(0),
+  activeDurationMs: integer("active_duration_ms").notNull().default(0),
+  metricsComplete: boolean("metrics_complete").notNull().default(true),
+  updatedAt: tsNow("updated_at"),
+}, t => [uniqueIndex("html_scan_generation_task_source_uidx").on(t.taskId, t.sourceId), index("html_scan_generation_expiry_idx").on(t.expiresAt)]);
+
+export const htmlScanPages = pgTable("html_scan_pages", {
+  generationId: uuid("generation_id").notNull().references(() => htmlScanGenerations.id, { onDelete: "cascade" }),
+  pageIndex: integer("page_index").notNull(),
+  url: text("url").notNull(),
+  nextUrl: text("next_url"),
+  contentHash: text("content_hash").notNull(),
+  semanticHash: text("semantic_hash").notNull(),
+  roleSetHash: text("role_set_hash").notNull(),
+  postings: jsonb("postings").$type<Record<string, unknown>[]>().notNull(),
+  dropped: integer("dropped").notNull().default(0),
+  recipe: jsonb("recipe").$type<Record<string, unknown> | null>(),
+  bytesStored: integer("bytes_stored").notNull(),
+}, t => [primaryKey({ columns: [t.generationId, t.pageIndex] }), uniqueIndex("html_scan_page_url_uidx").on(t.generationId, t.url)]);
 
 export const aiCalls = pgTable(
   "ai_calls",

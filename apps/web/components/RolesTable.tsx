@@ -169,7 +169,7 @@ interface RowActions {
  * The reason box for one row: it owns what is typed, so typing renders only this box. Enter saves
  * (R-7.2) with the text in hand; Shift+Enter is a new line; Escape closes.
  */
-function ReasonBox({ jobId, box, busy, actions }: { jobId: string; box: ReasonBoxState; busy: boolean; actions: RowActions }) {
+function ReasonBox({ jobId, title, companyName, box, busy, actions }: { jobId: string; title: string; companyName: string; box: ReasonBoxState; busy: boolean; actions: RowActions }) {
   const [text, setText] = useState(box.prefill);
   const field = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => { if (box.focus) field.current?.focus(); }, [box.focus]);
@@ -190,7 +190,10 @@ function ReasonBox({ jobId, box, busy, actions }: { jobId: string; box: ReasonBo
         {["Wrong location", "Wrong seniority", "Not interested"].map(reason => <Button key={reason} size="sm" variant="ghost" disabled={box.pending}
           onClick={() => setText(reason)}>{reason}</Button>)}
       </div>}
-      <textarea disabled={box.pending}
+      <label htmlFor={`role-reason-${jobId}`} className="text-13 font-semibold text-fg">
+        {box.kind === "skip" ? "Why dismiss" : "Why shortlist"} {title} at {companyName}{box.kind === "skip" ? "?" : "? (optional)"}
+      </label>
+      <textarea id={`role-reason-${jobId}`} disabled={box.pending}
         ref={field}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -321,7 +324,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
       {expanded && (
         <tr id={`role-review-${row.id}`} className={`${styles.reviewRow} bg-sunken`}>
           <td colSpan={hideCompany ? 5 : 6} className="p-4">
-            <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]">
+            <div className={`${styles.reviewBody} grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]`}>
               <div className="space-y-3">
                 <p className="text-14 font-semibold text-fg">{row.title}</p>
                 <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
@@ -380,9 +383,10 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 </div>
               </div>
               <div className="space-y-3">
+                <p className="text-14 font-semibold text-fg">{row.title}<span className="block text-13 font-normal text-muted">{row.companyName}</span></p>
                 <h3 className="ds-label">{ROLE_STATUS_LABELS[row.workflowStatus]}</h3>
                 {boxed ? (
-                  <ReasonBox key={boxed.opened} jobId={row.id} box={boxed} busy={busy} actions={actions} />
+                  <ReasonBox key={boxed.opened} jobId={row.id} title={row.title} companyName={row.companyName} box={boxed} busy={busy} actions={actions} />
                 ) : row.decision ? (
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
@@ -1003,7 +1007,7 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
             <SortTH label="Role" sortKey="title" links={sortLinks} sort={sort} dir={dir} />
             <SortTH label="Location" sortKey="location" links={sortLinks} sort={sort} dir={dir} />
             <SortTH label="Fit" sortKey="fit" links={sortLinks} sort={sort} dir={dir} />
-            <TH><span className="sr-only">Action</span></TH>
+            <TH>Action</TH>
           </tr>
         </THead>
         <TBody>

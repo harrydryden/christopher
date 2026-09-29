@@ -97,7 +97,12 @@ export interface FetchResponse {
 }
 
 export interface RenderedPage {
+  /** Legacy uncompressed captures, retained for callers and test fixtures that construct them. */
   listingPages?: Array<{ html: string; url: string }>;
+  /** Browser captures retained as bounded gzip buffers; decode only one at a time. */
+  compressedListingPages?: Array<{ gzip: Uint8Array; decodedBytes: number; url: string }>;
+  /** Final decoded HTML changed after the last stored capture but did not fit the compressed cap. */
+  finalCaptureUnstored?: boolean;
   incomplete?: boolean;
   html: string;
   finalUrl: string;

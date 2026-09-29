@@ -1,5 +1,8 @@
-/* One semantic table and one set of controls; the same cells become a readable card on phones. */
-@media (max-width: 767px) {
+/* One semantic table and one set of controls. Cards follow the space available to
+   the table, including when enlarged text makes the sidebar and filters wider. */
+.cards { container-type: inline-size; }
+
+@container (max-width: 60em) {
   .cards :global(table),
   .cards :global(tbody),
   .cards :global(tbody > tr),
@@ -41,4 +44,5 @@
   .reviewRow { width: auto !important; margin: -0.75rem 0.75rem 0.75rem; border: 2px solid var(--line); border-top: 0; }
   .reviewRow > :global(td) { padding: 0.75rem; }
   .reviewRow a { display: inline-flex; align-items: center; }
+  .reviewBody { grid-template-columns: minmax(0, 1fr); }
 }

@@ -365,17 +365,17 @@ describe("one decision writer", () => {
   it("leaves the same rows deciding a role alone as deciding it as a group of one", async () => {
     const [alone, grouped] = [await role(null), await role(null)];
     for (const [decision, reason] of [["apply", "Strong match"], ["skip", "Too junior"]] as const) {
-      await database.execute(sql`truncate tasks`);
+      await database.execute(sql`delete from tasks`);
       expect(await decide(alone.id, decision, reason)).toEqual({ ok: true });
       const one = await leftBehind(alone.id);
-      await database.execute(sql`truncate tasks`);
+      await database.execute(sql`delete from tasks`);
       expect(await decideRoles([grouped.id], decision, reason)).toEqual({ ok: true });
       expect(await leftBehind(grouped.id)).toEqual(one);
     }
-    await database.execute(sql`truncate tasks`);
+    await database.execute(sql`delete from tasks`);
     expect(await undoDecisionIfCurrent(alone.id, (await currentToken(alone.id)).decisionId)).toEqual({ ok: true });
     const one = await leftBehind(alone.id);
-    await database.execute(sql`truncate tasks`);
+    await database.execute(sql`delete from tasks`);
     expect(await undoDecisionsIfCurrent([await currentToken(grouped.id)])).toEqual({ ok: true });
     expect(await leftBehind(grouped.id)).toEqual(one);
   });

@@ -13,6 +13,7 @@ import {
   ats,
   aiBudgetWindowStart,
   classifyScan,
+  deriveExternalKey,
   keyPostings,
   listingShrank,
   looksRemote,
@@ -35,6 +36,7 @@ import {
   type SourceSpec,
   type SystemSettings,
   SOURCE_FAILING_AFTER,
+  stripHtml,
 } from "@ava/core";
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@ava/db";
@@ -46,7 +48,12 @@ import { prepareForAdmission } from "../admission";
 import { accountsWithBudget } from "../budget";
 import { HostBusyError, statusKind } from "../fetcher";
 import { withResourceLease } from "../lease";
+import { TaskDeferred } from "../queue";
+import { appendHtmlCheckpointPage, clearHtmlCheckpoint, htmlSourceFingerprint, HtmlCheckpointChanged,
+  HTML_GENERATION_MAX_PAGES, loadHtmlCheckpoint, pruneHtmlCheckpoints, recordHtmlCheckpointMetrics, restartHtmlCheckpoint,
+  type HtmlCheckpoint } from "../html-scan-checkpoint";
 import { log } from "../log";
+import { listingCaptureCount, listingCaptures } from "../listing-captures";
 import { loadUserSettingsMany } from "../settings";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
@@ -87,6 +94,11 @@ const budgetSpentReason = (limit: number) => `Scan stopped after its budget of $
  * wait. Past this the source records a failed scan for the day (counted against nothing).
  */
 const MAX_HOST_BUSY_DEFERRALS = 6;
+/** One HTTP listing pass stays comfortably below the three-minute task deadline at a 2s host pace. */
+const HTML_PAGES_PER_TASK_PASS = 20;
+const HTML_GENERATION_MAX_POSTINGS = 5_000;
+/** Leave at least eighty seconds of a three-minute claim for final reconciliation and queue work. */
+export const HTML_CLAIM_FETCH_BUDGET_MS = 100_000;
 
 /**
  * Taken off a failing source's backoff so that "one day" means the next daily run: the scan ran
@@ -123,19 +135,32 @@ export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<u
 }
 
 async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
+  const claimStartedAtMs = Date.now();
   const payload = task.payload as ScanPayload;
   const settings = await deps.settings();
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   if (!company) return { skipped: "company not found" };
   if (company.status !== "active") return { skipped: "company is not active" };
 
+  // A final scan commit may outlive the queue's completion write. The task/source marker lets a
+  // reclaimed task skip that source without repeating user admissions, miss counts or closure.
+  const committed = await deps.db.select({ sourceId: schema.scans.sourceId }).from(schema.scans).where(eq(schema.scans.taskId, task.id));
+  const completedSourceIds = new Set(committed.map(row => row.sourceId));
+  // The scan transaction commits before this idempotent housekeeping step. Reclaimed work must
+  // finish it even when the scan marker says not to reconcile the source a second time.
+  for (const sourceId of completedSourceIds) await archiveNonMatches(deps.db, { sourceId });
+  await pruneHtmlCheckpoints(deps.db, deps.now());
+
   let sources = await deps.db
     .select()
     .from(schema.careerSources)
-    .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"]), payload.trigger === "schedule" ? or(isNull(schema.careerSources.nextScanAt), sql`${schema.careerSources.nextScanAt} <= ${deps.now()}`) : undefined));
+    .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"]), payload.trigger === "schedule" ? or(isNull(schema.careerSources.nextScanAt), sql`${schema.careerSources.nextScanAt} <= ${deps.now()}`) : undefined))
+    .orderBy(schema.careerSources.createdAt, schema.careerSources.id);
 
   if (payload.sourceIds) sources = sources.filter(s => payload.sourceIds!.includes(s.id));
+  sources = sources.filter(s => !completedSourceIds.has(s.id));
   if (sources.length === 0) {
+    if (completedSourceIds.size) return { sources: completedSourceIds.size, resumed: true };
     log.warn("company has no active source", { company: company.name });
     return { skipped: "no active source" };
   }
@@ -143,11 +168,14 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   // The scan is shared, so one follower's "rescan now" must not fetch a board the system read
   // minutes ago for someone else. A source with no scan yet (just confirmed) is always read.
   if (payload.trigger !== "schedule" && !payload.scanRunId) {
+    const staged = await deps.db.select({ sourceId: schema.htmlScanGenerations.sourceId }).from(schema.htmlScanGenerations)
+      .where(eq(schema.htmlScanGenerations.taskId, task.id));
+    const stagedIds = new Set(staged.map(row => row.sourceId));
     const cutoff = new Date(deps.now().getTime() - MANUAL_RESCAN_INTERVAL_MS);
     const recent = await deps.db.select({ sourceId: schema.scans.sourceId }).from(schema.scans)
       .where(and(inArray(schema.scans.sourceId, sources.map(s => s.id)), sql`${schema.scans.startedAt} >= ${cutoff}`, inArray(schema.scans.status, ["ok", "partial"])));
     const fresh = new Set(recent.map(r => r.sourceId));
-    const stale = sources.filter(s => !fresh.has(s.id));
+    const stale = sources.filter(s => stagedIds.has(s.id) || !fresh.has(s.id));
     if (stale.length === 0) return { skipped: "scanned recently", sources: sources.length };
     sources = stale;
   }
@@ -156,12 +184,20 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   let totalClosed = 0;
   const statuses: ScanStatus[] = [];
   const retries = payload.hostBusyRetries ?? 0;
+  const continuationBusyRetries = (task.result as { busyRetries?: number } | null)?.busyRetries ?? 0;
   const deferred: string[] = [];
   let retryAt: Date | null = null;
   for (const source of sources) {
     const outcome = await withSpan("scan.fetch", { "source.type": source.type }, () =>
-      scanSource(deps, company, source, settings, payload.scanRunId ?? null, { deferWhenHostBusy: retries < MAX_HOST_BUSY_DEFERRALS }));
+      scanSource(deps, company, source, settings, payload.scanRunId ?? null, { deferWhenHostBusy: Math.max(retries, continuationBusyRetries) < MAX_HOST_BUSY_DEFERRALS, taskId: task.id, taskAttempt: task.attempts, claimStartedAtMs }));
+    if (outcome.continueAt) {
+      return new TaskDeferred(outcome.continueAt, { sourceId: source.id, htmlPages: outcome.pagesStaged,
+        busyRetries: continuationBusyRetries, reason: "Reading a paged HTML listing" });
+    }
     if (outcome.retryAt) {
+      const [checkpoint] = source.type === "html" ? await deps.db.select({ id: schema.htmlScanGenerations.id, pageCount: sql<number>`(select count(*)::int from html_scan_pages p where p.generation_id = ${schema.htmlScanGenerations.id})` })
+        .from(schema.htmlScanGenerations).where(and(eq(schema.htmlScanGenerations.taskId, task.id), eq(schema.htmlScanGenerations.sourceId, source.id))).limit(1) : [];
+      if (checkpoint) return new TaskDeferred(outcome.retryAt, { sourceId: source.id, htmlPages: checkpoint.pageCount, busyRetries: continuationBusyRetries + 1, reason: "Host pacing paused HTML listing continuation" });
       deferred.push(source.id);
       if (!retryAt || outcome.retryAt > retryAt) retryAt = outcome.retryAt;
       continue;
@@ -190,6 +226,9 @@ interface SourceOutcome {
   postingsFound: number;
   /** Set when nothing was read because the host is paced until then; no scan was recorded. */
   retryAt?: Date;
+  /** The same task will resume this source from its durable HTML page checkpoint. */
+  continueAt?: Date;
+  pagesStaged?: number;
 }
 
 interface Follower {
@@ -237,7 +276,7 @@ async function scanSource(
   source: CareerSource,
   settings: SystemSettings,
   scanRunId: string | null,
-  opts: { deferWhenHostBusy?: boolean } = {},
+  opts: { deferWhenHostBusy?: boolean; taskId?: string; taskAttempt?: number; claimStartedAtMs?: number } = {},
 ): Promise<SourceOutcome> {
   const started = Date.now();
   // Recorded on the worker's clock so the manual-rescan guard compares like with like.
@@ -332,11 +371,19 @@ async function scanSource(
   let incomplete = false;
   let updatedRecipe: HtmlRecipe | undefined;
   let reusedListing = false;
+  let longHtmlListing = false;
   let hostBusy: HostBusyError | null = null;
 
   try {
     if (source.type === "html") {
-      const outcome = await scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot);
+      const outcome = await scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot, opts.taskId, undefined, opts.claimStartedAtMs);
+      if (outcome.continueAt) {
+        await recordHtmlCheckpointMetrics(deps, opts.taskId!, source,
+          { requests, fetchedBytes, revalidated, activeDurationMs: Date.now() - started }, opts.taskAttempt ?? 1);
+        return { status: "partial", newCount: 0, closedCount: 0, postingsFound: outcome.postings.length,
+          continueAt: outcome.continueAt, pagesStaged: outcome.pagesStaged };
+      }
+      longHtmlListing = outcome.longListing ?? false;
       postings = outcome.postings;
       fetchMethod = outcome.method;
       droppedByValidation = outcome.dropped;
@@ -388,6 +435,12 @@ async function scanSource(
   }
 
   if (hostBusy && opts.deferWhenHostBusy) {
+    if (opts.taskId && source.type === "html") {
+      const [generation] = await deps.db.select({ id: schema.htmlScanGenerations.id }).from(schema.htmlScanGenerations)
+        .where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId), eq(schema.htmlScanGenerations.sourceId, source.id))).limit(1);
+      if (generation) await recordHtmlCheckpointMetrics(deps, opts.taskId, source,
+        { requests, fetchedBytes, revalidated, activeDurationMs: Date.now() - started }, opts.taskAttempt ?? 1);
+    }
     log.info("host busy: source scan deferred", { company: company.name, url: source.url, host: hostBusy.host, retryAt: hostBusy.retryAt.toISOString() });
     return { status: "failed", newCount: 0, closedCount: 0, postingsFound: 0, retryAt: hostBusy.retryAt };
   }
@@ -465,7 +518,7 @@ async function scanSource(
   const unresolved = new Set<string>();
   const deferred = new Set<string>();
   if (fetchOk && descriptionGates.length) {
-    if (ats.descriptionsFetchedPerPosting(source.type)) {
+    if (ats.descriptionsFetchedPerPosting(source.type) || longHtmlListing) {
       for (const posting of postings) {
         if (!posting.descriptionText && !savedByUrl.get(posting.url)?.hasText) deferred.add(posting.url);
       }
@@ -520,8 +573,12 @@ async function scanSource(
   await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
   const [current] = await tx.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)).for("update");
   // A user can disable or replace a source while the network request is in flight.
-  if (!current || !["active", "failing"].includes(current.status) || current.url !== source.url || current.apiUrl !== source.apiUrl) {
+  if (!current || !["active", "failing"].includes(current.status) || htmlSourceFingerprint(current) !== htmlSourceFingerprint(source)) {
     return { status: "partial", newCount: 0, closedCount: 0, postingsFound: postings.length };
+  }
+  if (opts.taskId) {
+    const [already] = await tx.select().from(schema.scans).where(and(eq(schema.scans.taskId, opts.taskId), eq(schema.scans.sourceId, source.id))).limit(1);
+    if (already) return { status: already.status, newCount: already.newCount, closedCount: already.closedCount, postingsFound: already.postingsFound };
   }
   const commitDeps = { ...deps, db: tx as unknown as WorkerDeps["db"] };
   committed = true;
@@ -875,10 +932,18 @@ async function scanSource(
     await deps.db.insert(schema.jobEvents).values(result.closed.map(jobId => ({ jobId, type: "closed" as const, payload: {} })));
   }
 
+  const [htmlGeneration] = opts.taskId && source.type === "html"
+    ? await deps.db.select().from(schema.htmlScanGenerations)
+      .where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId), eq(schema.htmlScanGenerations.sourceId, source.id))).for("update").limit(1)
+    : [];
+  const metricsComplete = !htmlGeneration || (htmlGeneration.metricsComplete && (opts.taskAttempt ?? 1) <= 1);
+  const activeDurationMs = (htmlGeneration?.activeDurationMs ?? 0) + Date.now() - started;
+  const observedStartedAt = htmlGeneration?.startedAt ?? startedAt;
   await deps.db.insert(schema.scans).values({
     scanRunId,
     sourceId: source.id,
-    startedAt,
+    taskId: opts.taskId,
+    startedAt: observedStartedAt,
     finishedAt: deps.now(),
     status,
     fetchMethod,
@@ -886,12 +951,15 @@ async function scanSource(
     newCount,
     closedCount: result.closed.length,
     error,
-    durationMs: Date.now() - started,
-    fetchedBytes,
-    requests,
-    revalidated,
+    durationMs: metricsComplete ? activeDurationMs : null,
+    elapsedMs: Math.max(0, deps.now().getTime() - observedStartedAt.getTime()),
+    metricsComplete,
+    fetchedBytes: metricsComplete ? (htmlGeneration?.fetchedBytes ?? 0) + fetchedBytes : null,
+    requests: metricsComplete ? (htmlGeneration?.requests ?? 0) + requests : null,
+    revalidated: metricsComplete ? (htmlGeneration?.revalidated ?? 0) + revalidated : null,
     rawSnapshot,
   });
+  if (opts.taskId && source.type === "html") await clearHtmlCheckpoint(deps.db, opts.taskId, source.id);
 
   // Keep bounded debugging evidence from the three most recent source scans.
   await deps.db.execute(sql`update scans set raw_snapshot = null where source_id = ${source.id} and raw_snapshot is not null
@@ -944,9 +1012,9 @@ async function scanSource(
     followers: followers.length,
     deferredDescriptions: deferred.size,
     reusedListing,
-    fetchedBytes,
-    requests,
-    revalidated,
+    claimFetchedBytes: fetchedBytes,
+    claimRequests: requests,
+    claimRevalidated: revalidated,
     heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1_048_576),
     ms: Date.now() - started,
   });
@@ -959,13 +1027,9 @@ async function scanSource(
  * The same digest as `sha1` over the captures joined with "|", fed one capture at a time: joining
  * a render's pages into one string copied every one of them again just to hash it.
  */
-function capturesHash(captures: Array<{ html: string }>): string {
-  const hash = createHash("sha1");
-  captures.forEach((capture, index) => {
-    if (index) hash.update("|");
-    hash.update(capture.html);
-  });
-  return hash.digest("hex");
+function appendCaptureHash(hash: ReturnType<typeof createHash>, html: string, index: number): void {
+  if (index) hash.update("|");
+  hash.update(html);
 }
 
 /**
@@ -1062,13 +1126,143 @@ interface HtmlScanOutcome {
   incompleteReason?: string;
   traversed?: boolean;
   nextPageUrl?: string;
+  continueAt?: Date;
+  pagesStaged?: number;
+  longListing?: boolean;
+}
+
+function checkpointPostings(checkpoint: HtmlCheckpoint): RawPosting[] {
+  return keyPostings(checkpoint.pages.flatMap(page => (page.postings as SnapshotPosting[]).map(revivePosting))).keyed;
+}
+
+/** A content nonce is not a changed board. Compare the parsed role set and the continuation. */
+function htmlPageRoleSetHash(postings: RawPosting[]): string {
+  const roles = postings.map(p => [normalisePostingUrl(p.url), p.externalId ?? "", p.title,
+    p.location ?? "", p.locations ?? [], p.department ?? "", p.employmentType ?? "",
+    p.postedAt?.toISOString() ?? ""])
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return sha1(JSON.stringify(roles));
+}
+
+function htmlPageSemanticHash(postings: RawPosting[], nextUrl: string | null): string {
+  return sha1(JSON.stringify([htmlPageRoleSetHash(postings), nextUrl]));
+}
+
+/** Only an explicit listing result count is useful as a lower bound, never a generic page number. */
+function htmlAdvertisedMinimum(html: string): number {
+  const text = stripHtml(html).replace(/\s+/g, " ");
+  const matches = [...text.matchAll(/\b\d{1,6}\s*(?:-|–|—|to)\s*\d{1,6}\s+of\s+(\d{1,7})\+?\s+(?:results?|jobs?|roles?|positions?|openings?)\b/gi)];
+  return Math.max(0, ...matches.map(match => Number(match[1])));
+}
+
+function htmlNextUrl(page: HtmlScanOutcome, url: string): string | null {
+  return page.nextPageUrl ?? (page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url));
+}
+
+/** Exactly one HTTP batch per task claim. Browser-expanded listings retain their existing path. */
+async function scanHtmlSourceContinued(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext,
+  lastOkSnapshot: () => Promise<StoredSnapshot | null>, taskId: string, claimStartedAtMs: number): Promise<HtmlScanOutcome> {
+  let checkpoint = await loadHtmlCheckpoint(deps, taskId, source);
+  const cached = (await lastOkSnapshot())?.htmlPages ?? [];
+  const partial = (reason: string, extra: RawPosting[] = []): HtmlScanOutcome => ({
+    postings: keyPostings([...checkpointPostings(checkpoint), ...extra]).keyed, method: "http", dropped: checkpoint.pages.reduce((n, p) => n + p.dropped, 0),
+    contentHash: sha1(checkpoint.pages.map(p => p.contentHash).join("|")), unchanged: false,
+    // The snapshot needs the full posting set once, not a second copy in per-page HTML evidence.
+    pages: [], incomplete: true, incompleteReason: reason,
+  });
+  const terminal = (): HtmlScanOutcome => ({
+    postings: checkpointPostings(checkpoint), method: "http", dropped: checkpoint.pages.reduce((n, p) => n + p.dropped, 0),
+    contentHash: sha1(checkpoint.pages.map(p => p.contentHash).join("|")), unchanged: false,
+    // Small pages keep the existing no-AI extraction cache. Large generations omit this second
+    // posting copy from the pruned snapshot; their bounded checkpoint is removed on final commit.
+    pages: checkpoint.pages.length <= HTML_PAGES_PER_TASK_PASS
+      ? checkpoint.pages.map(page => ({ url: page.url, contentHash: page.contentHash,
+        postings: (page.postings as SnapshotPosting[]).map(revivePosting) })) : [],
+    recipe: checkpoint.pages.find(p => p.recipe)?.recipe as HtmlRecipe | undefined,
+    longListing: checkpoint.pages.length > HTML_PAGES_PER_TASK_PASS,
+  });
+  if (checkpoint.expired) return partial("HTML listing continuation expired before all pages could be verified; roles remain open.");
+
+  // A deferred task does not treat yesterday's first page and today's tail as one generation.
+  // Re-read both ends; raw HTML can change harmlessly, so compare semantic evidence and next URL.
+  if (checkpoint.pages.length) {
+    const boundaries = [checkpoint.pages[0]!, checkpoint.pages.at(-1)!].filter((p, i, list) => i === 0 || p.pageIndex !== list[0]!.pageIndex);
+    let changed = false;
+    for (const stored of boundaries) {
+      try {
+        const observed = await scanHtmlPage(deps, { ...spec, url: stored.url }, source, ctx, cached.find(p => p.url === stored.url));
+        const next = htmlNextUrl(observed, stored.url);
+        if (observed.method !== "http" || observed.incomplete || htmlPageSemanticHash(observed.postings, next) !== stored.semanticHash) changed = true;
+      } catch (error) {
+        if (error instanceof HostBusyError) throw error;
+        return partial(`HTML listing boundary could not be revalidated: ${(error as Error).message}`.slice(0, 1000));
+      }
+    }
+    if (changed) {
+      checkpoint = await restartHtmlCheckpoint(deps, checkpoint, source);
+      if (checkpoint.expired) return partial("HTML listing changed repeatedly during continuation; no complete generation was observed.");
+    }
+  }
+
+  let readThisPass = 0;
+  while (checkpoint.generation.nextUrl) {
+    if (Date.now() - claimStartedAtMs >= HTML_CLAIM_FETCH_BUDGET_MS) {
+      return { ...partial("HTML listing continues after this claim's time budget."), continueAt: new Date(deps.now().getTime() + 1000), pagesStaged: checkpoint.pages.length };
+    }
+    const url = checkpoint.generation.nextUrl;
+    if (checkpoint.pages.some(page => page.url === url)) return partial("HTML listing repeated a pagination URL; the remaining pages cannot be verified.");
+    if (checkpoint.pages.length >= HTML_GENERATION_MAX_PAGES) return partial("HTML listing exceeded the bounded page limit before its final page.");
+    if (checkpointPostings(checkpoint).length >= HTML_GENERATION_MAX_POSTINGS) return partial("HTML listing exceeded the bounded posting limit before its final page.");
+    let page: HtmlScanOutcome;
+    try {
+      page = await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
+    } catch (error) {
+      if (checkpoint.pages.length === 0) throw error;
+      if (error instanceof HostBusyError) throw error;
+      return partial(`Could not finish listing page ${url}: ${(error as Error).message}`.slice(0, 1000));
+    }
+    if (page.method === "browser" || page.traversed) {
+      if (checkpoint.pages.length === 0) return scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot, undefined, page);
+      return partial("HTML listing switched to browser traversal after staged HTTP pages; the complete listing could not be verified.", page.postings);
+    }
+    const next = htmlNextUrl(page, url);
+    if (page.incomplete) return partial(page.incompleteReason ?? "HTML listing page was incomplete.", page.postings);
+    if (next && (next === url || checkpoint.pages.some(saved => saved.url === next))) {
+      return partial("HTML listing pagination repeated an earlier page; the complete listing cannot be verified.", page.postings);
+    }
+    const semanticHash = htmlPageSemanticHash(page.postings, next);
+    const roleSetHash = htmlPageRoleSetHash(page.postings);
+    if (checkpoint.pages.some(saved => saved.roleSetHash === roleSetHash && saved.url !== url)) {
+      return partial("HTML listing returned duplicate roles at different offsets; the complete listing cannot be verified.", page.postings);
+    }
+    try {
+      checkpoint = await appendHtmlCheckpointPage(deps, checkpoint, source, {
+        url, nextUrl: next, contentHash: page.contentHash, semanticHash, roleSetHash,
+        minAdvertised: htmlAdvertisedMinimum(page.html ?? ""),
+        postings: page.postings as unknown as Record<string, unknown>[], dropped: page.dropped,
+        recipe: page.recipe as Record<string, unknown> | undefined,
+      });
+    } catch (error) {
+      if (!(error instanceof HtmlCheckpointChanged)) throw error;
+      return partial(error.message, page.postings);
+    }
+    readThisPass += 1;
+    if (next && readThisPass >= HTML_PAGES_PER_TASK_PASS) {
+      return { ...partial("HTML listing continues in another task claim."), continueAt: new Date(deps.now().getTime() + 1000), pagesStaged: checkpoint.pages.length };
+    }
+  }
+  if (checkpointPostings(checkpoint).length < checkpoint.generation.minAdvertised) {
+    return partial(`Listing advertised at least ${checkpoint.generation.minAdvertised} results but only ${checkpointPostings(checkpoint).length} distinct roles were verified.`);
+  }
+  return terminal();
 }
 
 /**
  * Tier-3 HTML: try the stored selector recipe first, then embedded structure, then the model.
  * A model extraction also produces a recipe, so later scans of an unchanged page cost nothing.
  */
-async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, lastOkSnapshot: () => Promise<StoredSnapshot | null>): Promise<HtmlScanOutcome> {
+async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, lastOkSnapshot: () => Promise<StoredSnapshot | null>, taskId?: string, firstPage?: HtmlScanOutcome, claimStartedAtMs = Date.now()): Promise<HtmlScanOutcome> {
+  if (taskId) return scanHtmlSourceContinued(deps, spec, source, ctx, lastOkSnapshot, taskId, claimStartedAtMs);
   // Missing or unreadable snapshots trigger fresh extraction.
   const cached: CachedHtmlPage[] = (await lastOkSnapshot())?.htmlPages ?? [];
   const pages: CachedHtmlPage[] = [];
@@ -1084,7 +1278,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
     if (visited.has(url)) { incomplete = true; break; }
     visited.add(url);
     try {
-      const page = await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
+      const page: HtmlScanOutcome = pages.length === 0 && firstPage ? firstPage : await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
       if (page.method === "browser") method = "browser";
       dropped += page.dropped;
       unchanged = unchanged && page.unchanged;
@@ -1132,52 +1326,108 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
       // Same rule as the fetcher's.
       throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, statusKind(rendered.status), rendered.status);
     }
-    const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
-    const outcomes: HtmlScanOutcome[] = [];
+    // A browser may capture the same 1,000 roles on every page. Keep one posting per source
+    // identity, with a separate byte ceiling for unusually large descriptions/metadata.
+    const maxCapturedMetadataBytes = 4_000_000;
+    const capturedByKey = new Map<string, { posting: RawPosting; bytes: number }>();
+    let capturedMetadataBytes = 0;
+    let verifiedCaptureCount = 0;
+    let dropped = 0;
+    let postingCapExceeded = false;
+    const addCaptured = (items: RawPosting[]) => {
+      for (const item of items) {
+        const key = deriveExternalKey(item);
+        const previous = capturedByKey.get(key);
+        if (previous) {
+          const locations = new Set([...(previous.posting.locations ?? []), ...(previous.posting.location ? [previous.posting.location] : []),
+            ...(item.locations ?? []), ...(item.location ? [item.location] : [])]);
+          const merged = { ...previous.posting, locations: [...locations], remote: previous.posting.remote || item.remote || [...locations].some(looksRemote) || undefined };
+          const bytes = Buffer.byteLength(JSON.stringify(merged), "utf8");
+          if (capturedMetadataBytes - previous.bytes + bytes > maxCapturedMetadataBytes) postingCapExceeded = true;
+          else {
+            capturedMetadataBytes += bytes - previous.bytes;
+            capturedByKey.set(key, { posting: merged, bytes });
+          }
+        } else {
+          const bytes = Buffer.byteLength(JSON.stringify(item), "utf8");
+          if (capturedByKey.size >= ats.MAX_POSTINGS || capturedMetadataBytes + bytes > maxCapturedMetadataBytes) postingCapExceeded = true;
+          else {
+            capturedByKey.set(key, { posting: { ...item }, bytes });
+            capturedMetadataBytes += bytes;
+          }
+        }
+        if (postingCapExceeded) break;
+      }
+    };
     let incomplete = rendered.incomplete ?? false;
     let incompleteReason = incomplete ? BROWSER_PAGINATION_INCOMPLETE : undefined;
     // Browser controls may not expose a document-head rel=next link to the renderer. Keep
     // explicit HTTP and rendered next links, then resume the ordinary page traversal from the
     // first page the browser has not already captured. A later capture may itself point onward.
-    const capturedUrls = new Set([finalUrl, ...captures.map(capture => capture.url)].map(url => new URL(url).href));
-    const nextPageUrl = [{ html, url: finalUrl }, ...captures]
-      .map(page => ats.nextListingPage(page.html, page.url))
-      .find(next => next !== null && !capturedUrls.has(new URL(next).href)) ?? undefined;
-    if ([{ html, url: finalUrl }, ...captures].some(page => ats.hasUnfollowableListingContinuation(page.html, page.url))) {
+    const capturedUrls = new Set([new URL(finalUrl).href]);
+    const continuations = [ats.nextListingPage(html, finalUrl)];
+    let advertisedTotal = ats.advertisedDistinctJobTotal(html) ?? 0;
+    let externalContinuation = ats.hasUnfollowableListingContinuation(html, finalUrl);
+    let lastExpansionPending = false;
+    const captureHash = createHash("sha1");
+    const captureCount = listingCaptureCount(rendered);
+    let captureIndex = 0;
+    try {
+      for (const capture of listingCaptures(rendered)) {
+        const index = captureIndex++;
+        advertisedTotal = Math.max(advertisedTotal, ats.advertisedDistinctJobTotal(capture.html) ?? 0);
+        appendCaptureHash(captureHash, capture.html, index);
+        capturedUrls.add(new URL(capture.url).href);
+        const nextCaptured = ats.nextListingPage(capture.html, capture.url);
+        continuations.push(nextCaptured);
+        externalContinuation ||= ats.hasUnfollowableListingContinuation(capture.html, capture.url);
+        lastExpansionPending = !nextCaptured && ats.hasListingExpansionControl(capture.html, capture.url);
+        try {
+          const outcome = await scanHtmlPage(deps, spec, source, ctx, captureCount === 1 ? cached : undefined, capture);
+          // Only parsed postings and counts survive this iteration; never retain all decoded DOMs.
+          if (outcome.postings.length === 0 && captureCount > 1 && (verifiedCaptureCount > 0 || index < captureCount - 1)) {
+            incomplete = true;
+            incompleteReason ??= "A browser listing capture was empty after or before a populated capture; this scan cannot close roles.";
+          }
+          addCaptured(outcome.postings);
+          verifiedCaptureCount++;
+          dropped += outcome.dropped;
+          incomplete ||= outcome.incomplete ?? false;
+          incompleteReason ??= outcome.incompleteReason;
+        } catch (error) {
+          // A shell before later confirmed roles is allowed; one after roles is incomplete.
+          if (!verifiedCaptureCount && index < captureCount - 1 && error instanceof SourceFetchError && error.kind === "parse") continue;
+          if (!verifiedCaptureCount) throw error;
+          incomplete = true;
+          incompleteReason ??= `Browser listing capture ${index + 1} could not be verified: ${(error as Error).message}`.slice(0, 1000);
+        }
+        if (postingCapExceeded) { incomplete = true; break; }
+      }
+    } catch (error) {
+      // A corrupt compressed capture is never a complete listing. Retain already parsed captures
+      // and the HTTP first page so a partial scan can still surface useful roles.
+      if (!(error instanceof SourceFetchError && error.kind === "parse")) throw error;
+      incomplete = true;
+      incompleteReason ??= `Browser listing capture could not be decoded: ${error.message}`.slice(0, 1000);
+    }
+    if (externalContinuation) {
       incomplete = true;
       incompleteReason ??= "Listing has an explicit next page outside this source; the remaining roles could not be verified.";
     }
-    for (const [index, capture] of captures.entries()) {
-      try {
-        const outcome = await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture);
-        // A later empty capture cannot prove that the previously seen roles were the whole
-        // listing. A sole explicit empty state is different: it is verified by the HTML helper.
-        if (outcome.postings.length === 0 && captures.length > 1 && (outcomes.length > 0 || index < captures.length - 1)) {
-          incomplete = true;
-          incompleteReason ??= "A browser listing capture was empty after or before a populated capture; this scan cannot close roles.";
-        }
-        outcomes.push(outcome);
-        incomplete ||= outcome.incomplete ?? false;
-        incompleteReason ??= outcome.incompleteReason;
-      }
-      catch (error) {
-        // Some renderers capture a JavaScript shell before the client populates it. Continue only
-        // when another capture may establish real postings or an explicit empty listing. Never
-        // treat an unverified shell alone, or one after confirmed postings, as a complete scan.
-        if (!outcomes.length && index < captures.length - 1 && error instanceof SourceFetchError && error.kind === "parse") continue;
-        if (!outcomes.length) throw error;
-        incomplete = true;
-        incompleteReason ??= `Browser listing capture ${index + 1} could not be verified: ${(error as Error).message}`.slice(0, 1000);
-      }
-    }
-    const lastCapture = captures.at(-1)!;
-    if (!ats.nextListingPage(lastCapture.html, lastCapture.url)
-        && ats.hasListingExpansionControl(lastCapture.html, lastCapture.url)) {
+    if (lastExpansionPending) {
       incomplete = true;
       incompleteReason ??= "The final browser capture still has an expansion control; the remaining roles could not be verified.";
     }
-    return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
-      contentHash: capturesHash(captures), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
+    if (postingCapExceeded) incompleteReason ??= "The browser listing exceeded its posting or parsed-metadata limit; remaining roles could not be verified.";
+    const nextPageUrl = postingCapExceeded ? undefined : continuations.find(next => next !== null && !capturedUrls.has(new URL(next).href)) ?? undefined;
+    const capturedPostings = [...capturedByKey.values()].map(value => value.posting);
+    if (capturedPostings.length < advertisedTotal) {
+      incomplete = true;
+      incompleteReason ??= `Listing advertised ${advertisedTotal} distinct jobs but only ${capturedPostings.length} were verified.`;
+    }
+    return { postings: keyPostings(incomplete ? [...postings, ...capturedPostings] : capturedPostings).keyed,
+      method: "browser", dropped,
+      contentHash: captureIndex ? captureHash.digest("hex") : httpHash ?? sha1(html), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
       incompleteReason: incomplete ? incompleteReason ?? BROWSER_PAGINATION_INCOMPLETE : undefined, traversed: true, nextPageUrl };
 
   }

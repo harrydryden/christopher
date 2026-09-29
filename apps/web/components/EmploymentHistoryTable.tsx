@@ -3,6 +3,7 @@ import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries } from
 import type { CvLibrary, Employment } from "@ava/core/cv";
 import { inputClass } from "@/components/Field";
 import { TH, TR } from "@/components/table";
+import styles from "./EmploymentHistoryTable.module.css";
 
 // Every control in the grid is the same height, so the rows read as rows
 // rather than a scatter of boxes. Industry descriptions is a long field but
@@ -42,7 +43,7 @@ export function EmploymentHistoryTable({ employment, entries, onChange, onRemove
     if (rows > 0 && !window.confirm(jobRemovalConfirm(job, rows))) return;
     onRemove(job);
   }
-  return <section aria-labelledby="employment-heading" className="space-y-3">
+  return <section aria-labelledby="employment-heading" className={`${styles.employment} space-y-3`}>
     <h2 id="employment-heading" className="ds-pixel text-12">Employment history</h2>
     <datalist id="employment-companies">{companies.map(company => <option key={company} value={company} />)}</datalist>
     {/* One control for every field at every width: a table on desktop and stacked jobs on a phone.
@@ -55,19 +56,19 @@ export function EmploymentHistoryTable({ employment, entries, onChange, onRemove
         <TH className="w-32">Start date</TH>
         <TH className="w-32">End date</TH>
         <TH className="w-20 text-center">Current</TH>
-        <TH><span className="sr-only">Remove</span></TH>
+        <TH>Remove</TH>
       </tr></thead>
       <tbody className="block md:table-row-group">{employment.map((job, i) => <TR key={job.id} className="mb-3 block border-2 border-line-muted md:mb-0 md:table-row md:border-x-0 md:border-b-0">
-          <td className={cellPad}><span className="mb-1 block text-12 font-semibold md:hidden">Company</span><input required maxLength={160} aria-label={`Job ${i + 1} company`} list="employment-companies" className={cell} value={job.company} onChange={e => {
+          <td className={cellPad}><span className={`${styles.fieldLabel} mb-1 block text-12 font-semibold md:hidden`}>Company</span><input required maxLength={160} aria-label={`Job ${i + 1} company`} list="employment-companies" className={cell} value={job.company} onChange={e => {
             const company = e.target.value;
             const existing = employment.find(item => item.id !== job.id && item.company.trim().toLowerCase() === company.trim().toLowerCase());
             update(job.id, { company, ...(existing ? { industryDescriptions: existing.industryDescriptions ?? "" } : {}) });
           }} /></td>
-          <td className={cellPad}><span className="mb-1 block text-12 font-semibold md:hidden">Industry descriptions</span><input maxLength={1200} aria-label={`Job ${i + 1} industry descriptions`} placeholder="Workplace mental health, SaaS" className={cell} value={job.industryDescriptions ?? ""} onChange={e => onChange(updateEmploymentIndustries(employment, job.id, e.target.value))} /></td>
-          <td className={cellPad}><span className="mb-1 block text-12 font-semibold md:hidden">Job title</span><input required maxLength={160} aria-label={`Job ${i + 1} title`} className={cell} value={job.jobTitle} onChange={e => update(job.id, { jobTitle: e.target.value })} /></td>
-          <td className={cellPad}><span className="mb-1 block text-12 font-semibold md:hidden">Start date</span><input aria-label={`Job ${i + 1} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={cell} value={job.startDate} onChange={e => update(job.id, { startDate: e.target.value })} /></td>
-          <td className={cellPad}><span className="mb-1 block text-12 font-semibold md:hidden">End date</span><input disabled={job.current} aria-label={`Job ${i + 1} end date`} placeholder={job.current ? "Present" : "YYYY-MM"} pattern="[0-9]{4}(-[0-9]{2})?" className={`${cell} disabled:opacity-40`} value={job.endDate} onChange={e => update(job.id, { endDate: e.target.value })} /></td>
-          <td className={`${cellPad} text-center`}><label className="flex items-center gap-2 md:justify-center"><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /><span className="text-12 md:hidden">Current job</span></label></td>
+          <td className={cellPad}><span className={`${styles.fieldLabel} mb-1 block text-12 font-semibold md:hidden`}>Industry descriptions</span><input maxLength={1200} aria-label={`Job ${i + 1} industry descriptions`} placeholder="Workplace mental health, SaaS" className={cell} value={job.industryDescriptions ?? ""} onChange={e => onChange(updateEmploymentIndustries(employment, job.id, e.target.value))} /></td>
+          <td className={cellPad}><span className={`${styles.fieldLabel} mb-1 block text-12 font-semibold md:hidden`}>Job title</span><input required maxLength={160} aria-label={`Job ${i + 1} title`} className={cell} value={job.jobTitle} onChange={e => update(job.id, { jobTitle: e.target.value })} /></td>
+          <td className={cellPad}><span className={`${styles.fieldLabel} mb-1 block text-12 font-semibold md:hidden`}>Start date</span><input aria-label={`Job ${i + 1} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={cell} value={job.startDate} onChange={e => update(job.id, { startDate: e.target.value })} /></td>
+          <td className={cellPad}><span className={`${styles.fieldLabel} mb-1 block text-12 font-semibold md:hidden`}>End date</span><input disabled={job.current} aria-label={`Job ${i + 1} end date`} placeholder={job.current ? "Present" : "YYYY-MM"} pattern="[0-9]{4}(-[0-9]{2})?" className={`${cell} disabled:opacity-40`} value={job.endDate} onChange={e => update(job.id, { endDate: e.target.value })} /></td>
+          <td className={`${cellPad} text-center`}><label className="flex items-center gap-2 md:justify-center"><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /><span className={`${styles.currentLabel} text-12 md:hidden`}>Current job</span></label></td>
           <td className={`${cellPad} whitespace-nowrap text-right`}><button type="button" title="Remove job" aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg" onClick={() => remove(job)}>Remove</button></td>
         </TR>)}</tbody>
     </table></div>}

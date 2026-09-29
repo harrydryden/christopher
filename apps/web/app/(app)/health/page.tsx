@@ -2,11 +2,13 @@ import Link from "next/link";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
 import { HealthItems } from "@/components/HealthItems";
+import { HtmlScanProgressCard } from "@/components/HtmlScanProgressCard";
 import { PageHeader } from "@/components/PageHeader";
 import { ProblemScansCard, ScanRunsCard } from "@/components/ScanHealthCards";
 import { relativeTime } from "@/lib/format";
 import { workerStatusSentence } from "@/lib/worker-status";
 import { countHealthItems, getWorkerStatus, healthItems, listRecentProblemScans, listRecentScanRuns } from "@/lib/queries/health";
+import { listHtmlScanProgress } from "@/lib/queries/html-scan-progress";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { getSystemSettings } from "@/lib/settings";
 import { stageRouteWarnings } from "@/lib/stage-routes";
@@ -17,13 +19,14 @@ export const dynamic = "force-dynamic";
 export default async function HealthPage() {
   const user = await requireUser();
   const now = new Date();
-  const [items, itemCount, problemScans, scanRuns, status, system] = await Promise.all([
+  const [items, itemCount, problemScans, scanRuns, status, system, listingReads] = await Promise.all([
     healthItems(user.id, now),
     countHealthItems(user.id, now),
     listRecentProblemScans(user.id, 7),
     listRecentScanRuns(10, user.id),
     getWorkerStatus(now),
     user.role === "admin" ? getSystemSettings() : Promise.resolve(null),
+    listHtmlScanProgress(user.id),
   ]);
   // A stage the administrator routed to a model or effort no committed evaluation graded: the
   // switch is theirs, but it should follow a passing replay rather than stand in for one.
@@ -44,7 +47,7 @@ export default async function HealthPage() {
 
       <Card title={`Needs you (${itemCount})`}>
         {items.length === 0 ? (
-          <EmptyState title="Nothing needs you" description="Every company you follow is being read and your budget has room." />
+          <EmptyState title="Nothing needs you" description="No company-specific issues are recorded. Check the background worker below for monitoring status." />
         ) : (
           <div className="space-y-3">
             <HealthItems items={items} unverified={unverified} />
@@ -57,6 +60,8 @@ export default async function HealthPage() {
           </div>
         )}
       </Card>
+
+      <HtmlScanProgressCard items={listingReads} worker={status} now={now} />
 
       {routeWarnings.length > 0 && (
         <Card title={`Stage routes not evaluated (${routeWarnings.length})`}>

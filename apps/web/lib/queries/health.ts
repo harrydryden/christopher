@@ -35,6 +35,7 @@ import { accountAiBudget, budgetFromRow, budgetSelect, defaultAccountAiBudget, t
 import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
+import { interruptedHtmlRead, listHtmlScanProgress } from "@/lib/queries/html-scan-progress";
 import { ifMigrated } from "@/lib/schema-skew";
 import { deriveWorkerStatus, type ModelAccessEvent, type WorkerBreaker, type WorkerBreakerTrip, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
 import { histogramP75, VITAL_METRICS, type VitalMetric } from "@/lib/web-vitals";
@@ -1166,7 +1167,7 @@ export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanI
 import { SOURCE_FAILING_AFTER } from "@ava/core";
 export { SOURCE_FAILING_AFTER };
 
-export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "suspect_empty" | "partial" | "rediscovery";
+export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "suspect_empty" | "partial" | "incomplete_read" | "rediscovery";
 
 /** Where each kind sits in the list: what stops everything first, proposals last. */
 const KIND_ORDER: Record<HealthItemKind, number> = {
@@ -1176,8 +1177,9 @@ const KIND_ORDER: Record<HealthItemKind, number> = {
   failing: 3,
   suspect_empty: 4,
   partial: 5,
-  no_source: 6,
-  rediscovery: 7,
+  incomplete_read: 6,
+  no_source: 7,
+  rediscovery: 8,
 };
 
 export interface HealthCandidate {
@@ -1223,6 +1225,8 @@ export function healthItemHeadline(item: HealthItem): string {
       return "The careers listing unexpectedly returned no roles";
     case "partial":
       return "The careers listing was not read completely";
+    case "incomplete_read":
+      return "The careers listing read stopped before it finished";
     case "rediscovery":
       return "Discovery found another careers page";
   }
@@ -1245,6 +1249,8 @@ export function healthItemDetail(item: HealthItem): string {
       return item.reason ?? "The last complete listing had roles; this empty result cannot close them. Check this careers page.";
     case "partial":
       return item.reason ?? "Some roles may be missing from this scan. No unseen roles were closed.";
+    case "incomplete_read":
+      return "This read did not publish roles. Open the company and choose Rescan once monitoring is running.";
     case "rediscovery":
       return "A source is already scanning, so this one waits for a follower to judge it. Any of them can.";
   }
@@ -1383,6 +1389,21 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
       for (const item of found) if (item.source) item.reason = bySource.get(item.source.id) ?? null;
     }
 
+    // A failed or expired page read has no scan row to put it in the ordinary partial list.
+    // Give it one actionable company item, unless another source issue already owns that row.
+    const shownCompanies = new Set(found.map(item => item.company?.id));
+    for (const read of await listHtmlScanProgress(userId)) {
+      if (!interruptedHtmlRead(read, now) || shownCompanies.has(read.companyId)) continue;
+      const source = sourceRows.find(row => row.id === read.sourceId);
+      if (!source) continue;
+      found.push({
+        key: `incomplete_read:${read.companyId}`, kind: "incomplete_read", sortName: read.companyName,
+        company: { id: read.companyId, name: read.companyName }, source,
+        runId: null, candidates: [], reason: read.taskError, budget: null,
+      });
+      shownCompanies.add(read.companyId);
+    }
+
     found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.sortName.localeCompare(b.sortName));
     for (const { sortName: _sortName, ...item } of found) items.push(item);
   }
@@ -1408,7 +1429,22 @@ const countHealthItemsForMonth = cache(async (userId: string, monthStart: number
   // One statement, one pool checkout: the attention count as a scalar beside the budget row, which
   // is the same statement `accountAiBudget` runs. Two statements side by side cost the same round
   // trip but two checkouts from a pool of six, on every full render of every page.
-  const rows = await db().execute(sql`
+  const incompleteRead = sql`or exists (
+    select 1 from career_sources s
+    join html_scan_generations g on g.source_id = s.id
+    join tasks t on t.id = g.task_id
+    where s.company_id = c.id and c.status = 'active' and s.status in ('active', 'failing')
+      and g.id = (select newest.id from html_scan_generations newest
+        where newest.source_id = s.id order by newest.started_at desc, newest.id desc limit 1)
+      and (t.status in ('failed', 'done') or g.expires_at <= now())
+      and not exists (select 1 from scans completed where completed.source_id = s.id
+        and completed.status = 'ok' and completed.finished_at > g.started_at)
+      and not exists (select 1 from tasks newer
+        where newer.type = 'scan_company' and newer.status in ('queued', 'running')
+          and newer.created_at > t.created_at and newer.payload->>'companyId' = c.id::text
+          and (newer.payload->'sourceIds' is null or newer.payload->'sourceIds' ? s.id::text))
+  )`;
+  const readCount = (withContinuation: boolean) => db().execute(sql`
     select budget.*, (
       select count(*)::int
       from company_subscriptions cs
@@ -1429,9 +1465,13 @@ const countHealthItemsForMonth = cache(async (userId: string, monthStart: number
               and jsonb_array_length(r.candidates) > 0
               and r.started_at = (select max(r2.started_at) from discovery_runs r2 where r2.company_id = c.id)
           )
+          ${withContinuation ? incompleteRead : sql``}
         )
     ) as attention
     from (${budgetSelect([userId], month)}) budget`);
+  // Interface and worker can deploy separately; until 0047 exists, the older attention count
+  // remains available. Other database errors still surface.
+  const rows = await ifMigrated(() => readCount(true), () => readCount(false));
   const row = rows.rows[0] as unknown as (BudgetRow & { attention: number }) | undefined;
   const budget = row ? await budgetFromRow(row, month) : defaultAccountAiBudget(month);
   return Number(row?.attention ?? 0) + (budget.spentUsd >= budget.limitUsd ? 1 : 0);

@@ -121,6 +121,10 @@ it("re-evaluates and re-scores only when a save changes the gate", async () => {
 
 it("queues one re-evaluation when accepting a suggestion widens a large account's gate", async () => {
   await followedPostings(member.user.id, 501);
+  // Suggestion acceptance widens a choice the account already made; it cannot activate defaults.
+  await database.insert(schema.userSettings).values({ userId: member.user.id, key: "gate", value: {
+    includeKeywords: ["operations"], seniorityKeywords: [], excludeKeywords: [], locationTerms: [], includeRemote: true, matchFields: ["title"],
+  } });
   const [suggestion] = await database.insert(schema.filterSuggestions)
     .values({ userId: member.user.id, type: "keyword_include", value: { term: "chief of staff" }, rationale: "" }).returning();
   expect(await acceptFilterSuggestionWithReport(suggestion!.id)).toMatchObject({ ok: true });

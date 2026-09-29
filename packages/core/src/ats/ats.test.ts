@@ -3,7 +3,7 @@ import { createFakeFetchContext } from "../testing";
 import * as fx from "../fixtures";
 import { adapters, descriptionsFetchedPerPosting, fetchDescriptionFor, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { extractJsonLdPostings } from "./jsonld";
-import { advertisedDistinctJobTotal, applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, hasListingExpansionControl, hasUnfollowableListingContinuation, isExplicitEmptyListing, nextListingPage, validateRecipe } from "./html";
+import { advertisedDistinctJobTotal, applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, hasListingExpansionControl, hasUnfollowableListingContinuation, isExplicitEmptyListing, nextListingPage, validateRecipe, visibleListingScopeRestriction } from "./html";
 import { IncompleteListingError, type FetchContext, type HtmlRecipe, type SourceFetchError, type SourceSpec } from "../types";
 import { INLINE_DESCRIPTIONS_MAX_BYTES } from "./common";
 
@@ -590,6 +590,17 @@ describe("HTML extraction", () => {
     expect(isExplicitEmptyListing('<nav><div class="jobs-empty">Sorry, we don\u2019t have any job openings right now.</div></nav>', "https://www.acme.example/jobs")).toBe(false);
     expect(isExplicitEmptyListing('<footer><div class="jobs-empty">Sorry, we don\u2019t have any job openings right now.</div></footer>', "https://www.acme.example/jobs")).toBe(false);
     expect(isExplicitEmptyListing('<main><div class="jobs-empty">Sorry, we don\u2019t have any job openings right now.</div><a href="/all-jobs">View all jobs</a></main>', "https://www.acme.example/careers")).toBe(false);
+  });
+  it("does not call a visibly filtered empty board globally empty", () => {
+    const empty = '<div class="jobs-empty">There are currently no positions.</div>';
+    const options = '<div class="job-filter"><select><option value="">All offices</option><option value="london">London</option></select><input type="checkbox" name="team" value="design"><input type="hidden" value="csrf-token"></div>';
+    const selected = '<div class="job-filter"><select><option value="">All offices</option><option value="london" selected>London</option></select></div>';
+    expect(visibleListingScopeRestriction(`<main>${options}${empty}</main>`)).toBeUndefined();
+    expect(visibleListingScopeRestriction(`<main><div class="job-filter"><div class="sort-order"><select><option value="latest" selected>Most recent</option></select></div></div>${empty}</main>`)).toBeUndefined();
+    expect(isExplicitEmptyListing(`<main>${options}${empty}</main>`, "https://www.acme.example/jobs")).toBe(true);
+    expect(visibleListingScopeRestriction(`<main>${selected}${empty}</main>`)).toBe("london");
+    expect(isExplicitEmptyListing(`<main>${selected}${empty}</main>`, "https://www.acme.example/jobs")).toBe(false);
+    expect(visibleListingScopeRestriction(`<main><div class="job-filter"><input type="checkbox" checked value="design"></div>${empty}</main>`)).toBe("design");
   });
   const url = "https://www.acme.example/careers/jobs";
   it("finds job links and ignores navigation", () => {

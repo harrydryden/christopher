@@ -147,6 +147,16 @@ async function pollTask(): Promise<Task> {
 const succeeded = (customId: string, score = 72): AiBatchResultLike => ({ custom_id: customId, result: { type: "succeeded", message: answer(score) } });
 
 describe("the collector", () => {
+  it("finishes a queued batch role as AI unavailable when no model is configured", async () => {
+    const job = await seedRole(alice);
+    await queueScore(alice, job.id);
+    const task = await collectorTask();
+    const noAi = { ...deps, ai: { ...deps.ai, enabled: false } } as unknown as WorkerDeps;
+    expect(await handleCollectScoreBatch(task, noAi)).toMatchObject({ done: 1, collected: 1 });
+    expect(await viewOf(alice, job.id)).toMatchObject({ scoreState: "unavailable", fitScore: null });
+    expect(provider.sent).toHaveLength(0);
+  });
+
   it("gathers every queued role into one batch, names each by task, account and role, and holds each account's share", async () => {
     const [a1, a2, b1] = [await seedRole(alice), await seedRole(alice, { title: "Head of Operations" }), await seedRole(bob)];
     const tasks = [await queueScore(alice, a1.id), await queueScore(alice, a2.id), await queueScore(bob, b1.id)];

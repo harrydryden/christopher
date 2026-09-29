@@ -1,0 +1,7 @@
+# CV publication progress timestamp: verification correction
+
+On 29 September 2026, the frozen full worker run passed 714 of 715 tests. Its sole failure was `cv-tailoring.test.ts`'s baseline-to-improvement case: it compared a stored `cv_drafts.progress_at` of `1790698797128` with the publish step's `finished_at` of `1790698797118` and required the first to be earlier. Those timestamps come from different clocks. The worker writes progress with `deps.now()` (JavaScript `Date`), while the step ledger writes `finished_at` with PostgreSQL `now()` inside the publication transaction. A ten-millisecond ordering between them does not prove that optional improvement moved the published draft's progress marker.
+
+The test now captures the baseline's **stored** `progress_at` when the optional improvement's model call begins, after the baseline has published, and requires the same stored value after the revision is adopted. This tests the intended invariant directly, without a timestamp tolerance or production-code change. The fixture callback is used only by this case.
+
+The complete `cv-tailoring.test.ts` file passed **22/22** against the dedicated local `ava_cv_progress_review` database on port 55439, and `pnpm --filter @ava/worker typecheck` passed. These focused results correct the invalid assertion; they do not relabel the earlier full worker run as a clean 715/715 pass. No live provider call or application service was started.

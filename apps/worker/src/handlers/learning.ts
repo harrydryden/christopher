@@ -116,7 +116,7 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   // skips this role, and the task finishes done rather than failing at the hold and retrying.
   const scoreStop = await aiBudgetStop(deps, userId);
   if (scoreStop) {
-    await markScoreState(deps, userId, jobId, "budget");
+    await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : "budget");
     return { done: { skipped: scoreStop } };
   }
 

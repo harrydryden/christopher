@@ -70,6 +70,24 @@ export function hasListingExpansionControl(html: string, pageUrl: string): boole
   return false;
 }
 
+/** A selected job-listing filter, excluding unchecked choices and unrelated navigation controls. */
+export function visibleListingScopeRestriction(html: string): string | undefined {
+  const $ = cheerio.load(html);
+  const regions = $("main [class*='job-filter' i], main [class*='role-filter' i], main [class*='search-filter' i], main [data-testid*='job-filter' i], main [data-testid*='role-filter' i], main [id*='job-filter' i]");
+  for (const region of regions.toArray().slice(0, 20)) {
+    const node = $(region);
+    if (node.closest("[hidden], [aria-hidden='true']").length) continue;
+    for (const control of node.find("option[selected], [aria-pressed='true'], [aria-selected='true'], input[type='checkbox'][checked], input[type='radio'][checked], input[type='text'][value], input[type='search'][value]").toArray().slice(0, 30)) {
+      const selected = $(control);
+      if (selected.closest("[hidden], [aria-hidden='true']").length) continue;
+      if (selected.closest("[class*='sort' i], [id*='sort' i], [class*='locale' i], [id*='locale' i], [class*='language' i]").length) continue;
+      const value = (selected.attr("value") ?? selected.text()).replace(/\s+/g, " ").trim();
+      if (value && !/^(?:all|any|all jobs|all roles|all locations|all teams|all departments|select)$/i.test(value)) return value.slice(0, 80);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Prove that an unfiltered, first-party listing is intentionally empty. The page shape and scoped
  * statement are both required; a passing phrase in navigation, a footer, an archive or a filtered
@@ -83,6 +101,7 @@ export function isExplicitEmptyListing(html: string, url: string): boolean {
     return false;
   }
   if (parsed.search) return false;
+  if (visibleListingScopeRestriction(html)) return false;
   const lastSegment = parsed.pathname.split("/").filter(Boolean).at(-1) ?? "";
   if (!/^(?:careers?|jobs?|open-roles?|openings?|positions?|vacancies)$/i.test(lastSegment)) return false;
 

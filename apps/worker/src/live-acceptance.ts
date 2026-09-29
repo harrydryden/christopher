@@ -8,7 +8,7 @@ export interface LiveAcceptanceCase {
   id: string;
   company: string;
   homepageUrl: string;
-  expectedSource: { type: SourceType; url: string; equivalentUrls?: string[] };
+  expectedSource: { type: SourceType; url: string; equivalentUrls?: string[]; equivalentSources?: Array<{ type: SourceType; url: string }> };
   /** Null means no independent human count exists. It must never be treated as a passing label. */
   expectedRoleCount: number | null;
   labelStatus: "source_independently_checked" | "unverified";
@@ -27,8 +27,13 @@ export interface LiveAcceptanceResult {
     outcome: "resolved" | "needs_confirmation" | "not_found" | "error";
     observedType?: SourceType;
     observedUrl?: string;
+    method?: string;
+    evidence?: string[];
     confidence?: number;
     fetches?: number;
+    verifications?: number;
+    maxFetches?: number;
+    maxDurationMs?: number;
     sourceMatchesLabel: boolean | null;
     error?: string;
     errorCode?: "discovery_error";
@@ -81,6 +86,20 @@ export interface LiveAcceptanceMetrics {
 
 export type LiveAcceptanceVerdict = "pass" | "fail" | "blocked";
 
+export const DIAGNOSTIC_DISCOVERY_MAX_FETCHES = 16;
+export const DIAGNOSTIC_DISCOVERY_MAX_DURATION_MS = 45_000;
+
+export function resolveLiveAcceptanceDiscoveryBudget(raw?: string): { mode: "diagnostic" | "production"; maxFetches: number; maxDurationMs: number } {
+  if (raw === undefined || raw === "diagnostic") return {
+    mode: "diagnostic", maxFetches: DIAGNOSTIC_DISCOVERY_MAX_FETCHES, maxDurationMs: DIAGNOSTIC_DISCOVERY_MAX_DURATION_MS,
+  };
+  if (raw === "production") return {
+    mode: "production", maxFetches: discovery.DEFAULT_DISCOVERY_MAX_FETCHES,
+    maxDurationMs: discovery.DEFAULT_DISCOVERY_MAX_DURATION_MS,
+  };
+  throw new Error("--discovery-budget must be diagnostic or production");
+}
+
 export function resolveLiveAcceptanceConcurrency(raw: string | undefined, browserEnabled: boolean, aiEnabled: boolean): { value: number; source: "explicit" | "production_serial_default" | "http_default" } {
   if (raw !== undefined) {
     const value = Number.parseInt(raw, 10);
@@ -97,15 +116,50 @@ function normaliseSourceUrl(value: string): string {
   return canonicalPostingIdentity(value);
 }
 
-export function sourceMatches(expected: LiveAcceptanceCase["expectedSource"], actual?: SourceSpec): boolean {
-  if (!actual || actual.type !== expected.type) return false;
-  const expectedSpec = ats.specFromAnyUrl(expected.url);
-  if (expectedSpec?.atsSlug && actual.atsSlug) {
-    return expectedSpec.atsSlug.toLowerCase() === actual.atsSlug.toLowerCase()
-      && (expectedSpec.atsSite ?? "").toLowerCase() === (actual.atsSite ?? "").toLowerCase();
+/** An explicitly labelled vendor alternative names one complete board, never a role or filter. */
+function canonicalBoardUrls(type: SourceType, url: string): string[] {
+  const spec = ats.specFromAnyUrl(url);
+  if (!spec || spec.type !== type || !spec.atsSlug) return [];
+  if (type === "greenhouse") {
+    const canonical = new URL(spec.url);
+    const legacy = new URL(canonical);
+    legacy.hostname = canonical.hostname.replace(/^job-boards\./, "boards.");
+    return [canonical.toString(), legacy.toString(), spec.apiUrl!].map(normaliseSourceUrl);
   }
-  return [expected.url, ...(expected.equivalentUrls ?? [])]
-    .some(url => normaliseSourceUrl(url) === normaliseSourceUrl(actual.url));
+  if (type === "ashby") {
+    const api = new URL(spec.apiUrl!);
+    api.search = "";
+    return [spec.url, api.toString(), spec.apiUrl!].map(normaliseSourceUrl);
+  }
+  return [normaliseSourceUrl(spec.url)];
+}
+
+function matchesTypedAlternative(expected: { type: SourceType; url: string }, actual: SourceSpec): boolean {
+  if (actual.type !== expected.type) return false;
+  const labelled = ats.specFromAnyUrl(expected.url);
+  const observed = ats.specFromAnyUrl(actual.url);
+  if (!labelled || !observed || labelled.type !== expected.type || observed.type !== expected.type) {
+    return normaliseSourceUrl(expected.url) === normaliseSourceUrl(actual.url);
+  }
+  if ((labelled.atsSlug ?? "").toLowerCase() !== (observed.atsSlug ?? "").toLowerCase()
+    || (labelled.atsSite ?? "").toLowerCase() !== (observed.atsSite ?? "").toLowerCase()
+    || (actual.atsSlug && actual.atsSlug.toLowerCase() !== observed.atsSlug?.toLowerCase())
+    || (actual.atsSite && actual.atsSite.toLowerCase() !== (observed.atsSite ?? "").toLowerCase())) return false;
+  const boardUrls = canonicalBoardUrls(expected.type, expected.url);
+  return boardUrls.includes(normaliseSourceUrl(expected.url)) && boardUrls.includes(normaliseSourceUrl(actual.url));
+}
+
+export function sourceMatches(expected: LiveAcceptanceCase["expectedSource"], actual?: SourceSpec): boolean {
+  if (!actual) return false;
+  if (actual.type === expected.type) {
+    const expectedSpec = ats.specFromAnyUrl(expected.url);
+    if (expectedSpec?.atsSlug && actual.atsSlug
+      && expectedSpec.atsSlug.toLowerCase() === actual.atsSlug.toLowerCase()
+      && (expectedSpec.atsSite ?? "").toLowerCase() === (actual.atsSite ?? "").toLowerCase()) return true;
+    if ([expected.url, ...(expected.equivalentUrls ?? [])]
+      .some(url => normaliseSourceUrl(url) === normaliseSourceUrl(actual.url))) return true;
+  }
+  return (expected.equivalentSources ?? []).some(label => matchesTypedAlternative(label, actual));
 }
 
 export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: LiveAcceptanceResult[]): LiveAcceptanceMetrics {
@@ -197,7 +251,7 @@ function extractionErrorCode(error: unknown): NonNullable<LiveAcceptanceResult["
   return "extraction_error";
 }
 
-export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer; ai?: DiscoveryAiHooks; reference?: ReferencePostingSnapshot; referenceRawHashVerified?: boolean } = {}): Promise<LiveAcceptanceResult> {
+export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; maxDurationMs?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer; ai?: DiscoveryAiHooks; reference?: ReferencePostingSnapshot; referenceRawHashVerified?: boolean } = {}): Promise<LiveAcceptanceResult> {
   if (options.reference && options.reference.caseId !== item.id) throw new Error("Posting reference belongs to a different case");
   const started = Date.now();
   const referenceSourceMatches = options.reference ? sourceMatches(item.expectedSource,
@@ -237,15 +291,16 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
     verifySpec: (spec: SourceSpec) => ats.getAdapter(spec.type).verify(spec, fetchContext),
     extractFromHtml: ats.extractPostingsFromHtml,
     ai: options.ai,
-    maxFetches: options.maxFetches ?? 16,
-    maxDurationMs: 45_000,
+    maxFetches: options.maxFetches ?? DIAGNOSTIC_DISCOVERY_MAX_FETCHES,
+    maxDurationMs: options.maxDurationMs ?? DIAGNOSTIC_DISCOVERY_MAX_DURATION_MS,
   };
   const result: LiveAcceptanceResult = {
     id: item.id,
     company: item.company,
     startedAt: new Date(started).toISOString(),
     durationMs: 0,
-    discovery: { outcome: "error", sourceMatchesLabel: null, browserAttempts: 0, browserRenders: 0, browserUrls: [], browserFailures: [] },
+    discovery: { outcome: "error", sourceMatchesLabel: null, maxFetches: discoveryContext.maxFetches,
+      maxDurationMs: discoveryContext.maxDurationMs, browserAttempts: 0, browserRenders: 0, browserUrls: [], browserFailures: [] },
     extraction: { outcome: options.discoveryOnly ? "not_run" : "failed", countMatchesLabel: null, sample: [] },
   };
   try {
@@ -254,8 +309,13 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
       outcome: observed.outcome,
       observedType: observed.best?.spec.type,
       observedUrl: observed.best?.spec.url,
+      method: observed.best?.method,
+      evidence: observed.best?.evidence,
       confidence: observed.best?.confidence,
       fetches: observed.fetches,
+      verifications: observed.verifications,
+      maxFetches: discoveryContext.maxFetches,
+      maxDurationMs: discoveryContext.maxDurationMs,
       sourceMatchesLabel: item.labelStatus === "source_independently_checked" ? sourceMatches(item.expectedSource, observed.best?.spec) : null,
       browserAttempts,
       browserRenders,
@@ -263,7 +323,9 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
       browserFailures: [...browserFailures],
     };
   } catch (error) {
-    result.discovery = { outcome: "error", sourceMatchesLabel: null, error: (error as Error).message, errorCode: "discovery_error", browserAttempts, browserRenders, browserUrls: [...browserUrls], browserFailures: [...browserFailures] };
+    result.discovery = { outcome: "error", sourceMatchesLabel: null, error: (error as Error).message, errorCode: "discovery_error",
+      maxFetches: discoveryContext.maxFetches, maxDurationMs: discoveryContext.maxDurationMs,
+      browserAttempts, browserRenders, browserUrls: [...browserUrls], browserFailures: [...browserFailures] };
   }
   if (!options.discoveryOnly) {
     try {

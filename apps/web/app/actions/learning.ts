@@ -5,7 +5,7 @@ import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { filterSuggestions, tagVocabulary, type FilterSuggestion, type User } from "@ava/db/schema";
+import { filterSuggestions, tagVocabulary, userSettings, type FilterSuggestion, type User } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
@@ -153,6 +153,10 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
       const field = GATE_FIELD_FOR[suggestion.type];
       if (field) {
         if (extracted.kind !== "term") return fail("This suggestion has no usable term. Reject it instead.");
+        // Suggestions must not turn an untouched default gate into the account's first choice.
+        const [savedGate] = await tx.select({ key: userSettings.key }).from(userSettings)
+          .where(and(eq(userSettings.userId, user.id), eq(userSettings.key, "gate"))).limit(1);
+        if (!savedGate) return fail("Choose your keywords and locations before accepting a filter suggestion.");
         const settings = await getSettingsFor(user.id, tx as unknown as ReturnType<typeof db>);
         const before = await countRolesInTable(user.id, tx as unknown as ReturnType<typeof db>);
         await saveSettingsAndGateLocked(tx, user.id, { gate: { ...settings.gate, [field]: [...new Set([...(settings.gate[field] ?? []), extracted.term])] } });

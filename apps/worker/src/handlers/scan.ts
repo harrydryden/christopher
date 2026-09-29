@@ -270,6 +270,23 @@ function followersWithBudget(db: WorkerDeps["db"], followers: Follower[], wanted
     .map(f => ({ userId: f.userId, since: aiBudgetWindowStart(now, f.settings.aiBudgetResetAt), budgetUsd: f.settings.aiBudgetUsd })));
 }
 
+/** A scan does not queue model work that cannot run. Record why those account views remain
+ * unscored anyway, so the table never presents an indefinite "not scored yet" promise. */
+async function markUnavailableScores(db: WorkerDeps["db"], candidates: Array<{ userId: string; jobId: string }>, state: "budget" | "unavailable", now: Date): Promise<void> {
+  const unique = [...new Map(candidates.map(item => [`${item.userId}:${item.jobId}`, item])).values()];
+  for (let offset = 0; offset < unique.length; offset += 250) {
+    const pairs = unique.slice(offset, offset + 250).map(item => sql`(${item.userId}, ${item.jobId})`);
+    await db.execute(sql`update user_jobs set score_state = ${state}, score_state_at = ${now}
+      where (user_id, job_id) in (${sql.join(pairs, sql`, `)})
+        and in_table = true and archived_at is null and fit_score is null and scored_at is null
+        and (score_state is null or score_state in ('budget', 'unavailable'))
+        and exists (select 1 from jobs j where j.id = user_jobs.job_id and j.status = 'open')
+        and not exists (select 1 from decisions d where d.user_id = user_jobs.user_id
+          and d.job_id = user_jobs.job_id and d.superseded = false and d.decision = 'skip')
+        and score_state is distinct from ${state}`);
+  }
+}
+
 async function scanSource(
   deps: WorkerDeps,
   company: typeof schema.companies.$inferSelect,
@@ -993,12 +1010,13 @@ async function scanSource(
     await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" });
   }
 
-  // Scoring is per account, so the budget is asked per account: one follower with nothing left to
-  // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
-  // anyway would only fail and retry each task at the hold. Only the accounts with something to
-  // score are asked, all in one read.
+  // Scoring is per account. Leave roles visible when the model is unavailable or this account has
+  // no room, but record that reason instead of promising an indefinite pending score. Only the
+  // accounts with something to score are asked, all in one read; futile tasks are not queued.
   const scorable = deps.ai.enabled ? await followersWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
   const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
+  const unscorable = scoreQueue.filter(payload => !scorable.has(payload.userId));
+  if (unscorable.length) await markUnavailableScores(deps.db, unscorable, deps.ai.enabled ? "budget" : "unavailable", deps.now());
   await queueScoring(deps.db, scoring, deps.now());
   await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
 

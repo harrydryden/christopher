@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { liveAcceptanceVerdict, resolveLiveAcceptanceConcurrency, runLiveAcceptanceCase, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
+import { liveAcceptanceVerdict, resolveLiveAcceptanceConcurrency, resolveLiveAcceptanceDiscoveryBudget, runLiveAcceptanceCase, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
+import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
+import { discovery } from "@ava/core";
 import { compareReferencePostings, type ReferencePostingSnapshot } from "./live-acceptance-postings";
 import { createLiveAcceptanceAiBudget } from "./live-acceptance-ai";
 
@@ -40,6 +42,15 @@ describe("live acceptance reporting", () => {
     expect(() => resolveLiveAcceptanceConcurrency("4", false, false)).toThrow(/1, 2 or 3/);
   });
 
+  it("labels the legacy diagnostic crawl budget and offers the actual production defaults explicitly", () => {
+    expect(resolveLiveAcceptanceDiscoveryBudget()).toEqual({ mode: "diagnostic", maxFetches: 16, maxDurationMs: 45_000 });
+    expect(resolveLiveAcceptanceDiscoveryBudget("diagnostic")).toEqual(resolveLiveAcceptanceDiscoveryBudget());
+    expect(resolveLiveAcceptanceDiscoveryBudget("production")).toEqual({ mode: "production",
+      maxFetches: discovery.DEFAULT_DISCOVERY_MAX_FETCHES,
+      maxDurationMs: discovery.DEFAULT_DISCOVERY_MAX_DURATION_MS });
+    expect(() => resolveLiveAcceptanceDiscoveryBudget("unbounded")).toThrow(/diagnostic or production/);
+  });
+
   it("rejects unpriced AI models rather than inventing a cost ceiling", () => {
     expect(() => createLiveAcceptanceAiBudget("unknown-model", 1)).toThrow(/No checked pricing/);
   });
@@ -68,6 +79,30 @@ describe("live acceptance reporting", () => {
     expect(sourceMatches(expected, { type: "html", url: "https://a.test/jobs?location=London" })).toBe(false);
     expect(sourceMatches(expected, { type: "html", url: "https://a.test/jobs?page=2" })).toBe(false);
     expect(sourceMatches(expected, { type: "html", url: "https://a.test/jobs/?utm_source=careers#roles" })).toBe(true);
+  });
+
+  it("accepts only the reviewed Cloudflare full Greenhouse board as a typed alternative", () => {
+    const expected = LIVE_ACCEPTANCE_CASES.find(item => item.id === "cloudflare")!.expectedSource;
+    expect(sourceMatches(expected, { type: "html", url: "https://www.cloudflare.com/careers/jobs/" })).toBe(true);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://job-boards.greenhouse.io/cloudflare", atsSlug: "cloudflare" })).toBe(true);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://boards.greenhouse.io/cloudflare" })).toBe(true);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs" })).toBe(true);
+    expect(sourceMatches(expected, { type: "html", url: "https://job-boards.greenhouse.io/cloudflare" })).toBe(false);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://job-boards.greenhouse.io/other" })).toBe(false);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://boards.greenhouse.io/cloudflare/jobs/123" })).toBe(false);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs?department=Sales" })).toBe(false);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://job-boards.greenhouse.io/cloudflare", atsSlug: "other" })).toBe(false);
+  });
+
+  it("accepts only the reviewed Zapier full Ashby board as a typed alternative", () => {
+    const expected = LIVE_ACCEPTANCE_CASES.find(item => item.id === "zapier")!.expectedSource;
+    expect(sourceMatches(expected, { type: "html", url: "https://zapier.com/jobs" })).toBe(true);
+    expect(sourceMatches(expected, { type: "ashby", url: "https://jobs.ashbyhq.com/zapier", atsSlug: "zapier" })).toBe(true);
+    expect(sourceMatches(expected, { type: "ashby", url: "https://api.ashbyhq.com/posting-api/job-board/zapier" })).toBe(true);
+    expect(sourceMatches(expected, { type: "greenhouse", url: "https://jobs.ashbyhq.com/zapier" })).toBe(false);
+    expect(sourceMatches(expected, { type: "ashby", url: "https://jobs.ashbyhq.com/another-company" })).toBe(false);
+    expect(sourceMatches(expected, { type: "ashby", url: "https://jobs.ashbyhq.com/zapier/04838dc8-0efa-4fe5-b705-c99f6b3f17c6" })).toBe(false);
+    expect(sourceMatches(expected, { type: "ashby", url: "https://api.ashbyhq.com/posting-api/job-board/zapier?location=Europe" })).toBe(false);
   });
 
   it("excludes unverified labels and missing manual counts from accuracy denominators", () => {
@@ -124,6 +159,24 @@ describe("live acceptance reporting", () => {
     expect(observed.discovery.browserRenders).toBe(1);
     expect(observed.discovery.browserAttempts).toBe(1);
     expect(observed.discovery.browserUrls).toEqual(["https://a.test/"]);
+  });
+
+  it("preserves the chosen source's method, evidence and effective per-case crawl limits", async () => {
+    const home = "https://www.acme.example/";
+    const jobs = "https://www.acme.example/jobs";
+    const fetcher = { fetchText: async (url: string) => ({ url, status: 200, headers: {},
+      body: url === home
+        ? '<html><head><title>Acme Robotics</title></head><body><a href="/jobs">Jobs</a></body></html>'
+        : url === jobs
+          ? '<main><h1>Current job openings</h1><div class="jobs"><p>Sorry, we don\'t have any job openings right now.</p></div></main>'
+          : "not found" }),
+    fetchBytes: async () => { throw new Error("unused"); } };
+    const observed = await runLiveAcceptanceCase({ ...labelled, homepageUrl: home,
+      expectedSource: { type: "html", url: jobs } },
+    { discoveryOnly: true, maxFetches: 40, maxDurationMs: 120_000, fetcher: fetcher as never });
+    expect(observed.discovery).toMatchObject({ outcome: "resolved", observedType: "html", observedUrl: jobs,
+      method: "listing_empty", maxFetches: 40, maxDurationMs: 120_000 });
+    expect(observed.discovery.evidence).toContain(`explicit no-openings state on ${jobs}`);
   });
 });
 

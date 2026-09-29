@@ -61,7 +61,7 @@ beforeEach(async () => {
 });
 
 const answered = (parsed_output: unknown): ParseResponse => ({ parsed_output, usage: USAGE, stop_reason: "end_turn", model: "claude-sonnet-5" });
-type ScriptOptions = { plan?: CvTailoringPlan; rejectImprovement?: boolean; failImprovement?: boolean; omitRequiredEntryOnImprovement?: boolean };
+type ScriptOptions = { plan?: CvTailoringPlan; rejectImprovement?: boolean; failImprovement?: boolean; omitRequiredEntryOnImprovement?: boolean; onImprovement?: () => Promise<void> };
 
 function scriptedClient(options: ScriptOptions = {}) {
   const calls: string[] = [];
@@ -104,6 +104,7 @@ function scriptedClient(options: ScriptOptions = {}) {
     calls.push(improving ? "improvement" : "author");
     authorInputs.push(input);
     authors++;
+    if (improving) await options.onImprovement?.();
     if (options.failImprovement && improving) throw new Error("optional writer unavailable");
     const improved = improving;
     return answered({
@@ -155,8 +156,13 @@ it("a completed quiz reuses its semantic plan, skips another pause and passes pr
 });
 
 it("publishes the baseline first, then adopts one verified improvement as a new revision of the same chain", async () => {
-  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  let draftId = "";
+  let progressAtWhenImprovementStarted: number | null | undefined;
+  const scripted = scriptedClient({ onImprovement: async () => {
+    progressAtWhenImprovementStarted = (await draftAfter(draftId)).progressAt?.getTime() ?? null;
+  } }); deps.aiClient = scripted.client;
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  draftId = draft.id;
   await queue().drain();
   // The baseline is the CV that was published first, and it keeps the wording it was published with.
   const baseline = await draftAfter(draft.id);
@@ -190,9 +196,10 @@ it("publishes the baseline first, then adopts one verified improvement as a new 
   expect(adopt.detail).toMatchObject({ draftId: revision!.id, revisionId: revision!.id, revision: 2, version: expect.any(Number) });
   expect(adopt.detail.label).toBe(adopt.detail.name);
   expect(adopt.detail.name).toMatch(/^\d\d-[A-Z][a-z]{2}-V\d+$/);
-  // Once published, nothing the build did moved the baseline's last moment of progress.
-  const publishedAt = steps.find(step => step.motion === "publish")!.finishedAt!;
-  expect(baseline.progressAt!.getTime()).toBeLessThanOrEqual(publishedAt.getTime());
+  // The optional pass must not move the published baseline's progress marker. Compare the stored
+  // value itself: the worker's clock and PostgreSQL's step timestamps can differ by milliseconds.
+  expect(progressAtWhenImprovementStarted).toEqual(expect.any(Number));
+  expect(baseline.progressAt!.getTime()).toBe(progressAtWhenImprovementStarted);
   expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
 });
 

@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { validateReferenceSnapshot, type ReferencePostingSnapshot } from "./live-acceptance-postings";
 import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
-import { resolveLiveAcceptanceConcurrency, runLiveAcceptanceCase, summariseLiveAcceptance, liveAcceptanceVerdict, type LiveAcceptanceResult } from "./live-acceptance";
+import { resolveLiveAcceptanceConcurrency, resolveLiveAcceptanceDiscoveryBudget, runLiveAcceptanceCase, summariseLiveAcceptance, liveAcceptanceVerdict, type LiveAcceptanceResult } from "./live-acceptance";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import { BrowserRenderer } from "./browser";
 import { createAiEngine, type AiUsageRecord } from "@ava/ai";
@@ -22,6 +22,9 @@ async function main() {
   if (!Number.isInteger(limit) || limit < 1 || limit > LIVE_ACCEPTANCE_CASES.length) throw new Error(`--limit must be 1-${LIVE_ACCEPTANCE_CASES.length}`);
   const ids = valueAfter(args, "--ids")?.split(",").map(v => v.trim()).filter(Boolean);
   const discoveryOnly = args.includes("--discovery-only");
+  const discoveryBudgetRaw = valueAfter(args, "--discovery-budget");
+  if (args.includes("--discovery-budget") && !discoveryBudgetRaw) throw new Error("--discovery-budget requires diagnostic or production");
+  const discoveryBudget = resolveLiveAcceptanceDiscoveryBudget(discoveryBudgetRaw);
   const browserEnabled = args.includes("--browser");
   const aiEnabled = args.includes("--ai");
   const aiCapRaw = valueAfter(args, "--ai-max-usd");
@@ -89,7 +92,9 @@ async function main() {
         chooseCareersLinks: async (input: Parameters<typeof ai.chooseCareersLinks>[0]) => (await ai.chooseCareersLinks(input, { refType: "live_acceptance_case", refId: item.id })) ?? [],
         classifyPage: async (input: Parameters<typeof ai.classifyPage>[0]) => (await ai.classifyPage(input, { refType: "live_acceptance_case", refId: item.id })) ?? { kind: "other" as const, confidence: 0 },
       } : undefined;
-      const result = await runLiveAcceptanceCase(item, { discoveryOnly, fetcher, browser, ai: hooks, reference: references.get(item.id), referenceRawHashVerified: Boolean(references.get(item.id)?.rawPath) });
+      const result = await runLiveAcceptanceCase(item, { discoveryOnly, fetcher, browser, ai: hooks,
+        maxFetches: discoveryBudget.maxFetches, maxDurationMs: discoveryBudget.maxDurationMs,
+        reference: references.get(item.id), referenceRawHashVerified: Boolean(references.get(item.id)?.rawPath) });
       results[index] = result;
     }
   });
@@ -104,12 +109,18 @@ async function main() {
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     mode: discoveryOnly ? "discovery_only" : "discovery_and_extraction",
+    discoveryBudget: {
+      ...discoveryBudget,
+      note: discoveryBudget.mode === "diagnostic"
+        ? "Legacy bounded 16-fetch/45-second diagnostic for comparison with earlier reports; this is not the production discovery crawl budget."
+        : "Matches the production discovery crawl defaults of 40 fetches and 120 seconds per case; the worker task has its own deadline.",
+    },
     concurrency: {
       cases: concurrency.value,
       source: concurrency.source,
       productionShape: concurrency.value === 1,
       note: concurrency.value === 1
-        ? "Serial case execution avoids charging a case's 45-second discovery budget for time queued behind the shared browser or AI lane."
+        ? `Serial case execution avoids charging a case's ${discoveryBudget.maxDurationMs / 1000}-second discovery budget for time queued behind the shared browser or AI lane; productionShape describes concurrency only.`
         : "Concurrent case execution is a stress diagnostic; shared browser queue wait counts inside each case's discovery budget.",
     },
     browser: browserEnabled ? { enabled: true, implementation: "BrowserRenderer", aiEnabled } : { enabled: false, skipCode: "browser_not_requested", aiEnabled },

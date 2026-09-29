@@ -75,14 +75,15 @@ describe("role tabs", () => {
     expect(roleTabFor({ view: ["archived"] })).toBe("user-dismissed");
   });
 
-  it("opens on Matched, and on Shortlisted when this scope has nothing matched", () => {
+  it("opens on Matched when both live tabs are empty, and on a populated Shortlisted tab", () => {
     const counts: Record<RoleStatus, number> = { "auto-matched": 3, "user-shortlisted": 2, "user-dismissed": 1, archived: 4 };
     expect(resolveRoleView({}, counts)).toBe("auto-matched");
     expect(resolveRoleView({}, { ...counts, "auto-matched": 0 })).toBe("user-shortlisted");
-    // Counts a caller has not taken are zero, never a reason to open on an empty Matched.
-    expect(resolveRoleView({}, {})).toBe("user-shortlisted");
+    expect(resolveRoleView({}, {})).toBe("auto-matched");
+    expect(resolveRoleView({}, { "auto-matched": 0, "user-shortlisted": 0, archived: 17 })).toBe("auto-matched");
     // A link that names a view is answered whatever the counts say.
     expect(resolveRoleView({ view: "user-dismissed" }, counts)).toBe("user-dismissed");
+    expect(resolveRoleView({ view: "user-shortlisted" }, { "auto-matched": 0, "user-shortlisted": 0 })).toBe("user-shortlisted");
     expect(resolveRoleView({ archive: "1" }, { ...counts, "auto-matched": 0 })).toBe("user-dismissed");
   });
 
@@ -251,6 +252,7 @@ describe("what a blank score means", () => {
     expect(scoreStateText({ fitScore: null, scoreState: "queued", scoreStateAt: null }, now)).toBe("not scored yet");
 
     expect(scoreStateText({ fitScore: null, scoreState: "budget", scoreStateAt: now }, now)).toBe("not scored: budget spent");
+    expect(scoreStateText({ fitScore: null, scoreState: "unavailable", scoreStateAt: now }, now)).toBe("AI scoring unavailable; review manually");
     expect(scoreStateText({ fitScore: null, scoreState: "closed", scoreStateAt: now }, now)).toBe("closed");
     expect(scoreStateText({ fitScore: null, scoreState: "ineligible", scoreStateAt: now }, now)).toBe("not scored: outside your filters");
     // Rows from before the column existed have nothing recorded, which is not the same as waiting.

@@ -1,0 +1,80 @@
+{
+  "baselineCommit": "d798ccf",
+  "discoveryBundle": "git archive d798ccf packages/core/src, esbuild bundle discovery/index.ts",
+  "crawlLimits": {
+    "maxFetches": 40,
+    "maxDurationMs": 120000,
+    "taskDeadlineMs": 300000
+  },
+  "browser": true,
+  "ai": false,
+  "qualification": "Four-case diagnostic at production crawl budgets; not a whole-corpus gate or independent posting qualification.",
+  "results": [
+    {
+      "id": "datadog",
+      "startedAt": "2026-09-29T15:31:41.493Z",
+      "finishedAt": "2026-09-29T15:32:59.415Z",
+      "outcome": "needs_confirmation",
+      "url": "https://careers.datadoghq.com/all-jobs/",
+      "type": "html",
+      "method": "landing",
+      "confidence": 0.5,
+      "sourceMatchesLabel": true,
+      "fetches": 35,
+      "verifications": 3,
+      "durationMs": 77921,
+      "renders": 0
+    },
+    {
+      "id": "cloudflare",
+      "startedAt": "2026-09-29T15:32:59.416Z",
+      "finishedAt": "2026-09-29T15:34:19.954Z",
+      "outcome": "needs_confirmation",
+      "url": "https://job-boards.greenhouse.io/cloudflare",
+      "type": "greenhouse",
+      "method": "ats_guess",
+      "confidence": 0.7,
+      "sourceMatchesLabel": false,
+      "fetches": 29,
+      "verifications": 1,
+      "durationMs": 80538,
+      "renders": 0
+    },
+    {
+      "id": "zapier",
+      "startedAt": "2026-09-29T15:34:19.955Z",
+      "finishedAt": "2026-09-29T15:35:39.084Z",
+      "outcome": "needs_confirmation",
+      "url": "https://jobs.ashbyhq.com/zapier",
+      "type": "ashby",
+      "method": "ats_guess",
+      "confidence": 0.7,
+      "sourceMatchesLabel": false,
+      "fetches": 33,
+      "verifications": 3,
+      "durationMs": 79129,
+      "renders": 0
+    },
+    {
+      "id": "siemens",
+      "startedAt": "2026-09-29T15:35:39.086Z",
+      "finishedAt": "2026-09-29T15:37:39.118Z",
+      "outcome": "needs_confirmation",
+      "url": "https://jobs.siemens.com/en_US/externaljobs",
+      "type": "html",
+      "method": "landing",
+      "confidence": 0.5,
+      "sourceMatchesLabel": false,
+      "fetches": 35,
+      "verifications": 0,
+      "durationMs": 120032,
+      "renders": 0
+    }
+  ],
+  "provenance": {
+    "baselineCommit": "d798ccf",
+    "bundleSha256": "56bb51830f8f3d37011b7238deac68ab3354ff4fb73c0eb6c04224fb8109c289",
+    "probeSha256": "ade194b002792ab219f9d856f65bc3571f6770fc5def6c9d0fd8d52c14bdb82f",
+    "importsNote": "Baseline discovery bundled from git archive; production fetcher/browser/ATS modules loaded at run start before the subsequent selected-filter helper edits. Four cases run serially, no AI."
+  }
+}

@@ -710,8 +710,9 @@ describe("discovery: other shapes", () => {
     });
     const result = await discoverCareersSources("https://www.acme.example/", ctx);
     expect(result.best?.companyName).toBe("Zebra Logistics");
-    // 0.95 base for ats_link, +0.02 for a second corroborating method, -0.15 for the name mismatch.
-    expect(result.best?.confidence).toBeCloseTo(0.82, 2);
+    // Distinct corroborating methods may lift the score, but a named identity mismatch is capped
+    // below automatic acceptance even when several methods found the same wrong-company board.
+    expect(result.best?.confidence).toBeCloseTo(0.84, 2);
     expect(result.outcome).toBe("needs_confirmation");
   });
 });
@@ -748,6 +749,18 @@ describe("probeUrlAsSource", () => {
     expect(result.outcome).toBe("resolved");
     expect(result.best?.spec.type).toBe("html");
     expect(result.best?.method).toBe("pasted_listing");
+  });
+
+  it("uses the rendered destination and its selected scope for a pasted listing", async () => {
+    const url = "https://www.acme.example/jobs";
+    const filtered = `${url}?office=london`;
+    const roles = fx.LISTING_PAGE_HTML.replace(/job-boards\.greenhouse\.io\/acme\/jobs/g, "www.acme.example/jobs");
+    const ctx = createFakeDiscoveryContext({ routes: { [url]: { body: '<main><div id="jobs"></div></main>' } },
+      renders: { [url]: { html: roles, finalUrl: filtered } } });
+    const result = await probeUrlAsSource(url, ctx);
+    expect(result.best?.spec.url).toBe(filtered);
+    expect(result.best?.confidence).toBe(0.5);
+    expect(result.outcome).toBe("needs_confirmation");
   });
 });
 

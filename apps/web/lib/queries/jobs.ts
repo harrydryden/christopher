@@ -318,6 +318,8 @@ export function scoreStateText(
     }
     case "budget":
       return "not scored: budget spent";
+    case "unavailable":
+      return "AI scoring unavailable; review manually";
     case "closed":
       return "closed";
     // The handler's own words: the role neither matches your filters nor is shortlisted, so it was

@@ -32,7 +32,7 @@ export function GateSetup({
     <div id={id}>
       <Card title={title}>
         <p className="mb-3 text-14 text-muted">{GATE_SENTENCE}</p>
-        <SettingsForm action={saveGate} submitLabel={chosen ? "Save" : "Save filters"}>
+        <SettingsForm action={saveGate} submitLabel={chosen ? "Save" : "Save filters"} successMessage="Filters saved.">
           <label className={fieldClass}>
             <span className={labelClass}>Include keywords</span>
             <textarea

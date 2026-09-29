@@ -6,7 +6,9 @@ Astra coordinated the state model, integration and final judgement. Three Sol wo
 
 **Subsequent development checkpoint:** [Source reliability follow-up](SOURCE-RELIABILITY-FOLLOWUP.md) records further discovery, pagination, cache and false-completeness repairs, including defects exposed by independent review. Its new observations supersede the earlier extraction-completion interpretation below; historical run files remain unchanged. Independent review corrects J2 completeness from 4.5 to 4 and readiness from 80 to 77: the observed coverage makes the earlier completeness judgement too optimistic. Other scores remain unchanged; no 90-point acceptance gate is certified.
 
-**Latest development checkpoint:** [Continuation and enlarged-text verification](CONTINUATION-UX-VERIFICATION.md) records durable HTTP pagination, compressed browser captures, reliable page transitions, preserved multi-location roles, truthful Health progress and keyboard/text-reflow repairs. Datadog now matches its displayed 414 jobs; Cloudflare and Stripe traverse their observed final controls. A Siemens read survives a fresh process with 80 pages staged. Independent re-review retains all scores below: these gains repair observed defects but do not yet qualify the whole source corpus, real-user task success, model output quality or hosted continuity. The exact verification scope and remaining requirements are in that checkpoint.
+**Previous development checkpoint:** [Continuation and enlarged-text verification](CONTINUATION-UX-VERIFICATION.md) records durable HTTP pagination, compressed browser captures, reliable page transitions, preserved multi-location roles, truthful Health progress and keyboard/text-reflow repairs. Datadog now matches its displayed 414 jobs; Cloudflare and Stripe traverse their observed final controls. A Siemens read survives a fresh process with 80 pages staged. Independent re-review retains all scores below: these gains repair observed defects but do not yet qualify the whole source corpus, real-user task success, model output quality or hosted continuity. The exact verification scope and remaining requirements are in that checkpoint.
+
+**Current development checkpoint:** [Discovery and first-use verification](DISCOVERY-FIRST-USE-VERIFICATION.md) records the new confidence/scope protections, deliberate first preference save, concurrent settings merge and clearer AI state. After preserving the initial failed run and independently adjudicating two exact feed aliases, the final 25-case production-budget run reaches 20/25 correct automatic sources with zero wrong automatic accepts. The source-selection threshold passes; posting extraction/recall/precision remain unqualified. A corrected cold first-use journey produces 17 matches from 40 live postings, and a stored-scan filter change verifies a truthful zero-match state and recovery. [Local restored-pair verification](LOCAL-RESTORED-PAIR-VERIFICATION.md) now proves that a logical restore can serve the web application and run the real worker, including a queued task that changes restored account data. This raises J9 robustness from 3 to 3.5, without claiming hosted recovery or release protection. The remaining scores stay unchanged: these observations narrow the gaps but do not substitute for representative user, model-quality or hosted operational evidence.
 
 ## Re-score
 
@@ -14,17 +16,17 @@ The unchanged formula is **20 × (0.30 completeness + 0.30 robustness + 0.40 UX/
 
 | Job | Baseline | Completeness | Robustness | UX/UI | Now | Target met? | What prevents 90 |
 |---|---:|---:|---:|---:|---:|---|---|
-| J1 — Get set up and reach a useful first scan | 66 | 4.5 | 4 | 4 | **83** | No | Unaided first-use and real first-scan journey, including an empty successful result |
-| J2 — Follow companies and reliably receive relevant roles | 63 | 4 | 3.5 | 4 | **77** | No | Live source gate fails; measured partial/blocked coverage and former false-complete listings limit the outcome; independent posting recall/precision and manual-resolution coverage absent |
+| J1 — Get set up and reach a useful first scan | 66 | 4.5 | 4 | 4 | **83** | No | Unaided first-use, real email confirmation and representative device/accessibility evidence; the scripted live first scan and stored-scan empty-result recovery now pass |
+| J2 — Follow companies and reliably receive relevant roles | 63 | 4 | 3.5 | 4 | **77** | No | Source-selection threshold now passes; full posting recall/precision and manual-resolution coverage remain unqualified, with partial/blocked sources still limiting the outcome |
 | J3 — Review roles and decide quickly | 79 | 4.5 | 4 | 4.25 | **85** | No | Representative rapid-review/keyboard/assistive-technology and repeat-use evidence |
 | J4 — Make the strongest honest application | 73 | 4.5 | 4 | 4 | **83** | No | Current verified provider replay, independent claim/PDF quality review and first-time CV task success |
 | J5 — Maintain a safe, reusable evidence Library | 59 | 4.5 | 4 | 4.25 | **85** | No | Representative document imports and novice evidence-editing comprehension; device/assistive-technology coverage |
 | J6 — Know application status and what is owed next | 69 | 4.5 | 4 | 4.25 | **85** | No | Realistic repeat-use, large working lists and cross-device/date usability evidence |
 | J7 — Teach AVA what I want and widen the search deliberately | 66 | 4.5 | 3.5 | 4 | **80** | No | Genuine 50-decision calibration and understandable recommendation quality; synthetic decisions cannot establish it |
 | J8 — Notice problems and recover without losing progress | 62 | 4.5 | 4 | 4 | **83** | No | Complete exception matrix across browsers, network interruption and assistive technology |
-| J9 — Keep work available through failures and releases | 60 | 3.5 | 3 | 3.5 | **67** | No | Provider promotion protection, exact-commit hosted CI/release, delivered alert and full managed restore/worker recovery |
+| J9 — Keep work available through failures and releases | 60 | 3.5 | 3.5 | 3.5 | **70** | No | Provider promotion protection, exact-commit hosted CI/release, delivered alert and full managed restore/worker recovery |
 
-Canonical mean: **83.0**, previously 68.2. All nine mean: **80.9**. These means are descriptive only; the acceptance condition remains **every job ≥90 and every dimension at or above its floor**. J2, J7 and J9 still miss dimension floors as well as the total score. No job is certified at 90.
+Canonical mean: **83.0**, previously 68.2. All nine mean: **81.2**. These means are descriptive only; the acceptance condition remains **every job ≥90 and every dimension at or above its floor**. J2, J7 and J9 still miss dimension floors as well as the total score. No job is certified at 90.
 
 The final assessment keeps the independent reviewers' conservative scores except J5 UX and J8, where the subsequent narrow-screen editing, actual two-tab conflict recovery and completed failure-path checks add evidence. The provisional reviews remain available with their original scope and timing: [CV/Library](IMPLEMENTATION-CV-REVIEW.md), [UX/applications/operations](IMPLEMENTATION-UX-REVIEW.md), [reliability](IMPLEMENTATION-RELIABILITY-REVIEW.md).
 
@@ -46,6 +48,8 @@ The final assessment keeps the independent reviewers' conservative scores except
 Migration **0046** only makes `applications.applied_on` nullable. It deliberately preserves historical dates because an old Applying row might contain a real submission date after a status reversal. New rows and edits express unknown dates honestly. All nullable consumers were updated. Any production rollout must apply migrations and retain a rollback/roll-forward plan; this work did not deploy them.
 
 ## Verification and limits
+
+The following early diagnostic results are historical. The [current checkpoint](DISCOVERY-FIRST-USE-VERIFICATION.md) records the final production-budget source-selection pass and its separate unmeasured posting gates.
 
 See [IMPLEMENTATION-VERIFICATION](IMPLEMENTATION-VERIFICATION.md) for exact commands, counts, screenshots and the distinction between local fixtures and live observations.
 

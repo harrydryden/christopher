@@ -46,9 +46,10 @@ export function ProblemScansCard({ title, rows, now, companyHref }: { title: str
 
 export function ScanRunsCard({ runs, now, companiesLabel, emptyDescription }: { runs: Awaited<ReturnType<typeof listRecentScanRuns>>; now: Date; companiesLabel: string; emptyDescription: string }) {
   return (
-    <Card title="Recent scan runs">
+    <Card title="Recent daily scan runs">
+      <p className="mb-3 text-14 text-muted">Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history.</p>
       {runs.length === 0 ? (
-        <EmptyState title="No scan runs yet" description={emptyDescription} />
+        <EmptyState title="No daily scan runs yet" description={emptyDescription} />
       ) : (
         <Table>
           <THead>

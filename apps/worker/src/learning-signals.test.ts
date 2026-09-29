@@ -132,6 +132,13 @@ it("names every outcome of a scoring attempt on the view the table reads", async
   expect(scoreJob).toHaveBeenCalledTimes(1);
 });
 
+it("records an unavailable model separately from an exhausted account budget", async () => {
+  const { job } = await seedRole();
+  expect(deps.ai.enabled).toBe(false);
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), deps)).toEqual({ skipped: "ai unavailable" });
+  expect(await viewOf(job.id)).toMatchObject({ scoreState: "unavailable", fitScore: null });
+});
+
 it("scores a role on the confirmed evidence that bears on it, bounded, never on the whole library", async () => {
   const scoreJob = vi.fn().mockResolvedValue({ score: 70, verdict: "strong", rationale: "Fits." });
   const scored = aiDeps({ scoreJob });

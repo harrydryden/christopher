@@ -1025,6 +1025,46 @@ describe("functional review regressions", () => {
     expect(tasks.some((task) => task.status === "queued")).toBe(true);
   }, 60_000);
 
+  it("labels only eligible unscored views unavailable when a scan has no AI", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true));
+    expect(views.length).toBeGreaterThanOrEqual(3);
+    expect(views.every((view) => view.scoreState === "unavailable" && view.scoreStateAt !== null)).toBe(true);
+    const beforeScoreTasks = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+    expect(beforeScoreTasks.every((task) => task.status === "done")).toBe(true);
+
+    // A score or decision arriving between scan reads and its final fan-out must not be replaced
+    // by the scan's inability to run the model. Changed listing fields make these views candidates.
+    const scored = views[0]!;
+    const decided = views[1]!;
+    const applied = views[2]!;
+    await db.update(schema.userJobs).set({ fitScore: 87, scoredAt: now, scoreState: "scored" })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, scored.jobId)));
+    await db.update(schema.userJobs).set({ scoreState: null })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, decided.jobId)));
+    await db.update(schema.userJobs).set({ scoreState: null })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, applied.jobId)));
+    const [decidedJob] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, decided.jobId));
+    const [appliedJob] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, applied.jobId));
+    await db.insert(schema.decisions).values({ userId: user.id, jobId: decided.jobId, decision: "skip",
+      reason: "Already reviewed", jobTitle: decidedJob!.title, companyName: company.name });
+    await db.insert(schema.decisions).values({ userId: user.id, jobId: applied.jobId, decision: "apply",
+      reason: "Interested", jobTitle: appliedJob!.title, companyName: company.name });
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]
+      .map((job) => ({ ...job, location: { name: `${job.location.name} refreshed` } })));
+    await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job")))
+      .toHaveLength(beforeScoreTasks.length);
+    const all = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
+    expect(all.find((view) => view.jobId === scored.jobId)).toMatchObject({ fitScore: 87, scoreState: "scored" });
+    expect(all.find((view) => view.jobId === decided.jobId)?.scoreState).toBeNull();
+    expect(all.find((view) => view.jobId === applied.jobId)?.scoreState).toBe("unavailable");
+    expect(all.filter((view) => view.inTable && view.jobId !== scored.jobId && view.jobId !== decided.jobId)
+      .every((view) => view.scoreState === "unavailable")).toBe(true);
+  }, 60_000);
+
   it("proposes an ATS migration instead of activating it silently", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
@@ -1123,7 +1163,9 @@ describe("functional review regressions", () => {
     // The scan still observes and stores everything; only this account's scoring is held back,
     // and no task was queued that could only fail at the hold.
     expect(await scoreTasks()).toHaveLength(before);
-    expect((await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true))).length).toBeGreaterThan(0);
+    const heldViews = await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true));
+    expect(heldViews.length).toBeGreaterThan(0);
+    expect(heldViews.every((view) => view.scoreState === "budget" && view.scoreStateAt !== null)).toBe(true);
     expect((await db.select().from(schema.tasks)).filter((row) => row.status === "failed")).toHaveLength(0);
 
     await budget(25);

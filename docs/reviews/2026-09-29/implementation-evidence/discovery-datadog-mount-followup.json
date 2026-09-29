@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-29T15:58:36.514Z",
+  "mode": "discovery_only",
+  "discoveryBudget": {
+    "mode": "production",
+    "maxFetches": 40,
+    "maxDurationMs": 120000,
+    "note": "Matches the production discovery crawl defaults of 40 fetches and 120 seconds per case; the worker task has its own deadline."
+  },
+  "concurrency": {
+    "cases": 1,
+    "source": "explicit",
+    "productionShape": true,
+    "note": "Serial case execution avoids charging a case's 120-second discovery budget for time queued behind the shared browser or AI lane; productionShape describes concurrency only."
+  },
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "ai": {
+    "enabled": false,
+    "skipCode": "ai_not_requested",
+    "calls": []
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "Extraction starts from each labelled source, independently of discovery. Completion is not an end-to-end success or posting-recall claim.",
+    "HTML diagnostics traverse HTTP/browser listings and reject unverified empty results; they do not exercise the worker cache, learned recipes or AI extraction recovery.",
+    "Machine-enumerated posting references produce diagnostic comparisons only; they do not qualify human-reviewed full-site recall/precision.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback is disabled; no database or account data is read or written.",
+    "No paid model request is made without --ai and an explicit --ai-max-usd cap."
+  ],
+  "scope": {
+    "selectedCaseIds": [
+      "datadog"
+    ],
+    "requiredCaseIds": [
+      "anduril",
+      "airbnb",
+      "stripe",
+      "openai",
+      "notion",
+      "anthropic",
+      "netflix",
+      "figma",
+      "datadog",
+      "cloudflare",
+      "canonical",
+      "automattic",
+      "gitlab",
+      "wise",
+      "salesforce",
+      "siemens",
+      "spotify",
+      "mozilla",
+      "basecamp",
+      "monzo",
+      "revolut",
+      "zapier",
+      "linear",
+      "vercel",
+      "render"
+    ],
+    "fullCorpusSelected": false
+  },
+  "postingReferences": null,
+  "acceptance": {
+    "verdict": "blocked",
+    "reasons": [
+      "24 required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus",
+      "1 case(s) lack an independent role-count label",
+      "1 case(s) lack a qualifying independent posting-identity snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 1,
+    "sourceMismatches": 0,
+    "labelledAutomaticMatchesAt085": 1,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 1,
+    "extractionExactCountAgreement": null,
+    "postingIdentityLabelled": 0,
+    "postingIdentityFailures": 0,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "datadog",
+        "company": "Datadog",
+        "homepageUrl": "https://www.datadoghq.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.datadoghq.com/all-jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Datadog's company-owned careers homepage explicitly links to All Jobs; that destination has its own canonical URL and is the complete searchable listing. The previous careers-root and Greenhouse candidates were landing/stale sources.",
+        "sourceEvidenceUrls": [
+          "https://careers.datadoghq.com/",
+          "https://careers.datadoghq.com/all-jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "datadog",
+        "company": "Datadog",
+        "startedAt": "2026-09-29T15:58:23.658Z",
+        "durationMs": 12843,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://careers.datadoghq.com/all-jobs/",
+          "method": "listing_html",
+          "evidence": [
+            "10 distinct postings found on https://careers.datadoghq.com/all-jobs/",
+            "via complete listing from https://careers.datadoghq.com/ via homepage link",
+            "static body sha1 e23c81990c9cb99d79e24fe31b4cb2846723ee96",
+            "rendered body sha1 bbf12c313c37ea6f93ff5db6ce9ab7399c9b7a4d",
+            "posting identities sha1 f2b8dbd381db160d44b85f79b990cd04b8e0d14a"
+          ],
+          "confidence": 0.85,
+          "fetches": 5,
+          "verifications": 0,
+          "maxFetches": 40,
+          "maxDurationMs": 120000,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://careers.datadoghq.com/all-jobs/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

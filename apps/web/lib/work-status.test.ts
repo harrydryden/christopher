@@ -20,6 +20,7 @@ let theirs: string;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { companyWorkQuery, getCompanyWorkStatus, getRolesWorkStatus } from "./work-status";
 import { recordDecisions } from "@/lib/decisions";
+import { initialWorkPoll, LONGEST_POLL_MS, stepWorkPoll } from "./polling";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -112,6 +113,53 @@ describe("getCompanyWorkStatus", () => {
     expect(await getRolesWorkStatus(a.id)).toEqual({ active: true, version: roles.version });
     await database.execute(sql`update tasks set status = 'done'`);
     expect(await getRolesWorkStatus(a.id)).toEqual({ active: false, version: roles.version });
+  });
+
+  it("keeps Roles watching this account's late score after its company scan has finished", async () => {
+    const [source] = await database.insert(schema.careerSources).values({ companyId: mine, type: "html", url: "https://mine.example/jobs" }).returning();
+    const [job] = await database.insert(schema.jobs).values({ companyId: mine, sourceId: source!.id,
+      externalKey: "score-later", title: "Engineer", normalizedTitle: "engineer", url: "https://mine.example/jobs/score-later" }).returning();
+    await database.insert(schema.userJobs).values({ userId: a.id, jobId: job!.id, keywordMatched: true, locationOk: true, inTable: true,
+      scoreState: "queued", scoreStateAt: new Date() });
+    await task("scan_company", { companyId: mine }, "done");
+    const score = await task("score_job", { userId: a.id, jobId: job!.id });
+    const before = await getRolesWorkStatus(a.id);
+    expect(before.active).toBe(true);
+    expect((await getRolesWorkStatus(b.id)).active).toBe(false);
+    expect((await status(a)).active).toBe(false); // Companies does not wait for personal scores.
+
+    await database.update(schema.userJobs).set({ fitScore: 81, scoreState: "scored", scoreStateAt: new Date(Date.now() + 60_000),
+      updatedAt: new Date(Date.now() + 60_000) }).where(eq(schema.userJobs.jobId, job!.id));
+    expect((await getRolesWorkStatus(a.id)).version).not.toBe(before.version);
+    await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, score.id));
+    expect((await getRolesWorkStatus(a.id)).active).toBe(false);
+  });
+
+  it("watches a future batch hand-off for its member without a fast unchanged poll", async () => {
+    const score = await task("score_job", { userId: a.id, jobId: "role-1" });
+    const baseline = await getRolesWorkStatus(a.id);
+    expect(baseline.active).toBe(true);
+    // Batch hand-off finishes the individual task and leaves the provider poll task pending.
+    await database.transaction(async tx => {
+      await tx.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, score.id));
+      await tx.insert(schema.tasks).values({ type: "poll_score_batch", status: "queued",
+        runAfter: new Date(Date.now() + 60 * 60_000), payload: { items: [{ userId: a.id, jobId: "role-1" }] } });
+    });
+    expect(await getRolesWorkStatus(a.id)).toEqual({ active: true, version: baseline.version });
+    expect((await getRolesWorkStatus(b.id)).active).toBe(false);
+    let poll = initialWorkPoll(baseline.version);
+    for (let i = 0; i < 8; i++) poll = stepWorkPoll(poll, { active: true, version: baseline.version }).state;
+    expect(poll.wait).toBe(LONGEST_POLL_MS);
+    await database.execute(sql`update tasks set status = 'done' where type = 'poll_score_batch'`);
+    expect((await getRolesWorkStatus(a.id)).active).toBe(false);
+  });
+
+  it("watches only the account named by a queued rescore pass", async () => {
+    await task("rescore_all", { userId: b.id, onlyInTable: true });
+    expect((await getRolesWorkStatus(a.id)).active).toBe(false);
+    expect((await getRolesWorkStatus(b.id)).active).toBe(true);
+    await task("rescore_all", {}, "queued"); // Handler skips a legacy task with no account.
+    expect((await getRolesWorkStatus(a.id)).active).toBe(false);
   });
 });
 

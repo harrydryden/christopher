@@ -25,11 +25,11 @@ export function roleStatus(job: { archivedAt?: Date | string | null; inTable: bo
 
 /**
  * Which tab a visit to the roles table opens on: Matched while there is anything new to review,
- * otherwise Shortlisted. Missing counts are treated as zero, so a caller that has not counted a
- * status yet lands on Shortlisted rather than on an empty Matched tab.
+ * Shortlisted when that is where the person's roles are, and Matched when both are empty so the
+ * first-use or no-match explanation is visible. Missing counts are treated as zero.
  */
 export function defaultRoleTab(counts: Partial<Record<RoleStatus, number>>): RoleTab {
-  return (counts["auto-matched"] ?? 0) > 0 ? "auto-matched" : "user-shortlisted";
+  return (counts["auto-matched"] ?? 0) > 0 || (counts["user-shortlisted"] ?? 0) === 0 ? "auto-matched" : "user-shortlisted";
 }
 
 // ---------------------------------------------------------------------------

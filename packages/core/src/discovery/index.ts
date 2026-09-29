@@ -11,7 +11,7 @@ export type {
   DiscoveryVerification,
   HarvestedLink,
 } from "./types";
-export { discoverCareersSources, probeUrlAsSource } from "./discover";
+export { discoverCareersSources, probeUrlAsSource, DEFAULT_DISCOVERY_MAX_FETCHES, DEFAULT_DISCOVERY_MAX_DURATION_MS } from "./discover";
 export { harvestLinks, scoreLink, CAREERS_VOCABULARY, WELL_KNOWN_PATHS } from "./links";
 export { confidenceFor, outcomeFor, AUTO_ACCEPT_CONFIDENCE, CONFIRM_CONFIDENCE } from "./confidence";
 

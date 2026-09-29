@@ -85,7 +85,18 @@ it("says so when a filter suggestion was already settled, instead of doing nothi
   await expect(acceptFilterSuggestion(suggestion!.id)).rejects.toThrow(refusal("That suggestion has already been settled."));
 });
 
+it("does not let a suggestion silently activate default filters for an unconfigured account", async () => {
+  const [suggestion] = await database.insert(schema.filterSuggestions)
+    .values({ userId: user.id, type: "keyword_include", value: { term: "strategy" }, rationale: "" }).returning();
+  expect(await acceptFilterSuggestionWithReport(suggestion!.id)).toEqual({ ok: false, error: expect.stringContaining("Choose your keywords and locations") });
+  expect(await database.select().from(schema.userSettings)).toHaveLength(0);
+  expect((await database.select().from(schema.filterSuggestions))[0]!.status).toBe("pending");
+});
+
 it("revalidates the Roles page whenever the strip above its table settles a suggestion", async () => {
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "gate", value: {
+    includeKeywords: ["operations"], seniorityKeywords: [], excludeKeywords: [], locationTerms: [], includeRemote: true, matchFields: ["title"],
+  } });
   // The strip relies on the action's own response to carry the re-rendered Roles page, which
   // Next sends only when the action revalidates.
   const revalidated = vi.mocked(revalidatePath);

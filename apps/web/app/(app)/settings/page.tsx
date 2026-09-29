@@ -8,6 +8,7 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
+import { GateSetup } from "@/components/GateSetup";
 import { ModelSelect } from "@/components/ModelSelect";
 import { inputClass as fieldClass, labelClass as fieldLabelClass, selectClass } from "@/components/Field";
 import { getSettings } from "@/lib/settings";
@@ -40,6 +41,7 @@ export default async function SettingsPage() {
         }
       />
 
+      {!gateChosen ? <GateSetup gate={null} chosen={false} title="Choose keywords and locations" id="keywords" /> : <>
       <div id="keywords">
       <Card title="Keywords">
         {/* Filters first: an account that has never saved its gate is shown the example, not the
@@ -92,6 +94,7 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
       </div>
+      </>}
 
       <div id="seed-profile">
       <Card title="What work are you looking for?">

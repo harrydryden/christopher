@@ -25,6 +25,19 @@ function companyWorkWhere(userId: string) {
   );
 }
 
+/** Scoring can finish after a company's scan has left the queue. Keep only this account's work
+ * in the Roles poll, including a provider batch after its score_job rows have been handed off. */
+function roleScoreWorkWhere(userId: string) {
+  return and(
+    inArray(tasks.status, ['queued', 'running']),
+    or(
+      and(inArray(tasks.type, ['score_job', 'rescore_all']), sql`${tasks.payload}->>'userId' = ${userId}`),
+      and(eq(tasks.type, 'poll_score_batch'),
+        sql`${tasks.payload} @> jsonb_build_object('items', jsonb_build_array(jsonb_build_object('userId', ${userId}::text)))`),
+    ),
+  );
+}
+
 /**
  * The companies pages' reading of that work: they show whether discovery is queued or running, so
  * the version moves with each task's status. Exported apart from the memoised reader so a test can
@@ -43,8 +56,11 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
 });
 
 /**
- * The Roles page's reading, in one statement: pending exactly when `getCompanyWorkStatus` is, with a
- * version that is a fingerprint of what the page shows rather than of the work behind it. A scan
+ * The Roles page's reading, in one statement: pending for company work or this account's scoring,
+ * with a version that is a fingerprint of what the page shows rather than of the work behind it.
+ * A score may arrive after its scan ends or after a queued request has moved into a provider batch;
+ * future batch waits remain active, using AutoRefresh's 10-second-to-one-minute backoff and
+ * hidden-tab pause rather than a fast loop. A scan
  * that finds nothing new for this account leaves it alone, so an open tab is not re-rendered for it;
  * one that admits, changes, scores, closes or reopens a role in the account's table moves it.
  *
@@ -59,9 +75,10 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
  * Each part reads only this account's rows, so another account's work never moves it.
  */
 export function rolesWorkQuery(userId: string) {
-  const pending = db().select({ one: sql`1` }).from(tasks).where(companyWorkWhere(userId)).limit(1);
+  const pendingCompany = db().select({ one: sql`1` }).from(tasks).where(companyWorkWhere(userId)).limit(1);
+  const pendingScore = db().select({ one: sql`1` }).from(tasks).where(roleScoreWorkWhere(userId)).limit(1);
   return db().execute<{ active: boolean; version: string }>(sql`
-    select exists (${pending}) as active,
+    select (exists (${pendingCompany}) or exists (${pendingScore})) as active,
       md5(concat_ws(':', t.n, t.closed, t.views_at, t.scores_at, t.postings_at, d.n, d.newest, s.n, s.newest)) as version
     from (
       select count(*) as n, count(*) filter (where j.status = 'closed') as closed,

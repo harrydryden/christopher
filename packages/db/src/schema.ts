@@ -57,14 +57,13 @@ export const JOB_ORIGINS = ["scan", "user"] as const;
 /**
  * Why one account's view of a posting carries the fit score it carries — or none.
  *
- * A blank score covered five different situations and the table could not tell them apart:
+ * A blank score covers several situations and the table must tell them apart:
  * waiting, scored, never scored because the posting closed first, skipped because the account had
- * nothing left to spend, and not eligible (neither in the table nor shortlisted) when the task
- * ran. The score handler already decides all five; this records which one it decided. `decided`
- * is a sixth: the account skipped or archived the role, so no score has a reader and none is asked
- * for (a reversed skip queues one).
+ * nothing left to spend or the model was unavailable, and not eligible (neither in the table nor shortlisted) when the task
+ * ran. The score handler records which one it decided. `decided` means the account skipped or
+ * archived the role, so no score has a reader and none is asked for (a reversed skip queues one).
  */
-export const SCORE_STATES = ["queued", "scored", "closed", "budget", "ineligible", "decided"] as const;
+export const SCORE_STATES = ["queued", "scored", "closed", "budget", "unavailable", "ineligible", "decided"] as const;
 export type ScoreState = (typeof SCORE_STATES)[number];
 /**
  * Column enums whose values core decides are core's own lists, re-exported: where captured logo

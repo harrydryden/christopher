@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
-import type { ReactNode } from "react";
-import type { ActionResult } from "@/lib/validation";
+import { useActionState, useEffect, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { actionError, type ActionResult } from "@/lib/validation";
 import { Button } from "@/components/Button";
 
 const INITIAL: ActionResult = { ok: true };
+type FormState = ActionResult & { submitted?: boolean; uncertain?: boolean };
 
 /**
  * Wraps a zod-validated settings section in `useActionState` so a validation error shows inline,
@@ -34,16 +35,77 @@ export function SettingsForm({
   /** Only genuine saves should acknowledge success here; queued work has its own progress UI. */
   successMessage?: string;
 }) {
-  const [state, formAction, isPending] = useActionState<ActionResult & { submitted?: boolean }, FormData>(
-    async (previous, data) => ({ ...await action(previous, data), submitted: true }), INITIAL,
+  const editVersion = useRef(0);
+  const submittedVersion = useRef(0);
+  const allowReset = useRef(false);
+  const inFlight = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [editedSinceSubmit, setEditedSinceSubmit] = useState(false);
+  const [state, formAction, isPending] = useActionState<FormState, FormData>(
+    async (previous, data) => {
+      try {
+        const result = await action(previous, data);
+        // React commits its scheduled form reset after the action settles. Permit it only for a
+        // confirmed save with no newer edits, so refreshed defaults are in place when it runs.
+        allowReset.current = result.ok && editVersion.current === submittedVersion.current;
+        return { ...result, submitted: true };
+      } catch (error) {
+        allowReset.current = false;
+        return { ...actionError(error, "We couldn't confirm whether this went through. Keep this page open; your entries are still here.", "settings_form_action_failed"), submitted: true, uncertain: true };
+      } finally {
+        inFlight.current = false;
+      }
+    }, INITIAL,
   );
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => { if (!state.ok) errorRef.current?.focus(); }, [state]);
+  useEffect(() => {
+    // CV fields can sit outside this element and still belong to it via `form={id}`.
+    // Those controls are reset with the form, so their edits must count too.
+    const edited = (event: Event) => {
+      const target = event.target;
+      if ((target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)
+        && target.form === formRef.current) markEdited();
+    };
+    document.addEventListener("input", edited, true);
+    document.addEventListener("change", edited, true);
+    // React calls `form.reset()` during its commit while its synthetic event system is disabled.
+    // A native listener is needed to stop that early reset from erasing a refused submission.
+    const form = formRef.current;
+    const reset = (event: Event) => {
+      if (!allowReset.current) event.preventDefault();
+      allowReset.current = false;
+    };
+    form?.addEventListener("reset", reset);
+    return () => {
+      document.removeEventListener("input", edited, true);
+      document.removeEventListener("change", edited, true);
+      form?.removeEventListener("reset", reset);
+    };
+  }, []);
+  function submitted(event: FormEvent<HTMLFormElement>) {
+    if (inFlight.current || isPending) {
+      event.preventDefault();
+      return;
+    }
+    inFlight.current = true;
+    submittedVersion.current = editVersion.current;
+    allowReset.current = false;
+    setEditedSinceSubmit(false);
+  }
+  function markEdited() {
+    editVersion.current += 1;
+    allowReset.current = false;
+    setEditedSinceSubmit(true);
+  }
   return (
-    <form id={id} action={formAction} aria-busy={isPending} className="flex flex-col gap-3">
+    <form ref={formRef} id={id} action={formAction} onSubmit={submitted} aria-busy={isPending} className="flex flex-col gap-3">
       {children}
-      {successMessage && state.ok && state.submitted && !isPending && <p role="status" className="text-14 text-success">{successMessage}</p>}
-      {!state.ok && <p ref={errorRef} tabIndex={-1} role="alert" className="text-14 text-danger">{state.error}</p>}
+      {successMessage && state.ok && state.submitted && !isPending && !editedSinceSubmit && <p role="status" className="text-14 text-success">{successMessage}</p>}
+      {!state.ok && <p ref={errorRef} tabIndex={-1} role="alert" className="text-14 text-danger">
+        {state.error}
+        {state.uncertain && <>{" "}<a href="" target="_blank" rel="noopener noreferrer" className="mt-1 flex min-h-11 items-center underline">Check saved work in a new tab before trying again.</a></>}
+      </p>}
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" variant="primary" size="sm" disabled={isPending || submitDisabled} aria-describedby={submitDescribedBy}>
           {isPending ? "Saving…" : submitLabel}

@@ -1,0 +1,2 @@
+gate|{"matchFields": ["title"], "includeRemote": false, "locationTerms": ["Edinburgh"], "excludeKeywords": ["interns"], "includeKeywords": ["operations"]}
+seedProfile|"I want operations roles with flexible working and supportive leadership."

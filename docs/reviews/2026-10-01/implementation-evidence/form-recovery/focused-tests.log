@@ -1,0 +1,13 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+···············
+
+ Test Files  3 passed (3)
+      Tests  15 passed (15)
+   Start at  23:22:57
+   Duration  1.64s (environment 53%, import 18%, tests 16%, transform 12%)
+
+    Isolate  3 workers spawned · ~305ms startup each (spawn + environment, per file)
+             at least ~609ms faster with isolate: false — reuses workers across files instead of one per file
+

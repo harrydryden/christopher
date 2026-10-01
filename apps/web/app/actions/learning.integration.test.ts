@@ -21,7 +21,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { revalidatePath } from "next/cache";
-import { acceptFilterSuggestion, acceptFilterSuggestionWithReport, answerOpenQuestion, rejectFilterSuggestion, savePinnedStatements, savePreferenceProfile, saveSeedProfile } from "./learning";
+import { acceptFilterSuggestion, acceptFilterSuggestionWithReport, answerOpenQuestion, answerOpenQuestionSetting, rejectFilterSuggestion, savePinnedStatements, savePinnedStatementsSetting, savePreferenceProfile, savePreferenceProfileSetting, saveSeedProfile, saveSeedProfileSetting } from "./learning";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -55,12 +55,41 @@ it("sends a save from a page opened before the worker wrote a new version back w
   await profileWithQuestion();
   // The worker synthesised version 2 while the page still showed version 1.
   await database.insert(schema.preferenceProfiles).values({ userId: user.id, version: 2, markdown: "Operations, remote", pinnedStatements: [], openQuestions: [{ id: "q1", question: "Is remote work essential?" }], sourceDecisionCount: 5, model: "test" });
-  const stale = "Your preference profile changed since this page loaded, often because a new version was synthesised. Reload Learning and make the change again.";
+  const stale = "Your preference profile changed since this page loaded. Your edits are still here. Open the latest profile in a new tab, compare it with this draft and copy across the changes you want to keep.";
   await expect(savePinnedStatements(form({ pinnedStatements: "No relocation.", profileVersion: "1" }))).rejects.toThrow(refusal(stale));
   await expect(savePreferenceProfile(form({ markdown: "Strategy", profileVersion: "1" }))).rejects.toThrow(refusal(stale));
   await expect(answerOpenQuestion("q1", form({ answer: "Yes", profileVersion: "1" }))).rejects.toThrow(refusal(stale));
   expect(await versions()).toEqual([1, 2]);
   expect(await database.select().from(schema.tasks)).toHaveLength(0);
+});
+
+it("returns editable Learning refusals inline with an explicit new-tab recovery", async () => {
+  await profileWithQuestion();
+  await database.insert(schema.preferenceProfiles).values({ userId: user.id, version: 2, markdown: "Newer profile", pinnedStatements: [], openQuestions: [{ id: "q1", question: "Is remote work essential?" }], sourceDecisionCount: 4, model: "test" });
+  const stale = { ok: false, error: expect.stringContaining("Your edits are still here"), recovery: { href: "/learning", label: "Check the latest profile in a new tab" } };
+  expect(await savePreferenceProfileSetting({ ok: true }, form({ markdown: "My draft", profileVersion: "1" }))).toEqual(stale);
+  expect(await savePinnedStatementsSetting({ ok: true }, form({ pinnedStatements: "My draft", profileVersion: "1" }))).toEqual(stale);
+  expect(await answerOpenQuestionSetting("q1", { ok: true }, form({ answer: "My draft", profileVersion: "1" }))).toEqual(stale);
+  expect(await savePreferenceProfileSetting({ ok: true }, form({ markdown: "My draft" }))).toEqual(stale);
+  expect(await answerOpenQuestionSetting("q1", { ok: true }, form({ answer: " " , profileVersion: "2" }))).toEqual({ ok: false, error: "Write an answer before saving it." });
+  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "z".repeat(5_001) }))).toEqual({ ok: false, error: "Keep your seed profile under 5,000 characters. A few sentences is plenty." });
+  expect(await versions()).toEqual([1, 2]);
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+});
+
+it("rolls back pinned statements and answers if their required synthesis cannot be queued", async () => {
+  await profileWithQuestion();
+  await database.execute(sql.raw("create function learning_recovery_reject_synthesis() returns trigger language plpgsql as $$ begin if new.type = 'synthesize_profile' then raise exception 'forced queue failure'; end if; return new; end $$"));
+  await database.execute(sql.raw("create trigger learning_recovery_reject_synthesis before insert on tasks for each row execute function learning_recovery_reject_synthesis()"));
+  try {
+    await expect(savePinnedStatementsSetting({ ok: true }, form({ pinnedStatements: "Keep this", profileVersion: "1" }))).rejects.toThrow("Failed query");
+    await expect(answerOpenQuestionSetting("q1", { ok: true }, form({ answer: "Yes", profileVersion: "1" }))).rejects.toThrow("Failed query");
+    expect(await versions()).toEqual([1]);
+    expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  } finally {
+    await database.execute(sql.raw("drop trigger learning_recovery_reject_synthesis on tasks"));
+    await database.execute(sql.raw("drop function learning_recovery_reject_synthesis()"));
+  }
 });
 
 it("refuses empty and overlong answers and pinned statements in a sentence, writing nothing", async () => {
@@ -76,6 +105,10 @@ it("refuses empty and overlong answers and pinned statements in a sentence, writ
 
   // Within the limits, the same forms save.
   await answerOpenQuestion("q1", form({ answer: "x".repeat(2_000), profileVersion: "1" }));
+  expect(await versions()).toEqual([1, 2]);
+  expect(await answerOpenQuestionSetting("q1", { ok: true }, form({ answer: "A second answer", profileVersion: "2" }))).toMatchObject({
+    ok: false, error: expect.stringContaining("Your preference profile changed"),
+  });
   expect(await versions()).toEqual([1, 2]);
 });
 

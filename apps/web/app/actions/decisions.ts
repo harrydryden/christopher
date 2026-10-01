@@ -175,26 +175,42 @@ export async function undoDecisionIfCurrent(jobId: string, expectedDecisionId: s
  * page binds this straight to its form, so a refusal goes back there as a sentence.
  */
 export async function saveDecisionTags(decisionId: string, formData: FormData): Promise<void> {
+  const result = await saveDecisionTagsSetting(decisionId, { ok: true }, formData);
+  if (!result.ok) refuseOn("/learning", result.error);
+}
+
+export async function saveDecisionTagsSetting(decisionId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireVerifiedUser();
   const parsed = zUuid().safeParse(decisionId);
-  if (!parsed.success) refuseOn("/learning", "This decision has changed. Reload before editing its tags.");
+  const conflict = () => fail("This decision's tags changed since this page loaded. Your selection is still here. Open the latest tags in a new tab and apply the tags you want to keep there.", { href: "/learning", label: "Check the latest tags in a new tab" });
+  if (!parsed.success) return conflict();
   const id = parsed.data;
   const tags = [...new Set(formData.getAll("tags").map(String))];
-  if (tags.length > 30) refuseOn("/learning", "Choose at most 30 tags.");
+  if (tags.length > 30) return fail("Choose at most 30 tags.");
+  let expected: { tags: string[]; tagsEdited: boolean };
+  try {
+    const value = JSON.parse(String(formData.get("expectedTags") ?? ""));
+    if (!value || !Array.isArray(value.tags) || value.tags.some((tag: unknown) => typeof tag !== "string") || typeof value.tagsEdited !== "boolean") return conflict();
+    expected = { tags: [...new Set(value.tags as string[])].sort(), tagsEdited: value.tagsEdited };
+  } catch { return conflict(); }
   const accepted = tags.length ? await db().select({ tag: tagVocabulary.tag }).from(tagVocabulary)
     .where(and(eq(tagVocabulary.userId, user.id), inArray(tagVocabulary.tag, tags), eq(tagVocabulary.accepted, true))) : [];
-  if (accepted.length !== tags.length) refuseOn("/learning", "Choose accepted reason tags from the list.");
+  if (accepted.length !== tags.length) return fail("Choose accepted reason tags from the list.");
   const updated = await db().transaction(async tx => {
     await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
+    const [standing] = await tx.select({ tags: decisions.tags, tagsEdited: decisions.tagsEdited }).from(decisions)
+      .where(and(eq(decisions.id, id), eq(decisions.userId, user.id), eq(decisions.superseded, false))).for("update");
+    if (!standing || standing.tagsEdited !== expected.tagsEdited || JSON.stringify([...new Set(standing.tags)].sort()) !== JSON.stringify(expected.tags)) return false;
     const result = await tx.update(decisions).set({ tags, tagsEdited: true })
       .where(and(eq(decisions.id, id), eq(decisions.userId, user.id), eq(decisions.superseded, false))).returning({ id: decisions.id });
     if (result.length && await accountCanScore(tx as unknown as ReturnType<typeof db>, user.id))
       await enqueue("rescore_all", { userId: user.id, onlyInTable: true }, tx);
-    return result;
+    if (result.length) await enqueue("synthesize_profile", { userId: user.id, force: true }, tx);
+    return result.length > 0;
   });
-  if (!updated.length) refuseOn("/learning", "This decision has changed. Reload before editing its tags.");
-  await enqueue("synthesize_profile", { userId: user.id, force: true });
+  if (!updated) return conflict();
   revalidatePath("/learning");
+  return { ok: true, nextSnapshot: { expectedTags: JSON.stringify({ tags, tagsEdited: true }) } };
 }
 
 /** Archive is a user preference, independent of source status and future scans. */

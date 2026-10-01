@@ -14,7 +14,8 @@ export interface EnqueueOptions {
    * priority and start time instead of dropping the request. A person's request — a shortlist
    * score, a gate re-evaluation after a save — used to be absorbed into the background row already
    * waiting for the same work, and waited at that row's place in the queue. The waiting row's
-   * payload never changes. A CV build, whose key is held while it runs as well, is never promoted:
+   * payload normally stays as it was, except that a forced profile synthesis stays forced. A CV
+   * build, whose key is held while it runs as well, is never promoted:
    * its request is dropped as before.
    */
   promote?: boolean;
@@ -91,15 +92,56 @@ export async function enqueueStandard<T extends TaskType>(db: TaskWriter, type: 
  */
 async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean): Promise<Array<{ id: string; payload: Record<string, unknown>; inserted: boolean }>> {
   if (!rows.length) return [];
+  // Without promotion, the first row for a key supplies its payload and scheduling options.
+  // Combine only the force bit before splitting inserts from forced UPSERTs, so the split cannot
+  // let a later forced request replace that first row's priority or start time.
+  const batch: EnqueueRow[] = [];
+  const synthesisByKey = new Map<string, number>();
+  for (const row of rows) {
+    if (!promote && row.type === "synthesize_profile" && row.dedupeKey) {
+      const index = synthesisByKey.get(row.dedupeKey);
+      if (index !== undefined) {
+        if (row.payload.force === true) {
+          const first = batch[index]!;
+          batch[index] = { ...first, payload: { ...first.payload, force: true } };
+        }
+        continue;
+      }
+      synthesisByKey.set(row.dedupeKey, batch.length);
+    }
+    batch.push(row);
+  }
   // A CV build's key lives in an index of its own, and one statement can promote against one index.
-  const promoted = promote ? rows.filter(row => row.type !== "generate_cv") : [];
-  const dropped = promote ? rows.filter(row => row.type === "generate_cv") : rows;
+  const promoted = promote ? batch.filter(row => row.type !== "generate_cv") : [];
+  const forced = promote ? [] : batch.filter(row => row.type === "synthesize_profile" && row.payload.force === true);
+  const dropped = promote ? batch.filter(row => row.type === "generate_cv")
+    : batch.filter(row => row.type !== "synthesize_profile" || row.payload.force !== true);
   const accepted: Array<{ id: string; payload: Record<string, unknown>; inserted: boolean }> = [];
   let written = false;
   if (dropped.length) {
     const inserted = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id, payload: tasks.payload });
     accepted.push(...inserted.map(row => ({ ...row, inserted: true })));
     written ||= inserted.length > 0;
+  }
+  if (forced.length) {
+    // A queued weekly synthesis may be waiting when a person pins or answers something. Upgrade
+    // that one row durably, without changing its priority or time.
+    const byKey = new Map<string, EnqueueRow>();
+    const unkeyed: EnqueueRow[] = [];
+    for (const row of forced) {
+      if (row.dedupeKey) byKey.set(row.dedupeKey, row);
+      else unkeyed.push(row);
+    }
+    const upserted = await db.insert(tasks).values([...byKey.values(), ...unkeyed].map(valuesFor))
+      .onConflictDoUpdate({
+        target: tasks.dedupeKey,
+        targetWhere: sql`${tasks.status} = 'queued' and ${tasks.startedAt} is null and ${tasks.type} <> 'generate_cv' and ${tasks.dedupeKey} is not null`,
+        set: { payload: sql`jsonb_set(${tasks.payload}, '{force}', 'true'::jsonb, true)` },
+        setWhere: sql`${tasks.type} = 'synthesize_profile' and ${tasks.payload}->'force' is distinct from 'true'::jsonb`,
+      })
+      .returning({ id: tasks.id, payload: tasks.payload, inserted: sql<boolean>`(xmax = 0)` });
+    accepted.push(...upserted);
+    written ||= upserted.length > 0;
   }
   if (promoted.length) {
     const upserted = await db.insert(tasks).values(promoted.map(valuesFor))
@@ -110,13 +152,18 @@ async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean)
         // A promoted score is one somebody now waits on, so it stops being background work.
         set: {
           priority: sql`least(${tasks.priority}, excluded.priority)`, runAfter: sql`least(${tasks.runAfter}, excluded.run_after)`,
-          payload: sql`case when ${tasks.type} = 'admit_scores'
+          payload: sql`case when ${tasks.type} = 'synthesize_profile'
+            then case when ${tasks.payload}->'force' = 'true'::jsonb or excluded.payload->'force' = 'true'::jsonb
+              then jsonb_set(${tasks.payload}, '{force}', 'true'::jsonb, true) else ${tasks.payload} end
+            when ${tasks.type} = 'admit_scores'
             then case when ${tasks.payload} ? 'background' and excluded.payload ? 'background'
               then excluded.payload else excluded.payload - 'background' end
             when excluded.payload ? 'background' then ${tasks.payload} else ${tasks.payload} - 'background' end`,
         },
         setWhere: sql`${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after
-          or (${tasks.payload} ? 'background' and not excluded.payload ? 'background')`,
+          or (${tasks.payload} ? 'background' and not excluded.payload ? 'background')
+          or (${tasks.type} = 'synthesize_profile' and excluded.payload->'force' = 'true'::jsonb
+            and ${tasks.payload}->'force' is distinct from 'true'::jsonb)`,
       })
       .returning({ id: tasks.id, payload: tasks.payload, inserted: sql<boolean>`(xmax = 0)` });
     accepted.push(...upserted);
@@ -147,7 +194,8 @@ export async function enqueueTask(
 /**
  * Insert many tasks in multi-row statements, with the defaults `enqueueTask` uses and the same
  * dedupe rule: a row whose key already has a task waiting to start — or is repeated within the
- * batch — is skipped. Returns how many were inserted. `chunkSize` bounds one statement's
+ * batch — is skipped, except that a forced profile synthesis upgrades a queued match. Returns
+ * how many were inserted. `chunkSize` bounds one statement's
  * parameters.
  *
  * With `promote`, a batch that names one key twice keeps its most urgent row, because one
@@ -161,7 +209,10 @@ export async function enqueueTasks(db: TaskWriter, rows: EnqueueRow[], chunkSize
     for (const row of rows) {
       if (!row.dedupeKey) { unkeyed.push(row); continue; }
       const held = byKey.get(row.dedupeKey);
-      if (!held || (row.priority ?? 5) < (held.priority ?? 5)) byKey.set(row.dedupeKey, row);
+      const chosen = !held || (row.priority ?? 5) < (held.priority ?? 5) ? row : held;
+      if (chosen.type === "synthesize_profile" && (held?.payload.force === true || row.payload.force === true))
+        byKey.set(row.dedupeKey, { ...chosen, payload: { ...chosen.payload, force: true } });
+      else byKey.set(row.dedupeKey, chosen);
     }
     batch = [...byKey.values(), ...unkeyed];
   }

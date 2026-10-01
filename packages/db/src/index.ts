@@ -12,7 +12,7 @@ export { enqueueTask, enqueueTasks, enqueueStandard, queueScoring, requestScores
 export { reevaluateGate, archiveNonMatches, isGateArchive, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, REEVALUATE_CLOSED_DAYS, type ViewUpdate, type ViewVerdict, type GateScope, type ArchiveScope, type ReevaluateOptions } from "./gate";
 export { locationRevisionFor, requestLocationEnrichment, type LocationRevisionInput, type LocationEnrichmentCandidate } from "./location-enrichment";
 export { reserveLocationRead, WORKDAY_LOCATION_READS_PER_HOUR } from "./location-read-budget";
-export { appendProfile, latestProfileFor } from "./profiles";
+export { appendProfile, latestProfileFor, ProfileVersionConflictError } from "./profiles";
 export { lockScoreModelInput, lockAccountScoreInput, accountCanScore } from "./score-fence";
 export { latestCvLibrary } from "./cv-library";
 export { claimableTaskSql, workloadMetrics } from "./scaling";

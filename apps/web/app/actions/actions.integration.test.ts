@@ -444,6 +444,7 @@ describe("learning controls", () => {
       .values({ userId: user.id, tag: "seniority:overqualified", accepted: false });
     const form = new FormData();
     form.append("tags", "seniority:overqualified");
+    form.set("expectedTags", JSON.stringify({ tags: decision!.tags, tagsEdited: decision!.tagsEdited }));
     await expect(saveDecisionTags(decision!.id, form)).rejects.toThrow(
       "accepted",
     );

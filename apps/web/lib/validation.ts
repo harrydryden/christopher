@@ -11,14 +11,14 @@ export const zUrlString = () => z.string().trim().min(1).max(2048);
  * One result shape for every action and form. `message` is the optional success line some forms
  * show; actions that have nothing to say simply leave it out.
  */
-export type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
+export type ActionResult = { ok: true; message?: string; nextSnapshot?: Record<string, string> } | { ok: false; error: string; recovery?: { href: string; label: string } };
 
 export function ok(): ActionResult {
   return { ok: true };
 }
 
-export function fail(error: string): ActionResult {
-  return { ok: false, error };
+export function fail(error: string, recovery?: { href: string; label: string }): ActionResult {
+  return { ok: false, error, ...(recovery ? { recovery } : {}) };
 }
 
 /**

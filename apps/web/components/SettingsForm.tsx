@@ -21,19 +21,22 @@ export function SettingsForm({
   submitDescribedBy,
   secondaryActions,
   successMessage,
+  resetOnSuccess = true,
 }: {
   id?: string;
   action: (
     prevState: ActionResult,
     formData: FormData,
   ) => Promise<ActionResult>;
-  children: ReactNode;
+  children?: ReactNode;
   submitLabel?: string;
   submitDisabled?: boolean;
   submitDescribedBy?: string;
   secondaryActions?: ReactNode;
   /** Only genuine saves should acknowledge success here; queued work has its own progress UI. */
   successMessage?: string;
+  /** Controlled editors keep their own saved values after a confirmed action. */
+  resetOnSuccess?: boolean;
 }) {
   const editVersion = useRef(0);
   const submittedVersion = useRef(0);
@@ -47,7 +50,8 @@ export function SettingsForm({
         const result = await action(previous, data);
         // React commits its scheduled form reset after the action settles. Permit it only for a
         // confirmed save with no newer edits, so refreshed defaults are in place when it runs.
-        allowReset.current = result.ok && editVersion.current === submittedVersion.current;
+        const cleanSave = result.ok && editVersion.current === submittedVersion.current;
+        allowReset.current = cleanSave && resetOnSuccess;
         return { ...result, submitted: true };
       } catch (error) {
         allowReset.current = false;
@@ -104,6 +108,7 @@ export function SettingsForm({
       {successMessage && state.ok && state.submitted && !isPending && !editedSinceSubmit && <p role="status" className="text-14 text-success">{successMessage}</p>}
       {!state.ok && <p ref={errorRef} tabIndex={-1} role="alert" className="text-14 text-danger">
         {state.error}
+        {state.recovery && <>{" "}<a href={state.recovery.href} target="_blank" rel="noopener noreferrer" className="mt-1 flex min-h-11 items-center underline">{state.recovery.label}</a></>}
         {state.uncertain && <>{" "}<a href="" target="_blank" rel="noopener noreferrer" className="mt-1 flex min-h-11 items-center underline">Check saved work in a new tab before trying again.</a></>}
       </p>}
       <div className="flex flex-wrap items-center gap-2">

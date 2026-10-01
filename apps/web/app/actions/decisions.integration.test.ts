@@ -26,7 +26,51 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { revalidatePath } from "next/cache";
-import { archiveRoles, decide, decideRoles, decideWithUndoToken, decideRolesWithUndoTokens, undoDecisionIfCurrent, undoDecisionsIfCurrent, roleDetails } from "./decisions";
+import { archiveRoles, decide, decideRoles, decideWithUndoToken, decideRolesWithUndoTokens, undoDecisionIfCurrent, undoDecisionsIfCurrent, roleDetails, saveDecisionTagsSetting } from "./decisions";
+
+it("keeps a stale tag selection for comparison and queues follow-up work with a successful edit", async () => {
+  const job = await role();
+  const [standing] = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, job.id));
+  await database.insert(schema.tagVocabulary).values([
+    { userId: user.id, tag: "remote", accepted: true },
+    { userId: user.id, tag: "leadership", accepted: true },
+  ]);
+  const form = (tags: string[], expectedTags: string[]) => {
+    const data = new FormData();
+    for (const tag of tags) data.append("tags", tag);
+    data.set("expectedTags", JSON.stringify({ tags: expectedTags, tagsEdited: false }));
+    return data;
+  };
+  expect(await saveDecisionTagsSetting(standing!.id, { ok: true }, form(["remote"], []))).toEqual({ ok: true, nextSnapshot: { expectedTags: JSON.stringify({ tags: ["remote"], tagsEdited: true }) } });
+  expect(await saveDecisionTagsSetting(standing!.id, { ok: true }, form(["leadership"], []))).toEqual({
+    ok: false, error: expect.stringContaining("Your selection is still here"),
+    recovery: { href: "/learning", label: "Check the latest tags in a new tab" },
+  });
+  const [saved] = await database.select().from(schema.decisions).where(eq(schema.decisions.id, standing!.id));
+  expect(saved!.tags).toEqual(["remote"]);
+  expect((await database.select().from(schema.tasks)).map(task => task.type)).toContain("synthesize_profile");
+});
+
+it("rolls back tag edits if synthesis cannot be queued", async () => {
+  const job = await role();
+  const [standing] = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, job.id));
+  await database.insert(schema.tagVocabulary).values({ userId: user.id, tag: "remote", accepted: true });
+  const data = new FormData();
+  data.append("tags", "remote");
+  data.set("expectedTags", JSON.stringify({ tags: [], tagsEdited: false }));
+  await database.execute(sql.raw("create function learning_recovery_reject_synthesis() returns trigger language plpgsql as $$ begin if new.type = 'synthesize_profile' then raise exception 'forced queue failure'; end if; return new; end $$"));
+  await database.execute(sql.raw("create trigger learning_recovery_reject_synthesis before insert on tasks for each row execute function learning_recovery_reject_synthesis()"));
+  try {
+    await expect(saveDecisionTagsSetting(standing!.id, { ok: true }, data)).rejects.toThrow("Failed query");
+    const [saved] = await database.select().from(schema.decisions).where(eq(schema.decisions.id, standing!.id));
+    expect(saved!.tags).toEqual([]);
+    expect(saved!.tagsEdited).toBe(false);
+    expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  } finally {
+    await database.execute(sql.raw("drop trigger learning_recovery_reject_synthesis on tasks"));
+    await database.execute(sql.raw("drop function learning_recovery_reject_synthesis()"));
+  }
+});
 
 const DESCRIPTION = [
   "Head of Operations at a community health provider.",

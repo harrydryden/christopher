@@ -1,0 +1,5 @@
+ version |                            markdown                             |                                                                           pinned_statements
+---------+-----------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      13 | Operations leadership with clear ownership and useful feedback. | ["No relocation. Clear ownership matters."]
+      12 | Operations leadership with clear ownership and useful feedback. | ["No relocation.", "Protect this additional pinned draft.", "Q: What does a supportive team mean to you? A: A manager who gives useful feedback and clear ownership."]
+(2 rows)

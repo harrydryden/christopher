@@ -58,6 +58,17 @@ it("retains every edit and shows validation errors inline", async () => {
   expect(container.querySelector('[role="alert"] a')).toBeNull();
 });
 
+it("keeps a conflicting draft and offers its exact recovery page in a new tab", async () => {
+  await render(async () => ({ ok: false, error: "The profile changed.", recovery: { href: "/learning", label: "Check the latest profile in a new tab" } }));
+  await act(async () => { edit("location", "Edinburgh"); submit(); });
+  expect(field("location").value).toBe("Edinburgh");
+  const check = container.querySelector<HTMLAnchorElement>('[role="alert"] a')!;
+  expect(check.textContent).toBe("Check the latest profile in a new tab");
+  expect(check.getAttribute("href")).toBe("/learning");
+  expect(check.target).toBe("_blank");
+  expect(check.className).toContain("min-h-11");
+});
+
 it("keeps the form usable when a save's response is lost", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   await render(async () => { throw new TypeError("Failed to fetch"); });

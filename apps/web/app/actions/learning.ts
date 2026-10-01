@@ -5,12 +5,12 @@ import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { appendProfile, latestProfileFor, ProfileVersionConflictError, setSubscriptionStatus, lockAccountScoreInput } from "@ava/db";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { filterSuggestions, tagVocabulary, userSettings, type FilterSuggestion, type User } from "@ava/db/schema";
+import { filterSuggestions, tagVocabulary, userSettings, type FilterSuggestion } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
 import { describeFilterSuggestion, extractSuggestionValue } from "@/lib/filterSuggestions";
-import { getSettings, getSettingsFor, setUserSetting, saveSettingsAndGateLocked } from "@/lib/settings";
+import { getSettings, getSettingsFor, saveSeedProfileIfCurrent, saveSettingsAndGateLocked } from "@/lib/settings";
 import { actionError, fail, isUserFacingError, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { refuseOn, revalidate } from "@/lib/action-helpers";
 
@@ -127,22 +127,8 @@ export async function answerOpenQuestionSetting(questionId: string, _prev: Actio
 /** A few sentences, not a document: long enough for deal-breakers, short enough to stay readable. */
 const SEED_PROFILE_LIMIT = 5_000;
 
-/**
- * The one write behind both seed-profile cards (R-6.3). Settings is where setup asks for it and
- * Learning is where it stays editable, so the two forms differ only in what they return.
- *
- * Setup asks for the seed profile before the address is confirmed, so the text is saved for any
- * account; the synthesis it prompts is model work and waits for the confirmation. Nothing is lost
- * by waiting: scoring reads the seed profile itself until a synthesised one exists, and confirming
- * the account queues synthesis for a saved seed.
- */
-async function writeSeedProfile(user: User, raw: string): Promise<string | null> {
-  const text = String(raw ?? "");
-  if (text.length > SEED_PROFILE_LIMIT) return `Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`;
-  await setUserSetting(user.id, "seedProfile", text);
-  revalidate("/learning", "/settings", "/");
-  return null;
-}
+const SEED_CHANGED = "Your starting preferences changed since this page loaded. Your edits are still here. Open the latest preferences in a new tab, compare them with this draft and copy across the changes you want to keep.";
+const seedConflict = () => fail(SEED_CHANGED, { href: "/learning", label: "Check the latest preferences in a new tab" });
 
 export async function saveSeedProfile(formData: FormData): Promise<void> {
   refuseLegacy(await saveSeedProfileSetting({ ok: true }, formData));
@@ -151,8 +137,13 @@ export async function saveSeedProfile(formData: FormData): Promise<void> {
 /** The Settings card's twin, for a `SettingsForm` that shows its errors inline. */
 export async function saveSeedProfileSetting(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const error = await writeSeedProfile(user, String(formData.get("seedProfile") ?? ""));
-  return error ? fail(error) : { ok: true };
+  const text = String(formData.get("seedProfile") ?? "");
+  if (text.length > SEED_PROFILE_LIMIT) return fail(`Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`);
+  const expected = formData.get("expectedSeedProfile");
+  if (typeof expected !== "string" || expected.length > SEED_PROFILE_LIMIT) return seedConflict();
+  if (!await saveSeedProfileIfCurrent(user.id, expected, text)) return seedConflict();
+  revalidate("/learning", "/settings", "/");
+  return { ok: true, nextSnapshot: { expectedSeedProfile: text } };
 }
 
 /**

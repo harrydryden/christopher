@@ -59,20 +59,35 @@ export async function setSystemSetting(key: keyof SystemSettings, value: unknown
   });
 }
 
-export async function setUserSetting(userId: string, key: keyof UserSettings, value: unknown,
-  options: { rescore?: boolean } = {}): Promise<void> {
+export async function setUserSetting(userId: string, key: keyof UserSettings, value: unknown): Promise<void> {
   if (!isUserSettingsKey(key)) throw new Error(`Not a user setting: ${key}`);
+  if (key === "seedProfile") throw new Error("Use saveSeedProfileIfCurrent for starting preferences.");
   await db().transaction(async tx => {
-    if (key === "seedProfile" || key === "gate")
+    if (key === "gate")
       await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
     await tx.insert(userSettingsTable)
       .values({ userId, key, value: value as object, updatedAt: new Date() })
       .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
-    if (key === "seedProfile" && (options.rescore ?? true) && await accountCanScore(tx as unknown as ReturnType<typeof db>, userId)) {
+  });
+}
+
+/** Save setup preferences only if the text this editor opened with is still current.
+ * The comparison, write and model follow-ups share the account score fence and transaction. */
+export async function saveSeedProfileIfCurrent(userId: string, expected: string, text: string): Promise<boolean> {
+  return db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
+    const current = (await getSettingsFor(userId, tx as unknown as Writer)).seedProfile;
+    if (current !== expected) return false;
+    if (current === text) return true;
+    await tx.insert(userSettingsTable)
+      .values({ userId, key: "seedProfile", value: text, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: text, updatedAt: new Date() } });
+    if (await accountCanScore(tx as unknown as ReturnType<typeof db>, userId)) {
       await enqueueTask(tx as unknown as ReturnType<typeof db>, "rescore_all", { userId, onlyInTable: true },
         { dedupeKey: `rescore_all:${userId}`, priority: 5 });
       await enqueue("synthesize_profile", { userId, force: true }, tx);
     }
+    return true;
   });
 }
 

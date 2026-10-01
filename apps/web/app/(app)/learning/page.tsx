@@ -12,7 +12,8 @@ import { getSettings } from "@/lib/settings";
 import { selectClass } from "@/components/Field";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
 import { SettingsForm } from "@/components/SettingsForm";
-import { ReasonTagEditor } from "@/components/ReasonTagEditor";
+import { ReasonTagList } from "@/components/ReasonTagList";
+import { SeedProfileEditor } from "@/components/SeedProfileEditor";
 import { OpenQuestionEditors } from "@/components/OpenQuestionEditors";
 import { LearningProfileEditor } from "@/components/LearningProfileEditor";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
@@ -114,18 +115,9 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
 
       <Card title="Starting preferences">
         <p className="mb-2 text-12 text-muted">
-          What you wrote at setup; never overwritten.
+          Your starting preferences. Profile updates do not replace these.
         </p>
-        <SettingsForm action={saveSeedProfileSetting}>
-          <label htmlFor="seed-profile" className="text-14">Starting preferences</label>
-          <textarea
-            id="seed-profile"
-            name="seedProfile"
-            rows={4}
-            defaultValue={settings.seedProfile}
-            className="w-full border border-line-muted px-2 py-1.5 text-14 outline-none focus:border-line"
-          />
-        </SettingsForm>
+        <SeedProfileEditor text={settings.seedProfile} action={saveSeedProfileSetting} />
       </Card>
 
       <Card title="Reason tags">
@@ -136,15 +128,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             <SettingsForm action={acceptReasonTagSetting.bind(null, tag.tag)} submitLabel="Accept tag" />
           </div>
         ))}
-        {tags.recent.length === 0 && <EmptyState title="No decisions yet" description="Shortlist or skip a role to start recording your preferences." />}
-        {tags.recent.map(decision => (
-          <section key={decision.id} className="mb-2 border border-line-muted p-3">
-            <h3 className="text-14">{decision.jobTitle} · {decision.companyName} · {decision.decision}</h3>
-            <p className="my-2 text-14 text-muted">{decision.reason}</p>
-            <ReasonTagEditor decisionId={decision.id} tags={decision.tags} tagsEdited={decision.tagsEdited}
-              options={tags.vocabulary.filter(tag => tag.accepted)} disabled={unverified} />
-          </section>
-        ))}
+        <ReasonTagList recent={tags.recent} options={tags.vocabulary.filter(tag => tag.accepted)} disabled={unverified} />
       </Card>
 
       <Card title="Calibration">

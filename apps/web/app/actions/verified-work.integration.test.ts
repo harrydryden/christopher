@@ -78,14 +78,16 @@ it("sends an unconfirmed member to confirm before any Learning or recommendation
 });
 
 it("saves filters and the seed profile at once, and queues their model work only once the address is confirmed", async () => {
-  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Operations leadership in London." }))).toEqual({ ok: true });
+  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Operations leadership in London.", expectedSeedProfile: "" })))
+    .toEqual({ ok: true, nextSnapshot: { expectedSeedProfile: "Operations leadership in London." } });
   expect(await saveGate({ ok: true }, form({ includeKeywords: "operations", locationTerms: "London" }))).toEqual({ ok: true });
   const stored = await database.select({ key: schema.userSettings.key }).from(schema.userSettings).where(eq(schema.userSettings.userId, user.id));
   expect(stored.map(row => row.key).sort()).toEqual(["gate", "seedProfile"]);
   expect(await taskTypes()).toEqual([]);
 
   await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
-  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Operations leadership, UK." }))).toEqual({ ok: true });
+  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Operations leadership, UK.", expectedSeedProfile: "Operations leadership in London." })))
+    .toEqual({ ok: true, nextSnapshot: { expectedSeedProfile: "Operations leadership, UK." } });
   expect(await saveGate({ ok: true }, form({ includeKeywords: "operations, strategy", locationTerms: "London" }))).toEqual({ ok: true });
   expect(await taskTypes()).toEqual(["rescore_all", "synthesize_profile"]);
 });

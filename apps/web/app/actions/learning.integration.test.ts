@@ -77,6 +77,73 @@ it("returns editable Learning refusals inline with an explicit new-tab recovery"
   expect(await database.select().from(schema.tasks)).toHaveLength(0);
 });
 
+it("guards starting preferences shared by Learning and Settings against stale or missing snapshots", async () => {
+  const first = await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Remote operations", expectedSeedProfile: "" }));
+  expect(first).toEqual({ ok: true, nextSnapshot: { expectedSeedProfile: "Remote operations" } });
+  const stale = { ok: false, error: expect.stringContaining("Your edits are still here"),
+    recovery: { href: "/learning", label: "Check the latest preferences in a new tab" } };
+  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "London only", expectedSeedProfile: "" }))).toEqual(stale);
+  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "London only" }))).toEqual(stale);
+  const [stored] = await database.select().from(schema.userSettings).where(sql`user_id = ${user.id} and key = 'seedProfile'`);
+  expect(stored!.value).toBe("Remote operations");
+  const beforeNoop = await database.select().from(schema.tasks);
+  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Remote operations", expectedSeedProfile: "Remote operations" })))
+    .toEqual({ ok: true, nextSnapshot: { expectedSeedProfile: "Remote operations" } });
+  expect(await database.select().from(schema.tasks)).toEqual(beforeNoop);
+  expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "London only", expectedSeedProfile: "Remote operations" })))
+    .toEqual({ ok: true, nextSnapshot: { expectedSeedProfile: "London only" } });
+});
+
+it("serialises two starting-preferences saves from the same snapshot", async () => {
+  const holder = await pool.connect();
+  const observer = createTestDb({ max: 1 });
+  let saves: Promise<Awaited<ReturnType<typeof saveSeedProfileSetting>>[]> | null = null;
+  let results: Awaited<ReturnType<typeof saveSeedProfileSetting>>[];
+  try {
+    await holder.query("begin");
+    await holder.query("select pg_advisory_xact_lock(874302, hashtext($1))", [user.id]);
+    saves = Promise.all([
+      saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Remote operations", expectedSeedProfile: "" })),
+      saveSeedProfileSetting({ ok: true }, form({ seedProfile: "London leadership", expectedSeedProfile: "" })),
+    ]);
+    const deadline = Date.now() + 5_000;
+    let waiters = 0;
+    while (Date.now() < deadline) {
+      const activity = await observer.db.execute<{ n: number }>(sql`select count(*)::int as n from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock' and query like '%pg_advisory_xact_lock%'`);
+      waiters = Number(activity.rows[0]?.n ?? 0);
+      if (waiters >= 2) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(waiters).toBeGreaterThanOrEqual(2);
+    await holder.query("commit");
+    results = await saves;
+  } finally {
+    await holder.query("rollback").catch(() => {});
+    holder.release();
+    await observer.pool.end();
+    if (saves) await saves.catch(() => {});
+  }
+  expect(results.filter(result => result.ok)).toHaveLength(1);
+  expect(results.filter(result => !result.ok)).toHaveLength(1);
+  const [stored] = await database.select().from(schema.userSettings).where(sql`user_id = ${user.id} and key = 'seedProfile'`);
+  expect(["Remote operations", "London leadership"]).toContain(stored!.value);
+  expect((await database.select().from(schema.tasks)).map(task => task.type).sort()).toEqual(["rescore_all", "synthesize_profile"]);
+});
+
+it("rolls back a starting-preferences write if required follow-up work cannot be queued", async () => {
+  await database.execute(sql.raw("create function learning_recovery_reject_synthesis() returns trigger language plpgsql as $$ begin if new.type = 'synthesize_profile' then raise exception 'forced queue failure'; end if; return new; end $$"));
+  await database.execute(sql.raw("create trigger learning_recovery_reject_synthesis before insert on tasks for each row execute function learning_recovery_reject_synthesis()"));
+  try {
+    await expect(saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Remote operations", expectedSeedProfile: "" }))).rejects.toThrow("Failed query");
+    expect(await database.select().from(schema.userSettings).where(sql`user_id = ${user.id} and key = 'seedProfile'`)).toEqual([]);
+    expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  } finally {
+    await database.execute(sql.raw("drop trigger learning_recovery_reject_synthesis on tasks"));
+    await database.execute(sql.raw("drop function learning_recovery_reject_synthesis()"));
+  }
+});
+
 it("rolls back pinned statements and answers if their required synthesis cannot be queued", async () => {
   await profileWithQuestion();
   await database.execute(sql.raw("create function learning_recovery_reject_synthesis() returns trigger language plpgsql as $$ begin if new.type = 'synthesize_profile' then raise exception 'forced queue failure'; end if; return new; end $$"));

@@ -1,0 +1,7 @@
+{
+  "alert": "This decision's tags changed since this page loaded. Your selection is still here. Open the latest tags in a new tab and apply the tags you want to keep there. Check the latest tags in a new tab",
+  "guard": "{\"tags\":[],\"tagsEdited\":false}",
+  "selected": [
+    "culture"
+  ]
+}

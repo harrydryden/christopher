@@ -8,6 +8,7 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
+import { SeedProfileEditor } from "@/components/SeedProfileEditor";
 import { GateSetup } from "@/components/GateSetup";
 import { ModelSelect } from "@/components/ModelSelect";
 import { inputClass as fieldClass, labelClass as fieldLabelClass, selectClass } from "@/components/Field";
@@ -98,13 +99,9 @@ export default async function SettingsPage() {
 
       <div id="seed-profile">
       <Card title="What work are you looking for?">
-        <p className="mb-2 text-14 text-muted">The starting point for your preference profile; it is never overwritten.</p>
-        <SettingsForm successMessage="Saved." action={saveSeedProfileSetting}>
-          <label className={labelClass}>
-            <span className={fieldLabelClass}>What you are looking for</span>
-            <textarea name="seedProfile" rows={5} maxLength={5000} defaultValue={settings.seedProfile} placeholder="e.g. Operations leadership in London or remote, at a company past Series B. Nothing below £90k, nothing that needs five days in an office." className={inputClass} />
-          </label>
-        </SettingsForm>
+        <p className="mb-2 text-14 text-muted">Your starting preferences. Profile updates do not replace these.</p>
+        <SeedProfileEditor text={settings.seedProfile} action={saveSeedProfileSetting} label="What you are looking for" rows={5}
+          placeholder="e.g. Operations leadership in London or remote, at a company past Series B. Nothing below £90k, nothing that needs five days in an office." />
       </Card>
       </div>
 

@@ -1,0 +1,15 @@
+Command: pnpm --filter @ava/web exec vitest run components/LearningEditors.test.tsx components/SettingsForm.test.tsx components/ReasonTagList.test.tsx components/SeedProfileEditor.test.tsx
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+
+ Test Files  4 passed (4)
+      Tests  22 passed (22)
+   Start at  00:16:07
+   Duration  1.75s (environment 57%, import 19%, tests 14%, transform 9%, worker 1%)
+
+    Isolate  4 workers spawned · ~271ms startup each (spawn + environment, per file)
+             at least ~814ms faster with isolate: false — reuses workers across files instead of one per file
+
+
+Exit code: 0

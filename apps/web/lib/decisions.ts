@@ -6,7 +6,7 @@
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { decisions, jobEvents, userJobs } from "@ava/db/schema";
-import { requestScores, type Db } from "@ava/db";
+import { requestScores, lockAccountScoreInput, accountCanScore, type Db } from "@ava/db";
 import type { db } from "./db";
 import { enqueue, enqueueMany } from "./enqueue";
 import { UserFacingError } from "./validation";
@@ -108,6 +108,7 @@ export async function restoreDismissedApplications(tx: Tx, userId: string, jobId
  * is not this account's writes nothing at all, and is refused with `notFound`.
  */
 export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists."): Promise<Array<{ jobId: string; id: string }>> {
+  await lockAccountScoreInput(tx as unknown as Db, userId, "exclusive");
   const ids = [...new Set(jobIds)].sort();
   const now = new Date();
 
@@ -142,6 +143,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
     }
     await tx.insert(jobEvents).values(ids.map(jobId => ({ jobId, userId, type: "decided" as const, payload: { decision: null } })));
     await enqueue("synthesize_profile", { userId, force: true }, tx);
+    if (await accountCanScore(tx as unknown as Db, userId)) await enqueue("rescore_all", { userId, onlyInTable: true }, tx);
     return [];
   }
 
@@ -186,6 +188,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
   if (decision === "skip") await withdrawLiveApplications(tx, userId, ids);
   if (reason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
   await enqueue("synthesize_profile", { userId, force: false }, tx);
+  if (await accountCanScore(tx as unknown as Db, userId)) await enqueue("rescore_all", { userId, onlyInTable: true }, tx);
   await queueFilterSuggestionsOnCrossing(tx, userId, before);
   return insertedRows.map(row => ({ jobId: row.job_id, id: row.id }));
 }

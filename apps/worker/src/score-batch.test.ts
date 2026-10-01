@@ -510,8 +510,10 @@ describe("the poll applier", () => {
 
   it("never lets a score from older inputs replace one computed since", async () => {
     const { jobs, record } = await submitted([{ userId: alice }]);
-    // A live rescore landed after this batch read its inputs.
-    await db.update(schema.userJobs).set({ fitScore: 55, fitScoredAt: new Date(now.getTime() + 60_000) }).where(eq(schema.userJobs.jobId, jobs[0]!.id));
+    // A live rescore from a newer request landed in the same millisecond. Its request number,
+    // rather than a wall-clock comparison, keeps the older batch from replacing it.
+    await db.update(schema.userJobs).set({ fitScore: 55, fitScoredAt: now,
+      scoreAttemptVersion: record.items[0]!.attemptVersion! + 1 }).where(eq(schema.userJobs.jobId, jobs[0]!.id));
     provider.end(record.batchId, [succeeded(record.items[0]!.customId, 99)]);
     expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
     expect((await viewOf(alice, jobs[0]!.id)).fitScore).toBe(55);

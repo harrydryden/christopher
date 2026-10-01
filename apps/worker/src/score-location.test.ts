@@ -13,3 +13,10 @@ it("does not present retained names as current evidence while Workday detail is 
   expect(scoreLocationInput({ ...retained, locationResolution: "pending" })).toEqual({ locationStatus: "pending" });
   expect(scoreLocationInput({ ...retained, locationResolution: "unavailable" })).toEqual({ locationStatus: "unavailable" });
 });
+
+it("keeps all thousand verified names, including a relevant last one, in the score input", () => {
+  const locations = [...Array.from({ length: 999 }, (_, i) => `City ${i}`), "Boston, Massachusetts"];
+  const result = scoreLocationInput({ location: locations[0]!, locations, locationResolution: "resolved" });
+  expect(result.locations).toHaveLength(1000);
+  expect(result.locations).toContain("Boston, Massachusetts");
+});

@@ -358,6 +358,13 @@
       "when": 1792317600000,
       "tag": "0052_workday_location_read_budget",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792404000000,
+      "tag": "0053_score_publication_fence",
+      "breakpoints": true
     }
   ]
 }

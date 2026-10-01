@@ -24,7 +24,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { acceptFilterSuggestionWithReport, answerOpenQuestion, savePinnedStatements, savePreferenceProfile, saveSeedProfileSetting } from "./learning";
-import { saveDecisionTags } from "./decisions";
+import { decide, saveDecisionTags } from "./decisions";
+import { saveCvLibrary } from "./cv";
 import { rejectSuggestion } from "./suggestions";
 import { updateDiscoverySource } from "./discovery-sources";
 import { saveGate } from "./settings";
@@ -87,4 +88,35 @@ it("saves filters and the seed profile at once, and queues their model work only
   expect(await saveSeedProfileSetting({ ok: true }, form({ seedProfile: "Operations leadership, UK." }))).toEqual({ ok: true });
   expect(await saveGate({ ok: true }, form({ includeKeywords: "operations, strategy", locationTerms: "London" }))).toEqual({ ok: true });
   expect(await taskTypes()).toEqual(["rescore_all", "synthesize_profile"]);
+});
+
+it("does not add a full rescore for an unconfirmed decision, then queues one after confirmation", async () => {
+  const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme-verify.example",
+    homepageUrl: "https://acme-verify.example" }).returning();
+  const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id,
+    type: "html", url: "https://acme-verify.example/jobs" }).returning();
+  const [job] = await database.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id,
+    externalKey: "one", title: "Operations Lead", normalizedTitle: "operations lead",
+    url: "https://acme-verify.example/jobs/one" }).returning();
+  await database.insert(schema.userJobs).values({ userId: user.id, jobId: job!.id, inTable: true });
+
+  expect(await decide(job!.id, "skip", "Wrong sector")).toEqual({ ok: true });
+  expect(await taskTypes()).not.toContain("rescore_all");
+  await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
+  expect(await decide(job!.id, "skip", "Role is too junior")).toEqual({ ok: true });
+  expect(await taskTypes()).toContain("rescore_all");
+});
+
+it("saves Library versions before confirmation and queues rescoring only after confirmation", async () => {
+  const library = { name: "Casey", contact: "London", profile: "Operations leader", entries: [
+    { id: "skills", kind: "skill", heading: "Tools", details: "Reporting", skillItems: ["SQL"] },
+  ] };
+  expect(await saveCvLibrary({ ok: true }, form({ library: JSON.stringify(library), version: "0" }))).toEqual({ ok: true });
+  expect((await database.select({ version: schema.cvLibraries.version }).from(schema.cvLibraries)).map(row => row.version)).toEqual([1]);
+  expect(await taskTypes()).toEqual([]);
+
+  await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
+  expect(await saveCvLibrary({ ok: true }, form({ library: JSON.stringify(library), version: "1" }))).toEqual({ ok: true });
+  expect((await database.select({ version: schema.cvLibraries.version }).from(schema.cvLibraries)).map(row => row.version).sort()).toEqual([1, 2]);
+  expect(await taskTypes()).toEqual(["rescore_all"]);
 });

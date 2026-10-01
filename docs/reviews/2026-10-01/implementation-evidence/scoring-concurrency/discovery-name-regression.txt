@@ -1,0 +1,11 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+--{"t":"2026-10-01T21:26:52.348Z","level":"info","msg":"discovery finished","data":{"company":"Acme","outcome":"not_found","fetches":1}}
+·----------------------------------------------------------------------------------------------------------
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 108 skipped (109)
+   Start at  22:26:51
+   Duration  1.29s (transform 50%, import 36%, tests 14%)
+

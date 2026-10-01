@@ -7,7 +7,7 @@
  * here checks it again.
  */
 import { desc, eq, sql } from "drizzle-orm";
-import { cvLibraries, enqueueTask } from "@ava/db";
+import { accountCanScore, cvLibraries, enqueueTask, lockAccountScoreInput } from "@ava/db";
 import { CvLibrarySchema, parseLibraryAdditions, retainArchivedEvidence, type CvLibrary } from "@ava/core";
 import type { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -45,13 +45,15 @@ export async function writeCvLibraryVersion(
   build: (current: CvLibrary | null) => CvLibrary,
   options: { review?: boolean } = {},
 ): Promise<number> {
+  await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
   const latest = await latestLibrary(tx, userId);
   if ((latest?.version ?? 0) !== expectedVersion) throw new UserFacingError("The library changed. Reload before saving.");
   const version = (latest?.version ?? 0) + 1;
   const content = parseLibraryAdditions(build(latest?.content ?? null));
   await tx.insert(cvLibraries).values({ userId, version, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
-  await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+  if (await accountCanScore(tx as unknown as ReturnType<typeof db>, userId))
+    await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
   // The evidence review of the version this save just wrote, for the writes the person did not
   // type: an accepted import and a gap quiz's answers. A save from the Library editor passes
   // `review: false`, because there the review is the person's to ask for — the Re-score button,

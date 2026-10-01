@@ -1,7 +1,7 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
-import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
-import { decisionDigest, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
+import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, lockAccountScoreInput, lockScoreModelInput, accountCanScore, type ScoreState, type Task } from "@ava/db";
+import { decisionDigest, PROMPTS, resolveRoute, routedModel, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -47,7 +47,11 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   // Behind the task's fence, so a run the queue has given up on writes nothing after its retry began.
   await deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-    await tx.update(schema.decisions).set({ tags: result.tags }).where(and(eq(schema.decisions.id, decision.id), eq(schema.decisions.userId, decision.userId), eq(schema.decisions.tagsEdited, false), eq(schema.decisions.superseded, false)));
+    await lockAccountScoreInput(tx as unknown as WorkerDeps["db"], decision.userId, "exclusive");
+    const tagged = await tx.update(schema.decisions).set({ tags: result.tags }).where(and(eq(schema.decisions.id, decision.id), eq(schema.decisions.userId, decision.userId), eq(schema.decisions.tagsEdited, false), eq(schema.decisions.superseded, false)))
+      .returning({ id: schema.decisions.id });
+    if (tagged.length && await accountCanScore(tx as unknown as WorkerDeps["db"], decision.userId))
+      await enqueueStandard(tx as unknown as WorkerDeps["db"], "rescore_all", { userId: decision.userId, onlyInTable: true });
     if (result.proposedNewTags.length) {
       await tx
         .insert(schema.tagVocabulary)
@@ -77,6 +81,8 @@ export interface PreparedScore {
   input: ScoreJobInput;
   /** What the score was computed from, stored with it so an unchanged rerun skips the call. */
   fingerprint: string;
+  /** Monotonic request number on this account's view; timestamps cannot order same-ms answers. */
+  attemptVersion: number;
   profileVersion: number | null;
   /** When the inputs were read. */
   preparedAt: Date;
@@ -97,15 +103,19 @@ async function scoreInputs(db: WorkerDeps["db"], userId: string,
     employmentType: job.employmentType ?? undefined,
     description: view.inTable ? job.descriptionText ?? undefined : undefined,
     keywordTerms: view.keywordTerms,
+    locationTerms: settings.gate.locationTerms,
   };
+  const route = resolveRoute(PROMPTS.A5, settings.stageRoutes);
+  const model = routedModel(route, { callSite: modelForCallSite(settings, "A5") }, settings.defaultModel);
   const input = {
     profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
     decisionDigest: digest,
     evidence: library ? scoringEvidence(scoringEvidenceBlocks(library.content),
       [role.title, role.department, ...(role.keywordTerms ?? []), role.description].filter(Boolean).join(" ")) : "",
     job: role,
+    route: { model, effort: route.effort },
   };
-  return { input, fingerprint: sha1(JSON.stringify([input, modelForCallSite(settings, "A5")])),
+  return { input, fingerprint: sha1(JSON.stringify([input, PROMPTS.A5.version])),
     profileVersion: profile?.version ?? null };
 }
 
@@ -130,7 +140,7 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   if (!view) return { done: { skipped: "role is not in this account's table" } };
   if (!job.shared && job.addedBy !== userId && !view.addedByUrl)
     return { done: { skipped: "role is no longer shared with this account" } };
-  const settings = await deps.userSettings(userId);
+  const settings = await loadUserSettings(deps.db, userId);
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
   // A skipped or archived role's score has no reader: the table's order is for undecided roles,
@@ -171,20 +181,35 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
     await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : "budget");
     return { done: { skipped: scoreStop } };
   }
-  return { prepared: { userId, jobId, input, fingerprint, profileVersion, preparedAt } };
+  const [attempt] = await deps.db.update(schema.userJobs)
+    .set({ scoreAttemptVersion: sql`${schema.userJobs.scoreAttemptVersion} + 1` })
+    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)))
+    .returning({ version: schema.userJobs.scoreAttemptVersion });
+  if (!attempt) return { done: { skipped: "role is not in this account's table" } };
+  return { prepared: { userId, jobId, input, fingerprint, profileVersion, preparedAt, attemptVersion: attempt.version } };
 }
 
 /** Recheck the exact request against the current role and account before publishing an AI answer. */
 export async function checkScorePublication(deps: WorkerDeps, db: WorkerDeps["db"],
-  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "preparedAt">): Promise<boolean> {
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "preparedAt"> & { attemptVersion?: number }): Promise<boolean> {
   const { userId, jobId } = score;
-  // Gate, job, then view is the existing publication order used by description and location
-  // updates. These row locks keep their changes atomic with the score's final input check.
+  await lockScoreModelInput(db, "shared");
+  await lockAccountScoreInput(db, userId, "shared");
+  // Lock global and account input fences first, then gate, company, job and view. New profile,
+  // Library and decision rows have no stable row to lock; their writers take the account fence.
   await db.execute(sql`select user_id from user_settings where user_id = ${userId}::uuid and key = 'gate' for share`);
+  const [jobRef] = await db.select({ companyId: schema.jobs.companyId }).from(schema.jobs)
+    .where(eq(schema.jobs.id, jobId)).limit(1);
+  if (!jobRef) return false;
+  // Company deletion locks the company before cascading to its jobs. Match that order.
+  const [company] = await db.select({ id: schema.companies.id }).from(schema.companies)
+    .where(eq(schema.companies.id, jobRef.companyId)).for("share").limit(1);
+  if (!company) return false;
   const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).for("share").limit(1);
+  if (!job || job.companyId !== jobRef.companyId) return false;
   const [view] = await db.select().from(schema.userJobs)
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).for("update").limit(1);
-  if (!job || !view) return false;
+  if (!view) return false;
   const [choice] = await db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
   const ineligible: ScoreState | null = job.status !== "open" ? "closed"
@@ -208,7 +233,17 @@ export async function checkScorePublication(deps: WorkerDeps, db: WorkerDeps["db
     }
     return false;
   }
-  return !view.fitScoredAt || view.fitScoredAt <= score.preparedAt;
+  if (score.attemptVersion === undefined || view.scoreAttemptVersion !== score.attemptVersion) {
+    // Old persisted batches have no request number. They still settle their bill, but a fresh
+    // request must own the view before an answer can be published.
+    if (score.attemptVersion === undefined && (view.fitScore === null || view.scoreInputHash !== current.fingerprint)) {
+      await enqueueStandard(db, "score_job", { userId, jobId, live: true });
+      await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
+        .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    }
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -216,7 +251,7 @@ export async function checkScorePublication(deps: WorkerDeps, db: WorkerDeps["db
  * does not queue the same inputs again every day; a changed profile or gate asks again.
  */
 export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date,
-  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "preparedAt">): Promise<boolean> {
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint"> & { attemptVersion?: number }): Promise<boolean> {
   const written = await db.update(schema.userJobs).set({
     // A prior fit is retained for reference, but its attempted update has failed.
     scoreState: sql<ScoreState>`case when ${schema.userJobs.fitScore} is null then 'scored' else 'failed' end`,
@@ -224,7 +259,7 @@ export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date,
     scoreStateAt: now, scoredAt: now,
   })
     .where(and(eq(schema.userJobs.userId, score.userId), eq(schema.userJobs.jobId, score.jobId),
-      sql`(${schema.userJobs.fitScoredAt} is null or ${schema.userJobs.fitScoredAt} <= ${score.preparedAt})`))
+      score.attemptVersion === undefined ? sql`false` : eq(schema.userJobs.scoreAttemptVersion, score.attemptVersion)))
     .returning({ jobId: schema.userJobs.jobId });
   return written.length > 0;
 }
@@ -234,19 +269,16 @@ export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date,
  * fields and the score's bookkeeping and nothing else: never `in_table`, which the gate alone
  * decides, so a score — however late it lands — changes the table's order, never what is in it.
  *
- * `notAfter` is for a score that arrives late (a batch): it is written only when no score computed
- * from newer inputs has landed since those inputs were read. Returns whether it was written.
+ * A score arriving late is written only while its prepared attempt still owns this view.
+ * Returns whether it was written.
  */
 export async function writeScore(
   db: WorkerDeps["db"],
   now: Date,
-  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "profileVersion">,
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "profileVersion"> & { attemptVersion?: number },
   result: ScoreJobResult,
-  opts: { preparedAt?: Date } = {},
 ): Promise<boolean> {
-  const fresher = opts.preparedAt
-    ? sql`(${schema.userJobs.fitScoredAt} is null or ${schema.userJobs.fitScoredAt} <= ${opts.preparedAt})`
-    : undefined;
+  const fresher = score.attemptVersion === undefined ? sql`false` : eq(schema.userJobs.scoreAttemptVersion, score.attemptVersion);
   const written = await db
     .update(schema.userJobs)
     .set({
@@ -306,7 +338,7 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
     const writer = tx as unknown as WorkerDeps["db"];
     await deps.assertOwnership?.(writer);
     if (!await checkScorePublication(deps, writer, prep.prepared)) return { skipped: "score result no longer current" };
-    return await writeScore(writer, deps.now(), prep.prepared, result, { preparedAt: prep.prepared.preparedAt })
+    return await writeScore(writer, deps.now(), prep.prepared, result)
       ? { score: result.score, verdict: result.verdict } : { skipped: "newer score already landed" };
   });
 }
@@ -618,13 +650,22 @@ export const RESCORE_INTERVAL_MS = 60 * 60_000;
 
 /** What a full re-score is computed from for one account: its profile, gate, scoring model and evidence. */
 async function rescoreInputs(deps: WorkerDeps, userId: string): Promise<string> {
-  const settings = await deps.userSettings(userId);
+  const settings = await loadUserSettings(deps.db, userId);
   const profile = await latestProfileFor(deps.db, userId);
   const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
+  const digest = await buildDigest(deps.db, userId);
+  const route = resolveRoute(PROMPTS.A5, settings.stageRoutes);
+  const model = routedModel(route, { callSite: modelForCallSite(settings, "A5") }, settings.defaultModel);
+  const companies = await deps.db.execute<{ id: string; name: string }>(sql`select distinct c.id, c.name
+    from companies c join jobs j on j.company_id = c.id
+    join user_jobs uj on uj.job_id = j.id
+    where uj.user_id = ${userId}::uuid order by c.id`);
   return sha1(JSON.stringify([
     profile?.markdown ?? settings.seedProfile ?? "",
     settings.gate,
-    modelForCallSite(settings, "A5"),
+    digest,
+    PROMPTS.A5.version, model, route.effort,
+    companies.rows,
     library ? scoringEvidenceBlocks(library.content) : [],
   ]));
 }

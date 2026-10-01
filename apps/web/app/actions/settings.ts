@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { and, eq, sql } from "drizzle-orm";
 import { userSettings as userSettingsTable } from "@ava/db/schema";
+import { lockAccountScoreInput } from "@ava/db";
 import {
   isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD, parseTermList, SCORING_BATCH_MINUTES_MAX,
   SCORING_BATCH_MINUTES_MIN, SCORING_MODES, scoringBatchMinutesFrom, type GateSettings, type MatchField,
@@ -49,6 +50,7 @@ function gateFromForm(formData: FormData, current: GateSettings): { ok: true; ga
 export async function saveGate(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const result = await db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
     // Merge only submitted fields after taking the same per-account lock as suggestion acceptance.
     // Otherwise two cards or tabs can overwrite one another with a stale whole-gate read.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${user.id}`}))`);
@@ -73,6 +75,7 @@ export async function saveGate(_prev: ActionResult, formData: FormData): Promise
 export async function saveMatchFields(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const result = await db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${user.id}`}))`);
     const [saved] = await tx.select({ key: userSettingsTable.key }).from(userSettingsTable)
       .where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "gate"))).limit(1);

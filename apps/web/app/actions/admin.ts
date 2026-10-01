@@ -7,7 +7,7 @@ import { retireSourceRoles } from "@ava/db";
 import { careerSources, companies, companyNameSuggestions } from "@ava/db/schema";
 import { ensureHttpUrl, extractDomain } from "@ava/core";
 import { requireAdmin } from "@/lib/auth";
-import { applySuggestedName, normaliseCompanyName } from "@/lib/company-names";
+import { applySuggestedName, enqueueCompanyNameRescores, normaliseCompanyName } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { fail, zUuid, type ActionResult } from "@/lib/validation";
@@ -44,12 +44,13 @@ export async function saveCatalogueCompany(companyId: string, _previous: ActionR
   const duplicate = await db().select({ id: companies.id }).from(companies).where(eq(companies.domain, domain)).limit(1);
   if (duplicate[0] && duplicate[0].id !== id) return fail("Another company already uses this domain.");
   await db().transaction(async (tx) => {
-    const [locked] = await tx.select({ homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).for("update");
+    const [locked] = await tx.select({ homepageUrl: companies.homepageUrl, name: companies.name }).from(companies).where(eq(companies.id, id)).for("update");
     if (!locked) return;
     const changed = locked.homepageUrl !== homepageUrl;
     await tx.update(companies)
       .set({ homepageUrl, domain, ...(changed ? { faviconUrl: null } : {}), ...(name ? { name } : {}) })
       .where(eq(companies.id, id));
+    if (name && name !== locked.name) await enqueueCompanyNameRescores(tx, id);
     if (changed) {
       await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl }, tx);
       // A running discovery may still hold the former homepage. Its completion fence refuses
@@ -101,7 +102,10 @@ export async function removeCatalogueSource(sourceId: string): Promise<void> {
   const companyId = await db().transaction(async (tx) => {
     const [source] = await tx.update(careerSources).set({ status: "disabled" }).where(eq(careerSources.id, id)).returning({ companyId: careerSources.companyId });
     if (!source) return null;
-    // Lock the views first, in the order every other writer takes them, then read decisions and
+    // The publication path locks a job before its account view. Close source roles in that order
+    // too, so an in-flight score cannot leave this transaction waiting in the reverse order.
+    await retireSourceRoles(tx, { sourceId: id });
+    // Lock the views in account/role order, then read decisions and
     // CVs in a fresh statement: a shortlist committed while this waited must keep its role.
     await tx.execute(sql`select uj.user_id from user_jobs uj join jobs j on j.id = uj.job_id
       where j.source_id = ${id} and uj.archived_at is null
@@ -119,7 +123,6 @@ export async function removeCatalogueSource(sourceId: string): Promise<void> {
       select job_id, user_id, 'updated', ${SOURCE_RETIRED_EVENT}::jsonb from retired`);
     // The shared postings: a source nobody scans any more cannot close its roles by the two-miss
     // rule, so they are closed now, as of when they were last seen.
-    await retireSourceRoles(tx, { sourceId: id });
     return source.companyId;
   });
   revalidateCatalogue(companyId);

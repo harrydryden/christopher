@@ -97,6 +97,11 @@ evidence supplied; do not assume seniority or location that is not stated. The e
 what they have confirmed about their own experience; something absent from it is not proof that they
 cannot do it.
 
+An employer's location list may be marked partial, with total, included and omitted counts. The
+included places are verified examples, but omitted places may also be relevant. Do not infer a
+location mismatch or ineligibility from a partial list. Configured location terms used to select
+examples are filtering hints, not evidence that the person prefers or qualifies for those places.
+
 ${UNTRUSTED_RULE}`;
 
 export const A6_TAG_REASON = `You map a free-text reason for applying to or skipping a job onto a controlled tag vocabulary.

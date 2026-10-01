@@ -40,11 +40,12 @@ import { BATCH_PRICE_MULTIPLIER, estimateBatchCostUsd, estimateCostUsd, estimate
 import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import type * as S from "./schemas";
-import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, outputFormat, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
+import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, outputFormat, resolveRoute, type Effort, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
 import { canonicalEvidence, evidenceBlockId } from "./evidence";
 import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./claim-memo";
 import { AiGovernor, abortableSleep, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
+import { scoreLocationEvidence } from "./score-location-evidence";
 import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, type BreakerStats } from "./breaker";
 
 export type { Effort } from "./prompt-registry";
@@ -358,6 +359,8 @@ interface CallInput {
    * `cvModel` the CV builder does — so the engine does not have to be rebuilt to say so.
    */
   model?: string;
+  /** A route pinned with a score's fresh settings, immune to a stale engine settings cache. */
+  pinnedRoute?: { model: string; effort: Effort };
   /** A ceiling sized to this call's input, below the entry's own (A3 sizes it to the page). */
   maxTokens?: number;
   /** Fires once the response has begun, which is when a prefix this call caches becomes readable by others. */
@@ -1089,9 +1092,11 @@ export class AiEngine {
    * live path adds the refusal fallback; a batched request goes without it, as the Batches API
    * refuses that parameter.
    */
-  private async buildRequest(entry: PromptEntry, call: Pick<CallInput, "user" | "model" | "maxTokens">, recorded: Omit<Ref, "signal" | "priority">) {
+  private async buildRequest(entry: PromptEntry, call: Pick<CallInput, "user" | "model" | "maxTokens" | "pinnedRoute">, recorded: Omit<Ref, "signal" | "priority">) {
     const callSite = entry.callSite;
-    const { route, model } = await this.routeFor(entry, call.model);
+    const { route, model } = call.pinnedRoute
+      ? { route: { model: call.pinnedRoute.model, effort: call.pinnedRoute.effort }, model: call.pinnedRoute.model }
+      : await this.routeFor(entry, call.model);
     const { system, content } = layoutFor(entry, typeof call.user === "string" ? { tail: call.user } : call.user);
     const texts = [...system.map(block => block.text), ...(typeof content === "string" ? [content] : content.map(block => block.text))];
     const maxTokens = call.maxTokens ?? entry.maxTokens;
@@ -1622,7 +1627,7 @@ export class AiEngine {
 
   // A5 ---------------------------------------------------------------------
   async scoreJob(input: ScoreJobInput, ref: Ref = {}): Promise<ScoreJobResult | null> {
-    const result = await this.run<S.FitScoreOutput>(PROMPTS.A5, { user: scoreJobUser(input) }, ref);
+    const result = await this.run<S.FitScoreOutput>(PROMPTS.A5, { user: scoreJobUser(input), pinnedRoute: input.route }, ref);
     return result ? finishScore(result) : null;
   }
 
@@ -1651,12 +1656,12 @@ export class AiEngine {
   async scoreJobBatchRequest(input: ScoreJobInput): Promise<BatchScoreRequest> {
     const entry = PROMPTS.A5;
     const user = scoreJobUser(input);
-    const { model, request, meta, maxTokens } = await this.buildRequest(entry, { user }, {});
+    const { model, request, meta, maxTokens } = await this.buildRequest(entry, { user, pinnedRoute: input.route }, {});
     const estimate = estimateStage(entry, {
       stableBytes: user.stable.map(block => Buffer.byteLength(block)),
       tailBytes: Buffer.byteLength(user.tail),
       outputTokens: maxTokens,
-    }, { callSiteModel: model });
+    }, { callSiteModel: model, ...(input.route ? { routes: { A5: input.route } } : {}) });
     return { params: request, meta, model, estimateUsd: Number((estimate * BATCH_PRICE_MULTIPLIER).toFixed(6)) };
   }
 
@@ -2349,9 +2354,11 @@ function validate<T>(schema: z.ZodType, value: unknown): { data: T } | { error: 
 export interface ScoreJobInput {
   profileMarkdown: string;
   decisionDigest: string;
+  /** Model and effort resolved with the same fresh settings as this score's fingerprint. */
+  route?: { model: string; effort: Effort };
   /** The evidence that bears on this role, already bounded (`scoringEvidence` in core). */
   evidence?: string;
-  job: { title: string; company: string; location?: string; locations?: string[]; locationStatus?: "pending" | "unavailable"; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
+  job: { title: string; company: string; location?: string; locations?: string[]; locationTerms?: string[]; locationStatus?: "pending" | "unavailable"; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
 }
 
 /** One fit score, clamped and checked. */
@@ -2404,7 +2411,7 @@ function scoreJobUser(input: ScoreJobInput): { stable: string[]; tail: string } 
   const jobText = [
     `Title: ${j.title}`,
     `Company: ${j.company}`,
-    j.locations?.length ? `Employer-listed locations: ${j.locations.join("; ")}` : null,
+    j.locations?.length ? scoreLocationEvidence(j.locations, j.locationTerms) : null,
     !j.locations?.length && j.location ? `Location: ${j.location}` : null,
     j.locationStatus === "pending" ? "Location: awaiting verification of the current places" : null,
     j.locationStatus === "unavailable" ? "Location: current places could not be verified" : null,

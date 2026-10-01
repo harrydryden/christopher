@@ -170,12 +170,42 @@ describe("engine plumbing", () => {
     } });
     const [account, role] = userBlocks(calls[0]!.params);
     expect(account!.text).not.toContain("Boston, Massachusetts");
-    expect(role!.text).toContain("Employer-listed locations: Atlanta, Georgia; Boston, Massachusetts");
+    expect(role!.text).toContain("Employer-listed locations (complete; total: 2; included: 2; omitted: 0): Atlanta, Georgia; Boston, Massachusetts");
 
     await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: {
       title: "Operations Manager", company: "Acme", locationStatus: "pending",
     } });
     expect(userBlocks(calls[1]!.params)[1]!.text).toContain("Location: awaiting verification of the current places");
+  });
+
+  it("sends the same bounded location evidence live and in a batch", async () => {
+    const { engine, calls } = engineWith({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
+    const input = { profileMarkdown: "Boston preferred", decisionDigest: "", job: {
+      title: "Operations Manager", company: "Acme", locationTerms: ["Boston"],
+      locations: [...Array.from({ length: 999 }, (_, i) => `City-${i}-${"x".repeat(190)}`), "Boston, Massachusetts"],
+    } };
+    await engine.scoreJob(input);
+    const batch = await engine.scoreJobBatchRequest(input);
+    expect((batch.params.messages as unknown[])).toEqual(calls[0]!.params.messages);
+    const role = userBlocks(calls[0]!.params)[1]!.text;
+    expect(role).toContain("Boston, Massachusetts");
+    expect(role).toContain("partial; total: 1000;");
+    expect(role).toContain("Location evidence incomplete:");
+    expect(batch.estimateUsd).toBeLessThan(0.02);
+  });
+
+  it("uses one pinned score route for live and batch requests despite stale engine routing", async () => {
+    const { client, calls } = fakeClient({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
+    const engine = createAiEngine({ client, getModel: () => "claude-haiku-4-5",
+      getStageRoutes: () => ({ A5: { model: "claude-haiku-4-5", effort: "high" } }) });
+    const input = { profileMarkdown: "", decisionDigest: "", route: { model: "claude-sonnet-5", effort: "medium" as const },
+      job: { title: "Ops", company: "Acme" } };
+    await engine.scoreJob(input);
+    const batch = await engine.scoreJobBatchRequest(input);
+    expect(calls[0]!.params.model).toBe("claude-sonnet-5");
+    expect(batch.params.model).toBe("claude-sonnet-5");
+    expect(calls[0]!.params.output_config).toEqual(batch.params.output_config);
+    expect(calls[0]!.params.output_config).toHaveProperty("effort", "medium");
   });
 
   it("keeps scraped text inside its block when it carries the block's own closing tag", async () => {

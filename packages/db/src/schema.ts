@@ -459,6 +459,8 @@ export const userJobs = pgTable(
     fitRationale: text("fit_rationale"),
     fitProfileVersion: integer("fit_profile_version"),
     fitScoredAt: ts("fit_scored_at"),
+    /** Incremented when a fresh A5 request is prepared; only that attempt may publish. */
+    scoreAttemptVersion: integer("score_attempt_version").notNull().default(0),
     /**
      * Fingerprint of everything the last usable A5 score was computed from, or the last completed
      * attempt when no usable score exists (the role, this account's profile and evidence, and the

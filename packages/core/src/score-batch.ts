@@ -28,9 +28,11 @@ export interface ScoreBatchItem {
   estimateUsd: number;
   /** The hash of what the score is computed from, stored on the view with the score. */
   fingerprint: string;
+  /** View request number. Optional only for batches persisted before the publication migration. */
+  attemptVersion?: number;
   /** The preference profile version the score was asked against. */
   profileVersion: number | null;
-  /** When the inputs were read (ISO). A score computed from older inputs never replaces a newer one. */
+  /** When the inputs were read (ISO); ordering uses attemptVersion. */
   preparedAt: string;
 }
 

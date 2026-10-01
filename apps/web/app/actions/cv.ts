@@ -5,7 +5,7 @@ import { assertCvFinalisable } from "@ava/core/cv-review";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@ava/db";
+import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput } from "@ava/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type AppSettings, type CvContent, type CvWritingPreferences } from "@ava/core";
@@ -176,6 +176,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
   let nextId = draftId;
   try {
     nextId = await db().transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
       await lockCvDraft(tx, draftId);
       const [draft] = await tx.select().from(cvDrafts)
         .where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, user.id))).limit(1).for("update");

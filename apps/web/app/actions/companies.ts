@@ -1,5 +1,5 @@
 "use server";
-import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus, retireSourceRoles } from "@ava/db";
+import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus, retireSourceRoles, lockAccountScoreInput } from "@ava/db";
 
 import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 
@@ -502,6 +502,7 @@ export async function unfollowCompany(companyId: string): Promise<void> {
   const user = await requireUser();
   const id = zUuid().parse(companyId);
   await db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
     await tx.delete(companySubscriptions).where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id)));
     await tx.execute(sql`delete from user_jobs uj using jobs j where j.id = uj.job_id and uj.user_id = ${user.id} and j.company_id = ${id}`);
     await syncCompanyStatus(tx, id);

@@ -1,7 +1,7 @@
 "use server";
 import { assertCvFinalisable } from "@ava/core/cv-review";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, companies, cvDrafts, decisions, jobs, type ApplicationStatus } from "@ava/db";
+import { actionCvs, applications, companies, cvDrafts, decisions, jobs, lockAccountScoreInput, type ApplicationStatus } from "@ava/db";
 import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications";
 import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@ava/core";
 import { db } from "@/lib/db";
@@ -167,6 +167,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
     const fields = read.fields;
     const { status, notes, appliedOn: supplied } = fields;
     await db().transaction(async (tx) => {
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
       // The role lock `decide` and a CV build take, first, so a stage change, a decision and the
       // first application row of a build never interleave on one role.
       const view = await lockRoleView(tx, user.id, jobId);

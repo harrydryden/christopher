@@ -2,7 +2,7 @@
 
 import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
-import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
+import { appendProfile, latestProfileFor, setSubscriptionStatus, lockAccountScoreInput } from "@ava/db";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { filterSuggestions, tagVocabulary, userSettings, type FilterSuggestion, type User } from "@ava/db/schema";
@@ -107,7 +107,7 @@ const SEED_PROFILE_LIMIT = 5_000;
 async function writeSeedProfile(user: User, raw: string): Promise<string | null> {
   const text = String(raw ?? "");
   if (text.length > SEED_PROFILE_LIMIT) return `Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`;
-  await setUserSetting(user.id, "seedProfile", text);
+  await setUserSetting(user.id, "seedProfile", text, { rescore: !needsEmailConfirmation(user) });
   if (!needsEmailConfirmation(user)) await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidate("/learning", "/settings", "/");
   return null;
@@ -143,6 +143,7 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
   const id = parsedId.data;
   try {
     const result = await db().transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
       // This is the same lock used by a manual gate save. Read the gate only after taking it, so
       // accepting two terms from separate tabs cannot replace the first with a stale whole gate.
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${user.id}`}))`);
@@ -238,7 +239,6 @@ export async function savePreferenceProfile(formData: FormData): Promise<void> {
     markdown, pinnedStatements: latest?.pinnedStatements ?? [], openQuestions: latest?.openQuestions ?? [],
     sourceDecisionCount: latest?.sourceDecisionCount ?? 0, model: "user",
   });
-  await enqueue("rescore_all", { userId: user.id, onlyInTable: true });
   revalidatePath("/learning");
 }
 

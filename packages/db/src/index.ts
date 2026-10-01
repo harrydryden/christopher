@@ -13,6 +13,7 @@ export { reevaluateGate, archiveNonMatches, isGateArchive, gateCompiler, gateWit
 export { locationRevisionFor, requestLocationEnrichment, type LocationRevisionInput, type LocationEnrichmentCandidate } from "./location-enrichment";
 export { reserveLocationRead, WORKDAY_LOCATION_READS_PER_HOUR } from "./location-read-budget";
 export { appendProfile, latestProfileFor } from "./profiles";
+export { lockScoreModelInput, lockAccountScoreInput, accountCanScore } from "./score-fence";
 export { latestCvLibrary } from "./cv-library";
 export { claimableTaskSql, workloadMetrics } from "./scaling";
 export { topStatements, resetStatements, formatStatementTotals, type StatementTotal, type StatementTotals } from "./pg-stat";

@@ -4,6 +4,7 @@ import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { decisions, tagVocabulary, userJobs } from "@ava/db/schema";
+import { accountCanScore, lockAccountScoreInput } from "@ava/db";
 import { evaluateLocation } from "@ava/core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -156,6 +157,7 @@ export async function undoDecisionIfCurrent(jobId: string, expectedDecisionId: s
   if (!parsed.success) return fail("This Undo is out of date. Reload roles to review the latest decision.");
   try {
     await db().transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
       if (!await lockRoleView(tx, user.id, parsed.data.jobId)) throw new UserFacingError("Role not found.");
       const [standing] = await tx.select({ id: decisions.id }).from(decisions)
         .where(and(eq(decisions.userId, user.id), eq(decisions.jobId, parsed.data.jobId), eq(decisions.superseded, false)));
@@ -182,8 +184,14 @@ export async function saveDecisionTags(decisionId: string, formData: FormData): 
   const accepted = tags.length ? await db().select({ tag: tagVocabulary.tag }).from(tagVocabulary)
     .where(and(eq(tagVocabulary.userId, user.id), inArray(tagVocabulary.tag, tags), eq(tagVocabulary.accepted, true))) : [];
   if (accepted.length !== tags.length) refuseOn("/learning", "Choose accepted reason tags from the list.");
-  const updated = await db().update(decisions).set({ tags, tagsEdited: true })
-    .where(and(eq(decisions.id, id), eq(decisions.userId, user.id), eq(decisions.superseded, false))).returning({ id: decisions.id });
+  const updated = await db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
+    const result = await tx.update(decisions).set({ tags, tagsEdited: true })
+      .where(and(eq(decisions.id, id), eq(decisions.userId, user.id), eq(decisions.superseded, false))).returning({ id: decisions.id });
+    if (result.length && await accountCanScore(tx as unknown as ReturnType<typeof db>, user.id))
+      await enqueue("rescore_all", { userId: user.id, onlyInTable: true }, tx);
+    return result;
+  });
   if (!updated.length) refuseOn("/learning", "This decision has changed. Reload before editing its tags.");
   await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidatePath("/learning");
@@ -295,6 +303,7 @@ export async function undoDecisionsIfCurrent(expected: Array<{ jobId: string; de
   const wanted = new Map(parsed.data.map(item => [item.jobId, item.decisionId]));
   try {
     await db().transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
       // Every decision writer takes these same account-role locks. Sort before taking any lock to
       // match recordDecisions and keep concurrent bulk operations deadlock-free.
       for (const id of ids) if (!await lockRoleView(tx, user.id, id)) throw new UserFacingError("A selected role no longer exists.");

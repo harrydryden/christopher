@@ -194,6 +194,7 @@ export async function handleCollectScoreBatch(task: Task, deps: WorkerDeps): Pro
       items: batchable.map((item): ScoreBatchItem => ({
         customId: item.customId, taskId: item.task.id, userId: item.prepared.userId, jobId: item.prepared.jobId,
         estimateUsd: item.request.estimateUsd, fingerprint: item.prepared.fingerprint, profileVersion: item.prepared.profileVersion,
+        attemptVersion: item.prepared.attemptVersion,
         preparedAt: item.prepared.preparedAt.toISOString(),
       })),
       holds: Object.fromEntries([...holds].map(([userId, hold]) => [userId, hold.id])),
@@ -248,7 +249,7 @@ async function applyResult(deps: WorkerDeps, record: ScoreBatchRecord, item: Sco
     if (score === null) {
       return await markScoredWithoutResult(writer, now, prepared) ? "unscored" as const : "stale" as const;
     }
-    return (await writeScore(writer, now, item, score, { preparedAt: prepared.preparedAt })) ? "scored" as const : "stale" as const;
+    return (await writeScore(writer, now, item, score)) ? "scored" as const : "stale" as const;
   });
 }
 

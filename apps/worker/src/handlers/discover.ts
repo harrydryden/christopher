@@ -1,7 +1,7 @@
 import { withResourceLease } from "../lease";
 import { schema, enqueueStandard, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@ava/db";
 import { captureCompanyLogo, deadlineMsFor, discovery, LogoCaptureError, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@ava/core";
-import { and, eq, gte, lt, ne } from "drizzle-orm";
+import { and, eq, gte, lt, ne, sql } from "drizzle-orm";
 import { makeFetchContext, makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";
 
@@ -129,7 +129,8 @@ async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$
     await deps.assertOwnership?.(tx as unknown as Db);
   // Discovery can spend minutes on the network. An administrator may correct this shared
   // company's homepage meanwhile; a result found on the old site must never become its source.
-  const [current] = await tx.select({ homepageUrl: schema.companies.homepageUrl }).from(schema.companies)
+  const [current] = await tx.select({ homepageUrl: schema.companies.homepageUrl,
+    name: schema.companies.name, domain: schema.companies.domain }).from(schema.companies)
     .where(eq(schema.companies.id, company.id)).for("update").limit(1);
   if (!current || current.homepageUrl !== company.homepageUrl) {
     await tx.update(schema.discoveryRuns)
@@ -140,8 +141,15 @@ async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$
   // Replace a placeholder name (the raw domain or its label) with the first real one we learn,
   // from the homepage title or the verified careers feed. A name the site gave us is kept.
   const patch: Partial<typeof schema.companies.$inferInsert> = {};
-  if (result.companyName && discovery.isPlaceholderName(company.name, company.domain)) patch.name = result.companyName;
-  if (Object.keys(patch).length > 0) await tx.update(schema.companies).set(patch).where(eq(schema.companies.id, company.id));
+  if (result.companyName && discovery.isPlaceholderName(current.name, current.domain)) patch.name = result.companyName;
+  if (Object.keys(patch).length > 0) {
+    await tx.update(schema.companies).set(patch).where(eq(schema.companies.id, company.id));
+    const affected = await tx.execute<{ user_id: string }>(sql`select distinct uj.user_id
+      from user_jobs uj join jobs j on j.id = uj.job_id join users u on u.id = uj.user_id
+      where j.company_id = ${company.id}::uuid and (u.role = 'admin' or u.email_verified_at is not null)`);
+    for (const row of affected.rows)
+      await enqueueStandard(tx as unknown as Db, "rescore_all", { userId: row.user_id, onlyInTable: true });
+  }
 
   const candidates = result.candidates.map(serialiseCandidate);
   let chosenSourceId: string | null = null;

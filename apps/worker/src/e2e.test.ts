@@ -14,7 +14,7 @@ import { gzipSync } from "node:zlib";
 import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
-import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
+import { ats, dedupeKeyFor, discovery, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -23,6 +23,7 @@ import { _scanSourceForTests, handleScanCompany } from "./handlers/scan";
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { handleScoreJob, handleTagReason } from "./handlers/learning";
 import { handleFetchDescription, sliceBetweenAnchors } from "./handlers/description";
+import { handleDiscover } from "./handlers/discover";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskDeferred, TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
@@ -275,6 +276,33 @@ describe("end to end", () => {
     const [kept] = await db.select().from(schema.companies).where(eq(schema.companies.id, named!.id));
     expect(kept!.name).toBe("Acme Robotics Ltd");
     expect(await db.select().from(schema.careerSources)).toHaveLength(2);
+  });
+  it("preserves an administrator's name change while discovery is in flight", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example",
+      homepageUrl: "https://www.acme.example/" }).returning();
+    let begin!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const probe = vi.spyOn(discovery, "discoverCareersSources").mockImplementation(async () => {
+      begin();
+      await held;
+      return { homepageUrl: company!.homepageUrl, companyName: "Acme Robotics", outcome: "not_found",
+        candidates: [], log: [], fetches: 1, durationMs: 1 };
+    });
+    try {
+      const pending = handleDiscover({ id: crypto.randomUUID(), type: "discover", payload: { companyId: company!.id, reason: "added" },
+        attempts: 1, maxAttempts: 3 } as never, deps);
+      await started;
+      await db.update(schema.companies).set({ name: "Manually corrected Acme" }).where(eq(schema.companies.id, company!.id));
+      release();
+      await pending;
+      const [saved] = await db.select({ name: schema.companies.name }).from(schema.companies).where(eq(schema.companies.id, company!.id));
+      expect(saved!.name).toBe("Manually corrected Acme");
+    } finally {
+      release();
+      probe.mockRestore();
+    }
   });
   it("discovers the careers source from a homepage URL and scans it", async () => {
     await setGate({});

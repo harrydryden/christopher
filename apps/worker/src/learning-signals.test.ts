@@ -506,6 +506,27 @@ it("rescores an account's roles at most once an hour, and not at all when nothin
   expect(await handleRescoreAll(rescore, aiDeps({}))).toMatchObject({ queued: 1 });
 });
 
+it.each(["decision digest", "A5 route", "company name"] as const)("rescores when only the %s changes", async changed => {
+  await setGate({});
+  const { company, job } = await seedRole();
+  const rescore = { payload: { userId, onlyInTable: true }, type: "rescore_all", attempts: 1 } as never;
+  const first = await handleRescoreAll(rescore, aiDeps({})) as { queued: number; inputsHash: string };
+  expect(first.queued).toBe(1);
+  await db.execute(sql`delete from tasks`);
+  await db.insert(schema.tasks).values({ type: "rescore_all", payload: { userId, onlyInTable: true },
+    status: "done", result: first, finishedAt: daysAgo(1) });
+
+  if (changed === "decision digest") await db.insert(schema.decisions).values({
+    userId, jobId: job.id, decision: "apply", reason: "An appealing role", jobTitle: "Operations Manager", companyName: "Acme",
+  });
+  if (changed === "A5 route") await db.insert(schema.settings).values({ key: "stageRoutes", value: { A5: { effort: "medium" } } });
+  if (changed === "company name") await db.update(schema.companies).set({ name: "New Acme" }).where(eq(schema.companies.id, company.id));
+
+  const next = await handleRescoreAll(rescore, aiDeps({})) as { queued: number; inputsHash: string };
+  expect(next.queued).toBe(1);
+  expect(next.inputsHash).not.toBe(first.inputsHash);
+});
+
 // --- A8: suggestions a person can act on, and never the same one twice ----------------------
 
 it("files a pause for a followed company by its id, and never files a term the scans already filed", async () => {

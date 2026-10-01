@@ -295,6 +295,13 @@ export const careerSources = pgTable(
   (t) => [index("career_sources_company_idx").on(t.companyId)],
 );
 
+/** Rolling per-source cap on Workday posting-detail reads, shared by every worker process. */
+export const workdayLocationReadBudgets = pgTable("workday_location_read_budgets", {
+  sourceId: uuid("source_id").primaryKey().references(() => careerSources.id, { onDelete: "cascade" }),
+  windowStartedAt: ts("window_started_at").notNull(),
+  requestCount: integer("request_count").notNull(),
+});
+
 export const discoveryRuns = pgTable("discovery_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
@@ -375,6 +382,11 @@ export const jobs = pgTable(
     url: text("url").notNull(),
     location: text("location"),
     locations: jsonb("locations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    locationResolution: text("location_resolution", { enum: ["pending", "resolved", "unavailable"] }),
+    locationLabel: text("location_label"),
+    locationRevision: text("location_revision"),
+    locationFetchedAt: ts("location_fetched_at"),
+    locationError: text("location_error"),
     department: text("department"),
     employmentType: text("employment_type"),
     remote: boolean("remote"),

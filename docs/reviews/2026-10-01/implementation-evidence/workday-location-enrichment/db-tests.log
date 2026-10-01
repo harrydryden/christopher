@@ -1,0 +1,8 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+
+
+ Test Files  3 passed (3)
+      Tests  17 passed (17)
+   Start at  21:47:19
+   Duration  2.66s (tests 52%, import 37%, transform 11%)

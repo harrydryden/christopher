@@ -16,6 +16,10 @@ export interface RawPosting {
   location?: string;
   /** All location strings when a posting lists several. */
   locations?: string[];
+  /** Workday listing's counted place label, such as `70 Locations`; not a gateable place. */
+  locationLabel?: string;
+  /** Counted places require a detail read before any location-filtered admission. */
+  locationResolution?: "pending";
   department?: string;
   employmentType?: string;
   remote?: boolean;

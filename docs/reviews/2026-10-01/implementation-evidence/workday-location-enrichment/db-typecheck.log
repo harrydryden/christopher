@@ -1,0 +1,3 @@
+
+> @ava/db@0.1.0 typecheck /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+> tsc --noEmit -p tsconfig.json

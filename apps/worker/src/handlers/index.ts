@@ -6,6 +6,7 @@ import { handleDiscover } from "./discover";
 import { handleRunDaily } from "./daily";
 import { handleScanCompany } from "./scan";
 import { handleFetchDescription } from "./description";
+import { handleFetchLocations } from "./locations";
 import { handleImportPosting } from "./import-posting";
 import { handleProfileCompany, handleSuggestCompanies } from "./companies";
 import {
@@ -32,6 +33,7 @@ export const handlers: HandlerMap = {
   run_daily: handleRunDaily,
   scan_company: handleScanCompany,
   fetch_description: handleFetchDescription,
+  fetch_locations: handleFetchLocations,
   import_posting: handleImportPosting,
   score_job: handleScoreJob,
   admit_scores: handleAdmitScores,

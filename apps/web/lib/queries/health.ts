@@ -756,6 +756,7 @@ const SUBJECT_FIELDS: Partial<Record<Task["type"], { kind: SubjectKind; field: s
   extract_document: { kind: "source", field: "sourceId" },
   verify_company: { kind: "source", field: "sourceId" },
   fetch_description: { kind: "job", field: "jobId" },
+  fetch_locations: { kind: "job", field: "jobId" },
   admit_scores: { kind: "user", field: "userId" },
   score_job: { kind: "job", field: "jobId" },
   synthesize_profile: { kind: "user", field: "userId" },

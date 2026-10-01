@@ -14,7 +14,7 @@ describe("task priorities", () => {
   });
 
   it("queues background work behind the floor, so only ageing brings it level", () => {
-    for (const type of ["score_job", "fetch_description", "scan_company", "synthesize_profile", "suggest_companies"] as const)
+    for (const type of ["score_job", "fetch_description", "fetch_locations", "scan_company", "synthesize_profile", "suggest_companies"] as const)
       expect(priorityFor(type)).toBeGreaterThan(AGEING_PRIORITY_FLOOR);
   });
 });
@@ -30,6 +30,7 @@ describe("task dedupe keys and priorities", () => {
       scan_company: [{ companyId: c }, "scan_company:c1", 5],
       run_daily: [{ trigger: "schedule" }, "run_daily", 5],
       fetch_description: [{ jobId: "j1" }, "fetch_description:j1", 4],
+      fetch_locations: [{ jobId: "j1", locationRevision: "r1" }, "fetch_locations:j1:r1", 4],
       score_job: [{ userId: u, jobId: "j1" }, "score_job:u1:j1", 4],
       admit_scores: [{ userId: u, jobIds: ["j1"], requestKey: "h1" }, "admit_scores:u1:h1", 1],
       tag_reason: [{ decisionId: "x1" }, "tag_reason:x1", 1],
@@ -72,7 +73,7 @@ describe("task deadlines", () => {
 
   it("names every task type once", () => {
     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
-    expect(TASK_TYPE_NAMES).toHaveLength(24);
+    expect(TASK_TYPE_NAMES).toHaveLength(25);
   });
 });
 

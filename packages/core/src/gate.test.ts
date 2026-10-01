@@ -75,6 +75,13 @@ describe("location filter", () => {
 
   it("passes everything when no location terms are set", () => {
     expect(evaluateGate({ title: "Operations Manager", location: "Tokyo, Japan" }, base).locationOk).toBe(true);
+    expect(evaluateGate({ title: "Operations Manager", locationResolution: "pending", remote: true }, base).locationOk).toBe(true);
+  });
+  it("holds unresolved counted locations even when the listing calls the role remote", () => {
+    for (const locationResolution of ["pending", "unavailable"] as const) {
+      expect(evaluateLocation({ title: "Operations Manager", remote: true, locationResolution }, { locationTerms: ["UK"], includeRemote: true }).ok).toBe(false);
+    }
+    expect(evaluateLocation({ title: "Operations Manager", remote: true, locationResolution: "resolved" }, { locationTerms: ["UK"], includeRemote: true }).ok).toBe(true);
   });
   it("expands a country term to its cities", () => {
     expect(evaluateGate({ title: "Operations Manager", location: "London, UK" }, uk).locationOk).toBe(true);

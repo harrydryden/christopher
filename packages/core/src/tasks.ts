@@ -26,6 +26,8 @@ export interface TaskPayloads {
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };
+  /** Resolve a Workday listing's counted locations for exactly one observed revision. */
+  fetch_locations: { jobId: string; locationRevision: string };
   /**
    * One account's fit score for one role. `live` marks a role that batch scoring handed back —
    * its batch request expired or errored, or the batch could not be sent — so the queue runs it
@@ -110,7 +112,7 @@ export type TaskType = keyof TaskPayloads;
  * change to what `evaluateGate` (gate.ts) decides for a posting must bump this number, and
  * `gate-reevaluation-version.test.ts` fails until it is bumped and its digest recorded.
  */
-export const GATE_REEVALUATION_VERSION = 1;
+export const GATE_REEVALUATION_VERSION = 2;
 
 /**
  * The types a person is waiting for. The queue's interactive lane serves these first, and ageing
@@ -138,6 +140,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   scan_company: { priority: 5, dedupe: (p) => `scan_company:${p.companyId}` },
   run_daily: { priority: 5, dedupe: () => "run_daily" },
   fetch_description: { priority: 4, dedupe: (p) => `fetch_description:${p.jobId}` },
+  fetch_locations: { priority: 4, dedupe: (p) => `fetch_locations:${p.jobId}:${p.locationRevision}` },
   score_job: { priority: 4, dedupe: (p) => `score_job:${p.userId}:${p.jobId}` },
   admit_scores: { priority: 1, dedupe: (p) => `admit_scores:${p.userId}:${p.requestKey}` },
   tag_reason: { priority: 1, dedupe: (p) => `tag_reason:${p.decisionId}` },

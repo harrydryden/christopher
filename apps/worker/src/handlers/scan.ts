@@ -8,7 +8,7 @@
  * follower and posting, created only once the posting passes that follower's gate.
  */
 import { withSpan } from "../otel";
-import { schema, taskRow, enqueueTasks, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, type Task, type ViewUpdate } from "@ava/db";
+import { schema, taskRow, enqueueTasks, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, locationRevisionFor, type Task, type ViewUpdate } from "@ava/db";
 import {
   ats,
   classifyScan,
@@ -240,6 +240,37 @@ interface Follower {
 /** Description-based matching needs the detail text before the gate can decide anything. */
 function needsDescription(gate: GateSettings): boolean {
   return gate.matchFields.includes("description") && gate.includeKeywords.length > 0;
+}
+
+type LocationState = Pick<typeof schema.jobs.$inferSelect,
+  "location" | "locations" | "locationResolution" | "locationLabel" | "locationRevision" | "locationFetchedAt" | "locationError">;
+
+/** A counted Workday label is not a place. Keep a detail result while its listing revision stands. */
+function locationStateFor(source: CareerSource, posting: RawPosting,
+  stored: LocationState | undefined, externalKey: string, now: Date): LocationState | null {
+  if (source.type !== "workday") return null;
+  if (posting.locationResolution !== "pending" || !posting.locationLabel) {
+    return stored?.locationResolution ? {
+      location: posting.location ?? null, locations: posting.locations ?? (posting.location ? [posting.location] : []),
+      locationResolution: null, locationLabel: null, locationRevision: null, locationFetchedAt: null, locationError: null,
+    } : null;
+  }
+  const locationRevision = locationRevisionFor({ sourceId: source.id, externalKey, url: posting.url,
+    title: posting.title, locationLabel: posting.locationLabel }, now);
+  if (stored?.locationRevision === locationRevision && stored.locationResolution === "resolved" && stored.locations.length) {
+    return { location: stored.location, locations: stored.locations, locationResolution: "resolved",
+      locationLabel: posting.locationLabel, locationRevision, locationFetchedAt: stored.locationFetchedAt, locationError: null };
+  }
+  if (stored?.locationRevision === locationRevision && stored.locationResolution === "unavailable") {
+    return { location: stored.location, locations: stored.locations, locationResolution: "unavailable", locationLabel: posting.locationLabel,
+      locationRevision, locationFetchedAt: stored.locationFetchedAt, locationError: stored.locationError };
+  }
+  // A refresh is unproven until its detail arrives. Keep the last resolved names as provisional
+  // evidence for existing views, but the pending flag still blocks all new restricted admissions.
+  const lastNames = stored?.locationResolution && stored.locations.length ? stored.locations : [];
+  return { location: lastNames.length ? stored!.location : null, locations: lastNames,
+    locationResolution: "pending", locationLabel: posting.locationLabel, locationRevision,
+    locationFetchedAt: lastNames.length ? stored!.locationFetchedAt : null, locationError: null };
 }
 
 /**
@@ -550,6 +581,12 @@ async function scanSource(
   const unresolved = new Set<string>();
   const deferred = new Set<string>();
   if (fetchOk && descriptionGates.length) {
+    // A counted Workday place cannot pass a restricted location gate yet, so the ordinary inline
+    // admission planner would not even consider its description. Queue that text independently:
+    // either detail may finish first, and the second re-runs the follower gate.
+    if (source.type === "workday") for (const posting of postings)
+      if (posting.locationResolution === "pending" && !posting.descriptionText && !savedByUrl.get(posting.url)?.hasText)
+        deferred.add(posting.url);
     if (ats.descriptionsFetchedPerPosting(source.type) || longHtmlListing) {
       for (const posting of postings) {
         if (!posting.descriptionText && !savedByUrl.get(posting.url)?.hasText) deferred.add(posting.url);
@@ -557,7 +594,8 @@ async function scanSource(
     } else {
       // The listing is read; what descriptions may cost is the ordinary budget from here.
       requestLimit = Math.min(requestLimit, requests + MAX_REQUESTS_PER_SCAN);
-      for (const gate of descriptionGates) for (const url of await prepareForAdmission(postings, spec, ctx, gate, rejectionCache)) unresolved.add(url);
+      for (const gate of descriptionGates) for (const url of await prepareForAdmission(
+        postings.filter(posting => !deferred.has(posting.url)), spec, ctx, gate, rejectionCache)) unresolved.add(url);
     }
   }
   await rejectionCache.save();
@@ -699,6 +737,11 @@ async function scanSource(
       descriptionHash: schema.jobs.descriptionHash,
       url: schema.jobs.url,
       locations: schema.jobs.locations,
+      locationResolution: schema.jobs.locationResolution,
+      locationLabel: schema.jobs.locationLabel,
+      locationRevision: schema.jobs.locationRevision,
+      locationFetchedAt: schema.jobs.locationFetchedAt,
+      locationError: schema.jobs.locationError,
       department: schema.jobs.department,
       employmentType: schema.jobs.employmentType,
       remote: schema.jobs.remote,
@@ -738,6 +781,10 @@ async function scanSource(
     return observedAt && stored?.descriptionFetchedAt && stored.descriptionFetchedAt >= observedAt
       ? { ...posting, descriptionText: undefined } : posting;
   });
+  const locationByKey = new Map(safePostings.map(posting => {
+    const key = deriveExternalKey(posting);
+    return [key, locationStateFor(source, posting, sourceByKey.get(key), key, deps.now())] as const;
+  }));
   if (publication.generation && followers.some(follower => needsDescription(follower.settings.gate))) {
     const withoutText = safePostings.filter(posting => !posting.descriptionText);
     const storedWithText = withoutText.length ? await deps.db.select({ externalKey: schema.jobs.externalKey })
@@ -766,6 +813,7 @@ async function scanSource(
   let newCount = 0;
   const scoreQueue: Array<{ userId: string; jobId: string }> = [];
   const descriptionQueue = new Set<string>();
+  const locationQueue = new Map<string, string>();
   const viewInserts: Array<typeof schema.userJobs.$inferInsert> = [];
 
   // A role somebody added by URL, which this listing now carries, is the same vacancy. The scan
@@ -777,6 +825,9 @@ async function scanSource(
     .select({
       id: schema.jobs.id, url: schema.jobs.url, externalKey: schema.jobs.externalKey,
       location: schema.jobs.location, locations: schema.jobs.locations, department: schema.jobs.department,
+      locationResolution: schema.jobs.locationResolution, locationLabel: schema.jobs.locationLabel,
+      locationRevision: schema.jobs.locationRevision, locationFetchedAt: schema.jobs.locationFetchedAt,
+      locationError: schema.jobs.locationError,
       employmentType: schema.jobs.employmentType, remote: schema.jobs.remote, salaryText: schema.jobs.salaryText,
       postedAt: schema.jobs.postedAt, descriptionText: schema.jobs.descriptionText,
       lastSeenAt: schema.jobs.lastSeenAt,
@@ -809,8 +860,13 @@ async function scanSource(
         title: insert.title,
         normalizedTitle: normalizeTitle(insert.title),
         url: insert.url,
-        location: insert.location ?? null,
-        locations: insert.locations ?? (insert.location ? [insert.location] : []),
+        location: locationByKey.get(insert.externalKey)?.location ?? insert.location ?? null,
+        locations: locationByKey.get(insert.externalKey)?.locations ?? insert.locations ?? (insert.location ? [insert.location] : []),
+        locationResolution: locationByKey.get(insert.externalKey)?.locationResolution ?? null,
+        locationLabel: locationByKey.get(insert.externalKey)?.locationLabel ?? null,
+        locationRevision: locationByKey.get(insert.externalKey)?.locationRevision ?? null,
+        locationFetchedAt: locationByKey.get(insert.externalKey)?.locationFetchedAt ?? null,
+        locationError: locationByKey.get(insert.externalKey)?.locationError ?? null,
         department: insert.department ?? null,
         employmentType: insert.employmentType ?? null,
         remote: insert.remote ?? looksRemote([insert.location, ...(insert.locations ?? [])].filter(Boolean).join(" ")),
@@ -827,7 +883,20 @@ async function scanSource(
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
       });
   }
-  type Admissible = { id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; remote: boolean | null; descriptionText: string | null };
+  type Admissible = { id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; locationResolution: LocationState["locationResolution"]; locationRevision: string | null; remote: boolean | null; descriptionText: string | null };
+  const queueLocationIfPotential = (row: Admissible) => {
+    if (row.locationResolution !== "pending" || !row.locationRevision) return;
+    if (followers.some(follower => {
+      if (!follower.settings.gate.locationTerms.length) return false;
+      const verdict = follower.gate.evaluate({ title: row.title, department: row.department,
+        description: row.descriptionText, location: row.location, locations: row.locations,
+        remote: row.remote, locationResolution: row.locationResolution });
+      // A description-matching gate may still be waiting for its detail text. A title exclusion
+      // is already decisive, but the missing description must not become a false keyword reject.
+      if (needsDescription(follower.settings.gate) && !row.descriptionText) return !verdict.excluded;
+      return verdict.keywordMatched && !verdict.excluded;
+    })) locationQueue.set(row.id, row.locationRevision);
+  };
   /**
    * Offer a posting new to these followers to each one's gate: a view for every follower it
    * admits, and then either its description or their scores queued.
@@ -837,7 +906,7 @@ async function scanSource(
     for (const follower of followers) {
       if (skip?.(follower.userId)) continue;
       if (undecided(row.url) && needsDescription(follower.settings.gate)) continue;
-      const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
+      const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote, locationResolution: row.locationResolution });
       if (!verdict.inTable) continue;
       admitted.push(follower.userId);
       viewInserts.push(newView(follower.userId, row.id, viewVerdict(verdict, true), seeded, deps.now()));
@@ -852,14 +921,21 @@ async function scanSource(
     // description task re-runs every follower's gate and queues the score then, text or no text.
     // Scoring it now on the title alone would pay for the same role twice.
     else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
+    queueLocationIfPotential(row);
   };
   const adopted: Admissible[] = [];
   for (const { job, insert } of adoptions) {
+    const locationState = locationByKey.get(insert.externalKey);
     const fields = {
       title: insert.title,
       url: insert.url,
-      location: insert.location ?? job.location,
-      locations: insert.locations ?? (insert.location ? [insert.location] : job.locations),
+      location: locationState ? locationState.location : insert.location ?? job.location,
+      locations: locationState ? locationState.locations : insert.locations ?? (insert.location ? [insert.location] : job.locations),
+      locationResolution: locationState?.locationResolution ?? null,
+      locationLabel: locationState?.locationLabel ?? null,
+      locationRevision: locationState?.locationRevision ?? null,
+      locationFetchedAt: locationState?.locationFetchedAt ?? null,
+      locationError: locationState?.locationError ?? null,
       department: insert.department ?? job.department,
       remote: insert.remote ?? job.remote,
     };
@@ -888,7 +964,7 @@ async function scanSource(
   }
   for (let offset = 0; offset < newRows.length; offset += 100) {
     const created = await deps.db.insert(schema.jobs).values(newRows.slice(offset, offset + 100)).onConflictDoNothing()
-      .returning({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title, department: schema.jobs.department, location: schema.jobs.location, locations: schema.jobs.locations, remote: schema.jobs.remote, descriptionText: schema.jobs.descriptionText });
+      .returning({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title, department: schema.jobs.department, location: schema.jobs.location, locations: schema.jobs.locations, locationResolution: schema.jobs.locationResolution, locationRevision: schema.jobs.locationRevision, remote: schema.jobs.remote, descriptionText: schema.jobs.descriptionText });
     newCount += created.length;
     if (created.length) await deps.db.insert(schema.jobEvents).values(created.map(row => ({ jobId: row.id, type: "discovered" as const, payload: { method: fetchMethod, seeded: isFirstScan } })));
     for (const row of created) admit(row, isFirstScan);
@@ -938,10 +1014,16 @@ async function scanSource(
   for (const row of seenRows) {
     const job = row;
     const posting = observed.get(job.externalKey)!;
+    const locationState = locationByKey.get(job.externalKey);
     const fields = {
       title: posting.title, url: posting.url,
-      location: posting.location ?? job.location,
-      locations: posting.locations ?? (posting.location ? [posting.location] : job.locations),
+      location: locationState ? locationState.location : posting.location ?? job.location,
+      locations: locationState ? locationState.locations : posting.locations ?? (posting.location ? [posting.location] : job.locations),
+      locationResolution: locationState ? locationState.locationResolution : job.locationResolution,
+      locationLabel: locationState ? locationState.locationLabel : job.locationLabel,
+      locationRevision: locationState ? locationState.locationRevision : job.locationRevision,
+      locationFetchedAt: locationState ? locationState.locationFetchedAt : job.locationFetchedAt,
+      locationError: locationState ? locationState.locationError : job.locationError,
       department: posting.department ?? job.department,
       employmentType: posting.employmentType ?? job.employmentType,
       remote: posting.remote ?? job.remote,
@@ -982,15 +1064,17 @@ async function scanSource(
     for (const follower of followers) {
       const gate = follower.settings.gate;
       if (undecided(posting.url) && needsDescription(gate)) continue;
-      const verdict = follower.gate.evaluate({ ...fields, description: follower.gate.matchesDescription ? descriptionText : undefined });
       const view = viewByKey.get(`${follower.userId}:${job.id}`);
+      const { verdict, held } = gateWithRetainedLocations(follower.gate,
+        { ...fields, description: follower.gate.matchesDescription ? descriptionText : undefined },
+        { status: job.status, locationFetchedAt: fields.locationFetchedAt }, view);
       const inTable = inTableFor(verdict, follower.userId, job, view);
       if (view) {
         // A scan leaves `hidden` as it is.
         const update = viewUpdate(follower.userId, job.id, view, viewVerdict(verdict, inTable));
         if (update) viewUpdates.push(update);
         // A view whose scoring completed without a score is not paid for again on unchanged inputs.
-        if (inTable && (changedFields.length || !view.inTable || (view.fitScore === null && view.scoredAt === null))) scoreQueue.push({ userId: follower.userId, jobId: job.id });
+        if (!held && inTable && (changedFields.length || !view.inTable || (view.fitScore === null && view.scoredAt === null))) scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else if (inTable) {
         viewInserts.push(newView(follower.userId, job.id, viewVerdict(verdict, true), false, deps.now()));
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
@@ -1003,6 +1087,7 @@ async function scanSource(
     // keeps the age rule whatever the feed says: a failed or empty read leaves no text but does
     // move `description_fetched_at`, and `updated_at` will never move on our account.
     if (deferred.has(posting.url) && descriptionAged) descriptionQueue.add(job.id);
+    if (job.status === "open") queueLocationIfPotential({ id: job.id, ...fields, descriptionText });
   }
   // Being seen is positive evidence in every mode that reconciles: a partial scan that lists a role
   // proves it is still there as surely as an ok one does, so either resets the miss count. What a
@@ -1031,9 +1116,12 @@ async function scanSource(
   }
   for (let offset = 0; offset < updates.length; offset += 250) {
     await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
+      location_resolution=v."locationResolution", location_label=v."locationLabel", location_revision=v."locationRevision",
+      location_fetched_at=v."locationFetchedAt", location_error=v."locationError",
       department=v.department, employment_type=v."employmentType", remote=v.remote, salary_text=v."salaryText", posted_at=v."postedAt",
       normalized_title=v."normalizedTitle", updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v(id uuid, title text, url text, location text, locations jsonb,
+        "locationResolution" text, "locationLabel" text, "locationRevision" text, "locationFetchedAt" timestamptz, "locationError" text,
         department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "normalizedTitle" text)
       where j.id=v.id`);
   }
@@ -1062,6 +1150,8 @@ async function scanSource(
   for (let offset = 0; offset < scoreQueue.length; offset += 250)
     await admitScores(deps, scoreQueue.slice(offset, offset + 250), { db: deps.db, onlyUnscored: true, settings: scoreSettings });
   await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
+  await enqueueTasks(deps.db, [...locationQueue].map(([jobId, locationRevision]) =>
+    taskRow("fetch_locations", { jobId, locationRevision })));
   // A continuing publication has no coverage. Final coverage is computed from every page in the
   // current generation, including pages whose positive observations were already committed.
   if (publication.generation) {
@@ -1213,7 +1303,9 @@ function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; sta
     version: 2,
     listingHash,
     // `descriptionHash` is the text the listing itself carried for the role, when it carried any.
-    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt, updatedAt: p.updatedAt, descriptionHash: inlineHash?.get(p.url) })),
+    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations,
+      locationLabel: p.locationLabel, locationResolution: p.locationResolution, remote: p.remote,
+      department: p.department, postedAt: p.postedAt, updatedAt: p.updatedAt, descriptionHash: inlineHash?.get(p.url) })),
     responses: responses.map(r => ({ url: r.url, status: r.status, bytes: r.body.length, head: r.body.slice(0, 20_000) })),
     htmlPages,
   };

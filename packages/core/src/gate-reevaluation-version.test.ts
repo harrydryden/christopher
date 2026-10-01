@@ -12,6 +12,7 @@ import { GATE_REEVALUATION_VERSION } from "./tasks";
 /** The digest of the corpus's decisions under each version. Add a line when the version moves. */
 const DIGESTS: Record<number, string> = {
   1: "eafb1b78baaddcb9c0c0cfdf07b807077e172fd7cfd3fc62041b2fb173ba5930",
+  2: "92c33a07f141c75aaf1cb723141ceaf6227d28c1fe60806c167b81948d7ed820",
 };
 
 const postings: GateInput[] = [
@@ -45,6 +46,8 @@ const postings: GateInput[] = [
   { title: "Operations Coordinator", location: "Bristol, England" },
   { title: "Engineering Operations Manager", department: "Engineering", location: "Remote - Americas", remote: true },
   { title: "Director, Revenue Operations", location: "London, United Kingdom" },
+  { title: "Operations Manager", locationResolution: "pending", remote: true },
+  { title: "Operations Manager", locationResolution: "unavailable", location: "London", remote: true },
 ];
 
 const gates: GateSettings[] = [

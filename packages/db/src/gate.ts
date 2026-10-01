@@ -1,8 +1,9 @@
-import { compileGate, type AppSettings, type CompiledGate, type GateResult, type GateSettings } from "@ava/core";
+import { compileGate, type AppSettings, type CompiledGate, type GateInput, type GateResult, type GateSettings } from "@ava/core";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
 import { requestScores } from "./tasks";
+import { requestLocationEnrichment } from "./location-enrichment";
 
 export interface GateScope {
   /** One posting only (a description just arrived). */
@@ -13,6 +14,10 @@ export interface GateScope {
 
 interface GateRow extends Record<string, unknown> {
   id: string;
+  sourceId: string;
+  externalKey: string;
+  url: string;
+  locationLabel: string | null;
   title: string;
   /** The account that added this posting by pasting its URL, when one did. */
   addedBy: string | null;
@@ -22,6 +27,9 @@ interface GateRow extends Record<string, unknown> {
   descriptionText: string | null;
   location: string | null;
   locations: string[];
+  locationResolution: "pending" | "resolved" | "unavailable" | null;
+  locationRevision: string | null;
+  locationFetchedAt: Date | null;
   remote: boolean | null;
   status: "open" | "closed";
   viewed: boolean;
@@ -69,6 +77,26 @@ export function gateCompiler(): (gate: GateSettings) => CompiledGate {
     if (!found) compiled.set(key, found = compileGate(gate));
     return found;
   };
+}
+
+/**
+ * A refreshed counted listing has unknown current places. Its last verified names may preserve
+ * an existing qualified view while detail is pending, but cannot admit a new follower. Re-run the
+ * current gate on those names so a changed keyword or location filter still takes effect.
+ */
+export function gateWithRetainedLocations(
+  gate: CompiledGate,
+  input: GateInput,
+  evidence: { status: "open" | "closed"; locationFetchedAt: Date | string | null },
+  view?: { inTable: boolean | null; locationOk: boolean | null } | null,
+): { verdict: GateResult; held: boolean } {
+  const verdict = gate.evaluate(input);
+  if (evidence.status !== "open" || view?.inTable !== true || view.locationOk !== true
+      || !evidence.locationFetchedAt || !input.locations?.length
+      || (input.locationResolution !== "pending" && input.locationResolution !== "unavailable"))
+    return { verdict, held: false };
+  const retained = gate.evaluate({ ...input, locationResolution: "resolved" });
+  return retained.inTable ? { verdict: retained, held: true } : { verdict, held: false };
 }
 
 /**
@@ -180,7 +208,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   while (true) {
     const last = await run(async (db) => {
     const page = await db.execute<GateRow>(sql`
-      select j.id, j.title, j.added_by as "addedBy", j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.remote, j.status,
+      select j.id, j.source_id as "sourceId", j.external_key as "externalKey", j.url, j.title, j.added_by as "addedBy", j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.location_label as "locationLabel", j.location_resolution as "locationResolution", j.location_revision as "locationRevision", j.location_fetched_at as "locationFetchedAt", j.remote, j.status,
         (uj.job_id is not null) as viewed, uj.keyword_matched as "keywordMatched", uj.keyword_terms as "keywordTerms",
         uj.excluded, uj.location_ok as "locationOk", uj.in_table as "inTable", uj.hidden, uj.fit_score as "fitScore",
         uj.added_by_url as "addedByUrl", uj.scored_at as "scoredAt", uj.archived_at as "archivedAt", uj.gate_archived_at as "gateArchivedAt"
@@ -200,7 +228,12 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     const inserts: Array<typeof schema.userJobs.$inferInsert> = [];
     const scoring: Array<{ userId: string; jobId: string }> = [];
     for (const job of rows) {
-      const gate = gateOf.evaluate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote });
+      const input = { title: job.title, department: job.department, description: job.descriptionText,
+        location: job.location, locations: job.locations, locationResolution: job.locationResolution, remote: job.remote };
+      const { verdict: gate, held } = gateWithRetainedLocations(gateOf, input, job, job.viewed ? job : null);
+      if (job.status === "open" && job.locationResolution === "pending" && job.locationLabel && settings.gate.locationTerms.length > 0
+          && gate.keywordMatched && !gate.excluded)
+        await requestLocationEnrichment(db, { ...job, locationLabel: job.locationLabel }, now);
       const inTable = inTableFor(gate, userId, job, job);
       const values = viewVerdict(gate, inTable, { hidden: false });
       if (job.viewed) {
@@ -216,7 +249,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
         created++;
       } else continue;
       // A view whose scoring completed without a score is not asked again for the same inputs.
-      if (inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") scoring.push({ userId, jobId: job.id });
+      if (!held && inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") scoring.push({ userId, jobId: job.id });
     }
     await writeViewUpdates(db, updates, now);
     for (let offset = 0; offset < inserts.length; offset += 250) {

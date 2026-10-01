@@ -1,0 +1,55 @@
+{
+  "fixture": "synthetic local Workday rows; no worker running",
+  "checkedAt": "2026-10-01T20:43:15.571Z",
+  "observations": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "before": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n2 waiting for location details · 1 could not be checked yet. Monitoring needs an administrator before queued checks can continue.\n\nPayroll consultant – locations unavailable\n\nWorkday fixture\n\nLocations could not be read. You can try this check again.\n\nRetry location check\n\nOperations specialist – awaiting first check\n\nWorkday fixture\n\nLocation check has not started. You can request it again.\n\nStart location check\n\nSenior analyst – queued locations\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING",
+      "afterRetry": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n3 waiting for location details · 0 could not be checked yet. Monitoring needs an administrator before queued checks can continue.\n\nOperations specialist – awaiting first check\n\nWorkday fixture\n\nLocation check has not started. You can request it again.\n\nStart location check\n\nPayroll consultant – locations unavailable\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING\n\nSenior analyst – queued locations\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING",
+      "afterStart": "Role locations to check (3)Some careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.3 waiting for location details · 0 could not be checked yet. Monitoring needs an administrator before queued checks can continue.Operations specialist – awaiting first checkWorkday fixtureWaiting for monitoring to resume.WaitingPayroll consultant – locations unavailableWorkday fixtureWaiting for monitoring to resume.WaitingSenior analyst – queued locationsWorkday fixtureWaiting for monitoring to resume.Waiting",
+      "companyText": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n3 waiting for location details · 0 could not be checked yet. Monitoring needs an administrator before queued checks can continue.\n\nOperations specialist – awaiting first check\n\nWaiting for monitoring to resume.\n\nWAITING\n\nPayroll consultant – locations unavailable\n\nWaiting for monitoring to resume.\n\nWAITING\n\nSenior analyst – queued locations\n\nWaiting for monitoring to resume.\n\nWAITING",
+      "width": {
+        "viewport": 1280,
+        "document": 1280
+      },
+      "text200": null,
+      "keyboardFocus": true,
+      "linkFocus": true,
+      "companyDestination": "/companies/4a8d683d-fffa-4e19-a27d-bb5d1822243a",
+      "pageErrors": [],
+      "blockedExternalRequests": [
+        "https://icons.duckduckgo.com/ip3/fixture.test.ico"
+      ]
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "before": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n2 waiting for location details · 1 could not be checked yet. Monitoring needs an administrator before queued checks can continue.\n\nPayroll consultant – locations unavailable\n\nWorkday fixture\n\nLocations could not be read. You can try this check again.\n\nRetry location check\n\nOperations specialist – awaiting first check\n\nWorkday fixture\n\nLocation check has not started. You can request it again.\n\nStart location check\n\nSenior analyst – queued locations\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING",
+      "afterRetry": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n3 waiting for location details · 0 could not be checked yet. Monitoring needs an administrator before queued checks can continue.\n\nOperations specialist – awaiting first check\n\nWorkday fixture\n\nLocation check has not started. You can request it again.\n\nStart location check\n\nPayroll consultant – locations unavailable\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING\n\nSenior analyst – queued locations\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING",
+      "afterStart": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n3 waiting for location details · 0 could not be checked yet. Monitoring needs an administrator before queued checks can continue.\n\nOperations specialist – awaiting first check\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING\n\nPayroll consultant – locations unavailable\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING\n\nSenior analyst – queued locations\n\nWorkday fixture\n\nWaiting for monitoring to resume.\n\nWAITING",
+      "companyText": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n3 waiting for location details · 0 could not be checked yet. Monitoring needs an administrator before queued checks can continue.\n\nOperations specialist – awaiting first check\n\nWaiting for monitoring to resume.\n\nWAITING\n\nPayroll consultant – locations unavailable\n\nWaiting for monitoring to resume.\n\nWAITING\n\nSenior analyst – queued locations\n\nWaiting for monitoring to resume.\n\nWAITING",
+      "width": {
+        "viewport": 375,
+        "document": 375
+      },
+      "text200": {
+        "baseline": 14,
+        "enlarged": 28,
+        "viewport": 375,
+        "document": 375
+      },
+      "keyboardFocus": true,
+      "linkFocus": true,
+      "companyDestination": "/companies/b168fa4f-4549-4b24-984e-f6302f147d6d",
+      "pageErrors": [],
+      "blockedExternalRequests": [
+        "https://icons.duckduckgo.com/ip3/fixture.test.ico"
+      ]
+    }
+  ]
+}

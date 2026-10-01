@@ -344,6 +344,20 @@
       "when": 1792144800000,
       "tag": "0050_html_partial_publication",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792231200000,
+      "tag": "0051_workday_location_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792317600000,
+      "tag": "0052_workday_location_read_budget",
+      "breakpoints": true
     }
   ]
 }

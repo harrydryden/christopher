@@ -1,0 +1,15 @@
+# Workday location Health check — synthetic local fixture
+
+This verifies the interface path with three invented Workday roles in the isolated `ava_locations_web` database. No worker, model, email or external listing request ran. [seed.cjs](seed.cjs) creates a verified member, active follow and source, one queued location check, one failed check and one older pending row without a revision. Its signed session cookie is written outside Git at `/tmp/ava-locations-web-cookie`. [browser-check.cjs](browser-check.cjs) resets that fixture for each viewport and blocks non-local browser requests.
+
+At 1280px and 375px, [browser-check.json](browser-check.json) records a rendered Health card with three checks, truthful stopped-monitoring wording, keyboard focus and Enter on **Retry location check**, immediate queueing of the failed and legacy rows, and keyboard navigation to the company page, which shows the same checks. There were no page errors or document overflow. At 375px, the changed card was captured [normally](mobile-375-location-card-before.png) and with its computed text sizes doubled from 14px to 28px in [the enlarged card](mobile-375-location-card-text200.png); document width remained 375px. This is a scripted CSS text-enlargement check, not native browser zoom or assistive-technology validation. The attempted DuckDuckGo favicon URL was blocked before an outbound request; the application itself made no external request in this check.
+
+The web query, Health actions, Operations subject mapping and action-auth inventory passed 192/192 focused tests against the isolated database; `pnpm --filter @ava/web typecheck` passed. The focused command was:
+
+```sh
+TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:55439/ava_locations_web' pnpm --filter @ava/web exec vitest run lib/queries/location-health.test.ts lib/queries/health.test.ts app/actions/health.integration.test.ts app/server-actions-auth.integration.test.ts
+```
+
+For browser replay, run `seed.cjs`, start `pnpm --filter @ava/web dev --port 3145` with `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/ava_locations_web` and `SESSION_SECRET=synthetic-location-browser-secret-2026`, then run `browser-check.cjs` from the repository root. The browser tool named by the verification skill was not installed in this workspace; this check used the existing local Playwright runtime. The local server was stopped after capture.
+
+A later bounded-read allowance made one queued detail check wait until the next source window. With `seed.cjs scheduled`, a synthetic fresh heartbeat and a queued task due about an hour later, [browser-scheduled.json](browser-scheduled.json) and the [375px card capture](mobile-375-scheduled-card.png) show “Next check in 1h” with an absolute UK-time label. This is a scheduled-task UI fixture, not evidence of a running worker. The future, due-now and stopped-worker priority states passed 3/3 focused query/component tests. The production web build passed, and the production server used for this capture was stopped afterwards.

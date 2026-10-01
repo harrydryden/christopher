@@ -20,6 +20,7 @@ import {
 } from "@/app/actions/companies";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { CompanyNotepad } from "@/components/CompanyNotepad";
+import { LocationChecksCard } from "@/components/LocationChecksCard";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { CompanySetupSummary, CompanySetupTimeline } from "@/components/CompanySetupTimeline";
 import { Badge, companyStatusTone, discoveryStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
@@ -32,6 +33,8 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { companyIcon } from "@/lib/company-icon";
 import { relativeTime } from "@/lib/format";
 import { getCompanyWorkStatus } from "@/lib/work-status";
+import { getWorkerStatus } from "@/lib/queries/health";
+import { locationChecks } from "@/lib/queries/location-health";
 import { narrateCompanySetup } from "@/lib/company-timeline";
 import {
   companyApplicationCount,
@@ -115,7 +118,7 @@ type LoadedCompany = NonNullable<Awaited<ReturnType<typeof getCompany>>>;
 async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date) {
   const id = company.id;
   const admin = user.role === "admin";
-  const [sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, timing, applications, system, setup] = await Promise.all([
+  const [sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, timing, applications, system, setup, roleLocations] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
     // The scan history and the discovery log are shown only in an administrator's diagnostics.
@@ -131,7 +134,9 @@ async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date)
     companyApplicationCount(user.id, id),
     getSystemSettings(),
     companySetupRows(user.id, id),
+    locationChecks(user.id, id, 20),
   ]);
+  const workerStatus = roleLocations.total ? await getWorkerStatus(now) : null;
 
   // Shared discovery queued or running: the setup timeline's own reading of the same tasks.
   const discoveryState = setup.discoveryTask?.state ?? null;
@@ -173,14 +178,14 @@ async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date)
     ].filter((fact): fact is string => !!fact)
     : [];
 
-  return { admin, now, sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts };
+  return { admin, now, sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts, roleLocations, workerStatus };
 }
 
 type CompanyDetails = Awaited<ReturnType<typeof loadCompanyDetails>>;
 
 /** Above the roles: the header, work in progress, and the setup story or the card that fixes it. */
 async function CompanyOverview({ company, details }: { company: LoadedCompany; details: Promise<CompanyDetails> }) {
-  const { admin, latestRun, profile, followers, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts } = await details;
+  const { admin, now, latestRun, profile, followers, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts, roleLocations, workerStatus } = await details;
   return (
     <>
       <PageHeader
@@ -231,6 +236,8 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
           {unverified && <VerifyNotice className="w-full" />}
         </>}
       />
+
+      {workerStatus && <LocationChecksCard checks={roleLocations} worker={workerStatus} now={now} unverified={unverified} companyOnly />}
 
       {competing && latestRun && (
         <div className="flex flex-wrap items-center gap-2 border-2 border-line-muted px-3 py-2 text-12 text-muted">

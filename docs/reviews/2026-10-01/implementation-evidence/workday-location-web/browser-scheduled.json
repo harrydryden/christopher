@@ -1,0 +1,17 @@
+{
+  "fixture": "synthetic queued task with run_after about one hour ahead and synthetic fresh heartbeat; no real worker",
+  "checkedAt": "2026-10-01T20:49:39.039Z",
+  "text": "ROLE LOCATIONS TO CHECK (3)\n\nSome careers listings show only the number of locations. We need the place names before checking these roles against your preferences. More matches may appear when the checks finish. Previously confirmed matches remain visible while we check again.\n\n2 waiting for location details · 1 could not be checked yet.\n\nPayroll consultant – locations unavailable\n\nWorkday fixture\n\nLocations could not be read. You can try this check again.\n\nRetry location check\n\nOperations specialist – awaiting first check\n\nWorkday fixture\n\nLocation check has not started. You can request it again.\n\nStart location check\n\nSenior analyst – queued locations\n\nWorkday fixture\n\nWaiting before checking this careers site again. Next check in 1h.\n\nSCHEDULED",
+  "time": {
+    "visible": "Next check in 1h.",
+    "dateTime": "2026-10-01T21:49:38.048Z",
+    "title": "1 Oct 2026, 22:49 UK time",
+    "ariaLabel": "Next check 1 Oct 2026, 22:49 UK time"
+  },
+  "width": {
+    "document": 375,
+    "viewport": 375
+  },
+  "pageErrors": [],
+  "blockedExternalRequests": []
+}

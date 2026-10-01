@@ -385,6 +385,8 @@ it("shows what is running against its deadline, and what a crash handed back", a
     .toEqual({ kind: "cv", id: "33333333-3333-4333-8333-333333333333" });
   // Work that names an account and nothing resolvable still says whose queue is stuck.
   expect(taskSubjectRef("score_job", { userId: account.id })).toEqual({ kind: "user", id: account.id });
+  expect(taskSubjectRef("fetch_locations", { jobId: "33333333-3333-4333-8333-333333333333", locationRevision: "rev" }))
+    .toEqual({ kind: "job", id: "33333333-3333-4333-8333-333333333333" });
   expect(taskSubjectRef("admit_scores", { userId: account.id, jobIds: [] })).toEqual({ kind: "user", id: account.id });
   expect(taskSubjectRef("run_daily", { trigger: "schedule" })).toBeNull();
 });

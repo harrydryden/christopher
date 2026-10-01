@@ -88,6 +88,23 @@ async function isCompletedQuizPredecessor(
  * worker that ran it and, later, by a sweep that finds the row.
  */
 export const onAbandon: AbandonHookMap = {
+  fetch_locations: async (task, deps, reason) => {
+    const jobId = typeof task.payload.jobId === "string" ? task.payload.jobId : null;
+    const revision = typeof task.payload.locationRevision === "string" ? task.payload.locationRevision : null;
+    if (!jobId || !revision) return;
+    // A killed worker may never reach the handler's catch. Mark only this unresolved revision,
+    // and leave a newer fetch or a changed listing alone. The member can then retry explicitly.
+    await deps.db.execute(sql`update jobs j set location_resolution = 'unavailable',
+      location_error = ${`Location lookup stopped after its final attempt: ${reason}`.slice(0, 500)},
+      updated_at = now()
+      from career_sources s where j.id = ${jobId}::uuid and j.source_id = s.id
+        and s.type = 'workday' and s.status in ('active', 'failing')
+        and j.status = 'open' and j.location_revision = ${revision}
+        and j.location_resolution in ('pending', 'unavailable')
+        and not exists (select 1 from tasks t where t.id <> ${task.id}::uuid and t.type = 'fetch_locations'
+          and t.status in ('queued', 'running') and t.payload->>'jobId' = j.id::text
+          and t.payload->>'locationRevision' = j.location_revision)`);
+  },
   admit_scores: async (task, deps) => {
     const userId = typeof task.payload.userId === "string" ? task.payload.userId : null;
     const jobIds = Array.isArray(task.payload.jobIds) ? task.payload.jobIds.filter((id): id is string => typeof id === "string") : [];

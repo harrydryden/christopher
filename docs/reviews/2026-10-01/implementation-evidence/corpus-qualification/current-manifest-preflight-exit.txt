@@ -1,0 +1,2 @@
+Exit status: 2 (corpus composition blocked)
+Command: node scripts/live-acceptance.mjs --check-corpus

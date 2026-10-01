@@ -4,9 +4,14 @@ import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
 import { discovery } from "@ava/core";
 import { compareReferencePostings, type ReferencePostingSnapshot } from "./live-acceptance-postings";
 import { createLiveAcceptanceAiBudget } from "./live-acceptance-ai";
+import { fullyCoveredCorpus } from "./live-acceptance-corpus.fixtures";
 
 const labelled: LiveAcceptanceCase = { id: "a", company: "A", homepageUrl: "https://a.test", expectedSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme" }, expectedRoleCount: null, labelStatus: "source_independently_checked", labelNote: "checked" };
 const unverified: LiveAcceptanceCase = { ...labelled, id: "b", labelStatus: "unverified" };
+
+function verdictFor(cases: LiveAcceptanceCase[], metrics: ReturnType<typeof summariseLiveAcceptance>, requiredCaseIds = cases.map(item => item.id)) {
+  return liveAcceptanceVerdict(cases, metrics, requiredCaseIds);
+}
 
 function result(id: string, matches: boolean): LiveAcceptanceResult {
   return { id, company: id, startedAt: new Date(0).toISOString(), durationMs: 1, discovery: { outcome: "resolved", confidence: 0.9, sourceMatchesLabel: matches, browserAttempts: 0, browserRenders: 0, browserUrls: [], browserFailures: [] }, extraction: { outcome: "complete", countMatchesLabel: null, sample: [] } };
@@ -112,12 +117,12 @@ describe("live acceptance reporting", () => {
     expect(metrics.wrongAutomaticAccepts).toBe(1);
     expect(metrics.countLabelled).toBe(0);
     expect(metrics.extractionExactCountAgreement).toBeNull();
-    expect(liveAcceptanceVerdict([labelled, unverified], metrics)).toMatchObject({ verdict: "fail" });
+    expect(verdictFor([labelled, unverified], metrics)).toMatchObject({ verdict: "fail" });
   });
 
   it("reports absent independent labels as blocked rather than passed", () => {
     const metrics = summariseLiveAcceptance([unverified], [result("b", true)]);
-    expect(liveAcceptanceVerdict([unverified], metrics)).toMatchObject({ verdict: "blocked" });
+    expect(verdictFor([unverified], metrics)).toMatchObject({ verdict: "blocked" });
   });
 
   it("fails labelled cases that are all unresolved", () => {
@@ -125,7 +130,7 @@ describe("live acceptance reporting", () => {
     unresolved.discovery = { outcome: "not_found", sourceMatchesLabel: false, browserAttempts: 0, browserRenders: 0, browserUrls: [], browserFailures: [] };
     const metrics = summariseLiveAcceptance([labelled], [unresolved]);
     expect(metrics.discoveryAccuracy).toBe(0);
-    expect(liveAcceptanceVerdict([labelled], metrics).verdict).toBe("fail");
+    expect(verdictFor([labelled], metrics).verdict).toBe("fail");
   });
 
   it("fails unequal independently labelled counts", () => {
@@ -133,14 +138,14 @@ describe("live acceptance reporting", () => {
     const observed = result("a", true);
     observed.extraction = { outcome: "complete", observedRoleCount: 1, countMatchesLabel: false, sample: [] };
     const metrics = summariseLiveAcceptance([counted], [observed]);
-    expect(liveAcceptanceVerdict([counted], metrics).verdict).toBe("fail");
+    expect(verdictFor([counted], metrics).verdict).toBe("fail");
   });
 
   it("blocks discovery-only and detects missing selected results", () => {
     const discoveryOnly = result("a", true);
     discoveryOnly.extraction.outcome = "not_run";
     const metrics = summariseLiveAcceptance([labelled, { ...labelled, id: "c" }], [discoveryOnly]);
-    const acceptance = liveAcceptanceVerdict([labelled, { ...labelled, id: "c" }], metrics);
+    const acceptance = verdictFor([labelled, { ...labelled, id: "c" }], metrics);
     expect(metrics.sourceLabelled).toBe(2);
     expect(metrics.discoveryAccuracy).toBe(0.5);
     expect(acceptance.reasons.join(" ")).toMatch(/no result|did not run extraction/);
@@ -184,8 +189,8 @@ describe("live acceptance reporting", () => {
     const b = result("b", true);
     const missing = summariseLiveAcceptance(cases, [a]);
     expect(missing.total).toBe(1);
-    expect(liveAcceptanceVerdict(cases, missing)).toMatchObject({ verdict: "blocked" });
-    expect(liveAcceptanceVerdict(cases, missing).reasons.join(" ")).toMatch(/1 selected case.*no result/);
+    expect(verdictFor(cases, missing)).toMatchObject({ verdict: "blocked" });
+    expect(verdictFor(cases, missing).reasons.join(" ")).toMatch(/1 selected case.*no result/);
     expect(summariseLiveAcceptance(cases, [b, a])).toEqual(summariseLiveAcceptance(cases, [a, b]));
   });
 
@@ -193,8 +198,8 @@ describe("live acceptance reporting", () => {
     const cases = [labelled, { ...labelled, id: "b" }];
     const wrong = result("a", false);
     const metrics = summariseLiveAcceptance(cases, [wrong]);
-    expect(liveAcceptanceVerdict(cases, metrics)).toMatchObject({ verdict: "fail" });
-    expect(liveAcceptanceVerdict(cases, metrics).reasons.join(" ")).toMatch(/wrong source.*automatically accepted/);
+    expect(verdictFor(cases, metrics)).toMatchObject({ verdict: "fail" });
+    expect(verdictFor(cases, metrics).reasons.join(" ")).toMatch(/wrong source.*automatically accepted/);
   });
 
   it("fails an observed manual-count disagreement while another selected case is missing", () => {
@@ -203,13 +208,13 @@ describe("live acceptance reporting", () => {
     mismatched.extraction = { outcome: "complete", observedRoleCount: 1, countMatchesLabel: false, sample: [] };
     const metrics = summariseLiveAcceptance(cases, [mismatched]);
     expect(metrics.countDisagreements).toBe(1);
-    expect(liveAcceptanceVerdict(cases, metrics)).toMatchObject({ verdict: "fail" });
-    expect(liveAcceptanceVerdict(cases, metrics).reasons.join(" ")).toMatch(/observed labelled extraction count.*disagree/);
+    expect(verdictFor(cases, metrics)).toMatchObject({ verdict: "fail" });
+    expect(verdictFor(cases, metrics).reasons.join(" ")).toMatch(/observed labelled extraction count.*disagree/);
     const matching = result("a", true);
     matching.extraction = { outcome: "complete", observedRoleCount: 2, countMatchesLabel: true, sample: [] };
     const incomplete = summariseLiveAcceptance(cases, [matching]);
     expect(incomplete.countDisagreements).toBe(0);
-    expect(liveAcceptanceVerdict(cases, incomplete)).toMatchObject({ verdict: "blocked" });
+    expect(verdictFor(cases, incomplete)).toMatchObject({ verdict: "blocked" });
   });
 
   it("uses and reports the supplied production browser renderer", async () => {
@@ -251,7 +256,10 @@ describe("independent posting references", () => {
   const snapshot: ReferencePostingSnapshot = {
     caseId: "a", sourceUrl: "https://a.test/jobs", evidenceUrl: "https://a.test/careers",
     capturedAt: "2026-09-29T12:00:00Z", rawSha256: "a".repeat(64), rawPath: "fixture.raw.json", enumerationMethod: "Independent reviewer enumerated the unfiltered snapshot",
-    reviewStatus: "human_reviewed", completeScope: true, postingUrls: ["https://a.test/jobs/one", "https://a.test/jobs/two"],
+    reviewStatus: "human_reviewed", completeScope: true,
+    reviewAttestation: { reviewer: "Fixture reviewer", reviewedAt: "2026-09-29T12:30:00Z",
+      scopeEvidence: "Synthetic unit fixture: checked the complete unfiltered two-role listing.", fullScopeAttested: true },
+    postingUrls: ["https://a.test/jobs/one", "https://a.test/jobs/two"],
   };
   it("does not promote machine-enumerated references into qualification metrics", () => {
     const r = result("a", true);
@@ -260,7 +268,7 @@ describe("independent posting references", () => {
     const metrics = summariseLiveAcceptance([labelled], [r]);
     expect(metrics.postingIdentityLabelled).toBe(0);
     expect(metrics.postingIdentityRecall).toBeNull();
-    expect(liveAcceptanceVerdict([labelled], metrics).verdict).toBe("blocked");
+    expect(verdictFor([labelled], metrics).verdict).toBe("blocked");
   });
   it("rejects an equal-count extraction with the wrong posting identities", () => {
     const r = result("a", true);
@@ -269,13 +277,36 @@ describe("independent posting references", () => {
     expect(metrics.countMatches).toBe(1);
     expect(metrics.postingIdentityRecall).toBe(0.5);
     expect(metrics.postingIdentityPrecision).toBe(0.5);
-    expect(liveAcceptanceVerdict([labelled], metrics).verdict).toBe("fail");
+    expect(verdictFor([labelled], metrics).verdict).toBe("fail");
   });
-  it("accepts the fully qualified matching corpus without a redundant manual count", () => {
+  it("accepts a fully qualified synthetic corpus without a redundant manual count", () => {
+    const cases = fullyCoveredCorpus();
+    const results = cases.map(item => {
+      const r = result(item.id, true);
+      const url = `${item.expectedSource.url}/one`;
+      r.extraction.referenceComparison = compareReferencePostings(
+        { ...snapshot, caseId: item.id, sourceUrl: item.expectedSource.url, postingUrls: [url] },
+        [{ title: "Engineer", url }], { observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true },
+      );
+      return r;
+    });
+    const metrics = summariseLiveAcceptance(cases, results);
+    expect(verdictFor(cases, metrics)).toEqual({ verdict: "pass", reasons: [] });
+    expect(verdictFor(cases, metrics, [...cases.map(item => item.id), "extra"]).verdict).toBe("blocked");
+    const untypedCaller = liveAcceptanceVerdict as (cases: LiveAcceptanceCase[], metrics: ReturnType<typeof summariseLiveAcceptance>) => ReturnType<typeof liveAcceptanceVerdict>;
+    expect(untypedCaller(cases, metrics)).toMatchObject({ verdict: "blocked",
+      reasons: [expect.stringMatching(/required golden-set case IDs were not supplied/)] });
+  });
+  it("blocks a fully qualified posting comparison when its selected corpus lacks SPEC §9 breadth", () => {
     const r = result("a", true);
-    r.extraction.referenceComparison = compareReferencePostings(snapshot, snapshot.postingUrls.map(url => ({ title: "Engineer", url })), { observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true });
-    expect(liveAcceptanceVerdict([labelled], summariseLiveAcceptance([labelled], [r]))).toEqual({ verdict: "pass", reasons: [] });
-    expect(liveAcceptanceVerdict([labelled], summariseLiveAcceptance([labelled], [r]), ["a", "b"]).verdict).toBe("blocked");
+    r.extraction.referenceComparison = compareReferencePostings(snapshot,
+      snapshot.postingUrls.map(url => ({ title: "Engineer", url })),
+      { observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true });
+    const metrics = summariseLiveAcceptance([labelled], [r]);
+    expect(metrics.postingIdentityLabelled).toBe(1);
+    const verdict = verdictFor([labelled], metrics);
+    expect(verdict.verdict).toBe("blocked");
+    expect(verdict.reasons.join(" ")).toMatch(/primary ATS types/);
   });
   it("keeps exact-count failure when an otherwise precise qualified reference has one extra role", () => {
     const urls = Array.from({ length: 100 }, (_, index) => `https://a.test/jobs/${index}`);
@@ -289,7 +320,7 @@ describe("independent posting references", () => {
     expect(metrics.postingIdentityFailures).toBe(0);
     expect(metrics.postingIdentityPrecision).toBeGreaterThan(0.98);
     expect(metrics.countDisagreements).toBe(1);
-    expect(liveAcceptanceVerdict([labelled, { ...labelled, id: "b" }], metrics)).toMatchObject({ verdict: "fail" });
+    expect(verdictFor([labelled, { ...labelled, id: "b" }], metrics)).toMatchObject({ verdict: "fail" });
   });
   it("does not mix extraction browser work into discovery evidence", async () => {
     const fetcher = {

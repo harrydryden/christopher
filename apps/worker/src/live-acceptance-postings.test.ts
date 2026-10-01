@@ -19,6 +19,12 @@ const snapshot: ReferencePostingSnapshot = {
   enumerationMethod: "Independent public API enumeration, manually checked against the listing.",
   reviewStatus: "human_reviewed",
   completeScope: true,
+  reviewAttestation: {
+    reviewer: "Synthetic unit reviewer",
+    reviewedAt: "2026-09-29T13:45:00Z",
+    scopeEvidence: "Checked every page of the unfiltered fixture listing against the captured URL set.",
+    fullScopeAttested: true,
+  },
   postingUrls: ["https://board.example/jobs/1", "https://board.example/jobs/2"],
 };
 const posts = (...urls: string[]): RawPosting[] => urls.map(url => ({ title: "A role", url }));
@@ -56,7 +62,7 @@ describe("reference posting comparison", () => {
   });
 
   it("keeps machine and partial observations diagnostic but ineligible", () => {
-    const machine = compare({ ...snapshot, reviewStatus: "machine_enumerated", completeScope: false }, posts(snapshot.postingUrls[0]!));
+    const machine = compare({ ...snapshot, reviewStatus: "machine_enumerated", completeScope: false, reviewAttestation: undefined }, posts(snapshot.postingUrls[0]!));
     expect(machine).toMatchObject({ recall: 0.5, precision: 1, qualifiesForAcceptance: false });
     expect(machine.qualificationReasons).toContain("reference has not been human reviewed");
     expect(machine.qualificationReasons).toContain("complete listing scope has not been independently attested");
@@ -73,8 +79,29 @@ describe("reference posting comparison", () => {
     expect(compare({ ...snapshot, rawPath: undefined }, posts(...snapshot.postingUrls)).qualifiesForAcceptance).toBe(false);
   });
 
+  it("leaves historical bare human flags readable but explicitly unqualified", () => {
+    const legacy = { ...snapshot, reviewAttestation: undefined };
+    expect(validateReferenceSnapshot(legacy).reviewAttestation).toBeUndefined();
+    const result = compare(legacy, posts(...snapshot.postingUrls));
+    expect(result.qualifiesForAcceptance).toBe(false);
+    expect(result.qualificationReasons).toContain("human review attestation is missing");
+    expect(compare({ ...snapshot, reviewAttestation: { ...snapshot.reviewAttestation!, fullScopeAttested: false } },
+      posts(...snapshot.postingUrls)).qualificationReasons).toContain("reviewer did not attest the full listing scope");
+  });
+
+  it("requires capture, human review and observation in that order", () => {
+    expect(compare({ ...snapshot, reviewAttestation: { ...snapshot.reviewAttestation!, reviewedAt: "2026-09-29T14:00:01Z" } },
+      posts(...snapshot.postingUrls)).qualificationReasons).toContain("human review is after the observation");
+    expect(compare({ ...snapshot, reviewAttestation: { ...snapshot.reviewAttestation!, reviewedAt: now.toISOString() } },
+      posts(...snapshot.postingUrls)).qualifiesForAcceptance).toBe(true);
+    expect(compare({ ...snapshot, reviewAttestation: { ...snapshot.reviewAttestation!, reviewedAt: snapshot.capturedAt } },
+      posts(...snapshot.postingUrls)).qualifiesForAcceptance).toBe(true);
+    expect(compare({ ...snapshot, reviewAttestation: { ...snapshot.reviewAttestation!, reviewedAt: "2026-09-29T14:45:00+01:00" } },
+      posts(...snapshot.postingUrls)).qualifiesForAcceptance).toBe(true);
+  });
+
   it("uses the run clock: future and older-than-24-hour captures cannot qualify", () => {
-    expect(compare({ ...snapshot, capturedAt: "2026-09-29T14:00:01Z" }, posts(...snapshot.postingUrls)).qualificationReasons)
+    expect(compare({ ...snapshot, capturedAt: "2026-09-29T14:00:01Z", reviewAttestation: { ...snapshot.reviewAttestation!, reviewedAt: "2026-09-29T14:00:02Z" } }, posts(...snapshot.postingUrls)).qualificationReasons)
       .toContain("reference capture is in the future");
     expect(compare({ ...snapshot, capturedAt: "2026-09-28T13:59:59Z" }, posts(...snapshot.postingUrls)).qualificationReasons)
       .toContain("reference capture is older than 24 hours");
@@ -103,6 +130,19 @@ describe("reference posting comparison", () => {
     for (const [field, value] of invalid) {
       expect(() => validateReferenceSnapshot({ ...snapshot, [field]: value }), field).toThrow();
     }
+    const attestation = snapshot.reviewAttestation!;
+    const badAttestations = [null, [], {},
+      { ...attestation, reviewer: " " },
+      { ...attestation, reviewedAt: "2026-09-29" },
+      { ...attestation, reviewedAt: "2026-02-30T13:45:00Z" },
+      { ...attestation, reviewedAt: "2026-09-29T13:29:59Z" },
+      { ...attestation, scopeEvidence: "all pages" },
+      { ...attestation, fullScopeAttested: "yes" },
+    ];
+    for (const reviewAttestation of badAttestations) {
+      expect(() => validateReferenceSnapshot({ ...snapshot, reviewAttestation }), JSON.stringify(reviewAttestation)).toThrow();
+    }
+    expect(() => validateReferenceSnapshot({ ...snapshot, completeScope: false })).toThrow("conflicts with completeScope false");
     expect(() => compare(snapshot, posts("/jobs/relative"))).toThrow("absolute HTTP(S)");
     expect(validateReferenceSnapshot({ ...snapshot, jobs: [{ id: "audit-only" }] })).toEqual(snapshot);
   });

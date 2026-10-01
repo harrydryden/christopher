@@ -1,0 +1,33 @@
+{
+  "mode": "offline_corpus_composition",
+  "goldenSetCompositionQualified": false,
+  "corpusCoverage": {
+    "qualifies": false,
+    "criterionScope": "SPEC §9 golden-set composition only; automatic source choice, manual resolution, posting accuracy, recipe reproduction, cost and operations require separate evidence",
+    "counts": {
+      "selectedCases": 30,
+      "distinctCompanies": 30,
+      "primaryHtml": 14,
+      "customHtml": 5,
+      "jsHeavy": 2,
+      "multiRegionWorkday": 0,
+      "landingToExternalBoard": 1,
+      "botProtected": 0
+    },
+    "atsTypes": [
+      "ashby",
+      "eightfold",
+      "greenhouse",
+      "lever",
+      "teamtailor",
+      "workable",
+      "workday"
+    ],
+    "invalidEvidence": [],
+    "missingReasons": [
+      "golden-set corpus has 7 independently checked primary ATS types; at least 8 are required",
+      "golden-set corpus has 0 evidenced multi-region Workday companies; at least 2 are required",
+      "golden-set corpus lacks an evidenced bot-protected site"
+    ]
+  }
+}

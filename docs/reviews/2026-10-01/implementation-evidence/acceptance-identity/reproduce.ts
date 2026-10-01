@@ -32,7 +32,7 @@ function rejection(results: LiveAcceptanceResult[]): string {
 const duplicateResult = rejection([result("a"), result("a")]);
 const unknownResult = rejection([result("a"), result("unknown")]);
 const missingMetrics = summariseLiveAcceptance(cases, [result("a")]);
-const missingResultVerdict = liveAcceptanceVerdict(cases, missingMetrics);
+const missingResultVerdict = liveAcceptanceVerdict(cases, missingMetrics, cases.map(item => item.id));
 if (duplicateResult !== "Duplicate acceptance result: a"
   || unknownResult !== "Unknown acceptance result: unknown"
   || missingResultVerdict.verdict !== "blocked") throw new Error("acceptance identity gate regression");

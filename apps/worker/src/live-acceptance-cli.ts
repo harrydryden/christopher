@@ -2,6 +2,7 @@ import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { validateReferenceSnapshot, type ReferencePostingSnapshot } from "./live-acceptance-postings";
+import { assessLiveAcceptanceCorpus } from "./live-acceptance-corpus";
 import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
 import { resolveLiveAcceptanceConcurrency, resolveLiveAcceptanceDiscoveryBudget, runLiveAcceptanceCase, summariseLiveAcceptance, liveAcceptanceVerdict, type LiveAcceptanceResult } from "./live-acceptance";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
@@ -21,6 +22,16 @@ async function main() {
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : LIVE_ACCEPTANCE_CASES.length;
   if (!Number.isInteger(limit) || limit < 1 || limit > LIVE_ACCEPTANCE_CASES.length) throw new Error(`--limit must be 1-${LIVE_ACCEPTANCE_CASES.length}`);
   const ids = valueAfter(args, "--ids")?.split(",").map(v => v.trim()).filter(Boolean);
+  const selected = (ids ? LIVE_ACCEPTANCE_CASES.filter(item => ids.includes(item.id)) : LIVE_ACCEPTANCE_CASES).slice(0, limit);
+  if (!selected.length) throw new Error("no manifest cases selected");
+  const unknown = ids?.filter(id => !LIVE_ACCEPTANCE_CASES.some(item => item.id === id)) ?? [];
+  if (unknown.length) throw new Error(`unknown case id(s): ${unknown.join(", ")}`);
+  const corpusCoverage = assessLiveAcceptanceCorpus(selected);
+  if (args.includes("--check-corpus")) {
+    process.stdout.write(`${JSON.stringify({ mode: "offline_corpus_composition", goldenSetCompositionQualified: corpusCoverage.qualifies, corpusCoverage }, null, 2)}\n`);
+    if (!corpusCoverage.qualifies) process.exitCode = 2;
+    return;
+  }
   const discoveryOnly = args.includes("--discovery-only");
   const discoveryBudgetRaw = valueAfter(args, "--discovery-budget");
   if (args.includes("--discovery-budget") && !discoveryBudgetRaw) throw new Error("--discovery-budget requires diagnostic or production");
@@ -34,11 +45,6 @@ async function main() {
   const aiModel = process.env.LIVE_ACCEPTANCE_AI_MODEL ?? DEFAULT_SYSTEM_SETTINGS.defaultModel;
   const concurrency = resolveLiveAcceptanceConcurrency(valueAfter(args, "--concurrency"), browserEnabled, aiEnabled);
   if (aiEnabled && concurrency.value !== 1) throw new Error("--ai requires --concurrency 1 so its run-level cap and case attribution remain exact");
-  const selected = (ids ? LIVE_ACCEPTANCE_CASES.filter(item => ids.includes(item.id)) : LIVE_ACCEPTANCE_CASES).slice(0, limit);
-  if (!selected.length) throw new Error("no manifest cases selected");
-  const unknown = ids?.filter(id => !LIVE_ACCEPTANCE_CASES.some(item => item.id === id)) ?? [];
-  if (unknown.length) throw new Error(`unknown case id(s): ${unknown.join(", ")}`);
-
   const references = new Map<string, ReferencePostingSnapshot>();
   const referencePath = valueAfter(args, "--posting-references");
   if (args.includes("--posting-references") && !referencePath) throw new Error("--posting-references requires a JSON path");
@@ -142,6 +148,9 @@ async function main() {
       aiEnabled ? "AI costs are computed from provider-reported token usage and checked repository pricing; they are not an invoice or provider-side spending limit." : "No paid model request is made without --ai and an explicit --ai-max-usd cap.",
     ],
     scope: { selectedCaseIds: selected.map(item => item.id), requiredCaseIds: LIVE_ACCEPTANCE_CASES.map(item => item.id), fullCorpusSelected: selected.length === LIVE_ACCEPTANCE_CASES.length },
+    goldenSetCompositionQualified: corpusCoverage.qualifies,
+    corpusCoverage,
+    acceptanceCriterionScope: "This verdict covers the reporter's labelled source choice, extraction and corpus-composition checks only; SPEC §9 manual resolution, recipe reproduction and the 50-company operating budget require separate evidence.",
     postingReferences: referencePath ? { path: referencePath, snapshots: [...references.values()] } : null,
     acceptance,
     metrics,

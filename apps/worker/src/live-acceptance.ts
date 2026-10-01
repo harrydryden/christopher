@@ -3,6 +3,7 @@ import { PoliteFetcher, userAgentFor } from "./fetcher";
 import type { BrowserRenderer } from "./browser";
 import { observeHtmlListing } from "./live-acceptance-html";
 import { compareReferencePostings, canonicalPostingIdentity, type ReferencePostingSnapshot, type PostingComparison } from "./live-acceptance-postings";
+import { assessLiveAcceptanceCorpus, type CorpusCoverageEvidence } from "./live-acceptance-corpus";
 
 export interface LiveAcceptanceCase {
   id: string;
@@ -16,6 +17,8 @@ export interface LiveAcceptanceCase {
   /** First-party pages used by a reviewer to establish the source label. */
   sourceEvidenceUrls?: string[];
   sourceCheckedAt?: string;
+  /** Independently checked evidence for SPEC §9's special golden-set strata. */
+  coverage?: Partial<Record<"customHtml" | "jsHeavy" | "multiRegionWorkday" | "landingToExternalBoard" | "botProtected", CorpusCoverageEvidence>>;
 }
 
 export interface LiveAcceptanceResult {
@@ -236,12 +239,20 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
   };
 }
 
-export function liveAcceptanceVerdict(cases: LiveAcceptanceCase[], metrics: LiveAcceptanceMetrics, requiredCaseIds: string[] = cases.map(item => item.id)): { verdict: LiveAcceptanceVerdict; reasons: string[] } {
+export function liveAcceptanceVerdict(cases: LiveAcceptanceCase[], metrics: LiveAcceptanceMetrics, requiredCaseIds: string[]): { verdict: LiveAcceptanceVerdict; reasons: string[] } {
   const reasons: string[] = [];
+  const corpusCoverage = assessLiveAcceptanceCorpus(cases);
+  reasons.push(...corpusCoverage.missingReasons);
   const missingSelectedResults = metrics.total < cases.length;
   const selectedIds = new Set(cases.map(item => item.id));
-  const missingCases = requiredCaseIds.filter(id => !selectedIds.has(id));
-  if (missingCases.length) reasons.push(`${missingCases.length} required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus`);
+  if (!Array.isArray(requiredCaseIds) || !requiredCaseIds.length)
+    reasons.push("required golden-set case IDs were not supplied; subset diagnostics cannot qualify the full corpus");
+  else {
+    const requiredIds = new Set(requiredCaseIds);
+    if (requiredIds.size !== requiredCaseIds.length) reasons.push("required golden-set case IDs contain duplicates");
+    const missingCases = requiredCaseIds.filter(id => !selectedIds.has(id));
+    if (missingCases.length) reasons.push(`${missingCases.length} required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus`);
+  }
   if (metrics.wrongAutomaticAccepts > 0) reasons.push(`${metrics.wrongAutomaticAccepts} labelled wrong source(s) automatically accepted at or above 0.85`);
   if (!missingSelectedResults && metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8) reasons.push(`labelled automatic discovery agreement is ${(metrics.discoveryAccuracy * 100).toFixed(1)}%, below 80%`);
   if (metrics.sourceLabelled < cases.length) reasons.push(`${cases.length - metrics.sourceLabelled} source label(s) remain independently unverified`);

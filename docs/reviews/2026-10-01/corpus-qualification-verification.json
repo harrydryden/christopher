@@ -1,0 +1,61 @@
+{
+  "baseCommit": "45a680ff16d9d8d23dd120490128d9c305e2e2ba",
+  "date": "2026-10-01",
+  "scope": "Local SPEC §9 corpus composition and independent posting-reference attestation; no live acceptance, paid model call or production change",
+  "preflight": {
+    "command": "node scripts/live-acceptance.mjs --check-corpus",
+    "exitCode": 2,
+    "evidence": "docs/reviews/2026-10-01/implementation-evidence/corpus-qualification/current-manifest-preflight.json",
+    "selectedCases": 30,
+    "primaryAtsTypes": 7,
+    "customHtml": 5,
+    "jsHeavy": 2,
+    "multiRegionWorkday": 0,
+    "landingToExternalBoard": 1,
+    "botProtected": 0
+  },
+  "checks": [
+    {
+      "name": "Focused worker tests",
+      "result": "61/61 across corpus, acceptance, posting and HTML suites",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/corpus-qualification/focused-worker-tests.log"
+    },
+    {
+      "name": "Worker typecheck",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/corpus-qualification/worker-typecheck.log"
+    },
+    {
+      "name": "Offline wrapper test",
+      "result": "1/1 passed; blocked exit code preserved",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/corpus-qualification/offline-wrapper-test.log"
+    },
+    {
+      "name": "Worker build",
+      "result": "passed in root local tool output; no saved build log"
+    }
+  ],
+  "productionBoundary": {
+    "publicMainAndHealthCommit": "ebb346b1fa64e34c16447fffb0d47afbbfd890ac",
+    "localCommit": "45a680ff16d9d8d23dd120490128d9c305e2e2ba",
+    "strictEvaluationGateExitCode": 1,
+    "promptSet": "e06dce7dc560",
+    "verifiedReplayAvailable": false,
+    "providerKeyCheck": "No key found in current process or six standard repository env-file paths; account/hosted secrets not assessed"
+  },
+  "scoresChanged": false,
+  "codeAndContractSha256": {
+    "apps/worker/src/live-acceptance-corpus.ts": "c15a31d129ecafde503742fc87ea5469149ba30ca342fdd8fcca44508a16d79b",
+    "apps/worker/src/live-acceptance-corpus.fixtures.ts": "5312765f59f5cd0ac270ecb5580f1078d1f0e11dcdb47e5b8d74bf7e0d070cdf",
+    "apps/worker/src/live-acceptance-corpus.test.ts": "ebf9d013b2def826a7b552b36cde4d7d965f97a7ddca153f31f966c33a374514",
+    "apps/worker/src/live-acceptance-postings.ts": "c0415446c5993fc3bdc0753c4a9d28fab7ab1eb7436ba3fa3b2cdeeb7cc31936",
+    "apps/worker/src/live-acceptance-postings.test.ts": "3304af0db21fc581a80fb740b09475d08b494824769d57e37dae57164240034d",
+    "apps/worker/src/live-acceptance-manifest.ts": "b460f739422806017d51c9fee2cb94df37631e086bb60b72a2d0995b560ae91b",
+    "apps/worker/src/live-acceptance.ts": "a311b443c4ccb286276166b1ba408006dabd5366c6ee398d979967f8059c0d3f",
+    "apps/worker/src/live-acceptance.test.ts": "9fc6713121cbfda78b67d20a5b753e00218a4dbe871910d0189bee2550cb2487",
+    "apps/worker/src/live-acceptance-cli.ts": "6a61f66193b498684b78c3e9eee0b90331fcbbfd9bb90153bd8d2e582c1e3720",
+    "scripts/live-acceptance.mjs": "61910812fcfaece8a78baad6d818e1496c527a028218e5debffc4a76b6a69485",
+    "scripts/live-acceptance.test.mjs": "857096ebb0342e93188ac37ba202de9bb5b44b5d2ea485e8a67cdb9c3e2c0736",
+    "docs/live-acceptance.md": "e88b211cd5dc43684a432f54ba69d1c1eadc4bee89e2b1d782f9069051a08846"
+  }
+}

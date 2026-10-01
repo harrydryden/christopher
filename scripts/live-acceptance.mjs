@@ -10,7 +10,9 @@ for (const flag of ["--output", "--posting-references"]) {
     args[index + 1] = resolve(repositoryRoot, args[index + 1]);
   }
 }
-const child = spawn("pnpm", ["--filter", "@ava/worker", "exec", "tsx", "src/live-acceptance-cli.ts", ...args], {
+// Run the checked-in TS entry directly: pnpm maps every non-zero nested `exec` result to 1,
+// which would collapse the offline corpus command's distinct blocked (2) result.
+const child = spawn(process.execPath, ["--import", "tsx", resolve(repositoryRoot, "apps/worker/src/live-acceptance-cli.ts"), ...args], {
   cwd: repositoryRoot,
   stdio: "inherit",
 });

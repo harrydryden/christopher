@@ -1,0 +1,6 @@
+Sitemap: https://3m.wd1.myworkdayjobs.com/Search/siteMap.xml
+
+User-agent: *
+Allow: /Search/
+Disallow: /private/
+Disallow: /refreshFacet/

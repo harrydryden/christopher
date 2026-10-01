@@ -33,6 +33,7 @@ describe("tier-2 spec detection", () => {
     ["https://ats.rippling.com/acme/jobs", "rippling", "acme"],
     ["https://ats.rippling.com/acme/jobs/rp-1", "rippling", "acme"],
     ["https://acme.teamtailor.com/jobs/4410001-operations-manager", "teamtailor", "acme"],
+    ["https://career.teamtailor.com/jobs", "teamtailor", "career"],
     ["https://careers-acme.icims.com/jobs/search?ss=1", "icims", "acme"],
     ["https://career5.successfactors.com/career?company=acmecorp", "successfactors", "acmecorp"],
     ["https://jobs.jobvite.com/acme/jobs", "jobvite", "acme"],
@@ -44,7 +45,7 @@ describe("tier-2 spec detection", () => {
     expect(spec?.atsSlug).toBe(slug);
   });
   it("rejects vendor marketing hosts and unrelated URLs", () => {
-    for (const url of ["https://www.teamtailor.com/", "https://www.icims.com/products", "https://app.applytojob.com/", "https://acme.example/careers", "https://www.rippling.com/ats"]) {
+    for (const url of ["https://www.teamtailor.com/", "https://www.teamtailor.com/jobs", "https://app.teamtailor.com/jobs", "https://www.icims.com/products", "https://app.applytojob.com/", "https://acme.example/careers", "https://www.rippling.com/ats"]) {
       expect(specFromAnyUrl(url)).toBeNull();
     }
   });
@@ -81,6 +82,11 @@ describe("rippling", () => {
 });
 
 describe("teamtailor", () => {
+  it("recognises Teamtailor's own careers board as a canonical listing", () => {
+    expect(specFromAnyUrl("https://career.teamtailor.com/jobs/123-example")).toEqual(
+      teamtailorSpec("https://career.teamtailor.com", "career"),
+    );
+  });
   it("walks numbered pages until one adds nothing and splits department from location", async () => {
     const postings = await getAdapter("teamtailor").fetchPostings(teamtailorSpec("https://acme.teamtailor.com", "acme"), ctx);
     expect(postings.map(p => p.title)).toEqual(["Operations Manager", "VP Strategy", "Finance Lead"]);

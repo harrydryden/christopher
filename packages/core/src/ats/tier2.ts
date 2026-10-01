@@ -230,7 +230,12 @@ export const rippling = feedAdapter({ type: "rippling", fromUrl: ripplingFromUrl
 export function teamtailorSpec(origin: string, slug?: string): SourceSpec {
   return { type: "teamtailor", url: `${origin}/jobs`, atsSlug: slug };
 }
-const teamtailorFromUrl = (url: string) => specOrNull(subdomainSlug(url, "teamtailor.com", ["career", "app"]), (slug) => teamtailorSpec(`https://${slug}.teamtailor.com`, slug));
+const teamtailorFromUrl = (url: string) => {
+  const slug = safeUrl(url)?.hostname.toLowerCase() === "career.teamtailor.com"
+    ? "career"
+    : subdomainSlug(url, "teamtailor.com", ["app", "www"]);
+  return specOrNull(slug, (boardSlug) => teamtailorSpec(`https://${boardSlug}.teamtailor.com`, boardSlug));
+};
 const TT_JOB_RE = /\/jobs\/(\d+)-[^/?#]*/;
 export function parseTeamtailor(html: string, pageUrl: string): { postings: RawPosting[]; markers: boolean } {
   const $ = cheerio.load(html);

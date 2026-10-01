@@ -44,6 +44,7 @@ interface WdPosting {
   title?: string;
   externalPath?: string;
   locationsText?: string;
+  remoteType?: string;
   postedOn?: string;
   bulletFields?: string[];
 }
@@ -60,7 +61,7 @@ function mapPosting(p: WdPosting, host: string, site: string, now: Date): RawPos
     url: `https://${host}/${site}${path}`,
     location: locationsText,
     locations: split.length > 1 ? split : undefined,
-    remote: locationsText ? /remote/i.test(locationsText) || undefined : undefined,
+    remote: /^remote$/i.test(str(p.remoteType) ?? "") || (locationsText ? /remote/i.test(locationsText) : false) || undefined,
     postedAt: p.postedOn ? parseRelativePosted(p.postedOn, now) : undefined,
   };
 }

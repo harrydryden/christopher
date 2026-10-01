@@ -1,0 +1,17 @@
+{
+  "scope": "Offline single observed row replay; synthetic one-row pagination envelope; detail overlay is proposed behaviour, not implemented",
+  "id": "JR-0108691",
+  "mappedLocation": "70 Locations",
+  "before": {
+    "ok": false,
+    "terms": [],
+    "remote": false
+  },
+  "withObservedDetail": {
+    "ok": true,
+    "terms": [
+      "Boston"
+    ],
+    "remote": false
+  }
+}

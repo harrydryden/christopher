@@ -1,0 +1,76 @@
+Preferences
+Learning
+Health
+Account
+HEALTH
+NEEDS YOU (4)
+NEEDS CONFIRMATION
+Blocked reactivation
+Discovery found 1 candidate; nobody has picked one
+
+Nothing is scanned for this company until one of them is confirmed.
+
+a Greenhouse board 90% · synthetic-fixture
+https://boards.greenhouse.io/synthetic-health-blocked ↗
+
+This source was switched off or blocked for everyone. Only an administrator can turn it back on.
+
+Pause scanning
+Careers or board URL
+Try this URL
+NEEDS CONFIRMATION
+Confirmation race
+Discovery found 1 candidate; nobody has picked one
+
+Nothing is scanned for this company until one of them is confirmed.
+
+a Greenhouse board 90% · synthetic-fixture
+https://boards.greenhouse.io/synthetic-health-race ↗
+
+This company already has a working source, and only an administrator can replace it. Keep the current source, or ask an administrator.
+
+Use this
+Pause scanning
+Careers or board URL
+Try this URL
+FAILING
+Failing shared source
+Failed 3 scans in a row
+
+A source is marked failing after 3 failed scans in a row.
+
+greenhouse · https://boards.greenhouse.io/synthetic-health-failing ↗
+Re-discover
+
+Only an administrator can disable this shared source. You can pause scanning for your account or try re-discovery.
+
+Pause scanning
+PROPOSAL
+Replacement proposal
+Discovery found another careers page
+
+A source is already scanning. Any follower can keep it; an administrator can choose a replacement.
+
+a Greenhouse board 90% · synthetic-fixture
+https://boards.greenhouse.io/synthetic-health-replacement-new ↗
+
+A source already scans this company for everyone. Only an administrator can replace it.
+
+Keep the current source
+BACKGROUND WORKER
+
+The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations.
+
+RECENT PROBLEM SCANS (LAST 7 DAYS, 0)
+
+NO PROBLEM SCANS
+
+No problem scans are recorded in the last 7 days.
+
+RECENT DAILY SCAN RUNS
+
+Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history.
+
+NO DAILY SCAN RUNS YET
+
+Daily runs appear here once the schedule starts.

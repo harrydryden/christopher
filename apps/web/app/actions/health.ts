@@ -5,8 +5,9 @@ import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { requestLocationEnrichment, type Db } from "@ava/db";
 import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks } from "@ava/db/schema";
+import { markSourceConfirmed, useDiscoveryCandidate } from "./companies";
 import { db } from "@/lib/db";
-import { isUserFacingError, UserFacingError, zUuid } from "@/lib/validation";
+import { fail, isUserFacingError, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { refuseOn, revalidate } from "@/lib/action-helpers";
 
 /** A unique violation, however the driver wraps it: another row already holds this dedupe key. */
@@ -139,4 +140,38 @@ export async function keepCurrentSource(runId: string): Promise<void> {
     return run.companyId;
   });
   revalidate("/health", "/companies", `/companies/${companyId}`);
+}
+
+/** Health's inline forms keep an expected stale-source or permissions refusal beside the choice. */
+export async function confirmHealthSource(sourceId: string, _previous: ActionResult, _data: FormData): Promise<ActionResult> {
+  try {
+    await markSourceConfirmed(sourceId);
+    revalidate("/health");
+    return { ok: true };
+  } catch (error) {
+    if (isUserFacingError(error)) return fail(error.message);
+    throw error;
+  }
+}
+
+export async function useHealthCandidate(runId: string, index: number, _previous: ActionResult, _data: FormData): Promise<ActionResult> {
+  try {
+    await useDiscoveryCandidate(runId, index);
+    revalidate("/health");
+    return { ok: true };
+  } catch (error) {
+    if (isUserFacingError(error)) return fail(error.message);
+    throw error;
+  }
+}
+
+export async function keepHealthCurrentSource(runId: string, _previous: ActionResult, _data: FormData): Promise<ActionResult> {
+  try {
+    await keepCurrentSource(runId);
+    revalidate("/health");
+    return { ok: true };
+  } catch (error) {
+    if (isUserFacingError(error)) return fail(error.message);
+    throw error;
+  }
 }

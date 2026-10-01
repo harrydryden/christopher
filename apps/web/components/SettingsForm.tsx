@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { actionError, type ActionResult } from "@/lib/validation";
+import { actionError, type ActionResult } from "@/lib/action-result";
 import { Button } from "@/components/Button";
 
 const INITIAL: ActionResult = { ok: true };

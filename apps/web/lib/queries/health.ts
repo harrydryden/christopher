@@ -23,6 +23,7 @@ import {
   tasks,
   workerEvents,
   type CareerSource,
+  SOURCE_TYPES,
   type Task,
   type WorkerEventKind,
 } from "@ava/db/schema";
@@ -1191,6 +1192,8 @@ export interface HealthCandidate {
   url: string | null;
   confidence: number | null;
   method: string | null;
+  /** Why a member cannot use this candidate; administrators can still choose it. */
+  memberBlock: "replace" | "reactivate" | "invalid" | null;
 }
 
 export interface HealthItem {
@@ -1199,6 +1202,8 @@ export interface HealthItem {
   kind: HealthItemKind;
   company: { id: string; name: string } | null;
   source: { id: string; type: CareerSource["type"]; url: string; status: CareerSource["status"]; consecutiveFailures: number } | null;
+  /** A member can confirm a waiting source only while no other source is working. */
+  memberCanConfirmSource: boolean;
   /** The discovery run whose candidates the item offers, when it offers any. */
   runId: string | null;
   candidates: HealthCandidate[];
@@ -1240,7 +1245,9 @@ export function healthItemDetail(item: HealthItem): string {
     case "budget":
       return "Scoring, suggestions and CV builds stop for this account until the budget resets on the 1st.";
     case "needs_confirmation":
-      return "Nothing is scanned for this company until one of them is confirmed.";
+      return item.source && !item.memberCanConfirmSource
+        ? "A source already scans this company. Confirming another would change scanning for every follower."
+        : "Nothing is scanned for this company until one of them is confirmed.";
     case "no_source":
       return "Nothing is scanned for this company until a careers page is found.";
     case "blocked":
@@ -1254,11 +1261,30 @@ export function healthItemDetail(item: HealthItem): string {
     case "incomplete_read":
       return "This listing check did not finish. Any matching roles already found remain available. Open the company and choose Rescan once monitoring is running.";
     case "rediscovery":
-      return "A source is already scanning, so this one waits for a follower to judge it. Any of them can.";
+      return "A source is already scanning. Any follower can keep it; an administrator can choose a replacement.";
   }
 }
 
-function readHealthCandidates(value: unknown): HealthCandidate[] {
+type CandidateSource = Pick<CareerSource, "id" | "type" | "url" | "atsSlug" | "atsSite" | "status">;
+
+/** Mirror the source identity and working-source tests in `useDiscoveryCandidate` for display. */
+export function memberCandidateBlock(spec: unknown, sources: CandidateSource[]): HealthCandidate["memberBlock"] {
+  if (!spec || typeof spec !== "object") return "invalid";
+  const candidate = spec as Record<string, unknown>;
+  if (typeof candidate.type !== "string" || !(SOURCE_TYPES as readonly string[]).includes(candidate.type)
+    || typeof candidate.url !== "string"
+    || (candidate.atsSlug != null && typeof candidate.atsSlug !== "string")
+    || (candidate.atsSite != null && typeof candidate.atsSite !== "string")
+    || (candidate.apiUrl != null && typeof candidate.apiUrl !== "string")) return "invalid";
+  const match = sources.find(source => source.type === candidate.type && (candidate.atsSlug
+    ? source.atsSlug === candidate.atsSlug && source.atsSite === (candidate.atsSite ?? null)
+    : source.url === candidate.url));
+  if (match && (match.status === "disabled" || match.status === "blocked")) return "reactivate";
+  if (sources.some(source => (source.status === "active" || source.status === "failing") && source.id !== match?.id)) return "replace";
+  return null;
+}
+
+function readHealthCandidates(value: unknown, sources: CandidateSource[]): HealthCandidate[] {
   const list = Array.isArray(value) ? value : [];
   return list.map((entry, index) => {
     const candidate = (entry && typeof entry === "object" ? entry : {}) as { spec?: { type?: unknown; url?: unknown }; confidence?: unknown; method?: unknown };
@@ -1268,6 +1294,7 @@ function readHealthCandidates(value: unknown): HealthCandidate[] {
       url: typeof candidate.spec?.url === "string" ? candidate.spec.url : null,
       confidence: typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence) ? candidate.confidence : null,
       method: typeof candidate.method === "string" ? candidate.method : null,
+      memberBlock: memberCandidateBlock(candidate.spec, sources),
     };
   });
 }
@@ -1307,6 +1334,7 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
       kind: "budget",
       company: null,
       source: null,
+      memberCanConfirmSource: false,
       runId: null,
       candidates: [],
       reason: null,
@@ -1323,6 +1351,8 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
           companyId: careerSources.companyId,
           type: careerSources.type,
           url: careerSources.url,
+          atsSlug: careerSources.atsSlug,
+          atsSite: careerSources.atsSite,
           status: careerSources.status,
           consecutiveFailures: careerSources.consecutiveFailures,
         })
@@ -1361,14 +1391,14 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
       const partial = sources.find((source) => (source.status === "active" || source.status === "failing") && scanBySource.get(source.id)?.status === "partial");
       const working = sources.some((source) => source.status === "active" || source.status === "failing");
       const run = runByCompany.get(company.id);
-      const candidates = run?.status === "needs_confirmation" ? readHealthCandidates(run.candidates) : [];
+      const candidates = run?.status === "needs_confirmation" ? readHealthCandidates(run.candidates, sources) : [];
       const proposal = candidates.length ? run : undefined;
 
-      const base = { company: { id: company.id, name: company.name }, runId: null, candidates: [], reason: null, budget: null };
+      const base = { company: { id: company.id, name: company.name }, runId: null, candidates: [], reason: null, budget: null, memberCanConfirmSource: false };
       const add = (kind: HealthItemKind, rest: Partial<HealthItem>) =>
         found.push({ key: `${kind}:${company.id}`, kind, source: null, ...base, ...rest, sortName: company.name });
 
-      if (unconfirmed) add("needs_confirmation", { source: unconfirmed, runId: proposal?.id ?? null, candidates });
+      if (unconfirmed) add("needs_confirmation", { source: unconfirmed, runId: proposal?.id ?? null, candidates, memberCanConfirmSource: !working });
       else if (proposal && !working) add("needs_confirmation", { runId: proposal.id, candidates });
       else if (blocked) add("blocked", { source: blocked });
       else if (failing) add("failing", { source: failing });
@@ -1401,7 +1431,7 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
       found.push({
         key: `incomplete_read:${read.companyId}`, kind: "incomplete_read", sortName: read.companyName,
         company: { id: read.companyId, name: read.companyName }, source,
-        runId: null, candidates: [], reason: read.taskError, budget: null,
+        runId: null, candidates: [], reason: read.taskError, budget: null, memberCanConfirmSource: false,
       });
       shownCompanies.add(read.companyId);
     }

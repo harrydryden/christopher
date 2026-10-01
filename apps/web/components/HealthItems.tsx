@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { disableSource, markSourceConfirmed, pasteDiscoveryUrl, pauseCompany, rediscoverCompany, useDiscoveryCandidate } from "@/app/actions/companies";
-import { keepCurrentSource } from "@/app/actions/health";
+import { disableSource, pasteDiscoveryUrl, pauseCompany, rediscoverCompany } from "@/app/actions/companies";
+import { confirmHealthSource, keepHealthCurrentSource, useHealthCandidate } from "@/app/actions/health";
 import { Badge, type Tone } from "./Badge";
 import { Button } from "./Button";
 import { inputClass, labelClass } from "./Field";
+import { SettingsForm } from "./SettingsForm";
 import { VERIFY_SENTENCE, VerifyNotice } from "./VerifyNotice";
 import { sourceWords } from "@/lib/company-timeline";
 import { healthItemDetail, healthItemHeadline, type HealthCandidate, type HealthItem, type HealthItemKind } from "@/lib/queries/health";
@@ -69,7 +70,7 @@ function PasteUrl({ companyId, unverified }: { companyId: string; unverified: bo
  * company, disable the source. There is no "dismiss" that only hides a row — a row goes away
  * because something about the company changed.
  */
-function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boolean }) {
+function HealthItemRow({ item, unverified, isAdmin }: { item: HealthItem; unverified: boolean; isAdmin: boolean }) {
   const company = item.company;
   const verifyTitle = unverified ? VERIFY_SENTENCE : undefined;
   return (
@@ -105,9 +106,13 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
           {item.candidates.map((candidate) => (
             <li key={candidate.index} className="flex flex-wrap items-start justify-between gap-2 border-t-2 border-line-faint pt-2">
               <CandidateLine candidate={candidate} />
-              <form action={useDiscoveryCandidate.bind(null, item.runId!, candidate.index)}>
-                <Button type="submit" variant="primary" size="sm" disabled={unverified} title={verifyTitle}>Use this</Button>
-              </form>
+              {candidate.memberBlock === "invalid" ? <p className="text-12 text-muted">This candidate is incomplete. Re-discover the company to check it again.</p>
+                : isAdmin || candidate.memberBlock === null
+                  ? <SettingsForm action={useHealthCandidate.bind(null, item.runId!, candidate.index)} submitLabel="Use this"
+                      submitDisabled={unverified} />
+                  : <p className="max-w-sm text-12 text-muted">{candidate.memberBlock === "reactivate"
+                    ? "This source was switched off or blocked for everyone. Only an administrator can turn it back on."
+                    : "A source already scans this company for everyone. Only an administrator can replace it."}</p>}
             </li>
           ))}
         </ul>
@@ -115,24 +120,26 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
 
       <div className="flex flex-wrap items-center gap-2">
         {item.kind === "rediscovery" && item.runId && (
-          <form action={keepCurrentSource.bind(null, item.runId)}>
-            <Button type="submit" size="sm">Keep the current source</Button>
-          </form>
+          <SettingsForm action={keepHealthCurrentSource.bind(null, item.runId)} submitLabel="Keep the current source" />
         )}
-        {item.kind === "needs_confirmation" && item.source && (
-          <form action={markSourceConfirmed.bind(null, item.source.id)}>
-            <Button type="submit" size="sm">Use this source</Button>
-          </form>
+        {item.kind === "needs_confirmation" && item.source && (isAdmin || item.memberCanConfirmSource) && (
+          <SettingsForm action={confirmHealthSource.bind(null, item.source.id)} submitLabel="Use this source" submitDisabled={unverified} />
+        )}
+        {item.kind === "needs_confirmation" && item.source && !isAdmin && !item.memberCanConfirmSource && (
+          <p className="text-12 text-muted">A source already scans this company for everyone. Only an administrator can replace it.</p>
         )}
         {company && (item.kind === "failing" || item.kind === "blocked" || item.kind === "no_source" || item.kind === "suspect_empty" || item.kind === "partial") && (
           <form action={rediscoverCompany.bind(null, company.id)}>
             <Button type="submit" size="sm" disabled={unverified} title={verifyTitle}>Re-discover</Button>
           </form>
         )}
-        {item.source && (item.kind === "failing" || item.kind === "blocked") && (
+        {isAdmin && item.source && (item.kind === "failing" || item.kind === "blocked") && (
           <form action={disableSource.bind(null, item.source.id)}>
             <Button type="submit" size="sm">Disable this source</Button>
           </form>
+        )}
+        {!isAdmin && item.source && (item.kind === "failing" || item.kind === "blocked") && (
+          <p className="text-12 text-muted">Only an administrator can disable this shared source. You can pause scanning for your account or try re-discovery.</p>
         )}
         {company && item.kind !== "rediscovery" && (
           <form action={pauseCompany.bind(null, company.id)}>
@@ -149,13 +156,13 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
 }
 
 /** The attention list itself: everything that needs this account, resolution included. */
-export function HealthItems({ items, unverified }: { items: HealthItem[]; unverified: boolean }) {
+export function HealthItems({ items, unverified, isAdmin }: { items: HealthItem[]; unverified: boolean; isAdmin: boolean }) {
   return (
     <div className="space-y-3">
       {unverified && <VerifyNotice />}
       <ul className="space-y-3">
         {items.map((item) => (
-          <HealthItemRow key={item.key} item={item} unverified={unverified} />
+          <HealthItemRow key={item.key} item={item} unverified={unverified} isAdmin={isAdmin} />
         ))}
       </ul>
     </div>

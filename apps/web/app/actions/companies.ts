@@ -432,6 +432,8 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
     const [run] = await tx.select().from(discoveryRuns).where(eq(discoveryRuns.id, id)).for("update");
     if (!run) throw new UserFacingError("Discovery run not found.");
     await requireFollowed(user.id, run.companyId, { live: true, writer: tx });
+    // A second click has already been answered; it must not start another scan after the first
+    // task has finished.
     if (run.status === "resolved" && run.chosenSourceId) return run.companyId;
     const candidates = run.candidates as Array<{ spec?: unknown }>;
     const raw = candidates[candidateIndex];
@@ -469,10 +471,12 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
       .set({ status: "resolved", chosenSourceId: source.id, finishedAt: new Date() })
       .where(eq(discoveryRuns.id, id));
 
+    // Commit the first scan request with the chosen source. A queue failure must not leave a
+    // resolved run that nobody will scan.
+    await enqueue("scan_company", { companyId: run.companyId, trigger: "manual" }, tx);
     return run.companyId;
   });
 
-  await enqueue("scan_company", { companyId, trigger: "manual" });
   revalidatePath(`/companies/${companyId}`);
 }
 

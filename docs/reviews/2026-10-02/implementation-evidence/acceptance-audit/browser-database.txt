@@ -1,0 +1,5 @@
+         name         |       status       |           chosen_source_id           | sources | scans
+----------------------+--------------------+--------------------------------------+---------+-------
+ Confirmation race    | needs_confirmation |                                      |       1 |     0
+ Initial confirmation | resolved           | abca3cdb-87d9-412c-85c6-7ed1dc91c0c9 |       1 |     1
+(2 rows)

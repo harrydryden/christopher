@@ -1,0 +1,1 @@
+"{\"alerts\":[\"This company already has a working source, and only an administrator can replace it. Keep the current source, or ask an administrator.\"],\"draft\":[\"\",\"https://careers.example.test/retained-draft\"],\"width\":375,\"scroll\":375}"

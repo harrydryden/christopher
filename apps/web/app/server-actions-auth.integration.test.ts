@@ -122,7 +122,10 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/discovery-sources.ts": {
     saveDiscoverySource: "verified", updateDiscoverySource: "verified", checkDiscoverySource: "verified", importDiscoveryDocument: "verified",
   },
-  "actions/health.ts": { retryTask: "admin", retryLocationCheck: "verified", keepCurrentSource: "user" },
+  "actions/health.ts": {
+    retryTask: "admin", retryLocationCheck: "verified", keepCurrentSource: "user",
+    confirmHealthSource: "verified", useHealthCandidate: "verified", keepHealthCurrentSource: "user",
+  },
   "actions/learning.ts": {
     savePinnedStatements: "verified", savePinnedStatementsSetting: "verified", answerOpenQuestion: "verified", answerOpenQuestionSetting: "verified",
     saveSeedProfile: "user", saveSeedProfileSetting: "user", savePreferenceProfile: "verified", savePreferenceProfileSetting: "verified",

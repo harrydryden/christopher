@@ -1,0 +1,8 @@
+Command: pnpm exec tsx scripts/check-evaluation-reports.ts
+Environment overrides: {"AVA_EVAL_GATE_REQUIRE_VERIFIED": "1"}
+shipped prompt set: 27311fe3cb21; 2 committed report(s); a verified report is required (AVA_EVAL_GATE_REQUIRE_VERIFIED)
+note: docs/evaluations/cv-replay/report.json: graded at e06dce7dc560, marked unverified; it does not vouch for 27311fe3cb21.
+note: docs/evaluations/cv-tailoring-contrast/report.json: graded at an unrecorded prompt set, marked unverified; it does not vouch for 27311fe3cb21.
+error: No committed report is at the shipped prompt set 27311fe3cb21. Write one (docs/DEPLOY.md, "Evaluation reports and the prompt set").
+
+Exit code: 1

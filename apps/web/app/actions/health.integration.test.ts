@@ -78,9 +78,27 @@ it("confirms a candidate into the source a scan reads, and queues that scan", as
   const [resolved] = await database.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, run!.id));
   expect(resolved).toMatchObject({ status: "resolved", chosenSourceId: sources[0]!.id });
   expect((await tasksOf("scan_company")).map((task) => task.payload)).toEqual([{ companyId: company.id, trigger: "manual" }]);
+  const [firstScan] = await tasksOf("scan_company");
+  await database.update(schema.tasks).set({ status: "done", finishedAt: new Date() }).where(eq(schema.tasks.id, firstScan!.id));
+  await useDiscoveryCandidate(run!.id, 0);
+  expect((await tasksOf("scan_company")).map(task => task.id)).toEqual([firstScan!.id]);
   // Resolved is resolved: the item has gone, and so has the sidebar's count of it.
   expect(await healthItems(user.id)).toEqual([]);
   expect(await countHealthItems(user.id)).toBe(0);
+});
+
+it("rolls back source confirmation when its scan cannot be queued", async () => {
+  const { company, run } = await fixture({ candidates: CANDIDATES });
+  await database.execute(sql`alter table tasks add constraint health_candidate_queue_check check (type <> 'scan_company')`);
+  try {
+    await expect(useDiscoveryCandidate(run!.id, 0)).rejects.toThrow();
+    expect(await sourcesOf(company.id)).toEqual([]);
+    const [unchanged] = await database.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, run!.id));
+    expect(unchanged).toMatchObject({ status: "needs_confirmation", chosenSourceId: null });
+    expect(await tasksOf("scan_company")).toEqual([]);
+  } finally {
+    await database.execute(sql`alter table tasks drop constraint health_candidate_queue_check`);
+  }
 });
 
 it("lets a verified follower restart a failed or backfilled Workday location check once", async () => {

@@ -56,7 +56,7 @@ export default async function HealthPage({ searchParams }: { searchParams: Promi
           <EmptyState title="Nothing needs you" description="No company-specific issues are recorded. Check the background worker below for monitoring status." />
         ) : (
           <div className="space-y-3">
-            <HealthItems items={items} unverified={unverified} />
+            <HealthItems items={items} unverified={unverified} isAdmin={user.role === "admin"} />
             {itemCount > items.length && (
               <p className="text-12 text-muted">
                 Showing {items.length} of {itemCount}. The rest are on{" "}

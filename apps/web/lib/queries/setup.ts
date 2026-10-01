@@ -12,6 +12,7 @@ import { companySubscriptions, cvLibraries, userSettings, users } from "@ava/db/
 import { needsEmailConfirmation } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CHOOSE_GATE_SENTENCE, type MonitoringFacts, type SetupFacts } from "@/lib/setup";
+import { getWorkerStatus } from "@/lib/queries/health";
 import { UserFacingError } from "@/lib/validation";
 
 /** The account's own setting rows the checklist reads. Read from `user_settings` alone: a stray
@@ -96,6 +97,12 @@ export async function setupStatus(userId: string): Promise<SetupFacts> {
   // No account row means nothing else of it exists either (every other row cascades from it).
   const rows = row?.settings ?? [];
   const settings = resolveUserSettings(rows);
+  const monitoring: MonitoringFacts = row?.monitoring ?? { activeCompanies: 0, successfulCompanies: 0, attentionCompanies: 0, pendingCompanies: 0, lastSuccessAt: null };
+  // Pending work needs a worker read: a stale worker makes "checking" and a link to Companies a
+  // dead end, including when the pending work is a later rescan after first-scan completion.
+  if (monitoring.pendingCompanies > 0) {
+    monitoring.workerState = (await getWorkerStatus()).state;
+  }
   return {
     emailConfirmed: !!row && !needsEmailConfirmation(row),
     gateChosen: rows.some((entry) => entry.key === "gate"),
@@ -103,6 +110,6 @@ export async function setupStatus(userId: string): Promise<SetupFacts> {
     companiesFollowed: Number(row?.followed ?? 0),
     libraryFilled: Number(row?.experiences ?? 0) > 0,
     dismissedAt: settings.setupDismissedAt,
-    monitoring: row?.monitoring ?? { activeCompanies: 0, successfulCompanies: 0, attentionCompanies: 0, pendingCompanies: 0, lastSuccessAt: null },
+    monitoring,
   };
 }

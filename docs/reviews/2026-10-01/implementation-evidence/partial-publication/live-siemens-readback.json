@@ -1,0 +1,78 @@
+{
+  "jobs": {
+    "open": 239,
+    "count": 239,
+    "closed": 0,
+    "seeded": 239,
+    "lastSeenAt": "2026-10-01T17:15:55.062+00:00",
+    "firstSeenAt": "2026-10-01T17:14:14.596+00:00",
+    "distinctUrls": 239,
+    "missingPositive": 0,
+    "firstMissedNonNull": 0,
+    "distinctExternalKeys": 239
+  },
+  "pages": {
+    "count": 40,
+    "lastIndex": 39,
+    "firstIndex": 0,
+    "distinctUrls": 40,
+    "stagedPostings": 239,
+    "latestObservedAt": "2026-10-01T17:15:55.062+00:00",
+    "earliestObservedAt": "2026-10-01T17:14:14.596+00:00",
+    "distinctContentHashes": 40
+  },
+  "scans": 0,
+  "views": {
+    "count": 239,
+    "scored": 0,
+    "seeded": 239,
+    "inTable": 239,
+    "distinctJobs": 239
+  },
+  "events": {
+    "count": 239,
+    "byType": {
+      "discovered": 239
+    },
+    "closed": 0,
+    "discovered": 239
+  },
+  "source": {
+    "id": "ac685502-6f33-4c6a-b606-843a16359ef4",
+    "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+    "recipe": null,
+    "status": "active",
+    "company_id": "426ad41d-1ca9-43ca-ab4d-d04f2493934c",
+    "content_hash": null,
+    "next_scan_at": null,
+    "last_ok_scan_at": null,
+    "last_postings_count": null,
+    "consecutive_failures": 0
+  },
+  "aiCalls": 0,
+  "generation": {
+    "id": "0d7f0da2-53fa-45ca-92f3-8ff12c15d9c1",
+    "task_id": "636458a9-e82f-4dfd-8596-faafc8b79b12",
+    "next_url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=240",
+    "requests": 42,
+    "restarts": 0,
+    "source_id": "ac685502-6f33-4c6a-b606-843a16359ef4",
+    "expires_at": "2026-10-01T19:14:10.428+00:00",
+    "started_at": "2026-10-01T17:14:10.428+00:00",
+    "updated_at": "2026-10-01T17:15:55.169+00:00",
+    "revalidated": 0,
+    "bytes_stored": 40778,
+    "fetched_bytes": 6846140,
+    "min_advertised": 999,
+    "seed_first_scan": true,
+    "metrics_complete": true,
+    "active_duration_ms": 103617,
+    "source_fingerprint": "36ddf0affb6b878c47c7e99690b825b34fce9be5c377a08f52e7381b89017489",
+    "published_new_count": 239,
+    "published_page_count": 40
+  },
+  "queuedTasks": {
+    "scan_company": 1,
+    "fetch_description": 239
+  }
+}

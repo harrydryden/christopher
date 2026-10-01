@@ -1,0 +1,78 @@
+{
+  "fixture": "isolated synthetic database derived from mocked 25-page listing; no production worker or live site",
+  "mode": "interrupted-zero",
+  "at": "2026-10-01T17:18:20.325Z",
+  "observations": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "setupText": "Waiting for a complete scan No complete successful scan is recorded for your active companies yet. Check their source and progress before treating an empty list as a result. Check companies Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps",
+      "setupAnnouncements": [
+        "Waiting for a complete scan\n\nNo complete successful scan is recorded for your active companies yet. Check their source and progress before treating an empty list as a result.\n\nCheck companies"
+      ],
+      "rolesExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Roles Companies Applications Library Learning Health 1 Settings Fixture reviewer Sign out ROLES Waiting for a complete scan No complete successful scan is recorded for your active companies yet. Check their source and progress before treating an empty list as a result. Check companies Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps Matched 0 Shortlisted 0 Dismissed 0 All roles in this view Company All companies Pager fixture Title Update results Clear filters Availability Availability Newly opened Open Closed More filters NO ROLES AWAITING REVIEW No complete successful scan is recorded for your active companies yet. Check th",
+      "rolesWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "setupLink": null,
+      "healthExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Roles Companies Applications Library Learning Health 1 Settings Fixture reviewer Sign out Preferences Learning Health Account HEALTH NEEDS YOU (1) INCOMPLETE READ Pager fixture The careers listing read stopped before it finished This listing check did not finish. Any matching roles already found remain available. Open the company and choose Rescan once monitoring is running. html · https://pager.example/listing?page=0 ↗ Open company to Rescan Pause scanning LISTING SCAN PROGRESS (1) Matching roles can appear before a long listing check finishes. An incomplete check cannot confirm that all roles have been seen. Pager fixture INTERRUPTED https://pager.example/listing?page=0 0 pages checked so far This read stopped before matching roles were ready. Rescan to check the listing again. This read did not finish. An administrator must restore monitoring; then open the company and choose Rescan. Recorded error: Synthetic interrupted read before any page was published BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history. NO DAILY SCAN RUNS YET Daily runs appear here once the schedule starts.",
+      "healthStatuses": [
+        ""
+      ],
+      "healthWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "enlarged": null,
+      "recoveryLink": {
+        "label": "Open company to Rescan",
+        "focussed": true,
+        "destination": "/companies/0538c0c3-3b34-43cb-a4f7-af2f49d7518e",
+        "rescanButtonPresent": true
+      },
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "setupText": "Waiting for a complete scan No complete successful scan is recorded for your active companies yet. Check their source and progress before treating an empty list as a result. Check companies Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps",
+      "setupAnnouncements": [
+        "Waiting for a complete scan\n\nNo complete successful scan is recorded for your active companies yet. Check their source and progress before treating an empty list as a result.\n\nCheck companies"
+      ],
+      "rolesExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Menu ROLES Waiting for a complete scan No complete successful scan is recorded for your active companies yet. Check their source and progress before treating an empty list as a result. Check companies Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps Matched 0 Shortlisted 0 Dismissed 0 All roles in this view Filters NO ROLES AWAITING REVIEW No complete successful scan is recorded for your active companies yet. Check their source and progress before treating an empty list as a result. Check companies",
+      "rolesWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "setupLink": null,
+      "healthExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Menu Preferences Learning Health Account HEALTH NEEDS YOU (1) INCOMPLETE READ Pager fixture The careers listing read stopped before it finished This listing check did not finish. Any matching roles already found remain available. Open the company and choose Rescan once monitoring is running. html · https://pager.example/listing?page=0 ↗ Open company to Rescan Pause scanning LISTING SCAN PROGRESS (1) Matching roles can appear before a long listing check finishes. An incomplete check cannot confirm that all roles have been seen. Pager fixture INTERRUPTED https://pager.example/listing?page=0 0 pages checked so far This read stopped before matching roles were ready. Rescan to check the listing again. This read did not finish. An administrator must restore monitoring; then open the company and choose Rescan. Recorded error: Synthetic interrupted read before any page was published BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history. NO DAILY SCAN RUNS YET Daily runs appear here once the schedule starts.",
+      "healthStatuses": [
+        ""
+      ],
+      "healthWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "enlarged": {
+        "body": 375,
+        "viewport": 375,
+        "baselinePx": 14,
+        "enlargedPx": 28
+      },
+      "recoveryLink": {
+        "label": "Open company to Rescan",
+        "focussed": true,
+        "destination": "/companies/0538c0c3-3b34-43cb-a4f7-af2f49d7518e",
+        "rescanButtonPresent": true
+      },
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    }
+  ]
+}

@@ -37,6 +37,7 @@ export function CompanyManageMenu({
   status,
   extra,
   running = false,
+  monitoringIssue,
   blockedReason,
 }: {
   companyId: string;
@@ -49,6 +50,8 @@ export function CompanyManageMenu({
   extra?: "refresh" | "rediscover";
   /** A discovery already running for this company, which Refresh would only repeat. */
   running?: boolean;
+  /** A leased task remains owned, but the worker may not be able to finish it yet. */
+  monitoringIssue?: "stopped" | "restarting";
   /**
    * The sentence an unverified account gets instead of a refusal at press time: the actions still
    * ask `requireVerifiedUser()` for themselves, this only stops the press.
@@ -72,8 +75,11 @@ export function CompanyManageMenu({
         <div className="space-y-2 border-t-2 border-line-muted p-2">
           <div className="flex flex-wrap gap-2">
             {extra === "refresh" && status === "active" && (
-              <Button size="sm" disabled={pending !== null || running || !!blockedReason} title={blockedReason} onClick={() => run("refresh")}>
-                {pending === "refresh" || running ? "Refreshing…" : "Refresh"}
+              <Button size="sm" disabled={pending !== null || running || !!blockedReason}
+                title={blockedReason ?? (monitoringIssue === "stopped" ? "Monitoring must resume before this check can finish." : monitoringIssue === "restarting" ? "Monitoring is restarting; this check may be interrupted." : undefined)}
+                onClick={() => run("refresh")}>
+                {pending === "refresh" ? "Refreshing…" : running && monitoringIssue === "stopped" ? "Waiting for monitoring"
+                  : running && monitoringIssue === "restarting" ? "Monitoring restarting" : running ? "Refreshing…" : "Refresh"}
               </Button>
             )}
             {extra === "rediscover" && (

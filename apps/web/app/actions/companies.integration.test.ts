@@ -348,6 +348,21 @@ it("gives each companies-list row its open, review and shortlisted counts and th
   expect((await listCompanies(first.id))[0]!.sourceType).toBe("greenhouse");
 });
 
+it("labels queued and running scan work separately from discovery on a company row", async () => {
+  const company = await followedCompany();
+  const [scan] = await database.insert(schema.tasks).values({ type: "scan_company", payload: { companyId: company.id }, status: "queued" }).returning();
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "scan_company", activityState: "queued" });
+  const [discovery] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, status: "queued" }).returning();
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "scan_company", activityState: "queued" });
+  await database.update(schema.tasks).set({ status: "running" }).where(eq(schema.tasks.id, discovery!.id));
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "discover", activityState: "running" });
+  await database.update(schema.tasks).set({ status: "running" }).where(eq(schema.tasks.id, scan!.id));
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "scan_company", activityState: "running" });
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, scan!.id));
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "discover", activityState: "running" });
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, discovery!.id));
+});
+
 /** `count` companies the account already follows, straight into the tables. */
 async function alreadyFollowing(userId: string, count: number, prefix = "held") {
   const rows = await database.insert(schema.companies).values(Array.from({ length: count }, (_, n) => ({

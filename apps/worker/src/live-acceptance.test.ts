@@ -144,7 +144,72 @@ describe("live acceptance reporting", () => {
     expect(metrics.sourceLabelled).toBe(2);
     expect(metrics.discoveryAccuracy).toBe(0.5);
     expect(acceptance.reasons.join(" ")).toMatch(/no result|did not run extraction/);
-    expect(acceptance.verdict).toBe("fail");
+    expect(acceptance.verdict).toBe("blocked");
+  });
+
+  it("rejects duplicate selected case IDs before scoring", () => {
+    expect(() => summariseLiveAcceptance([labelled, { ...labelled }], [result("a", true)]))
+      .toThrow(/Duplicate selected acceptance case: a/);
+  });
+
+  it("rejects duplicate results that previously let A qualify while B was absent", () => {
+    const a = result("a", true);
+    a.extraction.referenceComparison = {
+      expectedCount: 1, observedCount: 1, matchedCount: 1,
+      expectedDuplicateCount: 0, observedDuplicateCount: 0,
+      expectedUrls: ["https://a.test/jobs/one"], observedUrls: ["https://a.test/jobs/one"],
+      matchedUrls: ["https://a.test/jobs/one"], missingUrls: [], unexpectedUrls: [],
+      recall: 1, precision: 1, qualifiesForAcceptance: true, qualificationReasons: [],
+    };
+    expect(() => summariseLiveAcceptance([labelled, { ...labelled, id: "b" }], [a, { ...a }]))
+      .toThrow(/Duplicate acceptance result: a/);
+  });
+
+  it("rejects unknown qualified results instead of adding them to posting metrics", () => {
+    const unknown = result("unknown", true);
+    unknown.extraction.referenceComparison = {
+      expectedCount: 1, observedCount: 1, matchedCount: 1,
+      expectedDuplicateCount: 0, observedDuplicateCount: 0,
+      expectedUrls: ["https://a.test/jobs/one"], observedUrls: ["https://a.test/jobs/one"],
+      matchedUrls: ["https://a.test/jobs/one"], missingUrls: [], unexpectedUrls: [],
+      recall: 1, precision: 1, qualifiesForAcceptance: true, qualificationReasons: [],
+    };
+    expect(() => summariseLiveAcceptance([labelled], [result("a", true), unknown]))
+      .toThrow(/Unknown acceptance result: unknown/);
+  });
+
+  it("keeps missing results as blocked diagnostics and accepts reordered valid results", () => {
+    const cases = [labelled, { ...labelled, id: "b" }];
+    const a = result("a", true);
+    const b = result("b", true);
+    const missing = summariseLiveAcceptance(cases, [a]);
+    expect(missing.total).toBe(1);
+    expect(liveAcceptanceVerdict(cases, missing)).toMatchObject({ verdict: "blocked" });
+    expect(liveAcceptanceVerdict(cases, missing).reasons.join(" ")).toMatch(/1 selected case.*no result/);
+    expect(summariseLiveAcceptance(cases, [b, a])).toEqual(summariseLiveAcceptance(cases, [a, b]));
+  });
+
+  it("fails a known wrong automatic source even when another selected case is missing", () => {
+    const cases = [labelled, { ...labelled, id: "b" }];
+    const wrong = result("a", false);
+    const metrics = summariseLiveAcceptance(cases, [wrong]);
+    expect(liveAcceptanceVerdict(cases, metrics)).toMatchObject({ verdict: "fail" });
+    expect(liveAcceptanceVerdict(cases, metrics).reasons.join(" ")).toMatch(/wrong source.*automatically accepted/);
+  });
+
+  it("fails an observed manual-count disagreement while another selected case is missing", () => {
+    const cases = [{ ...labelled, expectedRoleCount: 2 }, { ...labelled, id: "b", expectedRoleCount: 2 }];
+    const mismatched = result("a", true);
+    mismatched.extraction = { outcome: "complete", observedRoleCount: 1, countMatchesLabel: false, sample: [] };
+    const metrics = summariseLiveAcceptance(cases, [mismatched]);
+    expect(metrics.countDisagreements).toBe(1);
+    expect(liveAcceptanceVerdict(cases, metrics)).toMatchObject({ verdict: "fail" });
+    expect(liveAcceptanceVerdict(cases, metrics).reasons.join(" ")).toMatch(/observed labelled extraction count.*disagree/);
+    const matching = result("a", true);
+    matching.extraction = { outcome: "complete", observedRoleCount: 2, countMatchesLabel: true, sample: [] };
+    const incomplete = summariseLiveAcceptance(cases, [matching]);
+    expect(incomplete.countDisagreements).toBe(0);
+    expect(liveAcceptanceVerdict(cases, incomplete)).toMatchObject({ verdict: "blocked" });
   });
 
   it("uses and reports the supplied production browser renderer", async () => {
@@ -211,6 +276,20 @@ describe("independent posting references", () => {
     r.extraction.referenceComparison = compareReferencePostings(snapshot, snapshot.postingUrls.map(url => ({ title: "Engineer", url })), { observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true });
     expect(liveAcceptanceVerdict([labelled], summariseLiveAcceptance([labelled], [r]))).toEqual({ verdict: "pass", reasons: [] });
     expect(liveAcceptanceVerdict([labelled], summariseLiveAcceptance([labelled], [r]), ["a", "b"]).verdict).toBe("blocked");
+  });
+  it("keeps exact-count failure when an otherwise precise qualified reference has one extra role", () => {
+    const urls = Array.from({ length: 100 }, (_, index) => `https://a.test/jobs/${index}`);
+    const reference = { ...snapshot, postingUrls: urls };
+    const observed = [...urls, "https://a.test/jobs/extra"].map(url => ({ title: "Engineer", url }));
+    const r = result("a", true);
+    r.extraction.referenceComparison = compareReferencePostings(reference, observed, {
+      observation: "complete", now, sourceMatchesLabel: true, rawHashVerified: true,
+    });
+    const metrics = summariseLiveAcceptance([labelled, { ...labelled, id: "b" }], [r]);
+    expect(metrics.postingIdentityFailures).toBe(0);
+    expect(metrics.postingIdentityPrecision).toBeGreaterThan(0.98);
+    expect(metrics.countDisagreements).toBe(1);
+    expect(liveAcceptanceVerdict([labelled, { ...labelled, id: "b" }], metrics)).toMatchObject({ verdict: "fail" });
   });
   it("does not mix extraction browser work into discovery evidence", async () => {
     const fetcher = {

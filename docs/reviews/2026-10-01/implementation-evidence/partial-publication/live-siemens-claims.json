@@ -1,0 +1,422 @@
+{
+  "fixture": "Fresh isolated Siemens public HTTP listing with one synthetic verified follower",
+  "sourceUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+  "startedAt": "2026-10-01T17:14:10.412Z",
+  "claims": [
+    {
+      "number": 1,
+      "at": "2026-10-01T17:15:00.747Z",
+      "elapsedMs": 50330,
+      "requestCount": 20,
+      "transferredBytes": 3268924,
+      "responses": [
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:14 GMT",
+          "contentHash": null,
+          "transferredBytes": 160663
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=6",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=6",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:17 GMT",
+          "contentHash": null,
+          "transferredBytes": 164040
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=12",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=12",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:19 GMT",
+          "contentHash": null,
+          "transferredBytes": 162908
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=18",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=18",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:21 GMT",
+          "contentHash": null,
+          "transferredBytes": 163289
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=24",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=24",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:24 GMT",
+          "contentHash": null,
+          "transferredBytes": 164108
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=30",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=30",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:26 GMT",
+          "contentHash": null,
+          "transferredBytes": 164337
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=36",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=36",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:29 GMT",
+          "contentHash": null,
+          "transferredBytes": 161923
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=42",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=42",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:31 GMT",
+          "contentHash": null,
+          "transferredBytes": 164127
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=48",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=48",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:34 GMT",
+          "contentHash": null,
+          "transferredBytes": 163562
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=54",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=54",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:36 GMT",
+          "contentHash": null,
+          "transferredBytes": 164636
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=60",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=60",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:39 GMT",
+          "contentHash": null,
+          "transferredBytes": 164211
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=66",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=66",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:41 GMT",
+          "contentHash": null,
+          "transferredBytes": 163359
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=72",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=72",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:43 GMT",
+          "contentHash": null,
+          "transferredBytes": 163793
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=78",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=78",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:46 GMT",
+          "contentHash": null,
+          "transferredBytes": 163117
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=84",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=84",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:48 GMT",
+          "contentHash": null,
+          "transferredBytes": 163945
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=90",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=90",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:51 GMT",
+          "contentHash": null,
+          "transferredBytes": 163158
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=96",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=96",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:53 GMT",
+          "contentHash": null,
+          "transferredBytes": 162255
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=102",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=102",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:55 GMT",
+          "contentHash": null,
+          "transferredBytes": 163372
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=108",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=108",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:14:58 GMT",
+          "contentHash": null,
+          "transferredBytes": 163825
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=114",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=114",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:00 GMT",
+          "contentHash": null,
+          "transferredBytes": 164296
+        }
+      ],
+      "stagedPages": 119,
+      "stagedDistinctRoles": 119,
+      "publishedPageCount": 20,
+      "publishedNewCount": 119,
+      "generationRestarts": 0,
+      "generationStartedAt": "2026-10-01T17:14:10.428Z",
+      "generationExpiresAt": "2026-10-01T19:14:10.428Z",
+      "generationNextUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=120",
+      "jobs": 119,
+      "matchingViews": 119,
+      "scans": 0,
+      "aiCalls": 0,
+      "taskStatus": "queued",
+      "taskRunAfter": "2026-10-01T17:15:01.641Z",
+      "queuedTasksByType": [
+        {
+          "type": "fetch_description",
+          "count": 119
+        },
+        {
+          "type": "scan_company",
+          "count": 1
+        }
+      ],
+      "sourceStatus": "active",
+      "sourceLastOkScanAt": null,
+      "sourceLastPostingsCount": null,
+      "sourceConsecutiveFailures": 0,
+      "sourceNextScanAt": null,
+      "sourceFingerprint": "36ddf0affb6b878c47c7e99690b825b34fce9be5c377a08f52e7381b89017489"
+    },
+    {
+      "number": 2,
+      "at": "2026-10-01T17:15:55.186Z",
+      "elapsedMs": 53332,
+      "requestCount": 22,
+      "transferredBytes": 3577216,
+      "responses": [
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:04 GMT",
+          "contentHash": null,
+          "transferredBytes": 160643
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=114",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=114",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:06 GMT",
+          "contentHash": null,
+          "transferredBytes": 164294
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=120",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=120",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:09 GMT",
+          "contentHash": null,
+          "transferredBytes": 162242
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=126",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=126",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:11 GMT",
+          "contentHash": null,
+          "transferredBytes": 162141
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=132",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=132",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:14 GMT",
+          "contentHash": null,
+          "transferredBytes": 164501
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=138",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=138",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:17 GMT",
+          "contentHash": null,
+          "transferredBytes": 164079
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=144",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=144",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:19 GMT",
+          "contentHash": null,
+          "transferredBytes": 161776
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=150",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=150",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:21 GMT",
+          "contentHash": null,
+          "transferredBytes": 163833
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=156",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=156",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:24 GMT",
+          "contentHash": null,
+          "transferredBytes": 163372
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=162",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=162",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:26 GMT",
+          "contentHash": null,
+          "transferredBytes": 162103
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=168",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=168",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:28 GMT",
+          "contentHash": null,
+          "transferredBytes": 160401
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=174",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=174",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:30 GMT",
+          "contentHash": null,
+          "transferredBytes": 161045
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=180",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=180",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:33 GMT",
+          "contentHash": null,
+          "transferredBytes": 162798
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=186",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=186",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:35 GMT",
+          "contentHash": null,
+          "transferredBytes": 163799
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=192",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=192",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:37 GMT",
+          "contentHash": null,
+          "transferredBytes": 161310
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=198",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=198",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:40 GMT",
+          "contentHash": null,
+          "transferredBytes": 164092
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=204",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=204",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:42 GMT",
+          "contentHash": null,
+          "transferredBytes": 162247
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=210",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=210",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:45 GMT",
+          "contentHash": null,
+          "transferredBytes": 163130
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=216",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=216",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:47 GMT",
+          "contentHash": null,
+          "transferredBytes": 161162
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=222",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=222",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:50 GMT",
+          "contentHash": null,
+          "transferredBytes": 162743
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=228",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=228",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:52 GMT",
+          "contentHash": null,
+          "transferredBytes": 162614
+        },
+        {
+          "requestUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=234",
+          "responseUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=234",
+          "status": 200,
+          "responseDate": "Thu, 01 Oct 2026 17:15:55 GMT",
+          "contentHash": null,
+          "transferredBytes": 162891
+        }
+      ],
+      "stagedPages": 239,
+      "stagedDistinctRoles": 239,
+      "publishedPageCount": 40,
+      "publishedNewCount": 239,
+      "generationRestarts": 0,
+      "generationStartedAt": "2026-10-01T17:14:10.428Z",
+      "generationExpiresAt": "2026-10-01T19:14:10.428Z",
+      "generationNextUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=240",
+      "jobs": 239,
+      "matchingViews": 239,
+      "scans": 0,
+      "aiCalls": 0,
+      "taskStatus": "queued",
+      "taskRunAfter": "2026-10-01T17:15:56.081Z",
+      "queuedTasksByType": [
+        {
+          "type": "fetch_description",
+          "count": 239
+        },
+        {
+          "type": "scan_company",
+          "count": 1
+        }
+      ],
+      "sourceStatus": "active",
+      "sourceLastOkScanAt": null,
+      "sourceLastPostingsCount": null,
+      "sourceConsecutiveFailures": 0,
+      "sourceNextScanAt": null,
+      "sourceFingerprint": "36ddf0affb6b878c47c7e99690b825b34fce9be5c377a08f52e7381b89017489"
+    }
+  ],
+  "stop": "Two successful claims with useful positives"
+}

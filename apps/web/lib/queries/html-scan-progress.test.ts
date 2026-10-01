@@ -9,7 +9,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { listHtmlScanProgress } from "./html-scan-progress";
-import { countHealthItems, healthItems } from "./health";
+import { countHealthItems, healthItemDetail, healthItems } from "./health";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -90,7 +90,11 @@ it("counts an interrupted read as one actionable company issue without duplicati
 
   expect(await listHtmlScanProgress(user.id)).toMatchObject([{ taskStatus: "failed", publishedPages: 1 }]);
   expect(await countHealthItems(user.id)).toBe(1);
-  expect((await healthItems(user.id)).map(item => item.kind)).toEqual(["incomplete_read"]);
+  const published = await healthItems(user.id);
+  expect(published.map(item => item.kind)).toEqual(["incomplete_read"]);
+  expect(healthItemDetail(published[0]!)).toBe("This listing check did not finish. Any matching roles already found remain available. Open the company and choose Rescan once monitoring is running.");
+  await database.update(schema.htmlScanGenerations).set({ publishedPageCount: 0 });
+  expect(healthItemDetail((await healthItems(user.id))[0]!)).toBe(healthItemDetail(published[0]!));
 
   await database.insert(schema.scans).values({ sourceId: source!.id, status: "partial", startedAt: new Date(startedAt.getTime() + 1000) });
   expect(await countHealthItems(user.id)).toBe(1);

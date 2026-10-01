@@ -84,6 +84,11 @@ it("offers what the status allows, and holds Refresh for an unconfirmed account 
   expect(button("Refresh").title).toBe("Confirm your email address first.");
   act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" running />));
   expect(button("Refreshing…").disabled).toBe(true);
+  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" running monitoringIssue="stopped" />));
+  expect(button("Waiting for monitoring").disabled).toBe(true);
+  expect(button("Waiting for monitoring").title).toContain("Monitoring must resume");
+  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" running monitoringIssue="restarting" />));
+  expect(button("Monitoring restarting").disabled).toBe(true);
   act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="paused" extra="rediscover" />));
   expect(labels()).toEqual(["Re-discover", "Resume scanning", "Hide from my list", "Stop following"]);
   await act(async () => button("Re-discover").click());

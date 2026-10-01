@@ -1,0 +1,15 @@
+{
+  "observedAt": "2026-10-01",
+  "method": "Offline TypeScript fixture invoking summariseLiveAcceptance and liveAcceptanceVerdict before the identity-gate edit",
+  "selectedCaseIds": ["a", "b"],
+  "resultIds": ["a", "a"],
+  "metrics": {
+    "sourceMatches": 2,
+    "countLabelled": 2,
+    "countMatches": 2,
+    "postingIdentityLabelled": 2,
+    "total": 2
+  },
+  "verdict": { "verdict": "pass", "reasons": [] },
+  "note": "This records the pre-fix observation, not an output expected from the current implementation. The adjacent reproduce.ts now requires duplicate and unknown result IDs to throw."
+}

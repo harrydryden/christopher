@@ -73,6 +73,8 @@ export interface LiveAcceptanceMetrics {
   extractionFailed: number;
   countLabelled: number;
   countMatches: number;
+  /** Count disagreements proved by an observed result, excluding missing cases. */
+  countDisagreements: number;
   /** Null until the denominator has independently checked labels. */
   discoveryAccuracy: number | null;
   /** Exact agreement only. This is not posting-level recall or precision. */
@@ -163,16 +165,26 @@ export function sourceMatches(expected: LiveAcceptanceCase["expectedSource"], ac
 }
 
 export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: LiveAcceptanceResult[]): LiveAcceptanceMetrics {
-  const byId = new Map(cases.map(item => [item.id, item]));
+  const byId = new Map<string, LiveAcceptanceCase>();
+  for (const item of cases) {
+    if (byId.has(item.id)) throw new Error(`Duplicate selected acceptance case: ${item.id}`);
+    byId.set(item.id, item);
+  }
+  const resultIds = new Set<string>();
+  for (const result of results) {
+    if (!byId.has(result.id)) throw new Error(`Unknown acceptance result: ${result.id}`);
+    if (resultIds.has(result.id)) throw new Error(`Duplicate acceptance result: ${result.id}`);
+    resultIds.add(result.id);
+  }
   const sourceLabelled = cases.filter(item => item.labelStatus === "source_independently_checked").length;
   let sourceMatchesCount = 0;
   let labelledAutomaticMatchesAt085 = 0;
   let wrongAutomaticAccepts = 0;
   let countLabelled = cases.filter(item => item.expectedRoleCount !== null).length;
   let countMatches = 0;
+  let countDisagreements = 0;
   for (const result of results) {
-    const item = byId.get(result.id);
-    if (!item) continue;
+    const item = byId.get(result.id)!;
     if (item.labelStatus === "source_independently_checked") {
       if (result.discovery.sourceMatchesLabel === true) sourceMatchesCount++;
       if (result.discovery.outcome === "resolved" && (result.discovery.confidence ?? 0) >= 0.85 && result.discovery.sourceMatchesLabel === true) labelledAutomaticMatchesAt085++;
@@ -180,6 +192,7 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
     }
     if (item.expectedRoleCount !== null) {
       if (result.extraction.countMatchesLabel === true) countMatches++;
+      if (result.extraction.countMatchesLabel === false) countDisagreements++;
     }
   }
   const qualified = results.filter(r => r.extraction.referenceComparison?.qualifiesForAcceptance === true);
@@ -188,6 +201,7 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
       countLabelled++;
       const c = r.extraction.referenceComparison!;
       if (r.extraction.outcome === "complete" && c.expectedCount === c.observedCount) countMatches++;
+      if (r.extraction.outcome === "complete" && c.expectedCount !== c.observedCount) countDisagreements++;
     }
   }
   const compared = qualified.map(r => r.extraction.referenceComparison!);
@@ -212,6 +226,7 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
     extractionFailed: results.filter(r => r.extraction.outcome === "failed").length,
     countLabelled,
     countMatches,
+    countDisagreements,
     discoveryAccuracy: sourceLabelled ? labelledAutomaticMatchesAt085 / sourceLabelled : null,
     extractionExactCountAgreement: countLabelled ? countMatches / countLabelled : null,
     postingIdentityLabelled: qualified.length,
@@ -223,21 +238,25 @@ export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: Li
 
 export function liveAcceptanceVerdict(cases: LiveAcceptanceCase[], metrics: LiveAcceptanceMetrics, requiredCaseIds: string[] = cases.map(item => item.id)): { verdict: LiveAcceptanceVerdict; reasons: string[] } {
   const reasons: string[] = [];
+  const missingSelectedResults = metrics.total < cases.length;
   const selectedIds = new Set(cases.map(item => item.id));
   const missingCases = requiredCaseIds.filter(id => !selectedIds.has(id));
   if (missingCases.length) reasons.push(`${missingCases.length} required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus`);
   if (metrics.wrongAutomaticAccepts > 0) reasons.push(`${metrics.wrongAutomaticAccepts} labelled wrong source(s) automatically accepted at or above 0.85`);
-  if (metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8) reasons.push(`labelled automatic discovery agreement is ${(metrics.discoveryAccuracy * 100).toFixed(1)}%, below 80%`);
+  if (!missingSelectedResults && metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8) reasons.push(`labelled automatic discovery agreement is ${(metrics.discoveryAccuracy * 100).toFixed(1)}%, below 80%`);
   if (metrics.sourceLabelled < cases.length) reasons.push(`${cases.length - metrics.sourceLabelled} source label(s) remain independently unverified`);
   if (metrics.countLabelled < cases.length) reasons.push(`${cases.length - metrics.countLabelled} case(s) lack an independent role-count label`);
-  if (metrics.countMatches < metrics.countLabelled) reasons.push(`${metrics.countLabelled - metrics.countMatches} labelled extraction count(s) disagree`);
+  if (metrics.countDisagreements > 0) reasons.push(`${metrics.countDisagreements} observed labelled extraction count(s) disagree`);
+  else if (!missingSelectedResults && metrics.countMatches < metrics.countLabelled) reasons.push(`${metrics.countLabelled - metrics.countMatches} labelled extraction count(s) disagree`);
   if (metrics.postingIdentityLabelled < cases.length) reasons.push(`${cases.length - metrics.postingIdentityLabelled} case(s) lack a qualifying independent posting-identity snapshot`);
   if (metrics.postingIdentityFailures) reasons.push(`${metrics.postingIdentityFailures} case(s) fail the posting recall/precision threshold`);
   if (metrics.postingIdentityRecall === null || metrics.postingIdentityPrecision === null) reasons.push("posting-identity recall and precision have not been measured");
-  if (metrics.total < cases.length) reasons.push(`${cases.length - metrics.total} selected case(s) have no result`);
+  if (missingSelectedResults) reasons.push(`${cases.length - metrics.total} selected case(s) have no result`);
   if (metrics.extractionComplete + metrics.extractionPartial + metrics.extractionFailed < metrics.total) reasons.push("one or more selected cases did not run extraction");
   if (metrics.extractionFailed > 0 || metrics.extractionPartial > 0) reasons.push(`${metrics.extractionFailed} extraction failure(s) and ${metrics.extractionPartial} partial extraction(s)`);
-  if (metrics.postingIdentityFailures > 0 || metrics.wrongAutomaticAccepts > 0 || (metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8) || metrics.countMatches < metrics.countLabelled) return { verdict: "fail", reasons };
+  if (metrics.postingIdentityFailures > 0 || metrics.wrongAutomaticAccepts > 0 || metrics.countDisagreements > 0
+    || (!missingSelectedResults && ((metrics.discoveryAccuracy !== null && metrics.discoveryAccuracy < 0.8)
+      || metrics.countMatches < metrics.countLabelled))) return { verdict: "fail", reasons };
   if (reasons.length) return { verdict: "blocked", reasons };
   return { verdict: "pass", reasons: [] };
 }

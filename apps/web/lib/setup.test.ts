@@ -64,4 +64,17 @@ describe("empty-result explanations", () => {
     expect(monitoringNotice(failed)).toMatchObject({ state: "attention", href: "/health" });
     expect(buildSetupChecklist(failed).steps[3]!.href).toBe("/health");
   });
+
+  it("points an unfinished queued check to Health when monitoring is stopped or restarting", () => {
+    const pending = { ...WATCHING, monitoring: { ...WATCHING.monitoring, pendingCompanies: 1 } };
+    for (const workerState of ["stopped", "restarting"] as const) {
+      const facts = { ...pending, monitoring: { ...pending.monitoring, workerState } };
+      const checklist = buildSetupChecklist(facts);
+      expect(checklist.notice).toMatchObject({ state: "monitoring-paused", href: "/health" });
+      expect(checklist.steps[3]).toMatchObject({ done: false, href: "/health" });
+      expect(checklist.notice.description).not.toContain("running. Verified");
+    }
+    expect(buildSetupChecklist({ ...pending, monitoring: { ...pending.monitoring, workerState: "healthy" } }).notice)
+      .toMatchObject({ state: "working", href: "/companies" });
+  });
 });

@@ -1251,7 +1251,7 @@ export function healthItemDetail(item: HealthItem): string {
     case "partial":
       return item.reason ?? "Some roles may be missing from this scan. No unseen roles were closed.";
     case "incomplete_read":
-      return "This read did not publish roles. Open the company and choose Rescan once monitoring is running.";
+      return "This listing check did not finish. Any matching roles already found remain available. Open the company and choose Rescan once monitoring is running.";
     case "rediscovery":
       return "A source is already scanning, so this one waits for a follower to judge it. Any of them can.";
   }

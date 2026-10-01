@@ -1,0 +1,11 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-10-01T17:31:23.011Z","level":"info","event":"slow_database_query","durationMs":296,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+{"t":"2026-10-01T17:31:23.481Z","level":"info","event":"slow_database_query","durationMs":289,"statement":"truncate companies, tasks, settings, users restart identity cascade"}
+
+ Test Files  5 passed (5)
+      Tests  44 passed (44)
+   Start at  18:31:19
+   Duration  9.52s (tests 78%, import 14%, transform 5%, environment 3%)
+

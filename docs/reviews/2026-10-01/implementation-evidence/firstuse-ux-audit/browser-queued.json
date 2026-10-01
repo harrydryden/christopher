@@ -1,0 +1,85 @@
+{
+  "fixture": "isolated synthetic database derived from mocked 25-page listing; no production worker or live site",
+  "mode": "queued",
+  "at": "2026-10-01T17:29:01.545Z",
+  "observations": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "setupText": "Company checks are waiting for monitoring Company work is unfinished, and the background worker has not reported. An administrator needs to restore monitoring. Check Health for details. Check monitoring on Health Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps",
+      "setupAnnouncements": [
+        "Company checks are waiting for monitoring\n\nCompany work is unfinished, and the background worker has not reported. An administrator needs to restore monitoring. Check Health for details.\n\nCheck monitoring on Health"
+      ],
+      "firstScanHref": "/health",
+      "rolesExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Roles Companies Applications Library Learning Health Settings Fixture reviewer Sign out ROLES Company checks are waiting for monitoring Company work is unfinished, and the background worker has not reported. An administrator needs to restore monitoring. Check Health for details. Check monitoring on Health Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps Matched 0 Shortlisted 0 Dismissed 0 All roles in this view Company All companies Pager fixture Title Update results Clear filters Availability Availability Newly opened Open Closed More filters NO ROLES AWAITING REVIEW Company work is unfinished, and the background worker has ",
+      "rolesWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "rolesEnlarged": null,
+      "setupLink": {
+        "focussed": true,
+        "destination": "/health",
+        "companyPageExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Roles Companies Applications Library Learning Health Settings Fixture reviewer Sign out Following Discover COMPANIES next scheduled scan at 06:00 Europe/London Follow a company 1 result · Page 1 of 1 Company ▲ Source Status Open Review Shortlisted Actions Pager fixture pager.example HTML ACTIVE Never scanned Scan queued 0 0 0 MANAGE"
+      },
+      "healthExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Roles Companies Applications Library Learning Health Settings Fixture reviewer Sign out Preferences Learning Health Account HEALTH NEEDS YOU (0) NOTHING NEEDS YOU No company-specific issues are recorded. Check the background worker below for monitoring status. BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history. NO DAILY SCAN RUNS YET Daily runs appear here once the schedule starts.",
+      "healthStatuses": [
+        ""
+      ],
+      "healthWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "enlarged": null,
+      "recoveryLink": null,
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "setupText": "Company checks are waiting for monitoring Company work is unfinished, and the background worker has not reported. An administrator needs to restore monitoring. Check Health for details. Check monitoring on Health Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps",
+      "setupAnnouncements": [
+        "Company checks are waiting for monitoring\n\nCompany work is unfinished, and the background worker has not reported. An administrator needs to restore monitoring. Check Health for details.\n\nCheck monitoring on Health"
+      ],
+      "firstScanHref": "/health",
+      "rolesExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Menu ROLES Company checks are waiting for monitoring Company work is unfinished, and the background worker has not reported. An administrator needs to restore monitoring. Check Health for details. Check monitoring on Health Start here · 3 of 4 done Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps Matched 0 Shortlisted 0 Dismissed 0 All roles in this view Filters NO ROLES AWAITING REVIEW Company work is unfinished, and the background worker has not reported. An administrator needs to restore monitoring. Check Health for details. Check monitoring on Health",
+      "rolesWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "rolesEnlarged": {
+        "body": 375,
+        "viewport": 375,
+        "baselinePx": 14,
+        "enlargedPx": 28
+      },
+      "setupLink": {
+        "focussed": true,
+        "destination": "/health",
+        "companyPageExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Menu Following Discover COMPANIES next scheduled scan at 06:00 Europe/London Follow a company 1 result · Page 1 of 1 Pager fixture pager.example MANAGE ACTIVE HTML Scan queued Never scanned 0 Open 0 Review 0 Shortlisted"
+      },
+      "healthExcerpt": "Skip to main content Last scan not yet · Following 1 company · 0 new role matches · 0 new company matches Menu Preferences Learning Health Account HEALTH NEEDS YOU (0) NOTHING NEEDS YOU No company-specific issues are recorded. Check the background worker below for monitoring status. BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history. NO DAILY SCAN RUNS YET Daily runs appear here once the schedule starts.",
+      "healthStatuses": [
+        ""
+      ],
+      "healthWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "enlarged": {
+        "body": 375,
+        "viewport": 375,
+        "baselinePx": 13,
+        "enlargedPx": 26
+      },
+      "recoveryLink": null,
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    }
+  ]
+}

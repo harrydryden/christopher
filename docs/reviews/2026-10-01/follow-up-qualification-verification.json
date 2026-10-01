@@ -1,0 +1,84 @@
+{
+  "baseCommit": "7440489239f842d9ed38f174d4b321186f6e3403",
+  "date": "2026-10-01",
+  "scope": "Local follow-up: fresh live Siemens partial-publication audit, acceptance result-identity gate, and first-use worker-state UX; no deployment or production database",
+  "checks": [
+    {
+      "name": "Siemens public HTTP",
+      "result": "two claims; 20 then 40 published pages; 119 then 239 jobs/views; 0 scans; 0 AI calls",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/live-siemens-claims.json"
+    },
+    {
+      "name": "Siemens corrected readback",
+      "result": "40 staged pages; 239 distinct jobs, seeded views and discovered events; 0 missing/closed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/live-siemens-readback.json"
+    },
+    {
+      "name": "Acceptance focused tests",
+      "result": "51/51 across 3 files",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/acceptance-identity/acceptance-one-to-one-tests.log"
+    },
+    {
+      "name": "Acceptance worker typecheck",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/acceptance-identity/acceptance-one-to-one-typecheck.log"
+    },
+    {
+      "name": "Worker build",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/acceptance-identity/worker-build.log"
+    },
+    {
+      "name": "First-use focused web tests",
+      "result": "44/44 across 5 files",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/firstuse-ux-audit/focused-tests.log"
+    },
+    {
+      "name": "Web typecheck",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/firstuse-ux-audit/typecheck.log"
+    },
+    {
+      "name": "Web production build",
+      "result": "passed; BUILD_ID WPMlnhmqLBM0MEr27x-cX",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/firstuse-ux-audit/web-build.log"
+    }
+  ],
+  "scores": {
+    "J1": 83,
+    "J2": 77,
+    "J3": 85,
+    "J4": 83,
+    "J5": 85,
+    "J6": 85,
+    "J7": 80,
+    "J8": 83,
+    "J9": 70
+  },
+  "loadedLiveHarnessSha256": "cd4d0e864fa8c1a21f7d031578f22fdf8f583e8350c69bb2e89cc87a34848a73",
+  "filesSha256": {
+    "apps/web/app/(app)/companies/page.tsx": "c51b401f09fbddd1dde2ec404dc696e3cf040baa0b24edfa9e3a501dc3a3a540",
+    "apps/web/app/actions/companies.integration.test.ts": "1387bfe7a30f1216e52feedc7ad40ae786ffdfdd62947b30784274da40aec704",
+    "apps/web/components/CompanyManageMenu.test.tsx": "33ba794511ec2f70d9dfc74cb7858a811cb1af6c35236c8d3c75a97a2a1ebaee",
+    "apps/web/components/CompanyManageMenu.tsx": "a67273867ed0f16cde46723747bbe94867c842714ab2bce844b2cb052a455c30",
+    "apps/web/lib/queries/companies.ts": "027de4fbe7265de1cbf54647ea898637085a1aea83cbe0d6fe25c76ab3c1e1a2",
+    "apps/web/lib/queries/health.ts": "912848d37cf44bff250e4acb87f71e282bc158adcd4d07020c1b08a6e096b99d",
+    "apps/web/lib/queries/html-scan-progress.test.ts": "41e2260429dde1af476dfda1c61e260e088cfad3ea04fda49780fe118531ee7b",
+    "apps/web/lib/queries/setup.test.ts": "c08066d8d39363f94177b2095ba0631120e410d148487f0e96dd314371770677",
+    "apps/web/lib/queries/setup.ts": "d95bf569e8bcff52c67bfb5f486c7993a43d7bf65bacf48d406e9aece09353f0",
+    "apps/web/lib/setup.test.ts": "b4dd11d34830d1d2c1621034a3a9aa180137663b2dba564711167b819509d7c3",
+    "apps/web/lib/setup.ts": "1bad15288b5a7cb89c3f2d1fe3c9bff5fc5e348a1b7a51cce322750ba2ef014d",
+    "apps/worker/src/live-acceptance.test.ts": "66913f596ad74dce6e911a87188a85f1b977822c52d04c610b329234336134aa",
+    "apps/worker/src/live-acceptance.ts": "0b378b0574cfce379c4f6412bb74bb188136d90b5fc5c48ffee842a7bec32339",
+    "apps/worker/src/live-html-publication-audit.ts": "e6dceff1ee5c4e1aa6a8c06da43066e1387858e31c9ec6abdeae49810bad0bfd",
+    "docs/live-acceptance.md": "0a99b807b149ca76b3771d8fe74a144360f44e204fc05e54cef65a0bd78695f7",
+    "docs/reviews/2026-09-29/RESCORE-90.md": "6e6574df523024c9841c345cf80dfdf185036ddade10fc9c4428738b354169db",
+    "docs/reviews/2026-10-01/FOLLOW-UP-QUALIFICATION-CHECKPOINT.md": "ba97e18ff1eb22590946bc2d3c7a77c49e64d1b723f959ef71a441cdd3233a35",
+    "docs/reviews/2026-10-01/POSTING-ACCEPTANCE-IDENTITY-GATE-REVIEW.md": "ad6659893191dcf369cd7683fa4cbf444227fb26eb8bd605bba08d5d26375cb6",
+    "docs/reviews/2026-10-01/implementation-evidence/acceptance-identity/reproduce.ts": "484e0e463f09af7693af04990a7eae66b4d6ed993bf7b10f632b77109e1d1c81",
+    "docs/reviews/2026-10-01/implementation-evidence/firstuse-ux-audit/README.md": "22edfcaaec0337613308bc2b25c52ecf2091ba3ee0bcce08bb5c441d4d7b75a1",
+    "docs/reviews/2026-10-01/implementation-evidence/firstuse-ux-audit/browser-audit.cjs": "ff77fb9b75562174be0f398e532b7dd3e77d6068b004d40b863a605315952b78",
+    "docs/reviews/2026-10-01/implementation-evidence/partial-publication/SIEMENS-LIVE-PUBLICATION.md": "8492a7b01a9b883447596f5a9107591fa83ded0f106dec58b056fca5eccf0b8a",
+    "docs/reviews/2026-10-01/implementation-evidence/partial-publication/live-siemens-readback.sql": "48d925e0ac1cfb46e8b7366aaf5d7291a2264ab64a48c6b68e86f31c5d630215"
+  }
+}

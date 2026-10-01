@@ -158,7 +158,9 @@ it("distinguishes queued discovery, partial results and a complete empty scan wi
   await database.insert(schema.careerSources).values({ companyId: another.id, type: "html", url: "https://other.example/jobs", lastOkScanAt: new Date() });
   expect((await setupStatus(user.id)).monitoring).toMatchObject({ activeCompanies: 1, successfulCompanies: 0, attentionCompanies: 1, pendingCompanies: 0 });
   const [task] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, status: "queued" }).returning();
-  expect((await setupStatus(user.id)).monitoring).toMatchObject({ attentionCompanies: 0, pendingCompanies: 1 });
+  const pending = await setupStatus(user.id);
+  expect(pending.monitoring).toMatchObject({ attentionCompanies: 0, pendingCompanies: 1, workerState: "stopped" });
+  expect(buildSetupChecklist(pending).notice).toMatchObject({ state: "monitoring-paused", href: "/health" });
   await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, task!.id));
   const [source] = await database.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://watch.example/jobs" }).returning();
   await database.insert(schema.scans).values({ sourceId: source!.id, status: "partial", startedAt: new Date("2026-09-29T08:00:00Z"), finishedAt: new Date("2026-09-29T08:01:00Z") });
@@ -167,7 +169,13 @@ it("distinguishes queued discovery, partial results and a complete empty scan wi
   await database.update(schema.careerSources).set({ lastOkScanAt: new Date("2026-09-29T09:01:00Z") }).where(eq(schema.careerSources.id, source!.id));
   const facts = await setupStatus(user.id);
   expect(facts.monitoring).toMatchObject({ attentionCompanies: 0, successfulCompanies: 1 });
+  expect(facts.monitoring.workerState).toBeUndefined();
   expect(buildSetupChecklist(facts).notice.state).toBe("complete");
+  await database.insert(schema.tasks).values({ type: "scan_company", payload: { companyId: company.id }, status: "queued" });
+  const queuedRescan = await setupStatus(user.id);
+  expect(queuedRescan.monitoring.workerState).toBe("stopped");
+  expect(buildSetupChecklist(queuedRescan).notice.state).toBe("monitoring-paused");
+  expect(buildSetupChecklist(queuedRescan).steps[3]).toMatchObject({ done: true });
 });
 
 it("does not call inactive or unconfirmed experience usable Library evidence", async () => {

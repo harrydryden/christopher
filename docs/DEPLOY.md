@@ -44,6 +44,18 @@ the same learning loop.
    interface's reads behind it. It refuses to finish if any migration in the journal was left
    unapplied; writing a migration is covered in `packages/db/README.md`.
 
+   For partial HTML publication, apply migration `0050_html_partial_publication` before deploying
+   the worker or interface that reads its progress. It adds generation cursors and first-scan
+   seeding state, plus a fetch-time observation on staged pages. Existing staged pages are dated
+   from their generation start, not migration time. An older worker can append a page before
+   handover without the new field; its 1970 database default means “observation time unknown”,
+   which the new worker treats conservatively as the generation start. After migration, stop and
+   drain every old worker, start the new worker, then deploy the interface. Do not run old and new
+   workers against the same HTML checkpoint: old code ignores the published cursor and freshness
+   fences. Check that the new worker has resumed or completed active checkpoints. Once it has
+   published pages, pause the worker and roll forward if a fault appears; reverting worker code
+   against an active published checkpoint needs a separately tested recovery procedure.
+
 4. Generate the secret the interface needs:
 
    ```bash

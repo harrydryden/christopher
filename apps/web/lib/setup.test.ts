@@ -57,6 +57,9 @@ describe("empty-result explanations", () => {
 
   it("makes queued work visible, and gives unresolved attention precedence over previous success", () => {
     expect(monitoringNotice({ ...COMPLETE, monitoring: { ...COMPLETE.monitoring, pendingCompanies: 1 } }).state).toBe("working");
+    const firstScanRunning = { ...WATCHING, monitoring: { ...WATCHING.monitoring, pendingCompanies: 1 } };
+    expect(monitoringNotice(firstScanRunning).description).toContain("matching roles can appear");
+    expect(buildSetupChecklist(firstScanRunning).steps[3]!.done).toBe(false);
     const failed = { ...COMPLETE, monitoring: { ...COMPLETE.monitoring, attentionCompanies: 1, pendingCompanies: 1 } };
     expect(monitoringNotice(failed)).toMatchObject({ state: "attention", href: "/health" });
     expect(buildSetupChecklist(failed).steps[3]!.href).toBe("/health");

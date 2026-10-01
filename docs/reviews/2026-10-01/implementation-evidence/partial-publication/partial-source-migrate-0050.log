@@ -1,0 +1,9 @@
+
+> ava@0.1.0 db:migrate /Users/h_dryden/Documents/New project/christopher-jtbd-review
+> pnpm --filter @ava/db migrate
+
+
+> @ava/db@0.1.0 migrate /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+> tsx src/migrate-cli.ts
+
+migrations applied

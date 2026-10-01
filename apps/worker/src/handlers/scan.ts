@@ -37,7 +37,7 @@ import {
   SOURCE_FAILING_AFTER,
   stripHtml,
 } from "@ava/core";
-import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, or, isNull, gte } from "drizzle-orm";
 import type { CareerSource } from "@ava/db";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { createHash } from "node:crypto";
@@ -362,18 +362,32 @@ async function scanSource(
   let reusedListing = false;
   let longHtmlListing = false;
   let hostBusy: HostBusyError | null = null;
+  let publicationOnly = false;
+  let publicationMetricStartedAtMs: number | undefined;
+  let continuationAt: Date | undefined;
+  let stagedPageCount: number | undefined;
+  let unstagedPositivePostings: RawPosting[] = [];
+  let unstagedObservedAt: Date | undefined;
 
   try {
     if (source.type === "html") {
       const outcome = await scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot, opts.taskId, undefined, opts.claimStartedAtMs);
       if (outcome.continueAt) {
+        const metricsThroughMs = Date.now();
         await recordHtmlCheckpointMetrics(deps, opts.taskId!, source,
-          { requests, fetchedBytes, revalidated, activeDurationMs: Date.now() - started }, opts.taskAttempt ?? 1);
-        return { status: "partial", newCount: 0, closedCount: 0, postingsFound: outcome.postings.length,
-          continueAt: outcome.continueAt, pagesStaged: outcome.pagesStaged };
+          { requests, fetchedBytes, revalidated, activeDurationMs: metricsThroughMs - started }, opts.taskAttempt ?? 1);
+        publicationOnly = true;
+        publicationMetricStartedAtMs = metricsThroughMs;
+        continuationAt = outcome.continueAt;
+        stagedPageCount = outcome.pagesStaged;
+        // Descriptions are queued from published roles; fetching them inline would extend the
+        // listing claim past its page budget and delay the first useful results.
+        longHtmlListing = true;
       }
-      longHtmlListing = outcome.longListing ?? false;
+      longHtmlListing ||= outcome.longListing ?? false;
       postings = outcome.postings;
+      unstagedPositivePostings = outcome.extraPostings ?? [];
+      unstagedObservedAt = outcome.extraObservedAt;
       fetchMethod = outcome.method;
       droppedByValidation = outcome.dropped;
       contentHash = outcome.contentHash;
@@ -427,11 +441,40 @@ async function scanSource(
     if (opts.taskId && source.type === "html") {
       const [generation] = await deps.db.select({ id: schema.htmlScanGenerations.id }).from(schema.htmlScanGenerations)
         .where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId), eq(schema.htmlScanGenerations.sourceId, source.id))).limit(1);
-      if (generation) await recordHtmlCheckpointMetrics(deps, opts.taskId, source,
-        { requests, fetchedBytes, revalidated, activeDurationMs: Date.now() - started }, opts.taskAttempt ?? 1);
+      if (generation) {
+        const metricsThroughMs = Date.now();
+        await recordHtmlCheckpointMetrics(deps, opts.taskId, source,
+          { requests, fetchedBytes, revalidated, activeDurationMs: metricsThroughMs - started }, opts.taskAttempt ?? 1);
+        publicationMetricStartedAtMs = metricsThroughMs;
+      }
     }
-    log.info("host busy: source scan deferred", { company: company.name, url: source.url, host: hostBusy.host, retryAt: hostBusy.retryAt.toISOString() });
-    return { status: "failed", newCount: 0, closedCount: 0, postingsFound: 0, retryAt: hostBusy.retryAt };
+    if (source.type === "html" && opts.taskId) {
+      publicationOnly = true;
+      continuationAt = hostBusy.retryAt;
+      postings = [];
+    } else {
+      log.info("host busy: source scan deferred", { company: company.name, url: source.url, host: hostBusy.host, retryAt: hostBusy.retryAt.toISOString() });
+      return { status: "failed", newCount: 0, closedCount: 0, postingsFound: 0, retryAt: hostBusy.retryAt };
+    }
+  }
+  if (source.type === "html" && opts.taskId && !publicationOnly) {
+    const [pending] = await deps.db.select({
+      published: schema.htmlScanGenerations.publishedPageCount,
+      pages: sql<number>`(select count(*)::int from html_scan_pages p where p.generation_id = ${schema.htmlScanGenerations.id})`,
+    }).from(schema.htmlScanGenerations).where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId),
+      eq(schema.htmlScanGenerations.sourceId, source.id))).limit(1);
+    // A rolling old worker can leave more than one unpublished batch. Drain it over claims before
+    // the terminal transaction clears the checkpoint; never silently lose the tail.
+    if (pending && pending.pages - pending.published > HTML_PAGES_PER_TASK_PASS) {
+      const metricsThroughMs = Date.now();
+      await recordHtmlCheckpointMetrics(deps, opts.taskId, source,
+        { requests, fetchedBytes, revalidated, activeDurationMs: metricsThroughMs - started }, opts.taskAttempt ?? 1);
+      publicationOnly = true;
+      publicationMetricStartedAtMs = metricsThroughMs;
+      continuationAt = new Date(deps.now().getTime() + 1000);
+      stagedPageCount = pending.pages;
+      longHtmlListing = true;
+    }
   }
 
   const previousOk = await deps.db
@@ -569,20 +612,83 @@ async function scanSource(
     const [already] = await tx.select().from(schema.scans).where(and(eq(schema.scans.taskId, opts.taskId), eq(schema.scans.sourceId, source.id))).limit(1);
     if (already) return { status: already.status, newCount: already.newCount, closedCount: already.closedCount, postingsFound: already.postingsFound };
   }
+  // The source is locked first in every checkpoint transaction. Read the durable unpublished
+  // interval only after locking its generation; a reclaimed claimant cannot replay old pages.
+  const [generation] = opts.taskId && source.type === "html"
+    ? await tx.select().from(schema.htmlScanGenerations)
+      .where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId), eq(schema.htmlScanGenerations.sourceId, source.id))).for("update").limit(1)
+    : [];
+  if (publicationOnly && !generation) throw new HtmlCheckpointChanged("HTML publication checkpoint disappeared");
+  if (generation && generation.sourceFingerprint !== htmlSourceFingerprint(source)) {
+    throw new HtmlCheckpointChanged("HTML publication source changed");
+  }
+  const unpublished = generation ? await tx.select().from(schema.htmlScanPages)
+    .where(and(eq(schema.htmlScanPages.generationId, generation.id), gte(schema.htmlScanPages.pageIndex, generation.publishedPageCount)))
+    .orderBy(schema.htmlScanPages.pageIndex).limit(HTML_PAGES_PER_TASK_PASS) : [];
+  const observedByKey = new Map<string, Date>();
+  const latestByKey = new Map<string, RawPosting>();
+  for (const page of unpublished) for (const posting of (page.postings as SnapshotPosting[]).map(revivePosting)) {
+    const key = deriveExternalKey(posting);
+    // A rolling old worker may omit observed_at. Its database sentinel means only that this
+    // generation had started, never that the role was seen in 1970 or at publication time.
+    const observedAt = page.observedAt.getTime() === 0 ? generation!.startedAt : page.observedAt;
+    const previous = observedByKey.get(key);
+    if (previous && previous > observedAt) continue;
+    observedByKey.set(key, observedAt);
+    latestByKey.set(key, posting);
+  }
+  if (generation && unstagedObservedAt && !publicationOnly) for (const posting of unstagedPositivePostings) {
+    const key = deriveExternalKey(posting);
+    if (observedByKey.has(key) && observedByKey.get(key)! > unstagedObservedAt) continue;
+    observedByKey.set(key, unstagedObservedAt);
+    latestByKey.set(key, posting);
+  }
+  if (generation && !unpublished.length && generation.publishedPageCount === 0 && !publicationOnly) {
+    // The first page can switch to the legacy rendered path before an HTTP page is staged.
+    // The generation's start is conservative evidence time for that fallback.
+    for (const posting of postings) {
+      const key = deriveExternalKey(posting);
+      observedByKey.set(key, generation.startedAt);
+      latestByKey.set(key, posting);
+    }
+  }
+  if (generation && latestByKey.size) {
+    const enrichedByKey = new Map(keyPostings(postings).keyed.map(posting => [posting.externalKey, posting]));
+    for (const [key, raw] of latestByKey) {
+      const enriched = enrichedByKey.get(key);
+      if (enriched?.url === raw.url && enriched.descriptionText !== undefined) {
+        latestByKey.set(key, { ...raw, descriptionText: enriched.descriptionText });
+      }
+    }
+  }
+  const positivePostings = generation && latestByKey.size
+    ? [...latestByKey.entries()].filter(([key]) => !current.lastOkScanAt || observedByKey.get(key)! > current.lastOkScanAt).map(([, posting]) => posting)
+    : generation ? [] : postings;
+  // Any newer complete observation means this old traversal no longer proves absence, even if
+  // its later pages were fetched after that complete scan. The positive interval still applies.
+  const staleCoverage = !!generation && !!current.lastOkScanAt && current.lastOkScanAt >= generation.startedAt;
   const commitDeps = { ...deps, db: tx as unknown as WorkerDeps["db"] };
   committed = true;
-  return commitScan(commitDeps);
+  return commitScan(commitDeps, { generation, unpublishedCount: unpublished.length, observedByKey,
+    positivePostings, staleCoverage, sourceLastOkAt: current.lastOkScanAt });
   });
   // Idempotent and takes a transaction of its own, so it runs after this scan has committed
   // instead of extending the window in which the source's row lock is held.
-  if (committed) await archiveNonMatches(deps.db, { sourceId: source.id });
+  if (committed && !publicationOnly) await archiveNonMatches(deps.db, { sourceId: source.id });
   return outcome;
 
-  async function commitScan(deps: WorkerDeps): Promise<SourceOutcome> {
+  async function commitScan(deps: WorkerDeps, publication: {
+    generation?: typeof schema.htmlScanGenerations.$inferSelect;
+    unpublishedCount: number;
+    observedByKey: Map<string, Date>;
+    positivePostings: RawPosting[];
+    staleCoverage: boolean;
+    sourceLastOkAt: Date | null;
+  }): Promise<SourceOutcome> {
   // First, before anything is written: the gates the verdicts below come from, read now that the
   // network work is done and held until this commits (see `loadFollowers`).
   const followers = await loadFollowers(deps.db, company.id, { lockGates: true });
-  if (updatedRecipe) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
+  if (updatedRecipe && !publicationOnly && !publication.staleCoverage) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
   const sourceRows = await deps.db
     .select({
       origin: schema.jobs.origin,
@@ -607,6 +713,7 @@ async function scanSource(
       location: schema.jobs.location,
       normalizedTitle: schema.jobs.normalizedTitle,
       closedAt: schema.jobs.closedAt,
+      lastSeenAt: schema.jobs.lastSeenAt,
     })
     .from(schema.jobs)
     .where(eq(schema.jobs.sourceId, source.id));
@@ -617,8 +724,44 @@ async function scanSource(
   const existingRows = sourceRows.filter((row) => row.origin !== "user");
   const existing: ExistingJob[] = existingRows.map((r) => ({ ...r, status: r.status, closedAt: r.closedAt }));
 
-  const result = reconcile(existing, postings, { mode, now: deps.now(), closeAfterMissing: settings.closeAfterMissingScans });
-  const isFirstScan = existing.length === 0 && previousOkCount === null;
+  const sourceByKey = new Map(sourceRows.map(row => [row.externalKey, row]));
+  const safePostings = publication.positivePostings.filter(posting => {
+    const observedAt = publication.observedByKey.get(deriveExternalKey(posting));
+    if (!observedAt) return true;
+    const stored = sourceByKey.get(deriveExternalKey(posting));
+    return !stored || stored.lastSeenAt < observedAt;
+  }).map(posting => {
+    const stored = sourceByKey.get(deriveExternalKey(posting));
+    const observedAt = publication.observedByKey.get(deriveExternalKey(posting));
+    // A detail fetch after this page is stronger text evidence. Its stored text is loaded below
+    // for the current gate, and the old inline text must neither overwrite nor confirm it.
+    return observedAt && stored?.descriptionFetchedAt && stored.descriptionFetchedAt >= observedAt
+      ? { ...posting, descriptionText: undefined } : posting;
+  });
+  if (publication.generation && followers.some(follower => needsDescription(follower.settings.gate))) {
+    const withoutText = safePostings.filter(posting => !posting.descriptionText);
+    const storedWithText = withoutText.length ? await deps.db.select({ externalKey: schema.jobs.externalKey })
+      .from(schema.jobs).where(and(eq(schema.jobs.sourceId, source.id),
+        inArray(schema.jobs.externalKey, withoutText.map(posting => deriveExternalKey(posting))),
+        sql`${schema.jobs.descriptionText} is not null`)) : [];
+    const hasText = new Set(storedWithText.map(row => row.externalKey));
+    for (const posting of withoutText) if (!hasText.has(deriveExternalKey(posting))) deferred.add(posting.url);
+  }
+  const result = reconcile(existing, safePostings, { mode: publicationOnly || publication.generation ? "partial" : mode,
+    now: deps.now(), closeAfterMissing: settings.closeAfterMissingScans });
+  const coverageExisting = publication.generation
+    ? existing.filter(job => sourceByKey.get(job.externalKey)!.lastSeenAt < publication.generation!.startedAt)
+    : existing;
+  const coverage = publicationOnly ? null : reconcile(coverageExisting, postings, {
+    mode: publication.staleCoverage ? "partial" : mode, now: deps.now(), closeAfterMissing: settings.closeAfterMissingScans,
+  });
+  const firstScanCandidate = existing.length === 0 && (publication.generation
+    ? publication.sourceLastOkAt === null : previousOkCount === null);
+  if (publication.generation && publication.generation.seedFirstScan === null) {
+    await deps.db.update(schema.htmlScanGenerations).set({ seedFirstScan: firstScanCandidate })
+      .where(eq(schema.htmlScanGenerations.id, publication.generation.id));
+  }
+  const isFirstScan = (publication.generation?.seedFirstScan ?? firstScanCandidate) && !publication.staleCoverage;
 
   let newCount = 0;
   const scoreQueue: Array<{ userId: string; jobId: string }> = [];
@@ -636,6 +779,7 @@ async function scanSource(
       location: schema.jobs.location, locations: schema.jobs.locations, department: schema.jobs.department,
       employmentType: schema.jobs.employmentType, remote: schema.jobs.remote, salaryText: schema.jobs.salaryText,
       postedAt: schema.jobs.postedAt, descriptionText: schema.jobs.descriptionText,
+      lastSeenAt: schema.jobs.lastSeenAt,
     })
     .from(schema.jobs)
     .where(and(eq(schema.jobs.companyId, company.id), eq(schema.jobs.origin, "user")));
@@ -650,6 +794,8 @@ async function scanSource(
   const newRows: Array<typeof schema.jobs.$inferInsert> = [];
   for (const insert of result.inserts) {
     const candidate = userByUrl.get(normalisePostingUrl(insert.url));
+    const observedAt = publication.observedByKey.get(insert.externalKey) ?? deps.now();
+    if (publication.generation && candidate && candidate.lastSeenAt >= observedAt) continue;
     const holder = keyOwner.get(insert.externalKey);
     if (candidate && !adoptedIds.has(candidate.id) && (holder === undefined || holder === candidate.id)) {
       adoptions.push({ job: candidate, insert });
@@ -670,8 +816,8 @@ async function scanSource(
         remote: insert.remote ?? looksRemote([insert.location, ...(insert.locations ?? [])].filter(Boolean).join(" ")),
         salaryText: insert.salaryText ?? null,
         postedAt: insert.postedAt ?? null,
-        firstSeenAt: deps.now(),
-        lastSeenAt: deps.now(),
+        firstSeenAt: observedAt,
+        lastSeenAt: observedAt,
         seeded: isFirstScan,
         repostOfJobId: insert.repostOfJobId ?? null,
         descriptionText: insert.descriptionText?.slice(0, 30_000) ?? null,
@@ -725,7 +871,7 @@ async function scanSource(
       // it is the company's posting, shared like any other, even if it was pasted from elsewhere.
       origin: "scan",
       shared: true,
-      lastSeenAt: deps.now(),
+      lastSeenAt: publication.observedByKey.get(insert.externalKey) ?? deps.now(),
       missingScans: 0,
       firstMissedAt: null,
       status: "open",
@@ -756,7 +902,7 @@ async function scanSource(
   }
 
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
-  const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
+  const observed = new Map(keyPostings(safePostings).keyed.map((p) => [p.externalKey, p]));
   const updates: Array<Record<string, unknown>> = [];
   const descriptionWrites: Array<Record<string, unknown>> = [];
   // Rows whose description the listing gave again unchanged: their `description_fetched_at` moves
@@ -765,6 +911,7 @@ async function scanSource(
   const updateEvents: Array<typeof schema.jobEvents.$inferInsert> = [];
   const seenIds = new Set(result.seen);
   const seenRows = existingRows.filter((j) => seenIds.has(j.id));
+  const seenById = new Map(seenRows.map(row => [row.id, row]));
   // Stored text is only read for a gate that matches on it, and only where the listing gave none.
   // The copy taken before the listing was fetched is topped up for any row a `fetch_description`
   // task has written since, and for every row when no follower read descriptions back then.
@@ -817,7 +964,9 @@ async function scanSource(
       changedFields.push("descriptionText");
       if (job.descriptionSource !== "direct") changedFields.push("descriptionSource");
       if (job.descriptionTruncated !== truncated) changedFields.push("descriptionTruncated");
-    } else if (freshHash !== undefined || (inlineHash.has(posting.url) && inlineHash.get(posting.url) === job.descriptionHash)) {
+    } else if ((!publication.generation || !job.descriptionFetchedAt ||
+        job.descriptionFetchedAt < (publication.observedByKey.get(job.externalKey) ?? deps.now())) &&
+      (freshHash !== undefined || (inlineHash.has(posting.url) && inlineHash.get(posting.url) === job.descriptionHash))) {
       descriptionConfirmed.push(job.id);
     }
     const descriptionText = posting.descriptionText?.slice(0, 30_000) ?? savedTextByKey.get(job.externalKey) ?? null;
@@ -863,8 +1012,21 @@ async function scanSource(
       ? sql`case when ${inArray(schema.jobs.id, descriptionConfirmed)} then ${deps.now()}::timestamptz else ${schema.jobs.descriptionFetchedAt} end`
       : undefined;
     for (let offset = 0; offset < result.seen.length; offset += 5000) {
-      await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null, ...(confirmed ? { descriptionFetchedAt: confirmed } : {}) })
-        .where(inArray(schema.jobs.id, result.seen.slice(offset, offset + 5000)));
+      const slice = result.seen.slice(offset, offset + 5000);
+      if (publication.generation) {
+        const times = slice.map(id => {
+          const row = seenById.get(id)!;
+          return { id, observedAt: publication.observedByKey.get(row.externalKey) ?? deps.now() };
+        });
+        await deps.db.execute(sql`update jobs j set last_seen_at=v."observedAt", missing_scans=0, first_missed_at=null
+          from jsonb_to_recordset(${JSON.stringify(times)}::jsonb) as v(id uuid, "observedAt" timestamptz)
+          where j.id=v.id`);
+        if (confirmed) await deps.db.update(schema.jobs).set({ descriptionFetchedAt: confirmed })
+          .where(inArray(schema.jobs.id, slice));
+      } else {
+        await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null, ...(confirmed ? { descriptionFetchedAt: confirmed } : {}) })
+          .where(inArray(schema.jobs.id, slice));
+      }
     }
   }
   for (let offset = 0; offset < updates.length; offset += 250) {
@@ -894,7 +1056,32 @@ async function scanSource(
       .where(inArray(schema.jobs.id, result.reopened));
     await deps.db.insert(schema.jobEvents).values(result.reopened.map(jobId => ({ jobId, type: "reopened" as const, payload: {} })));
   }
-  if (result.missing.length > 0) {
+  // Queue work is part of the positive publication. A deferred listing claim must not leave
+  // visible roles without the description or score work that admits and ranks them.
+  const scoreSettings = new Map(followers.map(follower => [follower.userId, follower.settings] as const));
+  for (let offset = 0; offset < scoreQueue.length; offset += 250)
+    await admitScores(deps, scoreQueue.slice(offset, offset + 250), { db: deps.db, onlyUnscored: true, settings: scoreSettings });
+  await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
+  // A continuing publication has no coverage. Final coverage is computed from every page in the
+  // current generation, including pages whose positive observations were already committed.
+  if (publication.generation) {
+    await deps.db.update(schema.htmlScanGenerations).set({
+      publishedPageCount: publication.generation.publishedPageCount + publication.unpublishedCount,
+      publishedNewCount: publication.generation.publishedNewCount + newCount,
+      // The claim's fetch counters were persisted before this positive commit. Include the
+      // admission and publication work after that snapshot in the same atomic cursor update.
+      activeDurationMs: publicationOnly && publicationMetricStartedAtMs !== undefined
+        ? sql`${schema.htmlScanGenerations.activeDurationMs} + ${Math.max(0, Date.now() - publicationMetricStartedAtMs)}`
+        : publication.generation.activeDurationMs,
+      updatedAt: deps.now(),
+    }).where(eq(schema.htmlScanGenerations.id, publication.generation.id));
+  }
+  if (deps.signal?.aborted) throw deps.signal.reason ?? new Error("Scan run stopped during publication");
+  if (publicationOnly) return { status: "partial", newCount: 0, closedCount: 0,
+    postingsFound: postings.length, ...(hostBusy ? { retryAt: hostBusy.retryAt } : { continueAt: continuationAt }),
+    pagesStaged: stagedPageCount };
+  const absence = coverage!;
+  if (absence.missing.length > 0) {
     // The first miss records when it happened; the closing one is measured from it.
     await deps.db
       .update(schema.jobs)
@@ -902,23 +1089,23 @@ async function scanSource(
         missingScans: sql`${schema.jobs.missingScans} + 1`,
         firstMissedAt: sql`case when ${schema.jobs.missingScans} = 0 then ${deps.now()}::timestamptz else coalesce(${schema.jobs.firstMissedAt}, ${deps.now()}::timestamptz) end`,
       })
-      .where(inArray(schema.jobs.id, result.missing));
+      .where(inArray(schema.jobs.id, absence.missing));
   }
-  if (result.awaitingSeparation.length > 0) {
+  if (absence.awaitingSeparation.length > 0) {
     // Missed again too soon after the first miss to be a second observation: nothing is counted.
     // A row missed before with no time recorded gets one now, so it can close no sooner than
     // six hours from here.
     await deps.db
       .update(schema.jobs)
       .set({ firstMissedAt: deps.now() })
-      .where(and(inArray(schema.jobs.id, result.awaitingSeparation), isNull(schema.jobs.firstMissedAt)));
+      .where(and(inArray(schema.jobs.id, absence.awaitingSeparation), isNull(schema.jobs.firstMissedAt)));
   }
-  if (result.closed.length > 0) {
+  if (absence.closed.length > 0) {
     await deps.db
       .update(schema.jobs)
       .set({ status: "closed", closedAt: sql`coalesce(${schema.jobs.lastSeenAt}, now())`, missingScans: sql`${schema.jobs.missingScans} + 1` })
-      .where(inArray(schema.jobs.id, result.closed));
-    await deps.db.insert(schema.jobEvents).values(result.closed.map(jobId => ({ jobId, type: "closed" as const, payload: {} })));
+      .where(inArray(schema.jobs.id, absence.closed));
+    await deps.db.insert(schema.jobEvents).values(absence.closed.map(jobId => ({ jobId, type: "closed" as const, payload: {} })));
   }
 
   const [htmlGeneration] = opts.taskId && source.type === "html"
@@ -928,18 +1115,20 @@ async function scanSource(
   const metricsComplete = !htmlGeneration || (htmlGeneration.metricsComplete && (opts.taskAttempt ?? 1) <= 1);
   const activeDurationMs = (htmlGeneration?.activeDurationMs ?? 0) + Date.now() - started;
   const observedStartedAt = htmlGeneration?.startedAt ?? startedAt;
+  const terminalStatus: ScanStatus = publication.staleCoverage ? "partial" : status;
+  const totalNewCount = (publication.generation?.publishedNewCount ?? 0) + newCount;
   await deps.db.insert(schema.scans).values({
     scanRunId,
     sourceId: source.id,
     taskId: opts.taskId,
     startedAt: observedStartedAt,
     finishedAt: deps.now(),
-    status,
+    status: terminalStatus,
     fetchMethod,
     postingsFound: postings.length,
-    newCount,
-    closedCount: result.closed.length,
-    error,
+    newCount: totalNewCount,
+    closedCount: absence.closed.length,
+    error: publication.staleCoverage ? "A newer complete scan finished during this listing traversal; older pages cannot prove absence." : error,
     durationMs: metricsComplete ? activeDurationMs : null,
     elapsedMs: Math.max(0, deps.now().getTime() - observedStartedAt.getTime()),
     metricsComplete,
@@ -957,17 +1146,17 @@ async function scanSource(
 
   // A host that asked us to wait is not a source that failed: its count, its next scan and its
   // status stay exactly as they were.
-  const failures = hostBusy ? source.consecutiveFailures : status === "failed" ? source.consecutiveFailures + 1 : 0;
-  await deps.db
+  const failures = hostBusy ? source.consecutiveFailures : terminalStatus === "failed" ? source.consecutiveFailures + 1 : 0;
+  if (!publication.staleCoverage) await deps.db
     .update(schema.careerSources)
     .set({
       consecutiveFailures: failures,
       // Backed off by whole daily runs (1, 2, 4, then 7 days): measured from this scan, which ran
       // some time after its run began, the next run would find it not yet due and add a day.
       nextScanAt: hostBusy ? source.nextScanAt : failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000 - BACKOFF_MARGIN_MS) : null,
-      status: hostBusy ? source.status : blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
-      lastOkScanAt: status === "ok" ? deps.now() : source.lastOkScanAt,
-      lastPostingsCount: status === "ok" ? postings.length : source.lastPostingsCount,
+      status: hostBusy ? source.status : blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && terminalStatus === "ok" ? "active" : source.status,
+      lastOkScanAt: terminalStatus === "ok" ? deps.now() : source.lastOkScanAt,
+      lastPostingsCount: terminalStatus === "ok" ? postings.length : source.lastPostingsCount,
       contentHash,
     })
     .where(eq(schema.careerSources.id, source.id));
@@ -978,25 +1167,17 @@ async function scanSource(
   const persistentlyShrunk = settledShrink || (shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3);
-  if ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || status === "suspect_empty" || persistentlyShrunk) {
+  if (!publication.staleCoverage && ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || terminalStatus === "suspect_empty" || persistentlyShrunk)) {
     await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" });
   }
-
-  // Scoring is per account. Leave roles visible when the model is unavailable or this account has
-  // no room, but record that reason instead of promising an indefinite pending score. Only the
-  // accounts with something to score are asked, all in one read; futile tasks are not queued.
-  const scoreSettings = new Map(followers.map(follower => [follower.userId, follower.settings] as const));
-  for (let offset = 0; offset < scoreQueue.length; offset += 250)
-    await admitScores(deps, scoreQueue.slice(offset, offset + 250), { db: deps.db, onlyUnscored: true, settings: scoreSettings });
-  await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
 
   log.info("source scanned", {
     company: company.name,
     type: source.type,
-    status,
+    status: terminalStatus,
     postings: postings.length,
-    new: newCount,
-    closed: result.closed.length,
+    new: totalNewCount,
+    closed: absence.closed.length,
     followers: followers.length,
     deferredDescriptions: deferred.size,
     reusedListing,
@@ -1006,7 +1187,8 @@ async function scanSource(
     heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1_048_576),
     ms: Date.now() - started,
   });
-  return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
+  if (deps.signal?.aborted) throw deps.signal.reason ?? new Error("Scan run stopped before final commit");
+  return { status: terminalStatus, newCount: totalNewCount, closedCount: absence.closed.length, postingsFound: postings.length };
   }
 
 }
@@ -1117,6 +1299,9 @@ interface HtmlScanOutcome {
   continueAt?: Date;
   pagesStaged?: number;
   longListing?: boolean;
+  /** Positive evidence from an incomplete page, never part of complete coverage. */
+  extraPostings?: RawPosting[];
+  extraObservedAt?: Date;
 }
 
 function checkpointPostings(checkpoint: HtmlCheckpoint): RawPosting[] {
@@ -1152,11 +1337,11 @@ async function scanHtmlSourceContinued(deps: WorkerDeps, spec: SourceSpec, sourc
   lastOkSnapshot: () => Promise<StoredSnapshot | null>, taskId: string, claimStartedAtMs: number): Promise<HtmlScanOutcome> {
   let checkpoint = await loadHtmlCheckpoint(deps, taskId, source);
   const cached = (await lastOkSnapshot())?.htmlPages ?? [];
-  const partial = (reason: string, extra: RawPosting[] = []): HtmlScanOutcome => ({
+  const partial = (reason: string, extra: RawPosting[] = [], extraObservedAt?: Date): HtmlScanOutcome => ({
     postings: keyPostings([...checkpointPostings(checkpoint), ...extra]).keyed, method: "http", dropped: checkpoint.pages.reduce((n, p) => n + p.dropped, 0),
     contentHash: sha1(checkpoint.pages.map(p => p.contentHash).join("|")), unchanged: false,
     // The snapshot needs the full posting set once, not a second copy in per-page HTML evidence.
-    pages: [], incomplete: true, incompleteReason: reason,
+    pages: [], incomplete: true, incompleteReason: reason, extraPostings: extra, extraObservedAt,
   });
   const terminal = (): HtmlScanOutcome => ({
     postings: checkpointPostings(checkpoint), method: "http", dropped: checkpoint.pages.reduce((n, p) => n + p.dropped, 0),
@@ -1209,30 +1394,31 @@ async function scanHtmlSourceContinued(deps: WorkerDeps, spec: SourceSpec, sourc
       if (error instanceof HostBusyError) throw error;
       return partial(`Could not finish listing page ${url}: ${(error as Error).message}`.slice(0, 1000));
     }
+    const pageObservedAt = deps.now();
     if (page.method === "browser" || page.traversed) {
       if (checkpoint.pages.length === 0) return scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot, undefined, page);
-      return partial("HTML listing switched to browser traversal after staged HTTP pages; the complete listing could not be verified.", page.postings);
+      return partial("HTML listing switched to browser traversal after staged HTTP pages; the complete listing could not be verified.", page.postings, pageObservedAt);
     }
     const next = htmlNextUrl(page, url);
-    if (page.incomplete) return partial(page.incompleteReason ?? "HTML listing page was incomplete.", page.postings);
+    if (page.incomplete) return partial(page.incompleteReason ?? "HTML listing page was incomplete.", page.postings, pageObservedAt);
     if (next && (next === url || checkpoint.pages.some(saved => saved.url === next))) {
-      return partial("HTML listing pagination repeated an earlier page; the complete listing cannot be verified.", page.postings);
+      return partial("HTML listing pagination repeated an earlier page; the complete listing cannot be verified.", page.postings, pageObservedAt);
     }
     const semanticHash = htmlPageSemanticHash(page.postings, next);
     const roleSetHash = htmlPageRoleSetHash(page.postings);
     if (checkpoint.pages.some(saved => saved.roleSetHash === roleSetHash && saved.url !== url)) {
-      return partial("HTML listing returned duplicate roles at different offsets; the complete listing cannot be verified.", page.postings);
+      return partial("HTML listing returned duplicate roles at different offsets; the complete listing cannot be verified.", page.postings, pageObservedAt);
     }
     try {
       checkpoint = await appendHtmlCheckpointPage(deps, checkpoint, source, {
         url, nextUrl: next, contentHash: page.contentHash, semanticHash, roleSetHash,
         minAdvertised: htmlAdvertisedMinimum(page.html ?? ""),
         postings: page.postings as unknown as Record<string, unknown>[], dropped: page.dropped,
-        recipe: page.recipe as Record<string, unknown> | undefined,
+        recipe: page.recipe as Record<string, unknown> | undefined, observedAt: pageObservedAt,
       });
     } catch (error) {
       if (!(error instanceof HtmlCheckpointChanged)) throw error;
-      return partial(error.message, page.postings);
+      return partial(error.message, page.postings, pageObservedAt);
     }
     readThisPass += 1;
     if (next && readThisPass >= HTML_PAGES_PER_TASK_PASS) {

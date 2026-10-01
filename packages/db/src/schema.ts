@@ -732,6 +732,9 @@ export const htmlScanGenerations = pgTable("html_scan_generations", {
   restarts: integer("restarts").notNull().default(0),
   bytesStored: integer("bytes_stored").notNull().default(0),
   minAdvertised: integer("min_advertised").notNull().default(0),
+  publishedPageCount: integer("published_page_count").notNull().default(0),
+  publishedNewCount: integer("published_new_count").notNull().default(0),
+  seedFirstScan: boolean("seed_first_scan"),
   requests: integer("requests").notNull().default(0),
   fetchedBytes: integer("fetched_bytes").notNull().default(0),
   revalidated: integer("revalidated").notNull().default(0),
@@ -752,6 +755,7 @@ export const htmlScanPages = pgTable("html_scan_pages", {
   dropped: integer("dropped").notNull().default(0),
   recipe: jsonb("recipe").$type<Record<string, unknown> | null>(),
   bytesStored: integer("bytes_stored").notNull(),
+  observedAt: ts("observed_at").notNull().default(sql`'1970-01-01 00:00:00+00'::timestamptz`),
 }, t => [primaryKey({ columns: [t.generationId, t.pageIndex] }), uniqueIndex("html_scan_page_url_uidx").on(t.generationId, t.url)]);
 
 export const aiCalls = pgTable(

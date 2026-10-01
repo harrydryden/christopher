@@ -1,0 +1,18 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T16:23:59.401Z","level":"info","msg":"slow database query","data":{"durationMs":440,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:24:00.271Z","level":"info","msg":"slow database query","data":{"durationMs":394,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:24:00.572Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"partial","postings":20,"new":20,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":0,"claimRequests":0,"claimRevalidated":0,"heapUsedMb":73,"ms":42}}
+{"t":"2026-10-01T16:24:00.844Z","level":"info","msg":"slow database query","data":{"durationMs":260,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:24:01.312Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"partial","postings":21,"new":20,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":0,"claimRequests":0,"claimRevalidated":0,"heapUsedMb":74,"ms":82}}
+{"t":"2026-10-01T16:24:01.756Z","level":"info","msg":"slow database query","data":{"durationMs":429,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:24:02.212Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"ok","postings":1,"new":1,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":90,"claimRequests":1,"claimRevalidated":0,"heapUsedMb":81,"ms":71}}
+{"t":"2026-10-01T16:24:02.302Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"partial","postings":21,"new":20,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":0,"claimRequests":0,"claimRevalidated":0,"heapUsedMb":84,"ms":67}}
+{"t":"2026-10-01T16:24:02.792Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"ok","postings":21,"new":21,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":334,"claimRequests":2,"claimRevalidated":0,"heapUsedMb":86,"ms":25}}
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  17:23:56
+   Duration  6.19s (tests 64%, transform 23%, import 13%)
+

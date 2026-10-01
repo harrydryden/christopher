@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   latest: null as null | Record<string, unknown>,
+  workerState: "healthy" as "healthy" | "restarting" | "stopped",
 }));
 vi.mock("./settings", () => ({ getSystemSettings: vi.fn(async () => ({ scanTime: "06:00", timezone: "Europe/London" })) }));
 vi.mock("./queries/scan-strip", () => ({
@@ -13,8 +14,12 @@ vi.mock("./queries/scan-strip", () => ({
     latestRun: mocks.latest,
   })),
 }));
+vi.mock("./queries/health", () => ({
+  getWorkerStatus: vi.fn(async () => ({ state: mocks.workerState })),
+}));
 
 import { getScanStatus, scanPollHint } from "./scan-status";
+import { getWorkerStatus } from "./queries/health";
 
 const schedule = { scanTime: "06:00", timezone: "Europe/London" };
 const MINUTE = 60_000;
@@ -79,23 +84,34 @@ describe("scanPollHint", () => {
 });
 
 describe("getScanStatus", () => {
-  beforeEach(() => { mocks.latest = null; });
+  beforeEach(() => { mocks.latest = null; mocks.workerState = "healthy"; vi.mocked(getWorkerStatus).mockClear(); });
 
   it("says the four facts and when the banner should ask again", async () => {
     expect(await getScanStatus("user", at(-3 * HOUR))).toEqual({
-      scanning: false, lastScanAt: null, following: 0, newRoleMatches: 0, newCompanyMatches: 0, live: false, wakeInMs: 2 * HOUR,
+      scanState: "idle", lastScanAt: null, following: 0, newRoleMatches: 0, newCompanyMatches: 0, live: false, wakeInMs: 2 * HOUR,
     });
+    expect(getWorkerStatus).not.toHaveBeenCalled();
     // New role matches are the Matched tab's count alone: shortlisted and dismissed roles are decided.
     expect(await getScanStatus("scanned", at(-3 * HOUR))).toMatchObject({
       lastScanAt: "2026-09-11T04:30:00.000Z", following: 6, newRoleMatches: 3, newCompanyMatches: 2,
     });
   });
 
-  it("is scanning while the shared run is in progress", async () => {
+  it("is scanning only while an unfinished shared run has a healthy worker", async () => {
     mocks.latest = { startedAt: at(0), finishedAt: null, trigger: "schedule" };
     const status = await getScanStatus("user", at(10 * MINUTE));
-    expect(status).toMatchObject({ scanning: true, live: true });
+    expect(status).toMatchObject({ scanState: "scanning", live: true });
+    expect(getWorkerStatus).toHaveBeenCalledWith(at(10 * MINUTE));
     mocks.latest = { startedAt: at(0), finishedAt: at(30 * MINUTE), trigger: "schedule" };
-    expect((await getScanStatus("user", at(40 * MINUTE))).scanning).toBe(false);
+    expect((await getScanStatus("user", at(40 * MINUTE))).scanState).toBe("idle");
+    expect(getWorkerStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps polling an unfinished run while monitoring is stopped or restarting", async () => {
+    mocks.latest = { startedAt: at(0), finishedAt: null, trigger: "schedule" };
+    mocks.workerState = "stopped";
+    expect(await getScanStatus("user", at(10 * MINUTE))).toMatchObject({ scanState: "waiting", live: true, wakeInMs: null });
+    mocks.workerState = "restarting";
+    expect(await getScanStatus("user", at(11 * MINUTE))).toMatchObject({ scanState: "restarting", live: true, wakeInMs: null });
   });
 });

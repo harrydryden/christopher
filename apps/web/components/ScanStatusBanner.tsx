@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { BANNER_FAILURES, BANNER_FIRST_MS, BANNER_RECHECK_MS, bannerPollDelay, nextPollDelay, LONGEST_POLL_MS, type ScanPollHint } from "@/lib/polling";
-import { scanStripItems, scanStripSignature, type ScanStripFacts } from "@/lib/scan-banner";
+import { scanActivity, scanStripItems, scanStripSignature, type ScanStripFacts } from "@/lib/scan-banner";
 
 type Reading = ScanStripFacts & ScanPollHint;
 
@@ -10,8 +10,7 @@ const MINUTE_MS = 60_000;
 
 /**
  * The status strip: last scan, companies followed, new role matches, new company matches, each
- * linking to the page that holds what it counts, with "Scanning" in front while the shared run is
- * in progress.
+ * linking to the page that holds what it counts, with a truthful shared-run state in front.
  *
  * It asks for a fresh reading only while a run is in progress or due within the hour, waits longer
  * each time the reading comes back unchanged, and asks nothing of a hidden tab. Otherwise it sleeps
@@ -108,12 +107,17 @@ export function ScanStatusBanner({ initial }: { initial: Reading }) {
   }, [initialSignature, initialLive, initialWakeInMs]);
 
   const items = scanStripItems(facts, new Date(now));
+  const activity = scanActivity(facts);
   return (
     <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-13">
-      {facts.scanning && <span className="ds-pixel text-10" role="status">Scanning now</span>}
+      {activity && <span className="ds-pixel text-10" role="status">
+        {activity.href
+          ? <Link prefetch={false} href={activity.href} className="underline decoration-dotted">{activity.text}</Link>
+          : activity.text}
+      </span>}
       {items.map((item, index) => (
         <Fragment key={item.key}>
-          {(index > 0 || facts.scanning) && <span className="text-muted" aria-hidden="true">·</span>}
+          {(index > 0 || activity) && <span className="text-muted" aria-hidden="true">·</span>}
           <Link prefetch={false} href={item.href} title={item.title} className="underline decoration-dotted" suppressHydrationWarning={item.key === "last-scan"}>
             {item.text}
           </Link>

@@ -44,7 +44,7 @@ it("shows only an active follower's latest unfinished source generation and its 
     { type: "scan_company", payload: { companyId: hidden!.id }, status: "queued", createdAt: at, runAfter: later },
   ]).returning();
   const [generation, otherGeneration] = await database.insert(schema.htmlScanGenerations).values([
-    { taskId: task!.id, sourceId: source!.id, sourceFingerprint: "one", nextUrl: "https://continuation-mine.example/jobs?page=3", startedAt: at, expiresAt: later },
+    { taskId: task!.id, sourceId: source!.id, sourceFingerprint: "one", nextUrl: "https://continuation-mine.example/jobs?page=3", startedAt: at, expiresAt: later, publishedPageCount: 1, publishedNewCount: 8 },
     { taskId: otherTask!.id, sourceId: hiddenSource!.id, sourceFingerprint: "two", nextUrl: "", startedAt: at, expiresAt: later },
   ]).returning();
   await database.insert(schema.htmlScanPages).values([
@@ -53,8 +53,8 @@ it("shows only an active follower's latest unfinished source generation and its 
     { generationId: otherGeneration!.id, pageIndex: 0, url: hiddenSource!.url, nextUrl: null, contentHash: "c", semanticHash: "c", roleSetHash: "c", postings: [{ id: 4 }], bytesStored: 10 },
   ]);
 
-  expect(await listHtmlScanProgress(mine.id)).toMatchObject([{ companyName: "Mine", sourceUrl: source!.url, pagesRead: 2, stagedPostings: 3, taskStatus: "queued" }]);
-  expect((await listHtmlScanProgress(other.id)).map(row => row.companyName)).toEqual(["Hidden"]);
+  expect(await listHtmlScanProgress(mine.id)).toMatchObject([{ companyName: "Mine", sourceUrl: source!.url, pagesRead: 2, publishedPages: 1, stagedPostings: 3, taskStatus: "queued" }]);
+  expect((await listHtmlScanProgress(other.id)).map(row => [row.companyName, row.publishedPages])).toEqual([["Hidden", 0]]);
 
   // A new queued scan supersedes the abandoned one even before the new read has a page.
   const [retry] = await database.insert(schema.tasks).values({ type: "scan_company", payload: { companyId: company!.id }, status: "queued", createdAt: new Date(at.getTime() + 1000), runAfter: later }).returning();
@@ -63,7 +63,7 @@ it("shows only an active follower's latest unfinished source generation and its 
     taskId: retry!.id, sourceId: source!.id, sourceFingerprint: "one", nextUrl: source!.url,
     startedAt: new Date(at.getTime() + 1000), expiresAt: later,
   }).returning();
-  expect((await listHtmlScanProgress(mine.id)).map(row => [row.generationId, row.pagesRead])).toEqual([[newGeneration!.id, 0]]);
+  expect((await listHtmlScanProgress(mine.id)).map(row => [row.generationId, row.pagesRead, row.publishedPages])).toEqual([[newGeneration!.id, 0, 0]]);
 
   // A later complete observation is the resolution, even if its old checkpoint awaits cleanup.
   await database.insert(schema.scans).values({ sourceId: source!.id, status: "ok", startedAt: later, finishedAt: later });
@@ -85,9 +85,10 @@ it("counts an interrupted read as one actionable company issue without duplicati
   }).returning();
   await database.insert(schema.htmlScanGenerations).values({
     taskId: task!.id, sourceId: source!.id, sourceFingerprint: "interrupted", nextUrl: "?page=2",
-    startedAt, expiresAt: new Date(Date.now() + 60_000),
+    startedAt, expiresAt: new Date(Date.now() + 60_000), publishedPageCount: 1,
   });
 
+  expect(await listHtmlScanProgress(user.id)).toMatchObject([{ taskStatus: "failed", publishedPages: 1 }]);
   expect(await countHealthItems(user.id)).toBe(1);
   expect((await healthItems(user.id)).map(item => item.kind)).toEqual(["incomplete_read"]);
 

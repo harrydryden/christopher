@@ -5,8 +5,8 @@ import { relativeTime } from "./format";
  * is plain data so the server can render it and `/api/scan-status` can send it to an open tab.
  */
 export interface ScanStripFacts {
-  /** The shared run is in progress right now. */
-  scanning: boolean;
+  /** The shared run and worker together determine whether work is moving or needs attention. */
+  scanState: "idle" | "scanning" | "waiting" | "restarting";
   /** When a scan of a company this account follows last completed, as ISO, or null if none has. */
   lastScanAt: string | null;
   /** Companies this account actively follows. */
@@ -19,6 +19,16 @@ export interface ScanStripFacts {
 
 /** The Roles tab that holds the roles still to review. */
 export const REVIEW_HREF = "/?view=auto-matched#roles";
+
+/** An unfinished run alone cannot prove that the worker is doing any scanning. */
+export function scanActivity(facts: ScanStripFacts): { text: string; href: string | null } | null {
+  switch (facts.scanState) {
+    case "scanning": return { text: "Scanning now", href: null };
+    case "waiting": return { text: "Scan waiting for monitoring", href: "/health" };
+    case "restarting": return { text: "Scan may be interrupted", href: "/health" };
+    case "idle": return null;
+  }
+}
 
 export interface ScanStripItem {
   key: "last-scan" | "following" | "roles" | "companies";
@@ -48,5 +58,5 @@ export function scanStripItems(facts: ScanStripFacts, now: Date): ScanStripItem[
 
 /** Whether two readings say the same thing, so a poller can tell a change from a repeat. */
 export function scanStripSignature(facts: ScanStripFacts): string {
-  return [facts.scanning ? 1 : 0, facts.lastScanAt ?? "", facts.following, facts.newRoleMatches, facts.newCompanyMatches].join("|");
+  return [facts.scanState, facts.lastScanAt ?? "", facts.following, facts.newRoleMatches, facts.newCompanyMatches].join("|");
 }

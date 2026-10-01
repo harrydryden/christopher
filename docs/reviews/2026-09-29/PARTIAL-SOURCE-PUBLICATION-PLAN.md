@@ -1,6 +1,6 @@
 # Publishing useful roles before a long listing finishes
 
-Status: development design, **not implemented or acceptance evidence**. This is the next substantive J2 development after scoring recovery. It follows the observed Siemens continuation that staged roles across claims without publishing any to the catalogue. The current partial-at-expiry path is not equivalent to useful results during the scan.
+Status: **implemented locally and verified as a development checkpoint** on 1 October 2026. The [partial-publication verification](../2026-10-01/PARTIAL-PUBLICATION-VERIFICATION.md) records focused, adversarial, broad-suite and synthetic browser evidence, together with its exact revision limits. The independently labelled posting corpus, representative user checks and production operating envelope remain unqualified; this plan is not J2 acceptance evidence at 90. The change follows the observed Siemens continuation that staged roles across claims without publishing any to the catalogue.
 
 ## Required user outcome
 

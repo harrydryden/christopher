@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "31ae735",
+  "checkpointDate": "2026-10-01",
+  "status": "local-development-verified",
+  "change": "Positive-only publication of durable HTML listing pages during continuation",
+  "scoresUnchanged": true,
+  "scoreScale": 100,
+  "scores": [
+    {
+      "job": "J1",
+      "completeness": 4.5,
+      "robustness": 4,
+      "uxUi": 4,
+      "score": 83
+    },
+    {
+      "job": "J2",
+      "completeness": 4,
+      "robustness": 3.5,
+      "uxUi": 4,
+      "score": 77
+    },
+    {
+      "job": "J3",
+      "completeness": 4.5,
+      "robustness": 4,
+      "uxUi": 4.25,
+      "score": 85
+    },
+    {
+      "job": "J4",
+      "completeness": 4.5,
+      "robustness": 4,
+      "uxUi": 4,
+      "score": 83
+    },
+    {
+      "job": "J5",
+      "completeness": 4.5,
+      "robustness": 4,
+      "uxUi": 4.25,
+      "score": 85
+    },
+    {
+      "job": "J6",
+      "completeness": 4.5,
+      "robustness": 4,
+      "uxUi": 4.25,
+      "score": 85
+    },
+    {
+      "job": "J7",
+      "completeness": 4.5,
+      "robustness": 3.5,
+      "uxUi": 4,
+      "score": 80
+    },
+    {
+      "job": "J8",
+      "completeness": 4.5,
+      "robustness": 4,
+      "uxUi": 4,
+      "score": 83
+    },
+    {
+      "job": "J9",
+      "completeness": 3.5,
+      "robustness": 3.5,
+      "uxUi": 3.5,
+      "score": 70
+    }
+  ],
+  "verification": [
+    {
+      "id": "migration-0050",
+      "scope": "Disposable PostgreSQL ava_reliability; schema migration only",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/partial-source-migrate-0050.log"
+    },
+    {
+      "id": "workspace-typecheck",
+      "scope": "All five workspace packages before final worker timing change",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/typecheck.log"
+    },
+    {
+      "id": "worker-full",
+      "scope": "Worker before final active-duration correction; browser tests enabled",
+      "testsPassed": 747,
+      "testsTotal": 747,
+      "filesPassed": 58,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/worker-full.log"
+    },
+    {
+      "id": "worker-continuation-final",
+      "scope": "Final worker after active-duration correction; durable HTML continuation group",
+      "testsPassed": 15,
+      "testsTotal": 15,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/timing-final-continuation.log"
+    },
+    {
+      "id": "worker-adversarial-final",
+      "scope": "Final worker after active-duration correction; independent transaction and freshness cases",
+      "testsPassed": 5,
+      "testsTotal": 5,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/timing-final-adversarial.log"
+    },
+    {
+      "id": "worker-typecheck-final",
+      "scope": "Final worker after active-duration correction",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/timing-final-typecheck.log"
+    },
+    {
+      "id": "worker-build-final",
+      "scope": "Final worker production bundle after active-duration correction",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/timing-final-worker-build.log"
+    },
+    {
+      "id": "web-full",
+      "scope": "Web before final stopped-worker banner correction",
+      "testsPassed": 1256,
+      "testsTotal": 1256,
+      "filesPassed": 140,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/web-full.log"
+    },
+    {
+      "id": "web-banner-final",
+      "scope": "Final stopped-worker banner correction, targeted frontend tests",
+      "testsPassed": 18,
+      "testsTotal": 18,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/scan-banner-targeted.log"
+    },
+    {
+      "id": "web-build-final",
+      "scope": "Final frontend production build including banner correction",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/web-build.log"
+    },
+    {
+      "id": "db-full",
+      "scope": "Database suite with migration 0050",
+      "testsPassed": 98,
+      "testsTotal": 98,
+      "filesPassed": 10,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-10-01/implementation-evidence/partial-publication/db-full.log"
+    },
+    {
+      "id": "synthetic-browser-partial",
+      "scope": "Mocked 25-page listing, first claim; desktop 1280px and phone 375px; keyboard review link",
+      "publishedJobs": 20,
+      "matchingViews": 20,
+      "terminalScans": 0,
+      "firstScanSetupStepsDone": 3,
+      "firstScanSetupStepsTotal": 4,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-09-29/implementation-evidence/partial-publication/browser-partial.json"
+    },
+    {
+      "id": "synthetic-browser-terminal",
+      "scope": "Same mocked listing, second claim; desktop and phone",
+      "publishedJobs": 25,
+      "matchingViews": 25,
+      "terminalScans": 1,
+      "result": "passed",
+      "evidence": "docs/reviews/2026-09-29/implementation-evidence/partial-publication/browser-terminal.json"
+    },
+    {
+      "id": "synthetic-browser-stopped-worker",
+      "scope": "Unfinished shared run with no worker heartbeat; desktop and phone",
+      "result": "passed",
+      "evidence": "docs/reviews/2026-09-29/implementation-evidence/partial-publication/browser-shared-run-stopped.json"
+    }
+  ],
+  "limits": [
+    "Synthetic fixture uses mocked pages and no live host, paid AI or background worker.",
+    "The stored-page publication interval is at most 20; existing traversal still reads a bounded full checkpoint prefix.",
+    "Full worker and web suites precede respectively the narrow timing and banner corrections; final focused checks and builds cover those corrections.",
+    "Independent posting recall and precision, representative usability and production operating envelope remain unqualified.",
+    "Migration 0050 precedes new worker; rollback to old worker after publication requires a separately tested procedure."
+  ],
+  "sha256": {
+    "apps/web/components/HtmlScanProgressCard.test.tsx": "905ed7fcf7102ae83720de4d3f761a247f4629c5aaebe397520d9d41e11cbaa4",
+    "apps/web/components/HtmlScanProgressCard.tsx": "fc33ed773fa154a3322dada40ce7f914cdba0c0f25e331ebe0f3938c2f11d988",
+    "apps/web/components/ScanStatusBanner.test.tsx": "315ef06e0079cdb6f1962dcb765976b27369038d40d1ada3c6eab2c32409442c",
+    "apps/web/components/ScanStatusBanner.tsx": "f743792d2934d709f4c4f6f43bd0b6f19c2c06a23b3f22bd184d68602b0b6ac6",
+    "apps/web/lib/queries/html-scan-progress.test.ts": "51c32eeaa0ab051629121a8bdfac7cb467cd4583fb665f7cf09e72349e6f5155",
+    "apps/web/lib/queries/html-scan-progress.ts": "f4604ed8608201777866972a60e9db31bd7a586e469ef6f7a46fff8cfe1e02d3",
+    "apps/web/lib/scan-banner.test.ts": "8270ef7198403f2c32684e975ca840e3e42c555d853f9026018e04b9a6e4f407",
+    "apps/web/lib/scan-banner.ts": "0270a0cf1795680a58b913ada5125c19a06fa6f6773efdd2590f9bd9748b7694",
+    "apps/web/lib/scan-status.test.ts": "28e632391d7cd0be8b575390007d016f1eee168fc06148ee96ee4557db97cdc5",
+    "apps/web/lib/scan-status.ts": "e2b51602d73642866fb53e307ea48507d60dd53f5cce549b6664fec1be960013",
+    "apps/web/lib/setup.test.ts": "c29f7f7c420a68b469b085d75f2b23f6832f74a451c50d2399372f79dec08bfc",
+    "apps/web/lib/setup.ts": "b56ff4abc6da182a3b753bb3ee724c570deb125291f7b753199d42f04e209639",
+    "apps/worker/src/e2e.test.ts": "94bc1379de56496e6ffec6c134b706004bdc123fbe56d0646b67cd5ea5490f83",
+    "apps/worker/src/handlers/scan.ts": "02a8de65c13789ae039be670f301835ac68e764c84ae2f2bc9db33a454277926",
+    "apps/worker/src/html-partial-publication-adversarial.test.ts": "92ca98673be2c665a20f6cfe5beae169af63c710a992399e8620b350a0a36de3",
+    "apps/worker/src/html-scan-checkpoint.ts": "c42d2d512ba13a8f7f3123df9a1a35a52817fdfeb2f992df495807a0f8ea713c",
+    "docs/DEPLOY.md": "fedb29e5c63515f91637879034dea75ad81ffbf9ccbfc91800d7a52bb0e40573",
+    "docs/SPEC.md": "ec224dd9134bc0458531869700284ff1c44537d0f070eff8b4b2e9520aa2c97d",
+    "docs/reviews/2026-09-29/PARTIAL-SOURCE-PUBLICATION-PLAN.md": "abd4188d8ed8199bb2b74a83aeadc86d4e589e8f8454c3aa4f4d006ef0d8eb17",
+    "docs/reviews/2026-09-29/RESCORE-90.md": "2fb1739248145637e0cb6c3fb41d59777cb54e1c687c88e6e6f495af977deac6",
+    "docs/reviews/2026-09-29/implementation-evidence/partial-publication/banner-check.cjs": "655f27c31ecd6e333b1a567335304bd5705b9e2330e730612952241a53177b63",
+    "docs/reviews/2026-09-29/implementation-evidence/partial-publication/browser-check.cjs": "1b4d27fa7a9f5c21febd364f6875ca4e929f67e5887b97fc035a28d7b53be9e0",
+    "docs/reviews/2026-09-29/implementation-evidence/partial-publication/fixture.mts": "d598f955fdb9319ce32ed5bdea68ad9db0acbda8e9d842e19b19d3ff82f261e5",
+    "docs/reviews/2026-10-01/PARTIAL-PUBLICATION-INDEPENDENT-REVIEW.md": "50a17e896a94311f81880261ec51efe0dff7f8b337de2c00660d56f29334c0f0",
+    "docs/reviews/2026-10-01/PARTIAL-PUBLICATION-VERIFICATION.md": "4d3e506f16fb458d3a0143cb7c13675672cec8ed1077901fda59ea4345abc801",
+    "packages/db/drizzle/0050_html_partial_publication.sql": "9ad3f4b91439cf75e4b21ed37f9899dea73af94793419dd36214793ddf6b73d5",
+    "packages/db/drizzle/meta/_journal.json": "61a6d2dd552161dcb4c25096ff35be51829a7f4606901230c3243dea06f1e0cb",
+    "packages/db/src/schema.ts": "312d8b5c083eb9b637c777a84fc636c89b6a6bf5ed2e68e7fe38c86be4487b65"
+  }
+}

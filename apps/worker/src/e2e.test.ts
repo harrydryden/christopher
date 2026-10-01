@@ -2738,13 +2738,16 @@ describe("durable HTTP listing continuation", () => {
     return { company: company!, source: source!, run: run!, task: task!, fastDeps, fetchText };
   }
 
-  it("reads beyond twenty pages across task claims, waits to finalise, and skips a committed source after a crash", async () => {
+  it("publishes roles after twenty pages, waits to finalise, and skips a committed source after a crash", async () => {
     const { source, run, task, fastDeps } = await fixture();
     const first = await handleScanCompany(task, fastDeps);
     expect(first).toBeInstanceOf(TaskDeferred);
     expect((first as TaskDeferred).result).toMatchObject({ sourceId: source.id, htmlPages: 20 });
     expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(0);
     expect(await db.select().from(schema.htmlScanPages)).toHaveLength(20);
+    expect(await db.select().from(schema.jobs)).toHaveLength(20);
+    const [progress] = await db.select().from(schema.htmlScanGenerations).where(eq(schema.htmlScanGenerations.taskId, task.id));
+    expect(progress).toMatchObject({ publishedPageCount: 20, publishedNewCount: 20, seedFirstScan: true });
     expect(await finaliseScanRuns(deps)).toBe(0);
     expect((await db.select().from(schema.scanRuns).where(eq(schema.scanRuns.id, run.id)))[0]!.finishedAt).toBeNull();
 
@@ -2766,6 +2769,72 @@ describe("durable HTTP listing continuation", () => {
     expect(await db.select().from(schema.jobs)).toHaveLength(25);
     await db.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, task.id));
     expect(await finaliseScanRuns(deps)).toBe(1);
+  }, 60_000);
+
+  it("queues descriptions for a description gate as soon as the first page batch is published", async () => {
+    const { company, source, task, fastDeps } = await fixture();
+    await subscribeToCompany(db, user.id, company.id);
+    await setGate({ includeKeywords: ["operations"], matchFields: ["description"] });
+    expect(await handleScanCompany(task, fastDeps)).toBeInstanceOf(TaskDeferred);
+    expect(await db.select().from(schema.jobs).where(eq(schema.jobs.sourceId, source.id))).toHaveLength(20);
+    expect(await db.select().from(schema.userJobs)).toHaveLength(0);
+    const descriptionTasks = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(descriptionTasks).toHaveLength(20);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(0);
+  }, 60_000);
+
+  it("includes positive publication time in a continued scan's active duration", async () => {
+    const { task, fastDeps } = await fixture();
+    const realNow = Date.now;
+    let addedMs = 0;
+    let delayedInsert = false;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + addedMs);
+    const timedDb = new Proxy(fastDeps.db, {
+      get(target, property) {
+        if (property === "transaction") return (callback: (tx: WorkerDeps["db"]) => Promise<unknown>) =>
+          target.transaction(async tx => callback(new Proxy(tx as unknown as WorkerDeps["db"], {
+            get(transaction, key) {
+              if (key === "insert") return (table: unknown) => {
+                if (table === schema.jobs && !delayedInsert) {
+                  addedMs += 30_000;
+                  delayedInsert = true;
+                }
+                return transaction.insert(table as typeof schema.jobs);
+              };
+              const value = Reflect.get(transaction, key);
+              return typeof value === "function" ? value.bind(transaction) : value;
+            },
+          })));
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as WorkerDeps["db"];
+    try {
+      expect(await handleScanCompany(task, { ...fastDeps, db: timedDb })).toBeInstanceOf(TaskDeferred);
+      expect(delayedInsert).toBe(true);
+      const [generation] = await db.select().from(schema.htmlScanGenerations).where(eq(schema.htmlScanGenerations.taskId, task.id));
+      expect(generation!.activeDurationMs).toBeGreaterThanOrEqual(30_000);
+      await handleScanCompany(task, fastDeps);
+      const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.taskId, task.id));
+      expect(scan!.durationMs).toBeGreaterThanOrEqual(30_000);
+    } finally {
+      clock.mockRestore();
+    }
+  }, 60_000);
+
+  it("uses freshly fetched detail text for a small HTML description gate", async () => {
+    const { company, task, fastDeps, fetchText } = await fixture(1);
+    await subscribeToCompany(db, user.id, company.id);
+    await setGate({ includeKeywords: ["operations"], matchFields: ["description"] });
+    fetchText.mockImplementation(async (url: string) => {
+      const body = new URL(url).pathname.startsWith("/jobs/")
+        ? `<html><main><p>${"Operations work across UK sites, planning shifts and supporting colleagues. ".repeat(4)}</p></main></html>` : listing(0, 1);
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    await handleScanCompany(task, fastDeps);
+    const [job] = await db.select().from(schema.jobs);
+    expect(job?.descriptionText).toContain("Operations work");
+    expect(await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, job!.id))).toHaveLength(1);
   }, 60_000);
 
   it("marks aggregate traffic unavailable after an interrupted claim rather than understating it", async () => {
@@ -2822,7 +2891,10 @@ describe("durable HTTP listing continuation", () => {
     await handleScanCompany(task, fastDeps);
     const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
     expect(scan).toMatchObject({ status: "ok", postingsFound: 1, metricsComplete: false, requests: null, fetchedBytes: null });
-    expect((await db.select().from(schema.jobs)).map(job => job.title)).toEqual(["New Operations Manager"]);
+    // The earlier pages were already published. A source edit invalidates their coverage, not
+    // those historical positive observations.
+    expect((await db.select().from(schema.jobs)).map(job => job.title)).toContain("New Operations Manager");
+    expect(await db.select().from(schema.jobs)).toHaveLength(21);
   }, 60_000);
 
   it("restarts on a changed boundary page but ignores changing HTML nonces", async () => {
@@ -2842,6 +2914,7 @@ describe("durable HTTP listing continuation", () => {
     // A separate generation: a real role-title change on the first page invalidates all staged
     // offsets, even if its continuation URL is unchanged.
     await db.delete(schema.scans);
+    now = new Date(now.getTime() + 60_000);
     const secondId = await enqueueTask(db, "scan_company", { companyId: source.companyId, trigger: "manual" });
     const [secondTask] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, secondId!));
     expect(await handleScanCompany(secondTask!, fastDeps)).toBeInstanceOf(TaskDeferred);
@@ -2850,6 +2923,7 @@ describe("durable HTTP listing continuation", () => {
       const body = page === 0 ? listing(page).replace("Operations Role 1", "Senior Operations Role 1") : listing(page);
       return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
     });
+    now = new Date(now.getTime() + 60_000);
     expect(await handleScanCompany(secondTask!, fastDeps)).toBeInstanceOf(TaskDeferred);
     const [generation] = await db.select().from(schema.htmlScanGenerations).where(eq(schema.htmlScanGenerations.taskId, secondTask!.id));
     expect(generation).toMatchObject({ restarts: 1 });

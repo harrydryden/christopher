@@ -11,6 +11,8 @@ export interface HtmlScanProgress {
   sourceId: string;
   sourceUrl: string;
   pagesRead: number;
+  /** Pages whose positive role observations have been reconciled; they may contain no matches. */
+  publishedPages: number;
   stagedPostings: number;
   startedAt: Date;
   expiresAt: Date;
@@ -23,14 +25,15 @@ export function interruptedHtmlRead(item: HtmlScanProgress, now: Date): boolean 
   return item.taskStatus === "failed" || item.taskStatus === "done" || item.expiresAt <= now;
 }
 
-type RawProgress = Omit<HtmlScanProgress, "pagesRead" | "stagedPostings"> & {
+type RawProgress = Omit<HtmlScanProgress, "pagesRead" | "publishedPages" | "stagedPostings"> & {
   pagesRead: number | string;
+  publishedPages: number | string;
   stagedPostings: number | string;
 };
 
 /**
- * These pages have been read but not reconciled into jobs. The latest generation is the only
- * one worth showing for a source. A later complete scan clears it; a newer queued or running
+ * An unfinished read may have already made verified matches available. The latest generation is
+ * the only one worth showing for a source. A later complete scan clears it; a newer queued or running
  * company scan supersedes an abandoned task even before its first page is saved. Both tests
  * matter because an interrupted task can leave its generation until retention cleans it up.
  */
@@ -43,7 +46,7 @@ export const listHtmlScanProgress = cache(async (userId: string): Promise<HtmlSc
       )
       select g.id as "generationId", c.id as "companyId", c.name as "companyName",
         s.id as "sourceId", s.url as "sourceUrl",
-        p."pagesRead", p."stagedPostings", g.started_at as "startedAt",
+        p."pagesRead", g.published_page_count as "publishedPages", p."stagedPostings", g.started_at as "startedAt",
         g.expires_at as "expiresAt", t.status as "taskStatus", t.run_after as "runAfter",
         t.error as "taskError"
       from latest g
@@ -75,6 +78,7 @@ export const listHtmlScanProgress = cache(async (userId: string): Promise<HtmlSc
     return result.rows.map(row => ({
       ...row,
       pagesRead: Number(row.pagesRead),
+      publishedPages: Number(row.publishedPages),
       stagedPostings: Number(row.stagedPostings),
       startedAt: new Date(row.startedAt),
       expiresAt: new Date(row.expiresAt),

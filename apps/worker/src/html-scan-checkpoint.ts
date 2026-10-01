@@ -54,7 +54,7 @@ export async function loadHtmlCheckpoint(deps: WorkerDeps, taskId: string, sourc
       // reconciled with the new one. Keep the original deadline and consume a restart allowance.
       await db.delete(schema.htmlScanPages).where(eq(schema.htmlScanPages.generationId, generation.id));
       const [reset] = await db.update(schema.htmlScanGenerations).set({ sourceFingerprint: fingerprint,
-        nextUrl: source.url, bytesStored: 0, minAdvertised: 0, restarts: generation.restarts + 1,
+        nextUrl: source.url, bytesStored: 0, minAdvertised: 0, publishedPageCount: 0, restarts: generation.restarts + 1,
         metricsComplete: false, updatedAt: deps.now() })
         .where(eq(schema.htmlScanGenerations.id, generation.id)).returning();
       return { generation: reset!, pages: [], expired: reset!.expiresAt <= deps.now() || reset!.restarts > HTML_GENERATION_MAX_RESTARTS };
@@ -82,7 +82,7 @@ export async function restartHtmlCheckpoint(deps: WorkerDeps, checkpoint: HtmlCh
     }
     await db.delete(schema.htmlScanPages).where(eq(schema.htmlScanPages.generationId, generation.id));
     const [reset] = await db.update(schema.htmlScanGenerations).set({ nextUrl: source.url, bytesStored: 0, minAdvertised: 0,
-      restarts: generation.restarts + 1, updatedAt: deps.now() })
+      publishedPageCount: 0, restarts: generation.restarts + 1, updatedAt: deps.now() })
       .where(eq(schema.htmlScanGenerations.id, generation.id)).returning();
     return { generation: reset!, pages: [], expired: false };
   });
@@ -90,7 +90,7 @@ export async function restartHtmlCheckpoint(deps: WorkerDeps, checkpoint: HtmlCh
 
 export async function appendHtmlCheckpointPage(deps: WorkerDeps, checkpoint: HtmlCheckpoint, source: CareerSource, input: {
   url: string; nextUrl: string | null; contentHash: string; semanticHash: string; roleSetHash: string; minAdvertised: number; postings: Record<string, unknown>[];
-  dropped: number; recipe?: Record<string, unknown>;
+  dropped: number; recipe?: Record<string, unknown>; observedAt: Date;
 }): Promise<HtmlCheckpoint> {
   return deps.db.transaction(async tx => {
     const db = tx as unknown as Db;
@@ -108,7 +108,7 @@ export async function appendHtmlCheckpointPage(deps: WorkerDeps, checkpoint: Htm
     const [page] = await db.insert(schema.htmlScanPages).values({
       generationId: generation.id, pageIndex: checkpoint.pages.length, url: input.url,
       nextUrl: input.nextUrl, contentHash: input.contentHash, semanticHash: input.semanticHash, roleSetHash: input.roleSetHash, postings: input.postings,
-      dropped: input.dropped, recipe: input.recipe ?? null, bytesStored,
+      dropped: input.dropped, recipe: input.recipe ?? null, bytesStored, observedAt: input.observedAt,
     }).returning();
     const [updated] = await db.update(schema.htmlScanGenerations).set({ nextUrl: input.nextUrl ?? "", bytesStored: generation.bytesStored + bytesStored,
       minAdvertised: Math.max(generation.minAdvertised, input.minAdvertised), updatedAt: deps.now() })

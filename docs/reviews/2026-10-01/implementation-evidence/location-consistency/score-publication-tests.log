@@ -1,0 +1,70 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T21:05:26.709Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":3,"accounts":2}}
+{"t":"2026-10-01T21:05:26.851Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:27.109Z","level":"warn","msg":"score batch not sent; roles handed back to live scoring","data":{"roles":1,"error":"batch endpoint unavailable"}}
+{"t":"2026-10-01T21:05:27.284Z","level":"info","msg":"task start","taskId":"b01e7e87-9284-413f-be0b-9bf35503ea81","taskType":"score_job","data":{"id":"b01e7e87-9284-413f-be0b-9bf35503ea81","type":"score_job","attempt":1,"workerId":"live-test","commit":null,"readyWaitMs":36,"heapUsedMb":74,"heapLimitMb":4144,"rssMb":182}}
+{"t":"2026-10-01T21:05:27.304Z","level":"info","msg":"task done","taskId":"b01e7e87-9284-413f-be0b-9bf35503ea81","taskType":"score_job","data":{"id":"b01e7e87-9284-413f-be0b-9bf35503ea81","type":"score_job","ms":20,"heapUsedMb":77,"heapDeltaMb":3,"heapLimitMb":4144,"rssMb":183,"rssDeltaMb":1}}
+{"t":"2026-10-01T21:05:27.423Z","level":"info","msg":"task start","taskId":"6acd31e7-d921-4bc3-93ad-d19a308696a4","taskType":"score_job","data":{"id":"6acd31e7-d921-4bc3-93ad-d19a308696a4","type":"score_job","attempt":1,"workerId":"batch-test","commit":null,"readyWaitMs":4,"heapUsedMb":68,"heapLimitMb":4144,"rssMb":183}}
+{"t":"2026-10-01T21:05:27.444Z","level":"info","msg":"task done","taskId":"6acd31e7-d921-4bc3-93ad-d19a308696a4","taskType":"score_job","data":{"id":"6acd31e7-d921-4bc3-93ad-d19a308696a4","type":"score_job","ms":21,"heapUsedMb":71,"heapDeltaMb":3,"heapLimitMb":4144,"rssMb":184,"rssDeltaMb":1}}
+{"t":"2026-10-01T21:05:27.617Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:27.619Z","level":"info","msg":"task start","taskId":"42613a11-3e68-4f32-b4cb-e3850152b4dd","taskType":"score_job","data":{"id":"42613a11-3e68-4f32-b4cb-e3850152b4dd","type":"score_job","attempt":1,"workerId":"live-mixed","commit":null,"readyWaitMs":63,"heapUsedMb":77,"heapLimitMb":4144,"rssMb":184}}
+{"t":"2026-10-01T21:05:27.634Z","level":"info","msg":"task done","taskId":"42613a11-3e68-4f32-b4cb-e3850152b4dd","taskType":"score_job","data":{"id":"42613a11-3e68-4f32-b4cb-e3850152b4dd","type":"score_job","ms":15,"heapUsedMb":70,"heapDeltaMb":-7,"heapLimitMb":4144,"rssMb":185,"rssDeltaMb":1}}
+{"t":"2026-10-01T21:05:27.635Z","level":"info","msg":"task start","taskId":"0bfe6931-aff8-45f4-8674-8387d3e4dee4","taskType":"score_job","data":{"id":"0bfe6931-aff8-45f4-8674-8387d3e4dee4","type":"score_job","attempt":1,"workerId":"live-mixed","commit":null,"readyWaitMs":75,"heapUsedMb":70,"heapLimitMb":4144,"rssMb":185}}
+{"t":"2026-10-01T21:05:27.651Z","level":"info","msg":"task done","taskId":"0bfe6931-aff8-45f4-8674-8387d3e4dee4","taskType":"score_job","data":{"id":"0bfe6931-aff8-45f4-8674-8387d3e4dee4","type":"score_job","ms":16,"heapUsedMb":72,"heapDeltaMb":2,"heapLimitMb":4144,"rssMb":185,"rssDeltaMb":0}}
+{"t":"2026-10-01T21:05:28.144Z","level":"warn","msg":"score batch not sent; roles handed back to live scoring","data":{"roles":1,"error":"batch endpoint unavailable"}}
+{"t":"2026-10-01T21:05:28.551Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:28.556Z","level":"info","msg":"task start","taskId":"598fb736-0008-4848-9a25-3fd12081ed83","taskType":"poll_score_batch","data":{"id":"598fb736-0008-4848-9a25-3fd12081ed83","type":"poll_score_batch","attempt":1,"workerId":"poll-q","commit":null,"readyWaitMs":5,"heapUsedMb":80,"heapLimitMb":4144,"rssMb":184}}
+{"t":"2026-10-01T21:05:28.557Z","level":"info","msg":"task deferred","taskId":"598fb736-0008-4848-9a25-3fd12081ed83","taskType":"poll_score_batch","data":{"id":"598fb736-0008-4848-9a25-3fd12081ed83","type":"poll_score_batch","until":"2026-10-01T21:06:28.556Z","ms":1}}
+{"t":"2026-10-01T21:05:28.671Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:28.682Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":1,"unscored":0,"stale":0,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":0}}
+{"t":"2026-10-01T21:05:28.799Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:28.805Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":0,"unscored":0,"stale":0,"failed":0,"expired":1,"canceled":0,"applied":0,"requeued":1}}
+{"t":"2026-10-01T21:05:28.941Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:28.948Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":0,"unscored":0,"stale":0,"failed":1,"expired":0,"canceled":0,"applied":0,"requeued":1}}
+{"t":"2026-10-01T21:05:29.085Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":4,"accounts":2}}
+{"t":"2026-10-01T21:05:29.103Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":2,"unscored":0,"stale":0,"failed":0,"expired":1,"canceled":0,"applied":0,"requeued":2}}
+{"t":"2026-10-01T21:05:29.119Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":0,"unscored":0,"stale":0,"failed":0,"expired":1,"canceled":0,"applied":2,"requeued":2}}
+{"t":"2026-10-01T21:05:29.284Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":2,"accounts":1}}
+{"t":"2026-10-01T21:05:29.305Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":1,"unscored":0,"stale":0,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":1}}
+{"t":"2026-10-01T21:05:29.479Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":3,"accounts":2}}
+{"t":"2026-10-01T21:05:29.512Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":2,"unscored":0,"stale":1,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":0}}
+{"t":"2026-10-01T21:05:29.656Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:29.673Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":0,"unscored":0,"stale":1,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":0}}
+{"t":"2026-10-01T21:05:29.836Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:29.853Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":0,"unscored":0,"stale":1,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":0}}
+{"t":"2026-10-01T21:05:29.985Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:29.994Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":0,"unscored":0,"stale":1,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":0}}
+{"t":"2026-10-01T21:05:30.134Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:30.145Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":0,"unscored":0,"stale":1,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":0}}
+{"t":"2026-10-01T21:05:30.317Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":2,"accounts":2}}
+{"t":"2026-10-01T21:05:30.346Z","level":"info","msg":"score batch applied","data":{"batchId":"msgbatch_0001","scored":2,"unscored":0,"stale":0,"failed":0,"expired":0,"canceled":0,"applied":0,"requeued":0}}
+{"t":"2026-10-01T21:05:30.481Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:30.487Z","level":"error","msg":"gave up on a scoring batch; its roles are scored live and any cost it ran up is not in the ledger","data":{"batchId":"msgbatch_0001","taskId":"11fefed6-5c90-428d-a569-827ad3c6a8ce","roles":1,"requeued":1,"reason":"provider unreachable"}}
+{"t":"2026-10-01T21:05:30.647Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":1,"accounts":1}}
+{"t":"2026-10-01T21:05:30.668Z","level":"error","msg":"gave up on a scoring batch; its roles are scored live and any cost it ran up is not in the ledger","data":{"batchId":"msgbatch_0001","taskId":"81a475d3-5d18-4596-bb92-564d9936c020","roles":1,"requeued":1,"reason":"provider unreachable"}}
+{"t":"2026-10-01T21:05:30.815Z","level":"info","msg":"score batch sent","data":{"batchId":"msgbatch_0001","requests":2,"accounts":2}}
+{"t":"2026-10-01T21:05:30.821Z","level":"error","msg":"gave up on a scoring batch; its roles are scored live and any cost it ran up is not in the ledger","data":{"batchId":"msgbatch_0001","taskId":"05ad853b-def1-4d81-a393-f23b1322b4a8","roles":2,"requeued":2,"reason":"provider unreachable"}}
+{"t":"2026-10-01T21:05:30.998Z","level":"info","msg":"task start","taskId":"d2027804-5854-42bd-9f0c-ef23d15d62be","taskType":"collect_score_batch","data":{"id":"d2027804-5854-42bd-9f0c-ef23d15d62be","type":"collect_score_batch","attempt":1,"workerId":"batch-queue","commit":null,"readyWaitMs":23,"heapUsedMb":85,"heapLimitMb":4144,"rssMb":163}}
+{"t":"2026-10-01T21:05:31.026Z","level":"info","msg":"score batch sent","taskId":"d2027804-5854-42bd-9f0c-ef23d15d62be","taskType":"collect_score_batch","data":{"batchId":"msgbatch_0001","requests":3,"accounts":2}}
+{"t":"2026-10-01T21:05:31.027Z","level":"info","msg":"task done","taskId":"d2027804-5854-42bd-9f0c-ef23d15d62be","taskType":"collect_score_batch","data":{"id":"d2027804-5854-42bd-9f0c-ef23d15d62be","type":"collect_score_batch","ms":29,"heapUsedMb":89,"heapDeltaMb":4,"heapLimitMb":4144,"rssMb":163,"rssDeltaMb":0}}
+{"t":"2026-10-01T21:05:31.030Z","level":"info","msg":"task start","taskId":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","taskType":"poll_score_batch","data":{"id":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","type":"poll_score_batch","attempt":1,"workerId":"batch-queue","commit":null,"readyWaitMs":2,"heapUsedMb":89,"heapLimitMb":4144,"rssMb":163}}
+{"t":"2026-10-01T21:05:31.031Z","level":"info","msg":"task deferred","taskId":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","taskType":"poll_score_batch","data":{"id":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","type":"poll_score_batch","until":"2026-10-01T21:06:31.030Z","ms":1}}
+{"t":"2026-10-01T21:05:31.035Z","level":"info","msg":"task start","taskId":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","taskType":"poll_score_batch","data":{"id":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","type":"poll_score_batch","attempt":1,"workerId":"batch-queue","commit":null,"readyWaitMs":3,"heapUsedMb":90,"heapLimitMb":4144,"rssMb":163}}
+{"t":"2026-10-01T21:05:31.058Z","level":"info","msg":"score batch applied","taskId":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","taskType":"poll_score_batch","data":{"batchId":"msgbatch_0001","scored":2,"unscored":0,"stale":0,"failed":0,"expired":1,"canceled":0,"applied":0,"requeued":1}}
+{"t":"2026-10-01T21:05:31.059Z","level":"info","msg":"task done","taskId":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","taskType":"poll_score_batch","data":{"id":"a62551c5-55f9-4ba4-a26e-8c8feace7be0","type":"poll_score_batch","ms":24,"heapUsedMb":92,"heapDeltaMb":2,"heapLimitMb":4144,"rssMb":163,"rssDeltaMb":0}}
+{"t":"2026-10-01T21:05:31.061Z","level":"info","msg":"task start","taskId":"5f529f43-c116-4b01-ac4b-fb749d17579a","taskType":"score_job","data":{"id":"5f529f43-c116-4b01-ac4b-fb749d17579a","type":"score_job","attempt":1,"workerId":"batch-queue","commit":null,"readyWaitMs":7,"heapUsedMb":92,"heapLimitMb":4144,"rssMb":163}}
+{"t":"2026-10-01T21:05:31.094Z","level":"info","msg":"task done","taskId":"5f529f43-c116-4b01-ac4b-fb749d17579a","taskType":"score_job","data":{"id":"5f529f43-c116-4b01-ac4b-fb749d17579a","type":"score_job","ms":33,"heapUsedMb":95,"heapDeltaMb":3,"heapLimitMb":4144,"rssMb":163,"rssDeltaMb":0}}
+{"t":"2026-10-01T21:05:33.784Z","level":"info","msg":"profile synthesised","data":{"userId":"d12bb054-5b3e-4819-b42c-0081cd95b289","version":1,"decisions":1,"questions":0,"changed":true}}
+{"t":"2026-10-01T21:05:34.019Z","level":"info","msg":"scan suggestions filed","data":{"userId":"d12bb054-5b3e-4819-b42c-0081cd95b289","titles":4,"unmatched":4,"inserted":1}}
+{"t":"2026-10-01T21:05:34.027Z","level":"info","msg":"scan suggestions filed","data":{"userId":"d12bb054-5b3e-4819-b42c-0081cd95b289","titles":4,"unmatched":4,"inserted":0}}
+{"t":"2026-10-01T21:05:34.036Z","level":"info","msg":"scan suggestions filed","data":{"userId":"d12bb054-5b3e-4819-b42c-0081cd95b289","titles":4,"unmatched":4,"inserted":1}}
+{"t":"2026-10-01T21:05:34.196Z","level":"info","msg":"profile synthesised","data":{"userId":"d12bb054-5b3e-4819-b42c-0081cd95b289","version":2,"decisions":525,"questions":0,"changed":true}}
+{"t":"2026-10-01T21:05:34.282Z","level":"info","msg":"profile synthesised","data":{"userId":"d12bb054-5b3e-4819-b42c-0081cd95b289","version":2,"decisions":0,"questions":0,"changed":false}}
+
+ Test Files  2 passed (2)
+      Tests  54 passed (54)
+   Start at  22:05:25
+   Duration  9.78s (tests 84%, import 10%, transform 6%)
+

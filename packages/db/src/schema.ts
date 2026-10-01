@@ -460,9 +460,10 @@ export const userJobs = pgTable(
     fitProfileVersion: integer("fit_profile_version"),
     fitScoredAt: ts("fit_scored_at"),
     /**
-     * Fingerprint of everything the last A5 score was computed from (the role, this account's
-     * profile and evidence, and the model). Unchanged inputs mean the stored score still stands,
-     * so the call is skipped. Null means "never scored, or scored before this column existed".
+     * Fingerprint of everything the last usable A5 score was computed from, or the last completed
+     * attempt when no usable score exists (the role, this account's profile and evidence, and the
+     * model). Unchanged inputs need no new call. Null means no recorded inputs, or a score made
+     * before this column existed.
      */
     scoreInputHash: text("score_input_hash"),
     /**

@@ -150,11 +150,27 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
 
   const inserted = await tx.execute<{ id: string; job_id: string }>(sql`
     insert into decisions (user_id, job_id, decision, reason, job_title, company_name, job_location, job_department, description_snippet, fit_score_at_decision)
-    select ${userId}::uuid, j.id, ${decision}, ${reason}, j.title, coalesce(c.name, ''), j.location, j.department,
+    select ${userId}::uuid, j.id, ${decision}, ${reason}, j.title, coalesce(c.name, ''),
+           case j.location_resolution
+             when 'pending' then case
+               when j.location_fetched_at is null or coalesce(loc.names, nullif(j.location, '')) is null then 'Locations awaiting verification'
+               else concat('Previously verified locations: ', coalesce(loc.names, nullif(j.location, '')), ' — Locations awaiting verification')
+             end
+             when 'unavailable' then case
+               when j.location_fetched_at is null or coalesce(loc.names, nullif(j.location, '')) is null then 'Locations could not be verified'
+               else concat('Previously verified locations: ', coalesce(loc.names, nullif(j.location, '')), ' — Locations could not be verified')
+             end
+             else coalesce(loc.names, j.location)
+           end,
+           j.department,
            left(j.description_text, 300), v.fit_score
     from jobs j
     join user_jobs v on v.job_id = j.id and v.user_id = ${userId}::uuid
     left join companies c on c.id = j.company_id
+    left join lateral (
+      select string_agg(place.name, '; ' order by place.position) as names
+      from jsonb_array_elements_text(j.locations) with ordinality as place(name, position)
+    ) loc on true
     where j.id in (${idList(ids)})
     returning id, job_id`);
   const insertedRows = [...inserted.rows];

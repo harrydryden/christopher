@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
           r.company.name,
           r.company.homepageUrl,
           r.job.title,
-          r.job.location ?? "",
+          r.job.locations.length ? r.job.locations.join("; ") : r.job.location ?? "",
           r.job.url,
           liveFor(r.job, now).days,
           r.job.status,

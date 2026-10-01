@@ -1,10 +1,11 @@
-import { archiveNonMatches, reserveLocationRead, schema, type Task } from "@ava/db";
+import { archiveNonMatches, enqueueStandard, reserveLocationRead, schema, type Task } from "@ava/db";
 import { ats, type SourceSpec, type TaskPayloads } from "@ava/core";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { loadUserSettingsMany } from "../settings";
 import { refreshFollowers } from "./description";
 import { TaskDeferred } from "../queue";
+import { scoreLocationInput } from "../score-location";
 
 function specFor(source: typeof schema.careerSources.$inferSelect): SourceSpec {
   return { type: source.type, url: source.url, apiUrl: source.apiUrl ?? undefined,
@@ -72,7 +73,11 @@ export async function handleFetchLocations(task: Task, deps: WorkerDeps): Promis
     const eligible = followers.map(follower => follower.userId).filter(id => current.shared || id === current.addedBy);
     const settings = new Map([...allSettings].filter(([id]) => eligible.includes(id)));
     const at = deps.now();
-    const scoreInputsChanged = current.location !== detail.location;
+    // A pending weekly refresh retains previously verified names. Comparing the pending status
+    // would clear and re-buy every score even when the detail confirms exactly those names.
+    const scoreInputsChanged = JSON.stringify(scoreLocationInput({ ...current, locationResolution: "resolved" })) !== JSON.stringify(scoreLocationInput({
+      location: detail.location, locations: detail.locations, locationResolution: "resolved",
+    }));
     await tx.update(schema.jobs).set({ location: detail.location, locations: detail.locations,
       locationResolution: "resolved", locationFetchedAt: at, locationError: null, updatedAt: at })
       .where(eq(schema.jobs.id, jobId));
@@ -82,6 +87,24 @@ export async function handleFetchLocations(task: Task, deps: WorkerDeps): Promis
       { ...current, location: detail.location, locations: detail.locations, locationResolution: "resolved", locationFetchedAt: at },
       settings, scoreInputsChanged, { preserveHidden: true });
     await archiveNonMatches(tx as unknown as WorkerDeps["db"], { jobId });
+    if (!scoreInputsChanged && eligible.length) {
+      // A role may have been scored while the refresh was pending. Its request saw an unverified
+      // status, so let the score task compare its exact input hash now. A score based on the same
+      // verified names skips without a model call; a pending-status score is recomputed.
+      const scored = await tx.select({ userId: schema.userJobs.userId, inTable: schema.userJobs.inTable }).from(schema.userJobs)
+        .where(and(eq(schema.userJobs.jobId, jobId), inArray(schema.userJobs.userId, eligible),
+          isNull(schema.userJobs.archivedAt), or(isNotNull(schema.userJobs.fitScore), isNotNull(schema.userJobs.scoredAt))));
+      if (scored.length) {
+        const choices = await tx.select({ userId: schema.decisions.userId, decision: schema.decisions.decision })
+          .from(schema.decisions).where(and(eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false),
+            inArray(schema.decisions.userId, scored.map(view => view.userId))));
+        const byUser = new Map(choices.map(choice => [choice.userId, choice.decision]));
+        const queued = scored.filter(view => byUser.get(view.userId) !== "skip" && (view.inTable || byUser.get(view.userId) === "apply"));
+        for (const view of queued) await enqueueStandard(tx, "score_job", { userId: view.userId, jobId });
+        if (queued.length) await tx.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: at })
+          .where(and(eq(schema.userJobs.jobId, jobId), inArray(schema.userJobs.userId, queued.map(view => view.userId))));
+      }
+    }
     if (deps.signal?.aborted) throw deps.signal.reason ?? new Error("Location task stopped during publication");
     return { jobId, resolved: true, locations: detail.locations.length, followers: eligible.length };
   });

@@ -134,6 +134,62 @@ it("names every outcome of a scoring attempt on the view the table reads", async
   expect(scoreJob).toHaveBeenCalledTimes(1);
 });
 
+it("rejects a live answer after the role changes, and queues a fresh score", async () => {
+  const { job } = await seedRole();
+  const scoreJob = vi.fn(async () => {
+    await db.update(schema.jobs).set({ title: "New operations title" }).where(eq(schema.jobs.id, job.id));
+    return { score: 80, verdict: "strong" as const, rationale: "Old title." };
+  });
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), aiDeps({ scoreJob })))
+    .toEqual({ skipped: "score result no longer current" });
+  expect(await viewOf(job.id)).toMatchObject({ fitScore: null, scoreState: "queued" });
+  expect((await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job")))).toHaveLength(1);
+});
+
+it("re-reads the account profile before publishing a live answer", async () => {
+  const { job } = await seedRole();
+  const scoreJob = vi.fn(async () => {
+    await db.insert(schema.preferenceProfiles).values({ userId, version: 1, markdown: "Now seeking finance roles" });
+    return { score: 80, verdict: "strong" as const, rationale: "Old profile." };
+  });
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), aiDeps({ scoreJob })))
+    .toEqual({ skipped: "score result no longer current" });
+  expect(await viewOf(job.id)).toMatchObject({ fitScore: null, scoreState: "queued" });
+});
+
+it("preserves a hidden view and marks a failed update against its previous fit", async () => {
+  const { job } = await seedRole();
+  await db.update(schema.userJobs).set({ hidden: true }).where(eq(schema.userJobs.jobId, job.id));
+  await handleScoreJob(task({ userId, jobId: job.id }), aiDeps({ scoreJob: vi.fn().mockResolvedValue({ score: 72, verdict: "strong", rationale: "Prior fit." }) }));
+  expect((await viewOf(job.id)).hidden).toBe(true);
+  await db.update(schema.jobs).set({ title: "Updated operations title" }).where(eq(schema.jobs.id, job.id));
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), aiDeps({ scoreJob: vi.fn().mockResolvedValue(null) })))
+    .toEqual({ skipped: "no ai result" });
+  expect(await viewOf(job.id)).toMatchObject({ fitScore: 72, scoreState: "failed", hidden: true });
+});
+
+it("rejects an empty live answer after the inputs change while it runs", async () => {
+  const { job } = await seedRole();
+  const scoreJob = vi.fn(async () => {
+    await db.update(schema.jobs).set({ status: "closed" }).where(eq(schema.jobs.id, job.id));
+    return null;
+  });
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), aiDeps({ scoreJob })))
+    .toEqual({ skipped: "score result no longer current" });
+  expect(await viewOf(job.id)).toMatchObject({ fitScore: null, scoredAt: null, scoreState: "closed" });
+});
+
+it("does not publish a live answer after the account skips the role", async () => {
+  const { job } = await seedRole();
+  const scoreJob = vi.fn(async () => {
+    await db.update(schema.userJobs).set({ archivedAt: now }).where(eq(schema.userJobs.jobId, job.id));
+    return { score: 88, verdict: "strong" as const, rationale: "Arrived late." };
+  });
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), aiDeps({ scoreJob })))
+    .toEqual({ skipped: "score result no longer current" });
+  expect(await viewOf(job.id)).toMatchObject({ fitScore: null, scoreState: "decided" });
+});
+
 it("records an unavailable model separately from an exhausted account budget", async () => {
   const { job } = await seedRole();
   expect(deps.ai.enabled).toBe(false);

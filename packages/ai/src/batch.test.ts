@@ -70,8 +70,10 @@ const context = (over: Partial<BatchResultContext> = {}): BatchResultContext => 
 describe("an A5 request for a batch", () => {
   it("is the live request exactly, less the refusal fallback the Batches API refuses", async () => {
     const { engine, live } = engineWith(fakeBatches().resource);
-    await engine.scoreJob(input);
-    const { params, meta, model } = await engine.scoreJobBatchRequest(input);
+    const multiLocation = { ...input, job: { ...input.job, location: undefined,
+      locations: ["Atlanta, Georgia", "Boston, Massachusetts"] } };
+    await engine.scoreJob(multiLocation);
+    const { params, meta, model } = await engine.scoreJobBatchRequest(multiLocation);
     const { betas: _betas, fallbacks: _fallbacks, ...sentLive } = live[0]!;
     expect(params).toEqual(sentLive);
     expect(params).not.toHaveProperty("betas");
@@ -79,6 +81,7 @@ describe("an A5 request for a batch", () => {
     expect(params).not.toHaveProperty("stream");
     expect(meta).toEqual({ promptId: "A5", promptVersion: PROMPTS.A5.version });
     expect(model).toBe(MODEL);
+    expect(JSON.stringify(params)).toContain("Boston, Massachusetts");
   });
 
   it("is held at the batch price, the account's context priced as a cache write and the output at its ceiling", async () => {

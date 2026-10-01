@@ -28,7 +28,7 @@
   .roleAction { order: 1; width: 100% !important; text-align: right; }
   .roleCompany { order: 2; }
   .roleTitle { order: 3; max-width: none; }
-  .roleLocation { order: 4; width: 100% !important; overflow-wrap: anywhere; }
+  .roleLocation { order: 4; width: 100% !important; max-width: none !important; overflow-wrap: anywhere; }
   .roleFit { order: 5; width: 100% !important; overflow-wrap: anywhere; }
   .roleFit :global([data-fit-steps]) { display: none; }
 

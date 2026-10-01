@@ -2236,8 +2236,13 @@ export function decisionDigest(decisions: DecisionForDigest[], opts: { maxItems?
   for (const d of sorted.slice(0, maxItems)) {
     const reason = (d.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
     const tags = d.tags.length ? ` #${d.tags.join(" #")}` : "";
-    const line = `- [${d.decision}] ${d.title} @ ${d.company}${d.location ? ` (${d.location})` : ""}${reason ? ` — ${reason}` : ""}${tags}`;
-    if (used + line.length + 1 > maxChars) break;
+    const location = d.location?.trim();
+    // Keep the actual decision's title, reason and tags in the digest even when its stored
+    // employer location list is enormous. The complete list remains on the decision record.
+    const digestLocation = location && location.length > 1_000
+      ? "multiple/long location listing omitted from this summary" : location;
+    const line = `- [${d.decision}] ${d.title} @ ${d.company}${digestLocation ? ` (${digestLocation})` : ""}${reason ? ` — ${reason}` : ""}${tags}`;
+    if (used + line.length + 1 > maxChars) continue;
     lines.push(line);
     used += line.length + 1;
   }
@@ -2346,7 +2351,7 @@ export interface ScoreJobInput {
   decisionDigest: string;
   /** The evidence that bears on this role, already bounded (`scoringEvidence` in core). */
   evidence?: string;
-  job: { title: string; company: string; location?: string; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
+  job: { title: string; company: string; location?: string; locations?: string[]; locationStatus?: "pending" | "unavailable"; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
 }
 
 /** One fit score, clamped and checked. */
@@ -2399,7 +2404,10 @@ function scoreJobUser(input: ScoreJobInput): { stable: string[]; tail: string } 
   const jobText = [
     `Title: ${j.title}`,
     `Company: ${j.company}`,
-    j.location ? `Location: ${j.location}` : null,
+    j.locations?.length ? `Employer-listed locations: ${j.locations.join("; ")}` : null,
+    !j.locations?.length && j.location ? `Location: ${j.location}` : null,
+    j.locationStatus === "pending" ? "Location: awaiting verification of the current places" : null,
+    j.locationStatus === "unavailable" ? "Location: current places could not be verified" : null,
     j.department ? `Department: ${j.department}` : null,
     j.employmentType ? `Employment type: ${j.employmentType}` : null,
     j.keywordTerms?.length ? `Matched keywords: ${j.keywordTerms.join(", ")}` : null,

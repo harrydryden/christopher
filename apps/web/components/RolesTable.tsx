@@ -297,7 +297,14 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
         <TD className={`${styles.roleLocation} max-w-[10rem]`}>
           <span className="md:hidden text-muted">Location: </span>
           <div className="flex flex-wrap items-center gap-1">
-            <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>
+            {row.locations.length > 3 ? (
+              <details>
+                <summary className="cursor-pointer">{row.locations[0]} + {row.locations.length - 1} more locations</summary>
+                <ul className="mt-2 space-y-1 text-12 [overflow-wrap:anywhere]">
+                  {row.locations.map((location, index) => <li key={`${location}-${index}`}>{location}</li>)}
+                </ul>
+              </details>
+            ) : <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>}
             {row.remote && <Badge tone="blue">Remote</Badge>}
             {!row.location && row.locations.length === 0 && !row.remote && <span className="text-muted">—</span>}
           </div>

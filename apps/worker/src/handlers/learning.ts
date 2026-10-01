@@ -9,6 +9,8 @@ import { aiBudgetStop } from "../context";
 import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
 import { log } from "../log";
 import { admitScores } from "../score-admission";
+import { scoreLocationInput } from "../score-location";
+import { loadUserSettings } from "../settings";
 
 /** What a handler finishes with when its account has no room left for the call it was about to make. */
 const BUDGET_SKIP = { skipped: "account ai budget exceeded" } as const;
@@ -80,6 +82,33 @@ export interface PreparedScore {
   preparedAt: Date;
 }
 
+async function scoreInputs(db: WorkerDeps["db"], userId: string,
+  job: typeof schema.jobs.$inferSelect, view: typeof schema.userJobs.$inferSelect,
+  settings: Awaited<ReturnType<WorkerDeps["userSettings"]>>) {
+  const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
+  const profile = await latestProfileFor(db, userId);
+  const digest = await buildDigest(db, userId);
+  const library = await latestCvLibrary(db, userId, { content: schema.cvLibraries.content });
+  const role = {
+    title: job.title,
+    company: company?.name ?? "",
+    ...scoreLocationInput(job),
+    department: job.department ?? undefined,
+    employmentType: job.employmentType ?? undefined,
+    description: view.inTable ? job.descriptionText ?? undefined : undefined,
+    keywordTerms: view.keywordTerms,
+  };
+  const input = {
+    profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
+    decisionDigest: digest,
+    evidence: library ? scoringEvidence(scoringEvidenceBlocks(library.content),
+      [role.title, role.department, ...(role.keywordTerms ?? []), role.description].filter(Boolean).join(" ")) : "",
+    job: role,
+  };
+  return { input, fingerprint: sha1(JSON.stringify([input, modelForCallSite(settings, "A5")])),
+    profileVersion: profile?.version ?? null };
+}
+
 /**
  * Everything the score handler decides before it asks the model: whether the role is still open
  * and still this account's to score, whether the account has room, and — when the inputs are the
@@ -99,6 +128,8 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   }
   const [view] = await deps.db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
   if (!view) return { done: { skipped: "role is not in this account's table" } };
+  if (!job.shared && job.addedBy !== userId && !view.addedByUrl)
+    return { done: { skipped: "role is no longer shared with this account" } };
   const settings = await deps.userSettings(userId);
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
@@ -114,35 +145,11 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
     return { done: { skipped: "role does not match and is not shortlisted" } };
   }
   const preparedAt = deps.now();
-  const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
-  const profile = await latestProfileFor(deps.db, userId);
-  const digest = await buildDigest(deps, userId);
-
-  const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
-  const role = {
-    title: job.title,
-    company: company?.name ?? "",
-    location: job.location ?? undefined,
-    department: job.department ?? undefined,
-    employmentType: job.employmentType ?? undefined,
-    // Near-miss candidates are scored on metadata only (no description fetch for roles outside the gate).
-    description: view.inTable ? job.descriptionText ?? undefined : undefined,
-    keywordTerms: view.keywordTerms,
-  };
-  const input = {
-    profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
-    decisionDigest: digest,
-    // The confirmed evidence that bears on this role, bounded: never the whole library.
-    evidence: library ? scoringEvidence(scoringEvidenceBlocks(library.content),
-      [role.title, role.department, ...(role.keywordTerms ?? []), role.description].filter(Boolean).join(" ")) : "",
-    job: role,
-  };
   // What the score was computed from. It is kept on this account's own view of the role, so an
   // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
-  const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
-  if (view.fitScore !== null && view.scoreInputHash === fingerprint) {
-    // The stored score still stands, so the row is scored: say so, which also repairs a row that
-    // predates the column and one queued by a scan that found nothing to re-read.
+  const { input, fingerprint, profileVersion } = await scoreInputs(deps.db, userId, job, view, settings);
+  if ((view.fitScore !== null || view.scoredAt !== null) && view.scoreInputHash === fingerprint) {
+    // A stored fit, or a completed request with no usable fit, already covers these inputs.
     await markScoreState(deps, userId, jobId, "scored");
     return { done: { skipped: "scoring inputs unchanged" } };
   }
@@ -164,16 +171,62 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
     await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : "budget");
     return { done: { skipped: scoreStop } };
   }
-  return { prepared: { userId, jobId, input, fingerprint, profileVersion: profile?.version ?? null, preparedAt } };
+  return { prepared: { userId, jobId, input, fingerprint, profileVersion, preparedAt } };
+}
+
+/** Recheck the exact request against the current role and account before publishing an AI answer. */
+export async function checkScorePublication(deps: WorkerDeps, db: WorkerDeps["db"],
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "preparedAt">): Promise<boolean> {
+  const { userId, jobId } = score;
+  // Gate, job, then view is the existing publication order used by description and location
+  // updates. These row locks keep their changes atomic with the score's final input check.
+  await db.execute(sql`select user_id from user_settings where user_id = ${userId}::uuid and key = 'gate' for share`);
+  const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).for("share").limit(1);
+  const [view] = await db.select().from(schema.userJobs)
+    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).for("update").limit(1);
+  if (!job || !view) return false;
+  const [choice] = await db.select({ decision: schema.decisions.decision }).from(schema.decisions)
+    .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
+  const ineligible: ScoreState | null = job.status !== "open" ? "closed"
+    : !job.shared && job.addedBy !== userId && !view.addedByUrl ? "ineligible"
+    : view.archivedAt || choice?.decision === "skip" ? "decided"
+    : !view.inTable && choice?.decision !== "apply" ? "ineligible" : null;
+  if (ineligible) {
+    await db.update(schema.userJobs).set({ scoreState: ineligible, scoreStateAt: deps.now() })
+      .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    return false;
+  }
+  const settings = await loadUserSettings(db, userId);
+  const current = await scoreInputs(db, userId, job, view, settings);
+  if (current.fingerprint !== score.fingerprint) {
+    // A changed input needs durable work even when the original task is about to finish or the
+    // provider batch has already taken ownership of it. A queued task with this key deduplicates.
+    if (view.fitScore === null || view.scoreInputHash !== current.fingerprint) {
+      await enqueueStandard(db, "score_job", { userId, jobId, live: true });
+      await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
+        .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    }
+    return false;
+  }
+  return !view.fitScoredAt || view.fitScoredAt <= score.preparedAt;
 }
 
 /**
  * The model was asked and gave nothing usable. The view says so beside its blank score, so a scan
  * does not queue the same inputs again every day; a changed profile or gate asks again.
  */
-export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date, userId: string, jobId: string): Promise<void> {
-  await db.update(schema.userJobs).set({ scoreState: "scored", scoreStateAt: now, scoredAt: now })
-    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date,
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "preparedAt">): Promise<boolean> {
+  const written = await db.update(schema.userJobs).set({
+    // A prior fit is retained for reference, but its attempted update has failed.
+    scoreState: sql<ScoreState>`case when ${schema.userJobs.fitScore} is null then 'scored' else 'failed' end`,
+    scoreInputHash: sql<string>`case when ${schema.userJobs.fitScore} is null then ${score.fingerprint} else ${schema.userJobs.scoreInputHash} end`,
+    scoreStateAt: now, scoredAt: now,
+  })
+    .where(and(eq(schema.userJobs.userId, score.userId), eq(schema.userJobs.jobId, score.jobId),
+      sql`(${schema.userJobs.fitScoredAt} is null or ${schema.userJobs.fitScoredAt} <= ${score.preparedAt})`))
+    .returning({ jobId: schema.userJobs.jobId });
+  return written.length > 0;
 }
 
 /**
@@ -206,7 +259,6 @@ export async function writeScore(
       scoreState: "scored",
       scoreStateAt: now,
       scoredAt: now,
-      hidden: false,
       updatedAt: now,
     })
     .where(and(eq(schema.userJobs.userId, score.userId), eq(schema.userJobs.jobId, score.jobId), fresher))
@@ -241,14 +293,21 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   // result", which a scan would never queue again. It stays unscored and the task retries.
   if (!result && failure?.kind === "model_access") throw new ModelAccessError(failure);
   if (!result) {
-    await markScoredWithoutResult(deps.db, deps.now(), userId, jobId);
-    return { skipped: "no ai result" };
+    return deps.db.transaction(async tx => {
+      const writer = tx as unknown as WorkerDeps["db"];
+      await deps.assertOwnership?.(writer);
+      if (!await checkScorePublication(deps, writer, prep.prepared)) return { skipped: "score result no longer current" };
+      return await markScoredWithoutResult(writer, deps.now(), prep.prepared)
+        ? { skipped: "no ai result" } : { skipped: "newer score already landed" };
+    });
   }
 
   return deps.db.transaction(async tx => {
-    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-    await writeScore(tx as unknown as WorkerDeps["db"], deps.now(), prep.prepared, result);
-    return { score: result.score, verdict: result.verdict };
+    const writer = tx as unknown as WorkerDeps["db"];
+    await deps.assertOwnership?.(writer);
+    if (!await checkScorePublication(deps, writer, prep.prepared)) return { skipped: "score result no longer current" };
+    return await writeScore(writer, deps.now(), prep.prepared, result, { preparedAt: prep.prepared.preparedAt })
+      ? { score: result.score, verdict: result.verdict } : { skipped: "newer score already landed" };
   });
 }
 
@@ -275,8 +334,8 @@ export async function latestProfile(deps: WorkerDeps, userId: string) {
   return latestProfileFor(deps.db, userId);
 }
 
-async function decisionRows(deps: WorkerDeps, userId: string, limit = 200) {
-  return deps.db
+async function decisionRows(db: WorkerDeps["db"], userId: string, limit = 200) {
+  return db
     .select()
     .from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.superseded, false)))
@@ -284,8 +343,8 @@ async function decisionRows(deps: WorkerDeps, userId: string, limit = 200) {
     .limit(limit);
 }
 
-async function buildDigest(deps: WorkerDeps, userId: string): Promise<string> {
-  const rows = await decisionRows(deps, userId, 100);
+async function buildDigest(db: WorkerDeps["db"], userId: string): Promise<string> {
+  const rows = await decisionRows(db, userId, 100);
   return decisionDigest(
     rows.map((d) => ({
       title: d.jobTitle,
@@ -346,7 +405,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
   const since = current ? counts.since : counts.total;
   if (!force && current && since < RESYNTHESIS_THRESHOLD) return { skipped: `only ${since} new decisions` };
   // The newest decisions are the prompt's; the count above is over every one of them.
-  const decisions = await decisionRows(deps, userId, 500);
+  const decisions = await decisionRows(deps.db, userId, 500);
 
   const disagreements = decisions
     .filter((d) => d.fitScoreAtDecision !== null && ((d.fitScoreAtDecision >= 70 && d.decision === "skip") || (d.fitScoreAtDecision < 30 && d.decision === "apply")))
@@ -440,7 +499,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
   const filterStop = await aiBudgetStop(deps, userId);
   if (filterStop) return { skipped: filterStop };
   const settings = await deps.userSettings(userId);
-  const decisions = await decisionRows(deps, userId, 300);
+  const decisions = await decisionRows(deps.db, userId, 300);
   if (decisions.length === 0) return { skipped: "no decisions" };
 
   // A rejection older than its window is no longer evidence of anything: the term is not named as

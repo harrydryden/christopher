@@ -1,0 +1,17 @@
+# Location display and export check
+
+This check used the dedicated local `ava_locations_web` database and a synthetic account. [seed.cjs](seed.cjs) resets that database, then creates a resolved role with the 70 locations in the captured Workday detail JSON, a two-location role, and a role with an invented long unbroken location name. No worker, model, email, live write, or external listing request ran.
+
+[browser-check.cjs](browser-check.cjs) used local Chromium through the installed Playwright runtime because the verification skill's `agent-browser` command was unavailable. It blocked all requests outside `http://localhost:3146`. At 1280 px and 375 px, [browser-check.json](browser-check.json) records a collapsed primary location with “+ 69 more locations”, keyboard focus and Enter expansion, all 70 names including Boston, page End reaching the last location, and Space collapse. The two-location role remained inline. Both collapsed and expanded document widths equalled the viewport width; the invented 180-character location also caused no horizontal overflow. The four [screenshots](mobile-375-collapsed.png) capture desktop and mobile states. No page error or blocked external request occurred. This is an automated browser check, not a human usability or assistive technology assessment.
+
+The final mobile capture also includes a card-width correction for its location field: the collapsed long-list label and the two-location role use the available card width.
+
+The expanded list uses normal page scrolling. An initial bounded inner scroll area did not respond to End in Chromium; removing the inner scroll made the last location reachable with the browser's native page keys. The full list therefore makes the page long only when the user opens it.
+
+Static CSV review: the export joins resolved locations into one comma-delimited CSV cell, separated within that cell by semicolons, and falls back to the primary location if the list is empty. `csvRow` still applies `csvCell` to the complete text; its existing formula-prefix guard and RFC 4180 quoting are unchanged. A targeted route test covers Boston and primary fallback; the existing formula injection test also passed. The two targeted test files passed 30/30 and `git diff --check` passed.
+
+New decision snapshots now record the ordered location list. If the source is pending or unavailable, only names with a prior `location_fetched_at` are labelled as previously verified; an unverified list records the explicit status alone. Existing decisions are not rewritten. The isolated `ava_location_decisions_test` database passed the full decision integration suite (17/17), including Boston, both unverified states, primary fallback, and the historical snapshot after the job's location changes.
+
+Final [web typecheck](web-typecheck.log) and [production build](web-build.log) passed. An earlier typecheck had briefly failed in concurrent worker edits; those errors were resolved before these final checks.
+
+Replay from the repository root: run `node docs/reviews/2026-10-01/implementation-evidence/location-consistency/seed.cjs`, start `DATABASE_URL='postgres://postgres:postgres@127.0.0.1:55439/ava_locations_web' SESSION_SECRET='synthetic-location-browser-secret-2026' pnpm --filter @ava/web dev --port 3146`, then run `node docs/reviews/2026-10-01/implementation-evidence/location-consistency/browser-check.cjs`. The local server used for this capture was stopped afterwards.

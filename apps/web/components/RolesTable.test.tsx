@@ -492,6 +492,29 @@ it("draws each row's company from the page's map and says in words what its live
   expect(container.querySelector<HTMLAnchorElement>(`#role-review-${other.id} a[href="https://northwind.example"]`)?.textContent).toBe("Website ↗");
 });
 
+it("keeps a long location list reviewable and exposes every place on demand", () => {
+  const locations = ["USA, GA, Atlanta", ...Array.from({ length: 68 }, (_, i) => `Location ${i + 1}`), "USA, MA, Boston"];
+  const multiLocation: RoleRowVM = { ...FIRST, location: locations[0]!, locations };
+  act(() => root.render(<RolesTable rows={[multiLocation]} companies={COMPANIES} emptyState={<p>Nothing</p>} />));
+
+  const details = container.querySelector<HTMLDetailsElement>("tbody details");
+  const summary = details?.querySelector("summary");
+  expect(details?.open).toBe(false);
+  expect(summary?.textContent).toBe("USA, GA, Atlanta + 69 more locations");
+  expect(details?.querySelectorAll("li")).toHaveLength(70);
+  expect(details?.querySelector("li:last-child")?.textContent).toBe("USA, MA, Boston");
+  expect(details?.querySelector("ul")?.className).not.toContain("overflow-y-auto");
+  act(() => summary!.click());
+  expect(details?.open).toBe(true);
+});
+
+it("shows a short location list directly", () => {
+  const fewLocations: RoleRowVM = { ...FIRST, location: "London", locations: ["London", "Manchester"] };
+  act(() => root.render(<RolesTable rows={[fewLocations]} companies={COMPANIES} emptyState={<p>Nothing</p>} />));
+  expect(container.querySelector("tbody details")).toBeNull();
+  expect(container.querySelector("tbody")?.textContent).toContain("London, Manchester");
+});
+
 it("brings an undone row back with its company even when the new page's map no longer holds it", async () => {
   const other: RoleRowVM = { ...role("33333333-3333-4333-8333-333333333333", "Site Lead"), companyId: "company-2", companyName: "Northwind" };
   const withBoth: RoleCompaniesVM = { ...COMPANIES, "company-2": { iconSrc: null, domain: "northwind.example", homepageUrl: "https://northwind.example" } };

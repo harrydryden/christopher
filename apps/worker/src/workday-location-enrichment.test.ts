@@ -8,6 +8,7 @@ import { readEnv } from "./env";
 import { _scanSourceForTests } from "./handlers/scan";
 import { handleFetchLocations } from "./handlers/locations";
 import { handleFetchDescription } from "./handlers/description";
+import { handleScoreJob } from "./handlers/learning";
 import { onAbandon } from "./handlers/abandon";
 import { TaskDeferred } from "./queue";
 import { ensureTestUser } from "./test-users";
@@ -277,7 +278,7 @@ it("defers a location task at its source's hourly read cap without a detail requ
   expect(f.fetchText.mock.calls.filter(([requestUrl]) => requestUrl === detailUrl)).toHaveLength(1);
 });
 
-it("re-evaluates secondary locations without invalidating a score on the unchanged primary place", async () => {
+it("re-evaluates secondary locations and invalidates a score whose offered places changed", async () => {
   const f = await fixture();
   await f.scan();
   await handleFetchLocations(await f.locationTask(), f.mocked);
@@ -290,8 +291,100 @@ it("re-evaluates secondary locations without invalidating a score on the unchang
   f.setDetailAdditional("Seattle, Washington, United States");
   await handleFetchLocations(await f.locationTask(), f.mocked);
   const [after] = await db.select().from(schema.userJobs);
-  expect(after!.fitScore).toBe(77);
-  expect(after!.scoredAt).toEqual(new Date("2026-10-01T09:00:00Z"));
+  expect(after!.fitScore).toBeNull();
+  expect(after!.scoredAt).toBeNull();
   expect(after!.inTable).toBe(false);
   expect(after!.archivedAt).not.toBeNull();
+});
+
+it("scores a Boston-qualified role using both resolved locations and re-scores when only the second changes", async () => {
+  const f = await fixture([]);
+  await f.scan();
+  const restricted = await ensureTestUser(db, "workday-score-boston@example.com");
+  await db.insert(schema.userSettings).values({ userId: restricted.id, key: "gate", value: {
+    includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"],
+    locationTerms: ["Boston"], includeRemote: true,
+  } });
+  await subscribeToCompany(db, restricted.id, f.company.id);
+  await reevaluateGate(db, restricted.id, await deps.userSettings(restricted.id), now, { companyId: f.company.id });
+  await handleFetchLocations(await f.locationTask(), f.mocked);
+  const calls: Array<{ job: { location?: string; locations?: string[] } }> = [];
+  const scoreJob = vi.fn(async (input: { job: { location?: string; locations?: string[] } }) => {
+    calls.push(input);
+    return { score: 80, verdict: "strong" as const, rationale: "Boston is offered.", flags: [] };
+  });
+  const scoringDeps = { ...f.mocked, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
+  const job = await f.job();
+  const task = { payload: { userId: restricted.id, jobId: job.id } } as never;
+  await handleScoreJob(task, scoringDeps);
+  expect(calls[0]!.job).toMatchObject({ locations: ["Atlanta, Georgia, United States", "Boston, Massachusetts, United States"] });
+  expect(calls[0]!.job.location).toBeUndefined();
+  const [first] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, restricted.id));
+  expect(first!.scoreInputHash).toMatch(/^[0-9a-f]{40}$/);
+  const unrestrictedTask = { payload: { userId: f.user.id, jobId: job.id } } as never;
+  await handleScoreJob(unrestrictedTask, scoringDeps);
+  const [unrestrictedBefore] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, f.user.id));
+
+  await db.delete(schema.tasks);
+  now = new Date("2026-10-09T09:00:00Z");
+  await f.scan();
+  await handleFetchLocations(await f.locationTask(), f.mocked);
+  const [unchanged] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, f.user.id));
+  expect(unchanged!.fitScore).toBe(80);
+  expect(unchanged!.scoreInputHash).toBe(unrestrictedBefore!.scoreInputHash);
+  const askedBefore = scoreJob.mock.calls.length;
+  expect(await handleScoreJob(unrestrictedTask, scoringDeps)).toEqual({ skipped: "scoring inputs unchanged" });
+  expect(scoreJob).toHaveBeenCalledTimes(askedBefore);
+
+  await db.delete(schema.tasks);
+  now = new Date("2026-10-17T09:00:00Z");
+  await f.scan();
+  f.setDetailAdditional("Seattle, Washington, United States");
+  await handleFetchLocations(await f.locationTask(), f.mocked);
+  const [changed] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, restricted.id));
+  expect(changed!.fitScore).toBeNull();
+  expect(changed!.inTable).toBe(false);
+  // An unrestricted account still has this role and gets a new A5 input from the changed list.
+  await handleScoreJob(unrestrictedTask, scoringDeps);
+  expect(calls.at(-1)!.job.locations).toContain("Seattle, Washington, United States");
+  const [unrestrictedAfter] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, f.user.id));
+  expect(unrestrictedAfter!.scoreInputHash).not.toBe(unrestrictedBefore!.scoreInputHash);
+});
+
+it("retries a pending-status no-result score when unchanged names become verified", async () => {
+  const f = await fixture([]);
+  await f.scan();
+  const restricted = await ensureTestUser(db, "workday-pending-score-boston@example.com");
+  await db.insert(schema.userSettings).values({ userId: restricted.id, key: "gate", value: {
+    includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"],
+    locationTerms: ["Boston"], includeRemote: true,
+  } });
+  await subscribeToCompany(db, restricted.id, f.company.id);
+  await reevaluateGate(db, restricted.id, await deps.userSettings(restricted.id), now, { companyId: f.company.id });
+  await handleFetchLocations(await f.locationTask(), f.mocked);
+
+  await db.delete(schema.tasks);
+  now = new Date("2026-10-09T09:00:00Z");
+  await f.scan();
+  expect((await f.job()).locationResolution).toBe("pending");
+  const scoreJob = vi.fn()
+    .mockResolvedValueOnce(null)
+    .mockResolvedValue({ score: 80, verdict: "strong", rationale: "Both places verified.", flags: [] });
+  const scoringDeps = { ...f.mocked, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
+  const task = { payload: { userId: f.user.id, jobId: (await f.job()).id } } as never;
+  await handleScoreJob(task, scoringDeps);
+  const [pendingScore] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, f.user.id));
+  expect(pendingScore).toMatchObject({ fitScore: null, scoredAt: now });
+  expect(scoreJob.mock.calls[0]![0].job).toMatchObject({ locationStatus: "pending" });
+
+  const locationTask = await f.locationTask();
+  await db.delete(schema.tasks);
+  await handleFetchLocations(locationTask, f.mocked);
+  const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+  expect(queued.some(row => row.payload.userId === f.user.id && row.status === "queued")).toBe(true);
+  const [waiting] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, f.user.id));
+  expect(waiting).toMatchObject({ fitScore: null, scoreState: "queued" });
+  await handleScoreJob(task, scoringDeps);
+  expect(scoreJob).toHaveBeenCalledTimes(2);
+  expect(scoreJob.mock.calls[1]![0].job.locations).toContain("Boston, Massachusetts, United States");
 });

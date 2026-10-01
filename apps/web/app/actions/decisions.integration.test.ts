@@ -350,6 +350,50 @@ describe("recent Undo tokens", () => {
 });
 
 describe("one decision writer", () => {
+  it("snapshots ordered verified sites and labels retained names while verification is pending or unavailable", async () => {
+    const resolved = await role(null);
+    const pending = await role(null);
+    const unavailable = await role(null);
+    const unknown = await role(null);
+    const primaryOnly = await role(null);
+    await database.update(schema.jobs).set({
+      location: "USA, GA, Atlanta", locations: ["USA, GA, Atlanta", "USA, MA, Boston", "USA, VA, Reston"],
+      locationResolution: "resolved", locationLabel: "3 Locations",
+    }).where(eq(schema.jobs.id, resolved.id));
+    await database.update(schema.jobs).set({
+      location: "USA, GA, Atlanta", locations: ["USA, GA, Atlanta", "USA, MA, Boston"],
+      locationResolution: "pending", locationLabel: "70 Locations", locationFetchedAt: new Date("2026-09-30T00:00:00Z"),
+    }).where(eq(schema.jobs.id, pending.id));
+    await database.update(schema.jobs).set({
+      location: "USA, GA, Atlanta", locations: ["USA, GA, Atlanta", "USA, MA, Boston"],
+      locationResolution: "unavailable", locationLabel: "70 Locations", locationFetchedAt: new Date("2026-09-30T00:00:00Z"),
+    }).where(eq(schema.jobs.id, unavailable.id));
+    await database.update(schema.jobs).set({
+      location: "USA, GA, Atlanta", locations: ["USA, GA, Atlanta", "USA, MA, Boston"],
+      locationResolution: "pending", locationLabel: "70 Locations", locationFetchedAt: null,
+    }).where(eq(schema.jobs.id, unknown.id));
+    await database.update(schema.jobs).set({ location: "Leeds", locations: [] })
+      .where(eq(schema.jobs.id, primaryOnly.id));
+
+    const ids = [resolved.id, pending.id, unavailable.id, unknown.id, primaryOnly.id];
+    expect(await decideRoles(ids, "skip", "Not interested")).toEqual({ ok: true });
+    const snapshots = await database.select({ jobId: schema.decisions.jobId, location: schema.decisions.jobLocation })
+      .from(schema.decisions);
+    expect(new Map(snapshots.map(row => [row.jobId, row.location]))).toEqual(new Map([
+      [resolved.id, "USA, GA, Atlanta; USA, MA, Boston; USA, VA, Reston"],
+      [pending.id, "Previously verified locations: USA, GA, Atlanta; USA, MA, Boston — Locations awaiting verification"],
+      [unavailable.id, "Previously verified locations: USA, GA, Atlanta; USA, MA, Boston — Locations could not be verified"],
+      [unknown.id, "Locations awaiting verification"],
+      [primaryOnly.id, "Leeds"],
+    ]));
+
+    await database.update(schema.jobs).set({ location: "New York", locations: ["New York"], locationResolution: "resolved" })
+      .where(eq(schema.jobs.id, resolved.id));
+    const [historical] = await database.select({ location: schema.decisions.jobLocation })
+      .from(schema.decisions).where(eq(schema.decisions.jobId, resolved.id));
+    expect(historical?.location).toBe("USA, GA, Atlanta; USA, MA, Boston; USA, VA, Reston");
+  });
+
   /** What a decision left behind for one role, with its own ids written out of it. */
   async function leftBehind(jobId: string) {
     const rows = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, jobId)).orderBy(schema.decisions.createdAt);

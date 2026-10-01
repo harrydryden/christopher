@@ -492,20 +492,20 @@ describe("the poll applier", () => {
     expect(await holds()).toHaveLength(0);
   });
 
-  it("never changes table membership: a late score orders a row, and adds or removes none", async () => {
+  it("never changes table membership or scores a role that has left it", async () => {
     const { jobs, record } = await submitted([{ userId: alice }, { userId: alice, inTable: false }, { userId: bob }]);
     // Bob's gate is narrowed while the batch runs: his role leaves the table before its score lands.
     await db.update(schema.userJobs).set({ inTable: false }).where(and(eq(schema.userJobs.userId, bob), eq(schema.userJobs.jobId, jobs[2]!.id)));
     const before = await db.select({ userId: schema.userJobs.userId, jobId: schema.userJobs.jobId, inTable: schema.userJobs.inTable }).from(schema.userJobs);
     const scoreFor = new Map([[jobs[0]!.id, 95], [jobs[1]!.id, 10], [jobs[2]!.id, 80]]);
     provider.end(record.batchId, record.items.map(item => succeeded(item.customId, scoreFor.get(item.jobId))));
-    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ scored: 3 });
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ scored: 2, stale: 1 });
     const after = await db.select({ userId: schema.userJobs.userId, jobId: schema.userJobs.jobId, inTable: schema.userJobs.inTable }).from(schema.userJobs);
     expect(after.sort((a, b) => a.jobId.localeCompare(b.jobId))).toEqual(before.sort((a, b) => a.jobId.localeCompare(b.jobId)));
     expect(after.find(row => row.jobId === jobs[0]!.id)!.inTable).toBe(true);
     expect(after.find(row => row.jobId === jobs[1]!.id)!.inTable).toBe(false);
     expect(after.find(row => row.jobId === jobs[2]!.id)!.inTable).toBe(false);
-    expect((await viewOf(bob, jobs[2]!.id)).fitScore).toBe(80);
+    expect((await viewOf(bob, jobs[2]!.id)).fitScore).toBeNull();
   });
 
   it("never lets a score from older inputs replace one computed since", async () => {
@@ -517,6 +517,33 @@ describe("the poll applier", () => {
     expect((await viewOf(alice, jobs[0]!.id)).fitScore).toBe(55);
     // It was still billed, so it is still in the ledger.
     expect(await db.select().from(schema.aiCalls)).toHaveLength(1);
+  });
+
+  it("does not publish a batch answer for a changed role and queues current work", async () => {
+    const { jobs, record } = await submitted([{ userId: alice }]);
+    await db.update(schema.jobs).set({ title: "Director of Operations" }).where(eq(schema.jobs.id, jobs[0]!.id));
+    provider.end(record.batchId, [succeeded(record.items[0]!.customId, 99)]);
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
+    expect(await viewOf(alice, jobs[0]!.id)).toMatchObject({ fitScore: null, scoreState: "queued" });
+    const live = (await tasksOf("score_job")).filter(task => task.status === "queued");
+    expect(live.map(task => task.payload)).toEqual([{ userId: alice, jobId: jobs[0]!.id, live: true }]);
+  });
+
+  it("does not let an empty batch answer finish a score after the role closes", async () => {
+    const { jobs, record } = await submitted([{ userId: alice }]);
+    await db.update(schema.jobs).set({ status: "closed" }).where(eq(schema.jobs.id, jobs[0]!.id));
+    provider.end(record.batchId, [{ custom_id: record.items[0]!.customId,
+      result: { type: "succeeded", message: { ...answer(), parsed_output: null } } }]);
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
+    expect(await viewOf(alice, jobs[0]!.id)).toMatchObject({ fitScore: null, scoredAt: null, scoreState: "closed" });
+  });
+
+  it("does not publish a batch answer after a role becomes private to another account", async () => {
+    const { jobs, record } = await submitted([{ userId: alice }]);
+    await db.update(schema.jobs).set({ shared: false, addedBy: bob }).where(eq(schema.jobs.id, jobs[0]!.id));
+    provider.end(record.batchId, [succeeded(record.items[0]!.customId, 91)]);
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
+    expect(await viewOf(alice, jobs[0]!.id)).toMatchObject({ fitScore: null, scoreState: "ineligible" });
   });
 
   it("puts batch spend in the figures Health reports", async () => {

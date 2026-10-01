@@ -1,0 +1,7 @@
+Location scoring verification used an isolated local PostgreSQL 16 container named `jtbd-location-test-db`, published only to `127.0.0.1:5433`, with database `ava_test`. The worker integration run set `TEST_DATABASE_URL` to that instance. After combined verification, the container was stopped; it was started with `--rm` and its absence was confirmed with `docker ps -a --filter name=jtbd-location-test-db`. The shared database on port 55439 was untouched.
+
+`ai-tests.log` contains the A5 engine and batch request tests. `worker-location-tests.log` contains the Workday integration and canonical location tests. `ai-typecheck.log` and `worker-typecheck.log` contain the respective package type checks. The worker type check log was regenerated after correcting a test mock cast; its final run passed.
+
+The A5 system prompt and its registry version were unchanged. The role part of the A5 user input changed, which changes request hashes and can require fresh recordings for affected multi-location roles. These tests verify evidence delivery and scoring invalidation; they do not measure model judgement quality.
+
+The Workday adapter accepts up to 1,000 locations of up to 200 characters each. Current A5 input preserves all listed names so it does not silently omit a relevant place, but unusually large lists can increase context use and cost. Decision digests replace a location list over 1,000 characters with an explicit omission notice, preserving the decision's title, reason and tags and leaving the complete list on the stored decision.

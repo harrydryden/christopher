@@ -454,12 +454,12 @@ export const userJobs = pgTable(
      */
     scoreInputHash: text("score_input_hash"),
     /**
-     * What happened to the last score attempt, so a blank score can say which of its five causes
-     * it is. Null means "nothing recorded yet", which is how every row that predates the column
-     * reads; the interface falls back to the score itself, exactly as R-9.6 requires.
+     * What happened to the last score request or attempt. Null means "nothing recorded yet",
+     * which is how every row that predates the column reads; the interface falls back to the
+     * score itself, exactly as R-9.6 requires.
      */
     scoreState: text("score_state", { enum: SCORE_STATES }).$type<ScoreState>(),
-    /** When `scoreState` was last set. A `queued` state older than the task deadline is stale. */
+    /** When `scoreState` was last set. Age alone never proves failure; durable tasks own work. */
     scoreStateAt: ts("score_state_at"),
     /**
      * When the last scoring of this view completed. Beside a null `fitScore` it means the model was
@@ -488,6 +488,8 @@ export const userJobs = pgTable(
     primaryKey({ columns: [t.userId, t.jobId] }),
     index("user_jobs_job_idx").on(t.jobId),
     index("user_jobs_table_idx").on(t.userId, t.inTable, t.archivedAt, t.fitScore),
+    index("user_jobs_waiting_score_idx").on(t.scoreStateAt.asc().nullsFirst(), t.userId, t.jobId)
+      .where(sql`${t.scoreState} in ('requested', 'queued')`),
   ],
 );
 

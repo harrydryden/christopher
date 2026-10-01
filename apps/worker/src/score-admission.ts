@@ -60,6 +60,7 @@ export async function admitScores(
       left join lateral (select d.decision from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
         and d.superseded = false limit 1) choice on true
       where (${!opts.onlyUnscored} or (uj.fit_score is null and uj.scored_at is null))
+      order by uj.user_id, uj.job_id
       for update of uj`);
     const candidates = result.rows;
     for (const reason of ["closed", "decided", "ineligible"] as const)

@@ -1,0 +1,91 @@
+{
+  "at": "2026-10-01T15:59:35.651551+00:00",
+  "baseCommit": "813eae4d40e7dfb4786cc8e587c287564fdf28bf",
+  "scope": "Historical score recovery and role-scoped retry",
+  "verification": {
+    "workerFull": {
+      "passed": 740,
+      "failed": 0,
+      "skipped": 0
+    },
+    "workerPrevious": {
+      "passed": 711,
+      "failed": 11,
+      "skipped": 18
+    },
+    "webFullBeforeInventoryFix": {
+      "passed": 1249,
+      "failed": 1
+    },
+    "authFileAfterInventoryFix": {
+      "passed": 160,
+      "failed": 0
+    },
+    "db": {
+      "passed": 98,
+      "failed": 0
+    },
+    "types": "all five packages passed; web checked after browser repair",
+    "workerBuild": "passed",
+    "webBuild": {
+      "status": "passed",
+      "id": "ME_9axPZfATYgmYkIUYey"
+    },
+    "browser": "375px normal/doubled computed text; exact requested intent then no-AI unavailable; prior score retained"
+  },
+  "readiness": {
+    "J1": 83,
+    "J2": 77,
+    "J3": 85,
+    "J4": 83,
+    "J5": 85,
+    "J6": 85,
+    "J7": 80,
+    "J8": 83,
+    "J9": 70
+  },
+  "targetAchieved": false,
+  "files": {
+    "apps/web/app/actions/scores.integration.test.ts": "6bc0135eb3fa638eb202c59cfc15e00f2d1c486986a32b363d7e9ca6e5a2a14c",
+    "apps/web/app/actions/scores.ts": "db90827e0d1065c6d31e6dc742d256ec57237cdacd3039e662f2502286e548e9",
+    "apps/web/app/server-actions-auth.integration.test.ts": "cf0d7e5681a8f465a8065fbab974a16da994c7e653305ff78e88cd017f0ffb5f",
+    "apps/web/components/RetryScore.tsx": "09535be11f9f7ded2be6b1a0f504f13adbe3bd5435f18b69fe6a91660f1ac237",
+    "apps/web/components/RolesTable.test.tsx": "e96279f40e07089f291ba040e259855356138a12ba63af3686699c852a6027ac",
+    "apps/web/components/RolesTable.tsx": "7888252a989d2f2f3e8954f51b1210ab26e8fec5ad30cb0cdf606634f368f574",
+    "apps/worker/src/handlers/score-batch-recovery.ts": "468a8260be7cc5228c89c0947d9219105432c75f2f5b84fd9d26d692bb74d7ef",
+    "apps/worker/src/maintenance.test.ts": "5b31b08fbc37067e854d231e81ea893e929d24cc2a3a68140a9fe715ad12f54d",
+    "apps/worker/src/maintenance.ts": "1bd1ab4a506281392570bb98c51aa17ff317ad0e3b61199b83ba8511fee159c4",
+    "apps/worker/src/score-admission.test.ts": "819b7c6532319cdbdb7a39cfd634899f0a625feedbb7fe59a9966a397e64f394",
+    "apps/worker/src/score-admission.ts": "3817cf47b0771339b490669e9d0d9f3301c402e3e2d19699f8731035cac02e74",
+    "apps/worker/src/score-batch.test.ts": "ca74d83a2968a91fa41e8bacc44742a3787b9238c3e1d23bd8f51978dc87fe2e",
+    "apps/worker/src/score-orphans.test.ts": "429876dd05905c9644bfab819dd7767f96c9868c87bba5b4122a7c38d4811c38",
+    "apps/worker/src/score-orphans.ts": "4c149f133229b625afbe34fa8e630da2bd9cbd6673a53879ca7992328bae4cd0",
+    "docs/DEPLOY.md": "487be4fa04ddd212ecdd2beea422f4959cb599b8ce0f39f09adb3aaf65b4767b",
+    "docs/SPEC.md": "5f199b14922c81b111b8b5450b0b822a3fc4d72d6536c6c935fc0748b99e2627",
+    "docs/reviews/2026-09-29/PARTIAL-SOURCE-PUBLICATION-PLAN.md": "44d0ee6d8762638b526ced4754a2757a4edca7287ed9482f6f38a6f8d16cfb41",
+    "docs/reviews/2026-09-29/RESCORE-90.md": "1733672d20e53c51c5f41be20e2a1208d8a10effa3ae4e5a07d49afefb905704",
+    "docs/reviews/2026-09-29/SCORE-RECOVERY-INDEPENDENT-REVIEW.md": "92c1da907ce3502eef4213fef975e03a1903d1b59ddd1c236ec9a94d2677df15",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/auth-final.log": "4eb0154838dca07c366c20dc1603d2230ef6d1d125bc679cf6ffbcb525da2846",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/browser-check.cjs": "ce935100183940508c433110a9650854f1453b585049924f79adace0e10451f3",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/browser-check.json": "d0e68889b2c5db365ff165d834b7d3ef7ae5da80a5710a9bd837f1118345bb97",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/db-full.log": "7b44f6199dbe576a9dc572455029b6a7b29f767280b0a7f02ae9c16edaa32a49",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/e2e-isolated.log": "619ab60af7f93a4d97454485a2ad4081064e31f48d6f17b5e8502a2fff788e9c",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/orphan-focused.log": "684bbb5464660a8d94e6bef9c624e71b43dddf30f788a582f2dda6137b518b23",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/retry-failed-375.png": "a2ec61e6af0b0a764e62f1f1e3a4797773907fff8f071f1189ac6f83c9a59ea3",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/retry-requested-375.png": "dbd97bfe5bda6faa1706e206267854c812149560b4f6725c3d66d7b00bcd67d8",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/retry-text200-375.png": "4cf0b3e481988b74d1e88aba156498a5b0d96f2b7f3ad114b938e7901b92869a",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/retry-text200-viewport-375.png": "f279ad07d8be4961e5a9229161cf4eddd9e4d0a18c8cd81f47f07bc3e5c6d02e",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/retry-unavailable-375.png": "d2fa7dc589065bd2df31289c57b2189e7cd3de57816affeb6c155559ecbcafb1",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/types-all.log": "75e3712cceb8a94dd2050bc0d72d99017273030a09c5870ed69a2835786171f0",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/web-build.log": "9a2ae81306e6b66440823f25472bf49de7d9f7fc721044810c851e50cf62d887",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/web-full-inventory-failure.log": "898c885bf8fd341b624aae4b289f0f8fb7fb80107f5443892b11986689a4ff07",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/worker-build.log": "529a7c8e21c773f62a1f93762169ff8ad5eb0cbc23b9f5e82c7ce9de4b22972e",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/worker-full-final.log": "8b9d70dfde62e49f0e38538077d2f8ec9a20175105604655bc4621a79930cb14",
+    "docs/reviews/2026-09-29/implementation-evidence/score-recovery/worker-interrupted.log": "06528f0e286f267b23762be0c5f24bb34095e5aead4ca669b0bf9d7dffe1e4b8",
+    "docs/reviews/2026-10-01/SCORE-RECOVERY-VERIFICATION.md": "40a1bd75986e00a443a08c39ac39951bf1f79895ccade7f2130bd567808b22d4",
+    "packages/db/drizzle/0049_waiting_score_reconciliation.sql": "c00b717c4c1b43a65f77517b70de424abadcb03cd6b6613622cdcb7451965768",
+    "packages/db/drizzle/meta/_journal.json": "d3ff9480779d7ef8d0dd08a71f35e24eeee320aed03bd79d780985e8dbe73035",
+    "packages/db/src/schema.ts": "e94255f01390fa086ea33fd762812daa9df056c900a266aeb8ada12bc2d5ba01",
+    "packages/db/src/tasks.ts": "773964e6870b7fc965b723c11d35a3f74736c0a3378dc8ca9a24647549e289fb"
+  }
+}

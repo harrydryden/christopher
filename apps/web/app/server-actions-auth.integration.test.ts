@@ -129,6 +129,7 @@ const GATES: Record<string, Record<string, Gate>> = {
     rejectFilterSuggestion: "user", resynthesizeNow: "verified", rescoreAllRoles: "verified", savePreferenceProfile: "verified",
     acceptReasonTag: "user",
   },
+  "actions/scores.ts": { retryFailedScore: "verified" },
   "actions/library-import.ts": {
     importLibraryDocument: "verified", acceptLibraryImport: "user", dismissLibraryImport: "user", retryLibraryImport: "verified",
   },

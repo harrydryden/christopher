@@ -135,6 +135,38 @@ it("does not clobber a score when the only score task was deduplicated", async (
   expect((await view(pair.userId, pair.jobId)).scoreState).toBe("scored");
 });
 
+it("takes the role lock before inserting a score task", async () => {
+  const pair = await role();
+  let release!: () => void;
+  let locked!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { locked = resolve; });
+  const holder = db.transaction(async tx => {
+    await tx.execute(sql`select job_id from user_jobs where user_id = ${pair.userId}::uuid and job_id = ${pair.jobId}::uuid for update`);
+    locked();
+    await gate;
+  });
+  await ready;
+  const scoring = queueScoring(db, [pair], now);
+  try {
+    let waiting = false;
+    for (let n = 0; n < 40 && !waiting; n++) {
+      const result = await db.execute<{ waiting: boolean }>(sql`select exists(select 1 from pg_stat_activity
+        where pid <> pg_backend_pid() and wait_event_type = 'Lock'
+          and query like 'select uj.user_id, uj.job_id from user_jobs uj%') as waiting`);
+      waiting = result.rows[0]?.waiting === true;
+      if (!waiting) await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    expect(waiting).toBe(true);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).toHaveLength(0);
+  } finally {
+    release();
+  }
+  await holder;
+  expect(await scoring).toBe(1);
+  expect((await view(pair.userId, pair.jobId)).scoreState).toBe("queued");
+});
+
 it("terminal abandonment marks only orphaned current requests and queued scores failed", async () => {
   const pair = await role();
   await requestScores(db, [pair], now);

@@ -188,6 +188,12 @@ export async function queueScoring(
   for (let offset = 0; offset < pairs.length; offset += 250) {
     const batch = pairs.slice(offset, offset + 250);
     queued += await db.transaction(async tx => {
+      // A score request, orphan repair and provider-batch hand-back all lock the view before
+      // touching task rows. Keep this exported helper in the same order even outside admission.
+      await tx.execute(sql`select uj.user_id, uj.job_id from user_jobs uj
+        join jsonb_to_recordset(${JSON.stringify(batch.map(({ userId, jobId }) => ({ userId, jobId })))}::jsonb)
+          as v("userId" uuid, "jobId" uuid) on uj.user_id = v."userId" and uj.job_id = v."jobId"
+        order by uj.user_id, uj.job_id for update of uj`);
       const accepted = await insertTasks(tx, batch.map(({ userId, jobId, priority }) =>
         taskRow("score_job", opts.background ? { userId, jobId, background: true } : { userId, jobId },
           priority === undefined ? {} : { priority })), opts.promote === true);

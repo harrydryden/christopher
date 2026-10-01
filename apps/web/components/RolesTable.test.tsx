@@ -19,8 +19,10 @@ const actions = vi.hoisted(() => ({
   undoDecisionsIfCurrent: vi.fn(),
   archiveRoles: vi.fn(),
   roleDetails: vi.fn(),
+  retryFailedScore: vi.fn(),
 }));
 vi.mock("@/app/actions/decisions", () => actions);
+vi.mock("@/app/actions/scores", () => ({ retryFailedScore: actions.retryFailedScore }));
 vi.mock("@/app/actions/cv", () => ({ requestCv: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: ReactNode; href: string }) => <a href={href}>{children}</a> }));
@@ -191,6 +193,46 @@ it("keeps an earlier fit score visible beside an honest pending update in the ro
   const review = container.querySelector(`#role-review-${pending.id}`)!;
   expect(review.textContent).toContain("72");
   expect(review.textContent).toContain("Previous score; update pending");
+});
+
+it("offers one Retry score in a failed review and preserves the previous score and manual decision", async () => {
+  const failed: RoleRowVM = { ...FIRST, scoreState: "failed", scoreStateText: "Previous score; update failed; review manually",
+    workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: FIRST.id, decision: "apply", reason: "Relevant work", createdLabel: "just now", createdTitle: "now" } };
+  const request = deferred();
+  actions.retryFailedScore.mockReturnValue(request.promise);
+  render([failed]);
+  expect([...container.querySelectorAll("button")].some(el => el.textContent === "Retry score")).toBe(false);
+  act(() => button(FIRST.title).click());
+  const review = container.querySelector(`#role-review-${failed.id}`)!;
+  expect(review.textContent).toContain("72");
+  expect(review.textContent).toContain("Previous score; update failed");
+  expect(review.textContent).toContain("Relevant work");
+  expect(review.querySelectorAll("button").length).toBeGreaterThan(1);
+  expect(review.querySelector("button button")).toBeNull();
+  await act(async () => { button("Retry score").click(); });
+  expect(actions.retryFailedScore).toHaveBeenCalledOnce();
+  expect(actions.retryFailedScore).toHaveBeenCalledWith(failed.id);
+  expect(button("Requesting…").hasAttribute("disabled")).toBe(true);
+  await act(async () => { request.resolve({ ok: true }); });
+  expect(review.querySelector('[role="status"]')?.textContent).toContain("Score retry requested");
+  expect(review.textContent).toContain("72");
+  expect(button("Score requested").hasAttribute("disabled")).toBe(true);
+  render([{ ...failed, scoreState: "requested", scoreStateText: "Previous score; update pending; review manually" }]);
+  expect(container.querySelector(`#role-review-${failed.id} [role="status"]`)?.textContent).toContain("reviewing this role");
+  expect(button("Score requested").hasAttribute("disabled")).toBe(true);
+  render([failed]);
+  expect(button("Retry score").hasAttribute("disabled")).toBe(false);
+});
+
+it("announces a retry refusal and allows another attempt", async () => {
+  actions.retryFailedScore.mockResolvedValue({ ok: false, error: "This role is no longer eligible for scoring." });
+  render([{ ...FIRST, fitScore: null, scoreState: "failed", scoreStateText: "Could not score; review manually" }]);
+  act(() => button("Review").click());
+  await act(async () => { button("Retry score").click(); });
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("no longer eligible");
+  expect(button("Retry score").hasAttribute("disabled")).toBe(false);
+  expect(text()).toContain("Could not score; review manually");
 });
 
 const titles = () => [...container.querySelectorAll('tbody td[id^="role-row-"] button')].map(el => el.textContent);

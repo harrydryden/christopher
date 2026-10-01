@@ -1,0 +1,28 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-09-29T17:27:22.748Z","level":"info","msg":"slow database query","data":{"durationMs":300,"statement":"truncate tasks, companies, career_sources, jobs, user_jobs, decisions, settings, user_settings, ai_calls, ai_reservation"}}
+{"t":"2026-09-29T17:27:23.145Z","level":"info","msg":"slow database query","data":{"durationMs":345,"statement":"truncate tasks, companies, career_sources, jobs, user_jobs, decisions, settings, user_settings, ai_calls, ai_reservation"}}
+{"t":"2026-09-29T17:27:23.714Z","level":"info","msg":"slow database query","data":{"durationMs":489,"statement":"truncate tasks, companies, career_sources, jobs, user_jobs, decisions, settings, user_settings, ai_calls, ai_reservation"}}
+{"t":"2026-09-29T17:27:24.174Z","level":"info","msg":"slow database query","data":{"durationMs":274,"statement":"truncate tasks, companies, career_sources, jobs, user_jobs, decisions, settings, user_settings, ai_calls, ai_reservation"}}
+{"t":"2026-09-29T17:27:24.517Z","level":"info","msg":"slow database query","data":{"durationMs":299,"statement":"truncate tasks, companies, career_sources, jobs, user_jobs, decisions, settings, user_settings, ai_calls, ai_reservation"}}
+{"t":"2026-09-29T17:27:26.700Z","level":"info","msg":"maintenance changed rows","data":{"tasks":12000}}
+{"t":"2026-09-29T17:27:26.875Z","level":"info","msg":"maintenance changed rows","data":{"tasks":500}}
+{"t":"2026-09-29T17:27:26.936Z","level":"info","msg":"maintenance changed rows","data":{"tasks":1500}}
+{"t":"2026-09-29T17:27:27.099Z","level":"info","msg":"maintenance changed rows","data":{"tasks":500}}
+{"t":"2026-09-29T17:27:27.099Z","level":"warn","msg":"maintenance backlog; continuing next hour","data":{"tables":["tasks"],"batch":500,"budgetMs":20000}}
+{"t":"2026-09-29T17:27:27.269Z","level":"info","msg":"maintenance changed rows","data":{"tasks":10}}
+{"t":"2026-09-29T17:27:27.581Z","level":"info","msg":"reconciled historical score waiting states","data":{"rows":1,"examined":1}}
+{"t":"2026-09-29T17:27:27.581Z","level":"info","msg":"maintenance changed rows","data":{"score_orphans":1}}
+{"t":"2026-09-29T17:27:27.774Z","level":"info","msg":"maintenance changed rows","data":{"job_events":9}}
+{"t":"2026-09-29T17:27:27.940Z","level":"info","msg":"maintenance changed rows","data":{"scans":2}}
+{"t":"2026-09-29T17:27:28.101Z","level":"info","msg":"maintenance changed rows","data":{"scans.raw_snapshot":4}}
+{"t":"2026-09-29T17:27:28.286Z","level":"info","msg":"maintenance changed rows","data":{"discovery_runs":3}}
+{"t":"2026-09-29T17:27:28.450Z","level":"info","msg":"maintenance changed rows","data":{"verification_cache":1,"ai_reservations":1,"login_attempts":1,"sessions":1,"auth_tokens":2}}
+{"t":"2026-09-29T17:27:28.606Z","level":"info","msg":"maintenance changed rows","data":{"tasks":1,"login_attempts":1}}
+
+ Test Files  3 passed (3)
+      Tests  30 passed (30)
+   Start at  18:27:20
+   Duration  9.98s (tests 75%, import 16%, transform 9%)
+

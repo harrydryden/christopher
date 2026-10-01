@@ -330,6 +330,13 @@
       "when": 1791972000000,
       "tag": "0048_html_scan_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792058400000,
+      "tag": "0049_waiting_score_reconciliation",
+      "breakpoints": true
     }
   ]
 }

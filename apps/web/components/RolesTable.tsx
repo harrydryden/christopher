@@ -11,6 +11,7 @@ import { Button, buttonClass } from "@/components/Button";
 import { Monogram } from "@/components/brand/Monogram";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
+import { RetryScore } from "@/components/RetryScore";
 import type { RoleCompaniesVM, RoleCompanyVM, RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 import { missingDecisionReason } from "@/lib/decision-reason";
 import { reportRoleRefusal } from "@/lib/role-refusals";
@@ -347,6 +348,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                       {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
                     </div>
                     {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
+                    {(row.scoreState === "failed" || row.scoreState === "requested" || row.scoreState === "queued") && !archived && <RetryScore jobId={row.id} scoreState={row.scoreState} />}
                   </div>
                 )}
                 <div>

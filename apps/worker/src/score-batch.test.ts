@@ -20,6 +20,7 @@ import { readEnv } from "./env";
 import { claimTask, sleep, TaskDeferred, TaskQueue } from "./queue";
 import { TaskWakeup } from "./task-wakeup";
 import { requeueScoresLive } from "./handlers/score-batch-recovery";
+import { reconcileOrphanScores } from "./score-orphans";
 import { handleCollectScoreBatch, handlePollScoreBatch } from "./handlers/score-batch";
 import { handleScoreJob } from "./handlers/learning";
 import { onAbandon } from "./handlers/abandon";
@@ -363,6 +364,22 @@ describe("a hand-back to live scoring", () => {
       await watch.wakeup.stop();
     }
   });
+
+  it("does not revive a waiting label for closed, archived, skipped or unmatched roles", async () => {
+    const [closed, archived, skipped, unmatched] = await Promise.all([
+      seedRole(alice), seedRole(alice), seedRole(alice), seedRole(alice, { inTable: false }),
+    ]);
+    const jobs = [closed, archived, skipped, unmatched];
+    await db.update(schema.userJobs).set({ scoreState: "failed", scoreStateAt: now })
+      .where(sql`${schema.userJobs.jobId} in (${sql.join(jobs.map(job => sql`${job.id}::uuid`), sql`, `)})`);
+    await db.update(schema.jobs).set({ status: "closed" }).where(eq(schema.jobs.id, closed.id));
+    await db.update(schema.userJobs).set({ archivedAt: now }).where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, archived.id)));
+    await db.insert(schema.decisions).values({ userId: alice, jobId: skipped.id, decision: "skip", reason: "Not suitable",
+      jobTitle: skipped.title, companyName: "Acme", createdAt: now });
+
+    expect(await requeueScoresLive(db, jobs.map(job => ({ userId: alice, jobId: job.id })))).toBe(4);
+    for (const job of jobs) expect((await viewOf(alice, job.id)).scoreState).toBe("failed");
+  });
 });
 
 describe("the poll applier", () => {
@@ -520,6 +537,49 @@ describe("the poll applier", () => {
     await onAbandon.poll_score_batch!(poll!, deps, "provider unreachable");
     expect(await holds()).toHaveLength(0);
     expect((await tasksOf("score_job")).filter(task => task.status === "queued").map(task => task.payload)).toEqual([{ userId: alice, jobId: jobs[0]!.id, live: true }]);
+  });
+
+  it("restores a failed waiting label when poll abandonment hands a role back after orphan repair", async () => {
+    const { jobs } = await submitted([{ userId: alice }]);
+    const jobId = jobs[0]!.id;
+    const [poll] = await tasksOf("poll_score_batch");
+    await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: now, fitScore: 72, scoredAt: now })
+      .where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, jobId)));
+    // Queue abandonment commits the failed poll row before calling its hand-back hook.
+    await db.update(schema.tasks).set({ status: "failed", finishedAt: now }).where(eq(schema.tasks.id, poll!.id));
+    expect((await reconcileOrphanScores(db)).rows).toBe(1);
+    expect((await viewOf(alice, jobId)).scoreState).toBe("failed");
+
+    await onAbandon.poll_score_batch!(poll!, deps, "provider unreachable");
+    const view = await viewOf(alice, jobId);
+    expect(view.scoreState).toBe("queued");
+    expect(view.fitScore).toBe(72);
+    expect(view.scoredAt).toEqual(now);
+    expect((await tasksOf("score_job")).some(task => task.status === "queued" && task.payload.userId === alice
+      && task.payload.jobId === jobId && task.payload.live === true)).toBe(true);
+    expect((await reconcileOrphanScores(db)).rows).toBe(0);
+  });
+
+  it("keeps active live hand-back work and does not replace a newer request or score", async () => {
+    const { jobs } = await submitted([{ userId: alice }, { userId: bob }]);
+    const [aliceJob, bobJob] = jobs.map(job => job.id);
+    const [poll] = await tasksOf("poll_score_batch");
+    await db.update(schema.tasks).set({ status: "failed", finishedAt: now }).where(eq(schema.tasks.id, poll!.id));
+    await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: now })
+      .where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, aliceJob!)));
+    await db.update(schema.userJobs).set({ scoreState: "scored", scoreStateAt: now, fitScore: 83, scoredAt: now })
+      .where(and(eq(schema.userJobs.userId, bob), eq(schema.userJobs.jobId, bobJob!)));
+
+    await onAbandon.poll_score_batch!(poll!, deps, "provider unreachable");
+    expect((await reconcileOrphanScores(db)).rows).toBe(0);
+    expect((await viewOf(alice, aliceJob!)).scoreState).toBe("queued");
+    expect((await viewOf(bob, bobJob!)).scoreState).toBe("scored");
+    expect((await viewOf(bob, bobJob!)).fitScore).toBe(83);
+
+    await db.update(schema.userJobs).set({ scoreState: "requested", scoreStateAt: now })
+      .where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, aliceJob!)));
+    await requeueScoresLive(db, [{ userId: alice, jobId: aliceJob! }]);
+    expect((await viewOf(alice, aliceJob!)).scoreState).toBe("requested");
   });
 });
 

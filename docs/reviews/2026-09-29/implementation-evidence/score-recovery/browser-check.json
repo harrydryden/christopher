@@ -1,0 +1,79 @@
+{
+  "at": "2026-10-01T15:47:44.077Z",
+  "viewport": {
+    "width": 375,
+    "height": 812
+  },
+  "role": "0ce91711-e037-4d25-b319-a9111f0a2912",
+  "keyboardEnterActivated": true,
+  "before": "Software Engineer, Agent Auth Experience Engineering / Expansion · FullTime Salary$170K - $290K Why it matched ENGINEER Fit 72 Previous score; update failed; review manually STRONG FIT Previous score from before update Retry score Description Build CV View vacancy ↗ Website ↗ Software Engineer, Agent Auth Experience Render Shortlisted SHORTLISTED Decided 2d ago Reconsider Reset Archive",
+  "acknowledged": "Score retry requested. You can keep reviewing this role.",
+  "afterClick": {
+    "score_state": "requested",
+    "fit_score": 72,
+    "fit_rationale": "Previous score from before update"
+  },
+  "pendingText": "Software Engineer, Agent Auth Experience Engineering / Expansion · FullTime Salary$170K - $290K Why it matched ENGINEER Matches your location filter: United States. Fit 72 Previous score; update pending STRONG FIT Previous score from before update Score requested Score retry requested. You can keep reviewing this role.",
+  "taskId": "4202ad09-1258-48b8-8ebf-418df8cb578b",
+  "admission": {
+    "workerId": "score-ux-harness",
+    "taskId": "4202ad09-1258-48b8-8ebf-418df8cb578b",
+    "roleId": "0ce91711-e037-4d25-b319-a9111f0a2912",
+    "before": {
+      "score_state": "requested",
+      "fit_score": 72
+    },
+    "taskClaimed": "running",
+    "ownershipFenced": true,
+    "handlerResult": {
+      "queued": 0,
+      "unavailable": 1,
+      "budget": 0,
+      "blockedUnavailable": 1,
+      "blockedBudget": 0,
+      "skipped": 0
+    },
+    "completed": true,
+    "after": {
+      "score_state": "unavailable",
+      "fit_score": 72
+    },
+    "taskAfter": {
+      "status": "done",
+      "result": {
+        "budget": 0,
+        "queued": 0,
+        "skipped": 0,
+        "unavailable": 1,
+        "blockedBudget": 0,
+        "blockedUnavailable": 1
+      }
+    },
+    "aiCallsBefore": 0,
+    "aiCallsAfter": 0,
+    "scoreTasksForRole": 1
+  },
+  "refreshMs": 8109,
+  "settled": "Software Engineer, Agent Auth Experience Engineering / Expansion · FullTime Salary$170K - $290K Why it matched ENGINEER Matches your location filter: United States. Fit 72 Previous score; AI update unavailable STRONG FIT Previous score from before update",
+  "nativeWidth": {
+    "body": 375,
+    "viewport": 375
+  },
+  "enlargedTextOnlyWidth": {
+    "body": 375,
+    "viewport": 375,
+    "buttonBaselinePx": 13,
+    "buttonFontPx": 26
+  },
+  "final": {
+    "score_state": "unavailable",
+    "fit_score": 72,
+    "fit_rationale": "Previous score from before update"
+  },
+  "standingDecision": {
+    "decision": "apply",
+    "reason": ""
+  },
+  "blockedExternalRequests": [],
+  "pageErrors": []
+}

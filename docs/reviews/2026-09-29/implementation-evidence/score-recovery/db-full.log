@@ -1,0 +1,22 @@
+
+> @ava/db@0.1.0 test /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+> vitest run
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+
+{"t":"2026-09-29T17:28:00.180Z","level":"warn","event":"database_pool_error","message":"terminating connection due to administrator command","code":"57P01"}
+{"t":"2026-09-29T17:28:00.264Z","level":"warn","event":"database_pool_error","message":"terminating connection due to administrator command","code":"57P01"}
+{"t":"2026-09-29T17:28:03.419Z","level":"warn","event":"migration_lock_retry","what":"the migration lock","attempt":1,"attempts":2}
+{"t":"2026-09-29T17:28:03.571Z","level":"warn","event":"migration_lock_retry","what":"the migrations","attempt":1,"attempts":3}
+{"t":"2026-09-29T17:28:03.667Z","level":"warn","event":"migration_lock_retry","what":"the migrations","attempt":1,"attempts":2}
+
+ Test Files  10 passed (10)
+      Tests  98 passed (98)
+   Start at  18:27:59
+   Duration  7.89s (tests 50%, import 45%, transform 5%)
+
+     Import  90 modules were evaluated 135 times · 3.29s total, 45% of tracked time
+             ~1.10s faster with isolate: false — shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation
+

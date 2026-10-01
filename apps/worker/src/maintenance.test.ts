@@ -61,7 +61,7 @@ describe("finished tasks", () => {
     try {
       const report = await maintainHistory(deps, { batch: 500, tableBudgetMs: 0 });
       expect(report?.tasks).toEqual({ rows: 500, backlog: true });
-      expect(warn.mock.calls.some(([line]) => String(line).includes("retention backlog") && String(line).includes("tasks"))).toBe(true);
+      expect(warn.mock.calls.some(([line]) => String(line).includes("maintenance backlog") && String(line).includes("tasks"))).toBe(true);
     } finally {
       warn.mockRestore();
     }
@@ -90,6 +90,18 @@ describe("the hourly claim", () => {
     expect(first).toBeNull();
     expect(second).toBeNull();
     expect(await count(sql`select 1 from tasks`)).toBe(10);
+  });
+
+  it("repairs orphan score labels in the claimed hourly pass and leaves saved fit intact", async () => {
+    const { job } = await postingFixture();
+    const user = await ensureTestUser(db, "orphan-maintenance@example.com");
+    await db.insert(schema.userJobs).values({ userId: user.id, jobId: job.id, inTable: true,
+      scoreState: "queued", scoreStateAt: new Date("2026-09-28T09:00:00Z"), fitScore: 79 });
+    const first = await maintainHistory(deps);
+    expect(first?.score_orphans).toMatchObject({ rows: 1, backlog: false });
+    const [after] = await db.select().from(schema.userJobs);
+    expect(after).toMatchObject({ scoreState: "failed", fitScore: 79 });
+    expect(await maintainHistory(deps)).toBeNull();
   });
 });
 

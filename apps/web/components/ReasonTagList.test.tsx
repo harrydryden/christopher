@@ -32,7 +32,9 @@ afterEach(async () => {
   container.remove();
 });
 
-const render = (recent: ReasonTagDecision[]) => act(async () => root.render(<ReasonTagList recent={recent} options={options} disabled={false} />));
+const render = (recent: ReasonTagDecision[], page = 1, totalPages = 1) => act(async () => root.render(
+  <ReasonTagList recent={recent} options={options} disabled={false} page={page} totalPages={totalPages}
+    totalDecisions={totalPages === 1 ? recent.length : 24} profileVersionParam="3" compareParam="previous" />));
 const section = (id: string) => [...container.querySelectorAll("section")].find(row => row.textContent?.includes(`Role ${id} ·`));
 const checkbox = (row: Element, tag: string) => row.querySelector<HTMLInputElement>(`input[type="checkbox"][value="${tag}"]`)!;
 const guard = (row: Element) => row.querySelector<HTMLInputElement>('input[name="expectedTags"]')!.value;
@@ -48,7 +50,7 @@ it("keeps a dirty decision and its original guard when it leaves the recent list
   expect(section("second")).toBeUndefined();
   expect(checkbox(kept, "Growth").checked).toBe(true);
   expect(JSON.parse(guard(kept))).toEqual({ tags: ["Remote"], tagsEdited: false });
-  expect(kept.textContent).toContain("no longer in the recent list");
+  expect(kept.textContent).toContain("outside the page you are viewing");
   const discard = kept.querySelector<HTMLButtonElement>('button[aria-label="Discard tag draft for Role first at Acme"]')!;
   expect(discard).toBeTruthy();
   act(() => discard.click());
@@ -57,9 +59,9 @@ it("keeps a dirty decision and its original guard when it leaves the recent list
 
 it("keeps a refused stale draft and does not submit a removed decision without its original guard", async () => {
   actions.saveDecisionTagsSetting.mockResolvedValue({ ok: false, error: "This decision's tags changed since this page loaded." } satisfies ActionResult);
-  await render([first]);
+  await render([first], 2, 2);
   act(() => checkbox(section("first")!, "Growth").click());
-  await render([newcomer]);
+  await render([newcomer], 1, 2);
   await act(async () => save(section("first")!).click());
 
   expect(actions.saveDecisionTagsSetting).toHaveBeenCalledWith("first", expect.any(Object), expect.any(FormData));
@@ -73,10 +75,10 @@ it("keeps a refused stale draft and does not submit a removed decision without i
 it("keeps a pristine row mounted if its save is pending when it leaves the recent list", async () => {
   let resolve!: (value: ActionResult) => void;
   actions.saveDecisionTagsSetting.mockImplementation(() => new Promise<ActionResult>(done => { resolve = done; }));
-  await render([first]);
+  await render([first], 2, 2);
   act(() => save(section("first")!).click());
   await act(async () => {});
-  await render([newcomer]);
+  await render([newcomer], 1, 2);
   expect(section("first")).toBeTruthy();
   expect(section("first")?.querySelector<HTMLButtonElement>('button[aria-label^="Discard tag draft"]')?.disabled).toBe(true);
   expect(JSON.parse(guard(section("first")!))).toEqual({ tags: ["Remote"], tagsEdited: false });
@@ -84,7 +86,7 @@ it("keeps a pristine row mounted if its save is pending when it leaves the recen
   await act(async () => resolve({ ok: true, nextSnapshot: { expectedTags: JSON.stringify({ tags: ["Remote"], tagsEdited: true }) } }));
   expect(section("first")).toBeUndefined();
   const notice = container.querySelector<HTMLElement>('[role="status"]')!;
-  expect(notice.textContent).toBe("Tags saved for Role first at Acme.");
+  expect(notice.textContent).toBe("Tags saved for Role first at Acme. This decision is outside the page you are viewing.");
   expect(document.activeElement).toBe(notice);
 });
 
@@ -110,5 +112,38 @@ it("keeps a newer edit made while an earlier save is pending, then removes the r
 
   await act(async () => save(section("first")!).click());
   expect(section("first")).toBeUndefined();
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Tags saved for Role first at Acme.");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Tags saved for Role first at Acme. This decision is outside the page you are viewing.");
+});
+
+it("keeps a dirty older-page row and its guard across page navigation and sibling refresh", async () => {
+  await render([first], 2, 2);
+  act(() => checkbox(section("first")!, "Growth").click());
+  await render([newcomer], 1, 2);
+  await render([second], 1, 2);
+  const kept = section("first")!;
+  expect(kept).toBeTruthy();
+  expect(checkbox(kept, "Growth").checked).toBe(true);
+  expect(JSON.parse(guard(kept))).toEqual({ tags: ["Remote"], tagsEdited: false });
+  expect(kept.textContent).toContain("outside the page you are viewing");
+  const older = container.querySelector<HTMLAnchorElement>('nav[aria-label="Reason tag pages"] a')!;
+  expect(older.textContent).toBe("Older decisions");
+  expect(older.getAttribute("href")).toBe("/learning?v=3&compare=previous&tagsPage=2");
+  await render([first, second], 2, 2);
+  expect(section("first")?.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
+  expect(checkbox(section("first")!, "Growth").checked).toBe(true);
+  expect(JSON.parse(guard(section("first")!))).toEqual({ tags: ["Remote"], tagsEdited: false });
+  const newer = container.querySelector<HTMLAnchorElement>('nav[aria-label="Reason tag pages"] a')!;
+  expect(newer.textContent).toBe("Newer decisions");
+  expect(newer.getAttribute("href")).toBe("/learning?v=3&compare=previous");
+});
+
+it("makes an older decision's tag save available on its page", async () => {
+  actions.saveDecisionTagsSetting.mockResolvedValue({ ok: true, nextSnapshot: { expectedTags: JSON.stringify({ tags: ["Remote", "Growth"], tagsEdited: true }) } } satisfies ActionResult);
+  await render([decision("twenty-first")], 2, 2);
+  act(() => checkbox(section("twenty-first")!, "Growth").click());
+  await act(async () => save(section("twenty-first")!).click());
+  expect(actions.saveDecisionTagsSetting).toHaveBeenCalledWith("twenty-first", expect.any(Object), expect.any(FormData));
+  const submitted = actions.saveDecisionTagsSetting.mock.calls[0]![2] as FormData;
+  expect(submitted.get("expectedTags")).toBe(JSON.stringify({ tags: ["Remote"], tagsEdited: false }));
+  expect(submitted.getAll("tags")).toEqual(["Remote", "Growth"]);
 });

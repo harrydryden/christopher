@@ -1,4 +1,6 @@
 import { acceptFilterSuggestionSetting, rejectFilterSuggestionSetting, rescoreAllRolesSetting, resynthesizeNowSetting, savePinnedStatementsSetting, saveSeedProfileSetting, savePreferenceProfileSetting, acceptReasonTagSetting, suggestFromScansNowSetting } from "@/app/actions/learning";
+import Link from "next/link";
+import { ProfileComparison } from "@/components/ProfileComparison";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -10,7 +12,6 @@ import { describeEvidenceItem, describeFilterSuggestion } from "@/lib/filterSugg
 import { getCalibration, getPreferenceProfile, listPendingFilterSuggestionsResolved, listProfileVersions, getReasonTagEditor } from "@/lib/queries/learning";
 import { getSettings } from "@/lib/settings";
 import { selectClass } from "@/components/Field";
-import { SearchForm, SearchPending } from "@/components/SearchForm";
 import { SettingsForm } from "@/components/SettingsForm";
 import { ReasonTagList } from "@/components/ReasonTagList";
 import { SeedProfileEditor } from "@/components/SeedProfileEditor";
@@ -22,25 +23,31 @@ import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
 export const dynamic = "force-dynamic";
 
-export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string; error?: string }> }) {
+export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string | string[]; tagsPage?: string | string[]; error?: string }> }) {
   const user = await requireUser();
   const unverified = needsEmailConfirmation(user);
   const sp = await searchParams;
-  const requestedVersion = sp.v ? Number(sp.v) : undefined;
+  const hasRequestedVersion = sp.v !== undefined;
+  const requestedVersion = typeof sp.v === "string" && /^[1-9]\d*$/.test(sp.v) && Number(sp.v) <= 2147483647
+    ? Number(sp.v) : undefined;
+  const invalidVersion = hasRequestedVersion && requestedVersion === undefined;
   const now = new Date();
 
   const [profile, versions, calibration, suggestions, settings, tags] = await Promise.all([
-    getPreferenceProfile(user.id, Number.isFinite(requestedVersion) ? requestedVersion : undefined),
+    invalidVersion ? Promise.resolve(null) : getPreferenceProfile(user.id, requestedVersion),
     listProfileVersions(user.id),
     getCalibration(user.id),
     listPendingFilterSuggestionsResolved(user.id),
     getSettings(),
-    getReasonTagEditor(user.id),
+    getReasonTagEditor(user.id, sp.tagsPage),
   ]);
 
   // On the default route the profile read can race the version list. Keep its editors mounted;
   // their submitted version still prevents an obsolete write. Only an explicit history view is read-only.
-  const isLatest = !sp.v || versions.length === 0 || (profile && profile.version === versions[0]?.version);
+  const unavailableVersion = hasRequestedVersion && !profile;
+  const isLatest = !unavailableVersion && (!hasRequestedVersion || (profile && profile.version === versions[0]?.version));
+  const previousVersion = profile ? versions.find(version => version.version < profile.version) : undefined;
+  const previousProfile = previousVersion ? await getPreferenceProfile(user.id, previousVersion.version) : null;
 
   return (
     <div className="space-y-6">
@@ -61,8 +68,10 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         title="Preference profile"
         actions={
           versions.length > 1 && (
-            <SearchForm action="/learning" className="flex items-center gap-2">
-              <select key={profile?.version ?? 0} name="v" defaultValue={profile?.version} className={`w-auto py-1 text-12 ${selectClass}`}>
+            <form method="get" action="/learning" target="_blank" rel="noopener" className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="tagsPage" value={tags.page > 1 ? tags.page : ""} />
+              <label htmlFor="profile-version" className="text-12">Saved version</label>
+              <select id="profile-version" key={profile?.version ?? 0} name="v" defaultValue={profile?.version ?? versions[0]?.version} className={`w-auto py-1 text-12 ${selectClass}`}>
                 {versions.map((v) => (
                   <option key={v.version} value={v.version}>
                     v{v.version}
@@ -70,14 +79,16 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                 ))}
               </select>
               <Button type="submit" size="sm">
-                View
+                View in new tab
               </Button>
-              <SearchPending />
-            </SearchForm>
+            </form>
           )
         }
       >
-        {profile ? (
+        {unavailableVersion ? <div className="space-y-2 text-14">
+          <p role="status">This saved profile version is not available.</p>
+          <Link href={tags.page > 1 ? `/learning?tagsPage=${tags.page}` : "/learning"} className="inline-flex min-h-11 items-center underline">Return to current profile</Link>
+        </div> : profile ? (
           <div>
             <p className="mb-2 text-12 text-muted">
               Version {profile.version}
@@ -85,6 +96,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
               {profile.model && ` · ${profile.model}`}
             </p>
             <SafeMarkdown markdown={profile.markdown} />
+            {previousProfile && <ProfileComparison previous={previousProfile} current={profile} />}
           </div>
         ) : (
           <EmptyState title="No profile yet" description={unverified
@@ -121,14 +133,16 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
       </Card>
 
       <Card title="Reason tags">
-        <p className="mb-3 text-14 text-muted">Tags on your 20 most recent decisions. Your edits are kept.</p>
+        <p className="mb-3 text-14 text-muted">Review the reasons behind your decisions, including older ones. Your edited tags are kept when the profile is updated.</p>
         {tags.vocabulary.filter(tag => !tag.accepted).map(tag => (
           <div key={tag.tag} className="mb-2 flex items-center gap-3">
             <span className="text-14">{tag.tag}{tag.description ? ` — ${tag.description}` : ""}</span>
             <SettingsForm action={acceptReasonTagSetting.bind(null, tag.tag)} submitLabel="Accept tag" />
           </div>
         ))}
-        <ReasonTagList recent={tags.recent} options={tags.vocabulary.filter(tag => tag.accepted)} disabled={unverified} />
+        <ReasonTagList recent={tags.recent} options={tags.vocabulary.filter(tag => tag.accepted)} disabled={unverified}
+          page={tags.page} totalPages={tags.totalPages} totalDecisions={tags.totalDecisions}
+          profileVersionParam={requestedVersion === undefined ? undefined : String(requestedVersion)} />
       </Card>
 
       <Card title="Calibration">

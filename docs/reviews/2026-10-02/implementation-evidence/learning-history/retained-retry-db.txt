@@ -1,0 +1,4 @@
+    job_title    |           tags           | tags_edited
+-----------------+--------------------------+-------------
+ History role 22 | ["leadership", "remote"] | t
+(1 row)

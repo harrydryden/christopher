@@ -1,0 +1,100 @@
+Command: TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/learning_tag_pages_1002 pnpm --filter @ava/web exec vitest run --fileParallelism=false
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-10-01T23:45:18.620Z","level":"info","event":"slow_database_query","durationMs":297,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-10-01T23:45:18.992Z","level":"info","event":"slow_database_query","durationMs":316,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-10-01T23:45:19.394Z","level":"info","event":"slow_database_query","durationMs":341,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-10-01T23:45:21.183Z","level":"info","event":"slow_database_query","durationMs":437,"statement":"insert into jobs (company_id, source_id, external_key, title, normalized_title, url) select $1::uuid, $2::uuid, 'cap-' |"}
+{"t":"2026-10-01T23:45:21.568Z","level":"info","event":"slow_database_query","durationMs":385,"statement":"insert into user_jobs (user_id, job_id, keyword_matched, location_ok, in_table) select $1::uuid, j.id, true, true, true "}
+{"t":"2026-10-01T23:45:33.264Z","level":"info","event":"slow_database_query","durationMs":425,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T23:45:33.617Z","level":"info","event":"slow_database_query","durationMs":311,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T23:45:51.443Z","level":"info","event":"database_round_trip","ms":0.7,"samplesMs":[0.7,1.1,0.8],"endpoint":"other","region":null}
+{"t":"2026-10-01T23:45:51.765Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-10-01","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-10-01T23:45:51.808Z","level":"info","msg":"task start","taskId":"00214f82-892e-4396-a0d4-768df20ba893","taskType":"run_daily","data":{"id":"00214f82-892e-4396-a0d4-768df20ba893","type":"run_daily","attempt":1,"workerId":"vercel-cron-8a51d567","commit":null,"readyWaitMs":45,"heapUsedMb":88,"heapLimitMb":4144,"rssMb":205}}
+{"t":"2026-10-01T23:45:51.817Z","level":"info","msg":"daily run started","taskId":"00214f82-892e-4396-a0d4-768df20ba893","taskType":"run_daily","data":{"runId":"62a9c289-0d8f-40a6-87d0-001cb8a2d730","runDate":"2026-10-01","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-10-01T23:45:51.823Z","level":"info","msg":"scan run finalised","taskId":"00214f82-892e-4396-a0d4-768df20ba893","taskType":"run_daily","data":{"runId":"62a9c289-0d8f-40a6-87d0-001cb8a2d730","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-10-01T23:45:51.823Z","level":"info","msg":"task done","taskId":"00214f82-892e-4396-a0d4-768df20ba893","taskType":"run_daily","data":{"id":"00214f82-892e-4396-a0d4-768df20ba893","type":"run_daily","ms":15,"heapUsedMb":89,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":205,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:45:52.745Z","level":"info","msg":"task start","taskId":"4ad41d2b-54de-4a5e-87be-0c5ecda38b35","taskType":"tag_reason","data":{"id":"4ad41d2b-54de-4a5e-87be-0c5ecda38b35","type":"tag_reason","attempt":1,"workerId":"vercel-cron-58ef470b","commit":null,"readyWaitMs":54,"heapUsedMb":98,"heapLimitMb":4144,"rssMb":150}}
+{"t":"2026-10-01T23:45:55.696Z","level":"warn","msg":"abandoned task failed after its deadline","taskId":"4ad41d2b-54de-4a5e-87be-0c5ecda38b35","taskType":"tag_reason","data":{"id":"4ad41d2b-54de-4a5e-87be-0c5ecda38b35","type":"tag_reason","error":"tag_reason exceeded its 3s deadline after 3s and was abandoned"}}
+{"t":"2026-10-01T23:45:55.702Z","level":"warn","msg":"task retry","taskId":"4ad41d2b-54de-4a5e-87be-0c5ecda38b35","taskType":"tag_reason","data":{"id":"4ad41d2b-54de-4a5e-87be-0c5ecda38b35","type":"tag_reason","error":"tag_reason exceeded its 3s deadline after 3s and was abandoned","ms":2957,"heapUsedMb":98,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":144,"rssDeltaMb":-6}}
+{"t":"2026-10-01T23:45:55.940Z","level":"info","msg":"task start","taskId":"294f7924-9ca8-4da4-8afa-9874d78fb87c","taskType":"tag_reason","data":{"id":"294f7924-9ca8-4da4-8afa-9874d78fb87c","type":"tag_reason","attempt":3,"workerId":"vercel-cron-7266efda","commit":null,"readyWaitMs":67,"heapUsedMb":89,"heapLimitMb":4144,"rssMb":146}}
+{"t":"2026-10-01T23:45:55.941Z","level":"warn","msg":"task failed","taskId":"294f7924-9ca8-4da4-8afa-9874d78fb87c","taskType":"tag_reason","data":{"id":"294f7924-9ca8-4da4-8afa-9874d78fb87c","type":"tag_reason","error":"tagging failed","ms":1,"heapUsedMb":89,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":146,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:45:56.297Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-10-01","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-10-01T23:45:56.587Z","level":"info","msg":"task start","taskId":"2934442b-eb80-457f-95b0-862b8fdb44ab","taskType":"discover","data":{"id":"2934442b-eb80-457f-95b0-862b8fdb44ab","type":"discover","attempt":1,"workerId":"vercel-cron-d3a0deaa","commit":null,"readyWaitMs":47,"heapUsedMb":96,"heapLimitMb":4144,"rssMb":146}}
+{"t":"2026-10-01T23:45:56.768Z","level":"info","msg":"discovery finished","taskId":"2934442b-eb80-457f-95b0-862b8fdb44ab","taskType":"discover","data":{"company":"acme.example","outcome":"resolved","fetches":2,"best":"ats_link"}}
+{"t":"2026-10-01T23:45:56.769Z","level":"info","msg":"task done","taskId":"2934442b-eb80-457f-95b0-862b8fdb44ab","taskType":"discover","data":{"id":"2934442b-eb80-457f-95b0-862b8fdb44ab","type":"discover","ms":182,"heapUsedMb":102,"heapDeltaMb":6,"heapLimitMb":4144,"rssMb":165,"rssDeltaMb":19}}
+{"t":"2026-10-01T23:45:56.771Z","level":"info","msg":"task start","taskId":"a4acd9d7-dc1c-45a8-8f3b-56cad14cd919","taskType":"scan_company","data":{"id":"a4acd9d7-dc1c-45a8-8f3b-56cad14cd919","type":"scan_company","attempt":1,"workerId":"vercel-cron-d3a0deaa","commit":null,"readyWaitMs":11,"heapUsedMb":102,"heapLimitMb":4144,"rssMb":165}}
+{"t":"2026-10-01T23:45:56.941Z","level":"info","msg":"source scanned","taskId":"a4acd9d7-dc1c-45a8-8f3b-56cad14cd919","taskType":"scan_company","data":{"company":"Acme Robotics","type":"greenhouse","status":"ok","postings":2,"new":2,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":566,"claimRequests":3,"claimRevalidated":0,"heapUsedMb":95,"ms":164}}
+{"t":"2026-10-01T23:45:56.948Z","level":"info","msg":"task done","taskId":"a4acd9d7-dc1c-45a8-8f3b-56cad14cd919","taskType":"scan_company","data":{"id":"a4acd9d7-dc1c-45a8-8f3b-56cad14cd919","type":"scan_company","ms":177,"heapUsedMb":96,"heapDeltaMb":-6,"heapLimitMb":4144,"rssMb":167,"rssDeltaMb":2}}
+{"t":"2026-10-01T23:45:56.950Z","level":"info","msg":"task start","taskId":"c6a31a0b-a33a-4014-8e0e-f95d8f128abe","taskType":"fetch_description","data":{"id":"c6a31a0b-a33a-4014-8e0e-f95d8f128abe","type":"fetch_description","attempt":1,"workerId":"vercel-cron-d3a0deaa","commit":null,"readyWaitMs":28,"heapUsedMb":96,"heapLimitMb":4144,"rssMb":167}}
+{"t":"2026-10-01T23:45:56.967Z","level":"info","msg":"task done","taskId":"c6a31a0b-a33a-4014-8e0e-f95d8f128abe","taskType":"fetch_description","data":{"id":"c6a31a0b-a33a-4014-8e0e-f95d8f128abe","type":"fetch_description","ms":17,"heapUsedMb":98,"heapDeltaMb":2,"heapLimitMb":4144,"rssMb":167,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:45:56.968Z","level":"info","msg":"task start","taskId":"dd86de3a-50e7-47d9-9cee-af821e0a5c15","taskType":"discover","data":{"id":"dd86de3a-50e7-47d9-9cee-af821e0a5c15","type":"discover","attempt":1,"workerId":"vercel-cron-d3a0deaa","commit":null,"readyWaitMs":379,"heapUsedMb":98,"heapLimitMb":4144,"rssMb":167}}
+{"t":"2026-10-01T23:45:57.033Z","level":"info","msg":"logo capture failed","taskId":"dd86de3a-50e7-47d9-9cee-af821e0a5c15","taskType":"discover","data":{"company":"Acme Robotics","error":"No usable icon found for acme.example","tried":3,"attempts":1,"nextAttemptAt":"2026-10-02T00:45:57.028Z"}}
+{"t":"2026-10-01T23:45:57.035Z","level":"info","msg":"task done","taskId":"dd86de3a-50e7-47d9-9cee-af821e0a5c15","taskType":"discover","data":{"id":"dd86de3a-50e7-47d9-9cee-af821e0a5c15","type":"discover","ms":67,"heapUsedMb":99,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":167,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:45:57.176Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-10-01","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-10-01T23:45:57.215Z","level":"info","msg":"task start","taskId":"37e9c648-3c6b-4759-aafc-d0a47ddfd5b0","taskType":"run_daily","data":{"id":"37e9c648-3c6b-4759-aafc-d0a47ddfd5b0","type":"run_daily","attempt":1,"workerId":"vercel-cron-847f7adc","commit":null,"readyWaitMs":42,"heapUsedMb":102,"heapLimitMb":4144,"rssMb":168}}
+{"t":"2026-10-01T23:45:57.221Z","level":"info","msg":"daily run started","taskId":"37e9c648-3c6b-4759-aafc-d0a47ddfd5b0","taskType":"run_daily","data":{"runId":"1f29f9aa-6cb9-49ab-a17a-79f01584e6e5","runDate":"2026-10-01","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-10-01T23:45:57.226Z","level":"info","msg":"scan run finalised","taskId":"37e9c648-3c6b-4759-aafc-d0a47ddfd5b0","taskType":"run_daily","data":{"runId":"1f29f9aa-6cb9-49ab-a17a-79f01584e6e5","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-10-01T23:45:57.227Z","level":"info","msg":"task done","taskId":"37e9c648-3c6b-4759-aafc-d0a47ddfd5b0","taskType":"run_daily","data":{"id":"37e9c648-3c6b-4759-aafc-d0a47ddfd5b0","type":"run_daily","ms":11,"heapUsedMb":102,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":168,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:46:29.317Z","level":"info","event":"slow_database_query","durationMs":272,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-10-01T23:46:29.680Z","level":"info","event":"slow_database_query","durationMs":303,"statement":"truncate users, companies restart identity cascade"}
+{"t":"2026-10-01T23:46:35.424Z","level":"info","event":"slow_database_query","durationMs":260,"statement":"truncate companies, tasks, preference_profiles, filter_suggestions, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:36.073Z","level":"info","event":"slow_database_query","durationMs":290,"statement":"truncate companies, tasks, preference_profiles, filter_suggestions, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:41.923Z","level":"info","event":"slow_database_query","durationMs":342,"statement":"truncate ai_calls, ai_reservations, cv_libraries, companies, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:42.258Z","level":"info","event":"slow_database_query","durationMs":255,"statement":"truncate ai_calls, ai_reservations, cv_libraries, companies, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:42.806Z","level":"info","event":"slow_database_query","durationMs":270,"statement":"truncate ai_calls, ai_reservations, cv_libraries, companies, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:43.452Z","level":"info","event":"slow_database_query","durationMs":308,"statement":"truncate ai_calls, ai_reservations, cv_libraries, companies, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:44.028Z","level":"info","event":"slow_database_query","durationMs":296,"statement":"truncate ai_calls, ai_reservations, cv_libraries, companies, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:44.839Z","level":"info","event":"slow_database_query","durationMs":437,"statement":"truncate ai_calls, ai_reservations, cv_libraries, companies, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:46.295Z","level":"info","event":"slow_database_query","durationMs":285,"statement":"truncate companies, tasks, decisions, applications, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:46.951Z","level":"info","event":"slow_database_query","durationMs":252,"statement":"truncate companies, tasks, decisions, applications, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:47.629Z","level":"info","event":"slow_database_query","durationMs":353,"statement":"truncate companies, tasks, decisions, applications, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:49.188Z","level":"info","event":"slow_database_query","durationMs":374,"statement":"truncate companies, tasks, ai_calls, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:49.894Z","level":"info","event":"slow_database_query","durationMs":349,"statement":"truncate companies, tasks, ai_calls, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:50.401Z","level":"info","event":"slow_database_query","durationMs":326,"statement":"truncate companies, tasks, ai_calls, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:50.823Z","level":"info","event":"slow_database_query","durationMs":305,"statement":"truncate companies, tasks, ai_calls, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:51.506Z","level":"info","event":"slow_database_query","durationMs":284,"statement":"truncate companies, tasks, ai_calls, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:52.139Z","level":"info","event":"slow_database_query","durationMs":275,"statement":"truncate companies, tasks, ai_calls, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:53.882Z","level":"info","event":"slow_database_query","durationMs":291,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:54.282Z","level":"info","event":"slow_database_query","durationMs":354,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:54.576Z","level":"info","event":"slow_database_query","durationMs":251,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:54.962Z","level":"info","event":"slow_database_query","durationMs":325,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:56.141Z","level":"info","event":"slow_database_query","durationMs":280,"statement":"truncate cv_library_reviews, cv_libraries, cv_drafts, tasks, settings, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:46:59.904Z","level":"info","event":"slow_database_query","durationMs":264,"statement":"truncate cv_drafts, users restart identity cascade"}
+{"t":"2026-10-01T23:47:00.355Z","level":"info","event":"slow_database_query","durationMs":311,"statement":"truncate cv_drafts, users restart identity cascade"}
+{"t":"2026-10-01T23:47:01.526Z","level":"info","event":"slow_database_query","durationMs":299,"statement":"truncate cv_drafts, users restart identity cascade"}
+{"t":"2026-10-01T23:47:02.377Z","level":"info","event":"slow_database_query","durationMs":279,"statement":"truncate cv_drafts, users restart identity cascade"}
+{"t":"2026-10-01T23:47:03.890Z","level":"info","event":"slow_database_query","durationMs":371,"statement":"truncate ai_calls, ai_reservations, resource_leases, applications, cv_versions, cv_drafts, cv_libraries, companies, task"}
+{"t":"2026-10-01T23:47:13.428Z","level":"info","event":"slow_database_query","durationMs":500,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, users restart identity cascade"}
+{"t":"2026-10-01T23:47:14.214Z","level":"info","event":"slow_database_query","durationMs":323,"statement":"truncate users restart identity cascade"}
+{"t":"2026-10-01T23:47:15.331Z","level":"info","event":"slow_database_query","durationMs":275,"statement":"truncate users, login_attempts, settings restart identity cascade"}
+{"t":"2026-10-01T23:47:15.766Z","level":"info","event":"slow_database_query","durationMs":362,"statement":"truncate users, login_attempts, settings restart identity cascade"}
+{"t":"2026-10-01T23:47:18.448Z","level":"info","event":"slow_database_query","durationMs":364,"statement":"truncate companies, settings, scan_runs, users restart identity cascade"}
+{"t":"2026-10-01T23:47:19.322Z","level":"info","event":"slow_database_query","durationMs":279,"statement":"truncate companies, settings, scan_runs, users restart identity cascade"}
+{"t":"2026-10-01T23:47:30.214Z","level":"info","event":"slow_database_query","durationMs":257,"statement":"truncate companies, tasks, preference_profiles, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:47:30.636Z","level":"info","event":"slow_database_query","durationMs":366,"statement":"truncate companies, tasks, preference_profiles, user_settings, users restart identity cascade"}
+{"t":"2026-10-01T23:47:32.247Z","level":"info","event":"slow_database_query","durationMs":266,"statement":"truncate companies, scan_runs, tasks, users restart identity cascade"}
+{"t":"2026-10-01T23:47:32.562Z","level":"info","event":"slow_database_query","durationMs":251,"statement":"truncate companies, scan_runs, tasks, users restart identity cascade"}
+{"t":"2026-10-01T23:47:32.865Z","level":"info","event":"slow_database_query","durationMs":259,"statement":"truncate companies, scan_runs, tasks, users restart identity cascade"}
+{"t":"2026-10-01T23:47:33.180Z","level":"info","event":"slow_database_query","durationMs":269,"statement":"truncate companies, scan_runs, tasks, users restart identity cascade"}
+{"t":"2026-10-01T23:47:33.512Z","level":"info","event":"slow_database_query","durationMs":252,"statement":"truncate companies, scan_runs, tasks, users restart identity cascade"}
+{"t":"2026-10-01T23:47:36.934Z","level":"info","event":"slow_database_query","durationMs":251,"statement":"truncate users, companies, applications, cv_drafts, decisions, tasks, login_attempts restart identity cascade"}
+{"t":"2026-10-01T23:47:39.232Z","level":"info","event":"slow_database_query","durationMs":283,"statement":"truncate settings, user_settings, company_suggestions, companies, users restart identity cascade"}
+{"t":"2026-10-01T23:47:47.201Z","level":"info","event":"slow_database_query","durationMs":258,"statement":"truncate companies, tasks, worker_events, settings, cv_drafts, users restart identity cascade"}
+{"t":"2026-10-01T23:47:50.046Z","level":"info","event":"slow_database_query","durationMs":330,"statement":"truncate library_imports, users cascade"}
+{"t":"2026-10-01T23:47:53.313Z","level":"info","event":"slow_database_query","durationMs":262,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-10-01T23:47:54.635Z","level":"info","event":"slow_database_query","durationMs":263,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-10-01T23:47:55.030Z","level":"info","event":"slow_database_query","durationMs":302,"statement":"truncate companies, tasks, users restart identity cascade"}
+
+ Test Files  154 passed (154)
+      Tests  1379 passed (1379)
+   Start at  00:45:12
+   Duration  201.34s (tests 71%, import 24%, environment 3%, transform 2%)
+
+    Isolate  154 workers spawned · ~114ms startup each (spawn + environment, per file)
+             at least ~17.42s faster with isolate: false — reuses workers across files instead of one per file
+
+
+Exit code: 0

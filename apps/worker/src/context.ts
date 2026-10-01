@@ -1,4 +1,4 @@
-import { createDb, type Db } from "@ava/db";
+import { accountCanScore, createDb, type Db } from "@ava/db";
 import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, modelForCallSite, type AppSettings, type DiscoveryAiHooks, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
 import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref, type ReserveHint } from "@ava/ai";
 import { sql } from "drizzle-orm";
@@ -10,6 +10,15 @@ import { log } from "./log";
 import { encodeLogoWebp } from "./logo-encode";
 import { recordModelCall } from "./otel";
 import { loadSettings, loadUserSettings } from "./settings";
+import { guardedDiscoveryFetchContext } from "./discovery-host-guard";
+
+/** A stale per-account task must not reserve or spend before its owner confirms their address. */
+export class AccountVerificationRequiredError extends Error {
+  constructor() {
+    super("Confirm your email address before using AI.");
+    this.name = "AccountVerificationRequiredError";
+  }
+}
 
 export interface WorkerDeps {
   db: Db;
@@ -114,7 +123,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   });
   const browser = env.disableBrowser
     ? null
-    : new BrowserRenderer({ traffic, beforeNavigate: host => fetcher.waitForHost(host), allowNavigate: url => fetcher.assertRobotsAllowed(url), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap,
+    : new BrowserRenderer({ traffic, beforeNavigate: host => fetcher.waitForHost(host), allowNavigate: (url, allowHost) => fetcher.assertRobotsAllowed(url, allowHost), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap,
       // A 429 or 503 the page's own navigation met defers the host for the fetcher as well.
       onRateLimited: (host, headers) => fetcher.backOff(host, headers) });
 
@@ -136,6 +145,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
    * stopped it instead of leaving the reader to guess which figure to raise.
    */
   const reserve = async (callSite: string, estimate: number, ref: Ref, hint?: ReserveHint) => {
+    if (ref.userId && !await accountCanScore(db, ref.userId)) throw new AccountVerificationRequiredError();
     const at = now();
     const account = ref.userId ? { userId: ref.userId, settings: await userSettings(ref.userId) } : undefined;
     // Never shorter than the call may run, so a live call's hold is not swept from under it.
@@ -272,7 +282,7 @@ export function makeDiscoveryContext(
     ...fetchCtx,
     resolveSpec: (url) => ats.specFromAnyUrl(url),
     findSpecsInText: (text, baseUrl) => ats.findAtsSpecsInText(text, baseUrl),
-    verifySpec: (spec) => ats.getAdapter(spec.type).verify(spec, fetchCtx),
+    verifySpec: (spec, allowHost, onChallenge) => ats.getAdapter(spec.type).verify(spec, guardedDiscoveryFetchContext(fetchCtx, allowHost, onChallenge)),
     extractFromHtml: (html, pageUrl) => ats.extractPostingsFromHtml(html, pageUrl),
     ai:
       useAi && deps.ai.enabled
@@ -286,7 +296,7 @@ export function makeDiscoveryContext(
 }
 
 /** Why no model call may be made now. Worded to be returned as a task's `skipped` reason. */
-export type AiBudgetStop = "ai unavailable" | "account ai budget exceeded";
+export type AiBudgetStop = "ai unavailable" | "account ai budget exceeded" | "email confirmation required";
 
 /**
  * What stops a model call now, or null when there is room for one.
@@ -300,6 +310,7 @@ export type AiBudgetStop = "ai unavailable" | "account ai budget exceeded";
  * left; handlers read that `BudgetRefusedError` as the same skip.
  */
 export async function aiBudgetStop(deps: WorkerDeps, userId?: string): Promise<AiBudgetStop | null> {
+  if (userId && !await accountCanScore(deps.db, userId)) return "email confirmation required";
   if (!deps.ai.enabled) return "ai unavailable";
   if (!userId) return null;
   const account = await deps.userSettings(userId);

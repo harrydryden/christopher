@@ -12,13 +12,15 @@ import { getCalibration, getPreferenceProfile, listPendingFilterSuggestionsResol
 import { getSettings } from "@/lib/settings";
 import { selectClass } from "@/components/Field";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
-import { requireUser } from "@/lib/auth";
+import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { RefusalNotice } from "@/components/RefusalNotice";
+import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
 export const dynamic = "force-dynamic";
 
 export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string; error?: string }> }) {
   const user = await requireUser();
+  const unverified = needsEmailConfirmation(user);
   const sp = await searchParams;
   const requestedVersion = sp.v ? Number(sp.v) : undefined;
   const now = new Date();
@@ -41,12 +43,12 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         actions={
           <>
             <form action={resynthesizeNow}>
-              <Button type="submit" size="sm">
-                Re-synthesise now
+              <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>
+                Update preference profile
               </Button>
             </form>
             <form action={rescoreAllRoles}>
-              <Button type="submit" size="sm" variant="ghost">
+              <Button type="submit" size="sm" variant="ghost" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>
                 Re-score all
               </Button>
             </form>
@@ -55,6 +57,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
       />
 
       <RefusalNotice sentence={sp.error} className="mb-4" />
+      {unverified && <VerifyNotice />}
 
       <Card
         title="Preference profile"
@@ -86,18 +89,22 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             <SafeMarkdown markdown={profile.markdown} />
           </div>
         ) : (
-          <EmptyState title="No profile yet" description="It is written from your decisions once you have made a few." />
+          <EmptyState title="No profile yet" description={unverified
+            ? "Save your starting preferences and decisions now. Your preference profile can be updated once you confirm your email address."
+            : "Your profile is built from your starting preferences and decisions. You can request an update above."} />
         )}
       </Card>
 
       {isLatest && <Card title="Edit preference profile">
         <form action={savePreferenceProfile} className="flex flex-col gap-2">
-          <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
-          <label htmlFor="profile-markdown" className="text-14">Your current preferences</label>
-          <textarea id="profile-markdown" name="markdown" required maxLength={50000} rows={10} defaultValue={profile?.markdown ?? settings.seedProfile}
-            className="w-full border border-line-muted px-2 py-1.5 text-14" />
-          <p className="text-12 text-muted">Saving creates a new version and re-scores open roles.</p>
-          <div><Button type="submit" variant="primary" size="sm">Save profile version</Button></div>
+          <fieldset disabled={unverified} className="flex flex-col gap-2">
+            <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
+            <label htmlFor="profile-markdown" className="text-14">Your current preferences</label>
+            <textarea id="profile-markdown" name="markdown" required maxLength={50000} rows={10} defaultValue={profile?.markdown ?? settings.seedProfile}
+              className="w-full border border-line-muted px-2 py-1.5 text-14" />
+            <p className="text-12 text-muted">Saving creates a new version and re-scores open roles.</p>
+            <div><Button type="submit" variant="primary" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Save profile version</Button></div>
+          </fieldset>
         </form>
       </Card>}
 
@@ -106,18 +113,22 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
           One per line, kept verbatim by every future synthesis.
         </p>
         <form action={savePinnedStatements} className="flex flex-col gap-2">
-          <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
-          <textarea
-            name="pinnedStatements"
-            rows={4}
-            defaultValue={(profile?.pinnedStatements ?? []).join("\n")}
-            className="w-full border border-line-muted px-2 py-1.5 text-14 outline-none focus:border-line"
-          />
-          <div>
-            <Button type="submit" variant="primary" size="sm">
-              Save
-            </Button>
-          </div>
+          <fieldset disabled={unverified} className="flex flex-col gap-2">
+            <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
+            <label htmlFor="pinned-statements" className="text-14">Statements to keep in future updates</label>
+            <textarea
+              id="pinned-statements"
+              name="pinnedStatements"
+              rows={4}
+              defaultValue={(profile?.pinnedStatements ?? []).join("\n")}
+              className="w-full border border-line-muted px-2 py-1.5 text-14 outline-none focus:border-line"
+            />
+            <div>
+              <Button type="submit" variant="primary" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>
+                Save
+              </Button>
+            </div>
+          </fieldset>
         </form>
       </Card>}
 
@@ -135,17 +146,21 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                     {q.answer}
                   </p>
                 ) : isLatest ? (
-                  <form action={answerOpenQuestion.bind(null, q.id)} className="flex items-end gap-2">
-                    <input type="hidden" name="profileVersion" value={profile.version} />
-                    <input
-                      name="answer"
-                      required
-                      placeholder="Your answer…"
-                      className="flex-1 border border-line-muted px-2 py-1 text-14 outline-none focus:border-line"
-                    />
-                    <Button type="submit" size="sm">
-                      Save answer
-                    </Button>
+                  <form action={answerOpenQuestion.bind(null, q.id)} className="flex min-w-0 items-end gap-2">
+                    <fieldset disabled={unverified} className="flex min-w-0 flex-1 flex-col items-stretch gap-2 sm:flex-row sm:items-end">
+                      <input type="hidden" name="profileVersion" value={profile.version} />
+                      <label htmlFor={`answer-${q.id}`} className="sr-only">Answer: {q.question}</label>
+                      <input
+                        id={`answer-${q.id}`}
+                        name="answer"
+                        required
+                        placeholder="Your answer…"
+                        className="w-full min-w-0 flex-1 border border-line-muted px-2 py-1 text-14 outline-none focus:border-line"
+                      />
+                      <Button type="submit" size="sm" className="w-full sm:w-auto" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>
+                        Save answer
+                      </Button>
+                    </fieldset>
                   </form>
                 ) : <p className="text-12 text-muted">Answer on the latest profile.</p>}
               </div>
@@ -154,12 +169,14 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         )}
       </Card>
 
-      <Card title="Seed profile">
+      <Card title="Starting preferences">
         <p className="mb-2 text-12 text-muted">
           What you wrote at setup; never overwritten.
         </p>
         <form action={saveSeedProfile} className="flex flex-col gap-2">
+          <label htmlFor="seed-profile" className="text-14">Starting preferences</label>
           <textarea
+            id="seed-profile"
             name="seedProfile"
             rows={4}
             defaultValue={settings.seedProfile}
@@ -187,12 +204,14 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             <h3 className="text-14">{decision.jobTitle} · {decision.companyName} · {decision.decision}</h3>
             <p className="my-2 text-14 text-muted">{decision.reason}</p>
             <form action={saveDecisionTags.bind(null, decision.id)} className="flex flex-col gap-2">
-              <label htmlFor={`tags-${decision.id}`} className="text-12">Reason tags (Ctrl or Command for several)</label>
-              <select id={`tags-${decision.id}`} name="tags" multiple defaultValue={decision.tags}
-                className="min-h-28 border border-line-muted p-2 text-14">
-                {tags.vocabulary.filter(tag => tag.accepted).map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}</option>)}
-              </select>
-              <div><Button type="submit" size="sm">Save tags</Button></div>
+              <fieldset disabled={unverified} className="flex flex-col gap-2">
+                <label htmlFor={`tags-${decision.id}`} className="text-12">Reason tags (Ctrl or Command for several)</label>
+                <select id={`tags-${decision.id}`} name="tags" multiple defaultValue={decision.tags}
+                  className="min-h-28 border border-line-muted p-2 text-14">
+                  {tags.vocabulary.filter(tag => tag.accepted).map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}</option>)}
+                </select>
+                <div><Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Save tags</Button></div>
+              </fieldset>
             </form>
           </section>
         ))}
@@ -225,7 +244,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
 
       <Card title="Filter suggestions" actions={
         <form action={suggestFromScansNow}>
-          <Button type="submit" size="sm" title="Read the latest scan of every company for role words and seniority labels your filters are turning away">Mine recent scans</Button>
+          <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : "Read the latest scan of every company for role words and seniority labels your filters are turning away"}>Mine recent scans</Button>
         </form>
       }>
         <p className="mb-3 text-12 text-muted">Terms your filters turn away that would admit roles in your locations. Accepting adds the term.</p>
@@ -250,7 +269,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                 )}
                 <div className="mt-2 flex gap-1.5">
                   <form action={acceptFilterSuggestion.bind(null, suggestion.id)}>
-                    <Button type="submit" variant="primary" size="sm">
+                    <Button type="submit" variant="primary" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>
                       Accept
                     </Button>
                   </form>

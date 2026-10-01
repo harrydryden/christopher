@@ -1,6 +1,6 @@
 "use server";
 
-import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
+import { requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { appendProfile, latestProfileFor, setSubscriptionStatus, lockAccountScoreInput } from "@ava/db";
 import { and, eq, sql } from "drizzle-orm";
@@ -101,14 +101,13 @@ const SEED_PROFILE_LIMIT = 5_000;
  *
  * Setup asks for the seed profile before the address is confirmed, so the text is saved for any
  * account; the synthesis it prompts is model work and waits for the confirmation. Nothing is lost
- * by waiting: scoring reads the seed profile itself until a synthesised one exists, and the first
- * decision after confirming queues the synthesis.
+ * by waiting: scoring reads the seed profile itself until a synthesised one exists, and confirming
+ * the account queues synthesis for a saved seed.
  */
 async function writeSeedProfile(user: User, raw: string): Promise<string | null> {
   const text = String(raw ?? "");
   if (text.length > SEED_PROFILE_LIMIT) return `Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`;
-  await setUserSetting(user.id, "seedProfile", text, { rescore: !needsEmailConfirmation(user) });
-  if (!needsEmailConfirmation(user)) await enqueue("synthesize_profile", { userId: user.id, force: true });
+  await setUserSetting(user.id, "seedProfile", text);
   revalidate("/learning", "/settings", "/");
   return null;
 }

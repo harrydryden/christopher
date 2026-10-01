@@ -23,6 +23,7 @@ import { handleSuggestFromScans } from "./suggest-from-scans";
 import { handleCollectScoreBatch, handlePollScoreBatch } from "./score-batch";
 import { handleReencodeLogos } from "./reencode-logos";
 import { handleAdmitScores } from "../score-admission";
+import { handleResumeReasonTags } from "./resume-reason-tags";
 
 export const handlers: HandlerMap = {
   extract_document: handleExtractDocument,
@@ -38,6 +39,7 @@ export const handlers: HandlerMap = {
   score_job: handleScoreJob,
   admit_scores: handleAdmitScores,
   tag_reason: handleTagReason,
+  resume_reason_tags: handleResumeReasonTags,
   synthesize_profile: handleSynthesizeProfile,
   suggest_filters: handleSuggestFilters,
   suggest_from_scans: handleSuggestFromScans,

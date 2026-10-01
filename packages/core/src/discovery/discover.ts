@@ -7,7 +7,7 @@ import * as cheerio from "cheerio";
 import { COMPLETE_LISTING_LABEL, isExplicitEmptyListing, visibleListingScopeRestriction } from "../ats/html";
 import { isTransientFailure, safeUrl } from "../ats/common";
 import { assertPublicHttpUrl } from "../url-safety";
-import type { FetchInit, RawPosting, SourceSpec } from "../types";
+import { SourceFetchError, type FetchInit, type RawPosting, type SourceSpec } from "../types";
 import { AUTO_ACCEPT_CONFIDENCE, CONFIRM_CONFIDENCE, confidenceFor, methodRank as rank, outcomeFor, type DiscoveryMethod } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
 import { companyNameFromTitle, companyNamesMatch, looksLikeSoft404, nameFromDomain, nameFromSlug } from "./text";
@@ -62,6 +62,8 @@ class Run {
   private readonly inspectedUrls = new Set<string>();
   private readonly inspectedBodies = new Set<string>();
   private readonly verified = new Map<string, DiscoveryVerification>();
+  /** Scoped to this discovery only; the shared fetcher remains usable by other accounts and runs. */
+  private readonly challengedHosts = new Set<string>();
   private richListingRenders = 0;
   fetches = 0;
   verifications = 0;
@@ -121,7 +123,36 @@ class Run {
     }
   }
 
+  private hostOf(url: string): string | null {
+    try { return new URL(url).hostname.toLowerCase(); } catch { return null; }
+  }
+
+  /** A deny-only guard handed through HTTP redirects, browser navigation and ATS verification. */
+  readonly allowHost = (hostname: string): void => {
+    if (this.challengedHosts.has(hostname.toLowerCase()))
+      throw new SourceFetchError(`bot challenge already observed for ${hostname}; skipping further requests in this discovery run`, "blocked", 403);
+  };
+
+  private challenged(url: string): boolean {
+    const host = this.hostOf(url);
+    if (!host || !this.challengedHosts.has(host)) return false;
+    this.sayOnce(`bot challenge already observed for ${host}; skipping further requests in this discovery run`);
+    return true;
+  }
+
+  private recordChallenge(error: unknown, requestedUrl: string): void {
+    if (!(error instanceof SourceFetchError) || !error.challengeHost) return;
+    const finalHost = error.challengeHost.toLowerCase();
+    this.challengedHosts.add(finalHost);
+    // A request that redirected to a challenged host is a known path back to it. Conservatively
+    // stop that request host as well; other ATS hosts remain available to this run.
+    const requestedHost = this.hostOf(requestedUrl);
+    if (requestedHost) this.challengedHosts.add(requestedHost);
+    this.sayOnce(`explicit bot challenge on ${finalHost}; suppressing further requests to ${[...this.challengedHosts].join(", ")}`);
+  }
+
   async fetch(url: string, init?: FetchInit): Promise<Fetched | null> {
+    if (this.challenged(url)) return null;
     const key = normalizeUrl(url);
     const cached = this.pages.get(key);
     if (cached !== undefined) return cached;
@@ -133,7 +164,10 @@ class Run {
     if (!this.budgetLeft()) return null;
     this.fetches++;
     try {
-      const res = await this.ctx.fetchText(url, init);
+      const res = await this.ctx.fetchText(url, { ...init, allowHost: async host => {
+        this.allowHost(host);
+        await init?.allowHost?.(host);
+      } });
       this.statuses.set(key, res.status);
       if (res.status === 404 || res.status === 410) this.missing.add(key);
       if (res.status >= 400) {
@@ -146,6 +180,7 @@ class Run {
       if (page.html.length <= MAX_CACHED_BODY) this.pages.set(key, page);
       return page;
     } catch (err) {
+      this.recordChallenge(err, url);
       this.say(`fetch ${url} failed: ${(err as Error).message}`);
       this.pages.set(key, null);
       return null;
@@ -168,6 +203,7 @@ class Run {
 
   /** Render a page once per run; a second request for the same URL gets the first render. */
   async render(url: string, opts: { scrollAndExpand?: boolean }): Promise<{ page: Fetched; requests: string[] } | null> {
+    if (this.challenged(url)) return null;
     const key = normalizeUrl(url);
     const cached = this.renders.get(key);
     if (cached !== undefined) return cached;
@@ -175,11 +211,12 @@ class Run {
     this.fetches++;
     this.renders.set(key, null);
     try {
-      const rendered = await this.ctx.render(url, opts);
+      const rendered = await this.ctx.render(url, { ...opts, allowHost: this.allowHost });
       const result = { page: { html: rendered.html, url: rendered.finalUrl, status: rendered.status ?? 200 }, requests: rendered.requests };
       if (result.page.html.length <= MAX_CACHED_BODY) this.renders.set(key, result);
       return result;
     } catch (err) {
+      this.recordChallenge(err, url);
       this.say(`render ${url} failed: ${(err as Error).message}`);
       return null;
     }
@@ -280,6 +317,7 @@ class Run {
    * or time budget; only the task's own cancellation stops it.
    */
   async verify(spec: SourceSpec): Promise<DiscoveryVerification> {
+    if (this.challenged(spec.url)) return { ok: false, error: `bot challenge already observed for ${this.hostOf(spec.url)}` };
     const key = specKey(spec);
     const cached = this.verified.get(key);
     if (cached) return cached;
@@ -291,8 +329,9 @@ class Run {
     this.verifications++;
     let result: DiscoveryVerification;
     try {
-      result = await this.ctx.verifySpec(spec);
+      result = await this.ctx.verifySpec(spec, this.allowHost, (error, url) => this.recordChallenge(error, url));
     } catch (err) {
+      this.recordChallenge(err, spec.url);
       result = { ok: false, error: (err as Error).message, transient: isTransientFailure(err) };
     }
     this.verified.set(key, result);

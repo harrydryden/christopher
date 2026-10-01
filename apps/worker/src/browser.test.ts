@@ -57,6 +57,9 @@ beforeAll(async () => {
   server = await startTestServer(
     {
       "www.acmeind.example": { "/open-roles": { body: SHELL_PAGE },
+        "/challenge-header": { status: 403, body: "<html><body>restricted</body></html>", headers: { "cf-mitigated": "challenge" } },
+        "/captcha-widget-listing": { body: `<html><body><a href="/jobs/one">Operations Director</a><div class="g-recaptcha"></div></body></html>` },
+        "/guarded-assets": { body: `<html><body>careers<script src="https://boards-api.greenhouse.io/guarded.js"></script></body></html>` },
         "/paginated": { body: `<html><body><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button id="next" onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button></body></html>` },
         "/pagination-labels": { body: `<html><body><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul>
           <button aria-label="Go to Next Page, Number 2" onclick="window.step=(window.step||0)+1;
@@ -92,7 +95,7 @@ beforeAll(async () => {
         "/big": { body: `<html><body>${"<p>role</p>".repeat(1000)}</body></html>` },
         "/busy": { status: 429, body: "<html><body>slow down</body></html>", headers: { "retry-after": "30" } },
         "/many-links": { body: MANY_LINKS_PAGE } },
-      "boards-api.greenhouse.io": { "/v1/boards/acmeindustries/jobs": { body: JOBS } },
+      "boards-api.greenhouse.io": { "/v1/boards/acmeindustries/jobs": { body: JOBS }, "/guarded.js": { body: "window.assetLoaded = true", contentType: "application/javascript" } },
     },
     ["www.acmeind.example", "boards-api.greenhouse.io"],
   );
@@ -109,6 +112,26 @@ afterAll(async () => {
 });
 
 describe.skipIf(skip)("headless rendering", () => {
+  it("reports an explicit challenge but keeps a normal listing with a captcha widget", async () => {
+    await expect(renderer.render("https://www.acmeind.example/challenge-header")).rejects.toMatchObject({
+      kind: "blocked", status: 403, challengeHost: "www.acmeind.example",
+    });
+    const listing = await renderer.render("https://www.acmeind.example/captcha-widget-listing");
+    expect(listing.html).toContain("Operations Director");
+  });
+
+  it("keeps challenged-host subresources out of a different page's render", async () => {
+    const before = server.requests.filter(request => request.host === "boards-api.greenhouse.io" && request.url === "/guarded.js").length;
+    const checked: string[] = [];
+    const result = await renderer.render("https://www.acmeind.example/guarded-assets", { allowHost: host => {
+      checked.push(host);
+      if (host === "boards-api.greenhouse.io") throw new Error("run-local challenged host");
+    } });
+    expect(result.html).toContain("careers");
+    expect(checked).toContain("boards-api.greenhouse.io");
+    expect(server.requests.filter(request => request.host === "boards-api.greenhouse.io" && request.url === "/guarded.js")).toHaveLength(before);
+  });
+
   it("preserves roles from every JavaScript page and stops at a disabled next button", async () => {
     const page = await renderer.render("https://www.acmeind.example/paginated", { scrollAndExpand: true });
     const postings = [...listingCaptures(page)].flatMap(p => ats.extractPostingsFromHtml(p.html, p.url));

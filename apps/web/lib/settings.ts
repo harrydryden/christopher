@@ -2,7 +2,7 @@ import { cache } from "react";
 import { eq, notLike, sql } from "drizzle-orm";
 import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
 import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
-import { enqueueTask, enqueueTasks, taskRow, reevaluateGate, lockAccountScoreInput, lockScoreModelInput } from "@ava/db";
+import { accountCanScore, enqueueTask, enqueueTasks, taskRow, reevaluateGate, lockAccountScoreInput, lockScoreModelInput } from "@ava/db";
 import { requireUser } from "./auth";
 import { db } from "./db";
 import { enqueue } from "./enqueue";
@@ -68,8 +68,11 @@ export async function setUserSetting(userId: string, key: keyof UserSettings, va
     await tx.insert(userSettingsTable)
       .values({ userId, key, value: value as object, updatedAt: new Date() })
       .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
-    if (key === "seedProfile" && (options.rescore ?? true)) await enqueueTask(tx as unknown as ReturnType<typeof db>, "rescore_all", { userId, onlyInTable: true },
-      { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+    if (key === "seedProfile" && (options.rescore ?? true) && await accountCanScore(tx as unknown as ReturnType<typeof db>, userId)) {
+      await enqueueTask(tx as unknown as ReturnType<typeof db>, "rescore_all", { userId, onlyInTable: true },
+        { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+      await enqueue("synthesize_profile", { userId, force: true }, tx);
+    }
   });
 }
 
@@ -113,7 +116,8 @@ export async function saveSettingsAndGateLocked(
       const payload = { userId };
       await enqueue("reevaluate_gate", payload, tx);
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
-    if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
+    if ((options.rescore ?? true) && await accountCanScore(tx as unknown as ReturnType<typeof db>, userId))
+      await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
 }
 
 export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>, options: { rescore?: boolean } = {}): Promise<void> {

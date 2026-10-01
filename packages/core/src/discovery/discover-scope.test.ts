@@ -39,7 +39,7 @@ describe("held-out full-listing scope and provenance", () => {
     const render = vi.fn(ctx.render!);
     const result = await discoverCareersSources(HOME, { ...ctx, render });
     expect(render.mock.calls.filter(([url]) => url === target)).toHaveLength(1);
-    expect(render).toHaveBeenCalledWith(target, { scrollAndExpand: false });
+    expect(render).toHaveBeenCalledWith(target, expect.objectContaining({ scrollAndExpand: false, allowHost: expect.any(Function) }));
     expect(result.outcome).toBe("resolved");
     expect(result.best?.spec.url).toBe(target);
     expect(result.best?.count).toBeGreaterThanOrEqual(3);

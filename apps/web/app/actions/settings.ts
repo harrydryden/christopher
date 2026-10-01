@@ -1,6 +1,6 @@
 "use server";
 
-import { needsEmailConfirmation, requireAdmin, requireUser } from "@/lib/auth";
+import { requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -64,7 +64,7 @@ export async function saveGate(_prev: ActionResult, formData: FormData): Promise
     const settings = await getSettingsFor(user.id, tx as unknown as ReturnType<typeof db>);
     const parsed = gateFromForm(formData, settings.gate);
     if (!parsed.ok) return fail(parsed.error);
-    await saveSettingsAndGateLocked(tx, user.id, { gate: parsed.gate }, { rescore: !needsEmailConfirmation(user) });
+    await saveSettingsAndGateLocked(tx, user.id, { gate: parsed.gate });
     return ok();
   });
   if (!result.ok) return result;
@@ -83,7 +83,7 @@ export async function saveMatchFields(_prev: ActionResult, formData: FormData): 
     const settings = await getSettingsFor(user.id, tx as unknown as ReturnType<typeof db>);
     const raw = formData.getAll("matchFields").map(String);
     const matchFields = MATCH_FIELDS.filter((f) => raw.includes(f));
-    await saveSettingsAndGateLocked(tx, user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } }, { rescore: !needsEmailConfirmation(user) });
+    await saveSettingsAndGateLocked(tx, user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } });
     return ok();
   });
   if (!result.ok) return result;

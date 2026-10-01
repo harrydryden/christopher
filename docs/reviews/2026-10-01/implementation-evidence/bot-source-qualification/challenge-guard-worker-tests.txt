@@ -1,0 +1,45 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T21:59:29.814Z","level":"info","msg":"http revalidated","data":{"host":"cache.test","durationMs":2,"bytes":0}}
+{"t":"2026-10-01T21:59:29.827Z","level":"info","msg":"http robots denied","data":{"host":"www.example.test","url":"https://www.example.test/private/secret"}}
+{"t":"2026-10-01T21:59:29.833Z","level":"info","msg":"browser robots denied","data":{"host":"www.example.test","url":"https://www.example.test/private/secret"}}
+{"t":"2026-10-01T21:59:30.434Z","level":"info","msg":"http robots denied","data":{"host":"www.example.test","url":"https://www.example.test/private/secret"}}
+{"t":"2026-10-01T21:59:30.521Z","level":"info","msg":"http robots denied","data":{"host":"changing.test","url":"https://changing.test/jobs"}}
+{"t":"2026-10-01T21:59:30.526Z","level":"info","msg":"http robots denied","data":{"host":"flaky.test","url":"https://flaky.test/jobs"}}
+{"t":"2026-10-01T21:59:30.929Z","level":"info","msg":"http revalidated","data":{"host":"large.test","durationMs":1,"bytes":0,"validatorOnly":true}}
+{"t":"2026-10-01T21:59:30.977Z","level":"info","msg":"http revalidated","data":{"host":"traffic.test","durationMs":1,"bytes":0}}
+{"t":"2026-10-01T21:59:31.091Z","level":"info","msg":"http robots denied","data":{"host":"www.example.test","url":"https://www.example.test/private/secret"}}
+{"t":"2026-10-01T21:59:31.129Z","level":"warn","msg":"http refused a private address","data":{"host":"10.9.8.7","url":"http://10.9.8.7/admin"}}
+{"t":"2026-10-01T21:59:31.138Z","level":"info","msg":"http revalidated","data":{"host":"traffic.test","durationMs":0,"bytes":0}}
+{"t":"2026-10-01T21:59:31.248Z","level":"info","msg":"http revalidated","data":{"host":"traffic.test","durationMs":0,"bytes":0}}
+{"t":"2026-10-01T21:59:31.356Z","level":"warn","msg":"http refused a private address","data":{"host":"127.0.0.1","url":"http://127.0.0.1:61165/secret"}}
+{"t":"2026-10-01T21:59:31.356Z","level":"warn","msg":"http refused a private address","data":{"host":"127.0.0.1","url":"http://2130706433:61165/secret"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"[::ffff:7f00:1]","url":"http://[::ffff:127.0.0.1]:61165/"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"169.254.169.254","url":"http://169.254.169.254/latest/meta-data/"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"[::1]","url":"http://[::1]/"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"10.0.0.5","url":"http://10.0.0.5:8080/"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"127.0.0.1","url":"http://127.0.0.1:61165/favicon.ico"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"","url":"file:///etc/passwd"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"","url":"data:text/html,<title>x</title>"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"localhost","url":"http://localhost:8080/"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"metadata.google.internal","url":"http://metadata.google.internal/computeMetadata/v1/"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"ava-worker","url":"http://ava-worker:8080/healthz"}}
+{"t":"2026-10-01T21:59:31.357Z","level":"warn","msg":"http refused a private address","data":{"host":"intranet.example.com","url":"https://intranet.example.com/careers"}}
+{"t":"2026-10-01T21:59:31.358Z","level":"warn","msg":"http refused a private address","data":{"host":"split.example.com","url":"https://split.example.com/careers"}}
+{"t":"2026-10-01T21:59:31.358Z","level":"warn","msg":"http refused a private address","data":{"host":"rebound.example.com","url":"https://rebound.example.com/careers"}}
+{"t":"2026-10-01T21:59:31.361Z","level":"warn","msg":"http refused a private address","data":{"host":"127.0.0.1","url":"http://127.0.0.1:61166/secret"}}
+{"t":"2026-10-01T21:59:31.361Z","level":"warn","msg":"http refused a private address","data":{"host":"169.254.169.254","url":"http://169.254.169.254/latest/meta-data/"}}
+{"t":"2026-10-01T21:59:31.362Z","level":"warn","msg":"http refused a private address","data":{"host":"localhost","url":"http://localhost/admin"}}
+{"t":"2026-10-01T21:59:31.362Z","level":"warn","msg":"http refused a private address","data":{"host":"127.0.0.1","url":"http://127.0.0.1:61166/secret"}}
+{"t":"2026-10-01T21:59:31.365Z","level":"warn","msg":"http refused a private address","data":{"host":"127.0.0.2","url":"http://127.0.0.2:9/secret"}}
+{"t":"2026-10-01T21:59:31.369Z","level":"info","msg":"http robots denied","data":{"host":"www.careers.test","url":"https://www.careers.test/private/list"}}
+{"t":"2026-10-01T21:59:31.971Z","level":"info","msg":"http robots denied","data":{"host":"www.guard.test","url":"https://www.guard.test/"}}
+{"t":"2026-10-01T21:59:31.981Z","level":"info","msg":"http robots denied","data":{"host":"www.guard.test","url":"https://www.guard.test/jobs"}}
+{"t":"2026-10-01T21:59:31.981Z","level":"info","msg":"http robots denied","data":{"host":"www.guard.test","url":"https://www.guard.test/join-us"}}
+
+ Test Files  3 passed (3)
+      Tests  63 passed (63)
+   Start at  22:59:28
+   Duration  3.57s (tests 50%, import 33%, transform 17%)
+

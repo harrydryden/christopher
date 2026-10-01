@@ -8,7 +8,7 @@ import { accountsWithBudget } from "./budget";
 
 export interface ScorePair { userId: string; jobId: string }
 
-type Candidate = ScorePair & { reason: "closed" | "decided" | "ineligible" | null } & Record<string, unknown>;
+type Candidate = ScorePair & { reason: "closed" | "decided" | "ineligible" | "verification" | null } & Record<string, unknown>;
 
 async function markState(db: Db, pairs: ScorePair[], state: ScoreState, now: Date): Promise<number> {
   if (!pairs.length) return 0;
@@ -35,9 +35,9 @@ export async function admitScores(
   deps: WorkerDeps,
   pairs: ReadonlyArray<ScorePair>,
   opts: { db?: Db; priority?: number; background?: boolean; onlyUnscored?: boolean; settings?: Map<string, AppSettings> } = {},
-): Promise<{ queued: number; unavailable: number; budget: number; blockedUnavailable: number; blockedBudget: number; skipped: number }> {
+): Promise<{ queued: number; unavailable: number; budget: number; verification: number; blockedUnavailable: number; blockedBudget: number; blockedVerification: number; skipped: number }> {
   const unique = [...new Map(pairs.map(pair => [`${pair.userId}:${pair.jobId}`, pair])).values()];
-  if (!unique.length) return { queued: 0, unavailable: 0, budget: 0, blockedUnavailable: 0, blockedBudget: 0, skipped: 0 };
+  if (!unique.length) return { queued: 0, unavailable: 0, budget: 0, verification: 0, blockedUnavailable: 0, blockedBudget: 0, blockedVerification: 0, skipped: 0 };
   if (unique.length > 250) throw new Error("Score admission exceeds 250 roles");
   const db = opts.db ?? deps.db;
   // Settings reads happen before row locks; provider reservations enforce the final budget after
@@ -53,9 +53,11 @@ export async function admitScores(
       case when j.status <> 'open' then 'closed'
         when uj.archived_at is not null or choice.decision = 'skip' then 'decided'
         when not uj.in_table and choice.decision is distinct from 'apply' then 'ineligible'
+        when u.role <> 'admin' and u.email_verified_at is null then 'verification'
         else null end as reason
       from jsonb_to_recordset(${JSON.stringify(unique)}::jsonb) as v("userId" uuid, "jobId" uuid)
       join user_jobs uj on uj.user_id = v."userId" and uj.job_id = v."jobId"
+      join users u on u.id = uj.user_id
       join jobs j on j.id = uj.job_id
       left join lateral (select d.decision from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
         and d.superseded = false limit 1) choice on true
@@ -65,11 +67,13 @@ export async function admitScores(
     const candidates = result.rows;
     for (const reason of ["closed", "decided", "ineligible"] as const)
       await markState(tx as unknown as Db, candidates.filter(row => row.reason === reason), reason, now);
+    const blockedVerification = candidates.filter(row => row.reason === "verification");
+    const verification = await markState(tx as unknown as Db, blockedVerification, "verification", now);
     const eligible = candidates.filter(row => row.reason === null);
-    if (!eligible.length) return { queued: 0, unavailable: 0, budget: 0, blockedUnavailable: 0, blockedBudget: 0, skipped: unique.length };
+    if (!eligible.length) return { queued: 0, unavailable: 0, budget: 0, verification, blockedUnavailable: 0, blockedBudget: 0, blockedVerification: blockedVerification.length, skipped: unique.length - blockedVerification.length };
     if (!deps.ai.enabled) {
       const unavailable = await markState(tx as unknown as Db, eligible, "unavailable", now);
-      return { queued: 0, unavailable, budget: 0, blockedUnavailable: eligible.length, blockedBudget: 0, skipped: unique.length - eligible.length };
+      return { queued: 0, unavailable, budget: 0, verification, blockedUnavailable: eligible.length, blockedBudget: 0, blockedVerification: blockedVerification.length, skipped: unique.length - eligible.length - blockedVerification.length };
     }
     const users = [...new Set(eligible.map(row => row.userId))];
     const withBudget = await accountsWithBudget(tx as unknown as Db,
@@ -80,7 +84,7 @@ export async function admitScores(
     const queued = await queueScoring(tx as unknown as Db,
       scorable.map(row => ({ userId: row.userId, jobId: row.jobId, ...(opts.priority === undefined ? {} : { priority: opts.priority }) })),
       now, { promote: opts.priority !== undefined, background: opts.background });
-    return { queued, unavailable: 0, budget, blockedUnavailable: 0, blockedBudget: overBudget.length, skipped: unique.length - eligible.length };
+    return { queued, unavailable: 0, budget, verification, blockedUnavailable: 0, blockedBudget: overBudget.length, blockedVerification: blockedVerification.length, skipped: unique.length - eligible.length - blockedVerification.length };
   });
 }
 

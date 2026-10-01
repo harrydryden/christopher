@@ -1,0 +1,9 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  23:00:02
+   Duration  87ms (transform 61%, import 23%, tests 10%, worker 5%)
+

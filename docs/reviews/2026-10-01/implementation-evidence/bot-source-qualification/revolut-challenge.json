@@ -1,0 +1,21 @@
+{
+  "checkedAtUtc": "2026-10-01T21:38:36.229031+00:00",
+  "url": "https://www.revolut.com/careers/",
+  "userAgent": "AvaSourceQualification/1.0",
+  "robotsPolicy": "200 and allowed for this user agent in observations.json",
+  "status": 403,
+  "responseUrl": "https://www.revolut.com/careers/",
+  "responseDateHeader": "Thu, 01 Oct 2026 21:38:36 GMT",
+  "headers": {
+    "Content-Type": "text/html; charset=UTF-8",
+    "Cf-Mitigated": "challenge",
+    "Server": "cloudflare",
+    "CF-RAY": "a43e9d7f9eba651e-LHR"
+  },
+  "bodyBytes": 872825,
+  "bodySha256": "6176600b4be88515a3de1a8cdcc837151d53bbdb4e8e5175d2a8028adb10d0f7",
+  "bodyChallengeMarkers": [
+    "window._cf_chl_opt",
+    "/cdn-cgi/challenge-platform/"
+  ]
+}

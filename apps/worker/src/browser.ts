@@ -10,7 +10,7 @@
 import { SourceFetchError, type RenderedPage } from "@ava/core";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { AddressGuard, type HttpTrafficLedger, type ResolveHost } from "./fetcher";
+import { AddressGuard, explicitBotChallenge, type HttpTrafficLedger, type ResolveHost } from "./fetcher";
 import { MAX_DECODED_LISTING_BYTES } from "./listing-captures";
 import { log } from "./log";
 import { within } from "./timers";
@@ -21,6 +21,8 @@ type BrowserContext = import("playwright").BrowserContext;
 
 export interface RenderOptions {
   scrollAndExpand?: boolean;
+  /** Additional deny-only, run-local guard for every request and WebSocket. */
+  allowHost?: (hostname: string) => void | Promise<void>;
   /** Gives the render up: a queued one leaves the queue, a running one has its page closed. */
   signal?: AbortSignal;
 }
@@ -57,7 +59,7 @@ export interface BrowserOptions {
   /** Politeness for one navigation: reserved once, before the page is opened, never per subresource. */
   beforeNavigate?: (host: string) => Promise<void>;
   /** Robots/policy guard for every top-level document request, including redirects. */
-  allowNavigate?: (url: string) => Promise<void>;
+  allowNavigate?: (url: string, allowHost?: RenderOptions["allowHost"]) => Promise<void>;
   /**
    * The same ledger the fetcher writes to, so a render is visible as traffic too. A render is
    * counted as one request under `via: "browser"` — the subresources it makes are the page's
@@ -319,10 +321,11 @@ export class BrowserRenderer {
       cdp.on("Fetch.requestPaused", async (event: { requestId: string; frameId?: string; request: { url: string }; resourceType?: string }) => {
         const navigation = event.frameId === mainFrameId && event.resourceType === "Document";
         try {
+          await opts.allowHost?.(new URL(event.request.url).hostname);
           await this.guardRequest(event.request.url);
           if (navigation) {
             await this.opts.beforeNavigate?.(new URL(event.request.url).hostname);
-            await this.opts.allowNavigate?.(event.request.url);
+            await this.opts.allowNavigate?.(event.request.url, opts.allowHost);
           }
           await cdp.send("Fetch.continueRequest", { requestId: event.requestId });
         } catch (error) {
@@ -334,6 +337,7 @@ export class BrowserRenderer {
       // Neither interception sees a WebSocket, so it is guarded where Playwright hands it over.
       await page.routeWebSocket(/.*/, async (ws) => {
         try {
+          await opts.allowHost?.(new URL(ws.url()).hostname);
           await this.guardRequest(ws.url());
           ws.connectToServer();
         } catch (error) {
@@ -344,6 +348,8 @@ export class BrowserRenderer {
       const hostMap = this.opts.hostMap ?? {};
       await page.route("**/*", async (route) => {
         const req = route.request();
+        try { await opts.allowHost?.(new URL(req.url()).hostname); }
+        catch { return route.abort(); }
         const type = req.resourceType();
         if (type === "image" || type === "font" || type === "media") return route.abort();
         const target = new URL(req.url());
@@ -384,6 +390,18 @@ export class BrowserRenderer {
       // Reserve once per top-level document navigation (including redirects), never per subresource.
       const response = await page.goto(url, { waitUntil: "domcontentloaded" }).catch(error => { throw navigationError ?? error; });
       status = response?.status() ?? null;
+      if (response) {
+        const headers = await response.allHeaders();
+        // Read only bounded title/script evidence before the normal size-capped DOM snapshot.
+        const snippet = await page.evaluate(() => {
+          const title = `<title>${document.title.slice(0, 200)}</title>`;
+          const scripts = Array.from(document.querySelectorAll("script")).slice(0, 20)
+            .map(script => `${script.getAttribute("src") ?? ""} ${script.textContent?.slice(0, 500) ?? ""}`);
+          return [title, ...scripts].join("\n").slice(0, 20_000);
+        });
+        if (explicitBotChallenge(headers, snippet, status ?? 200))
+          throw new SourceFetchError(`bot challenge while rendering ${url}`, "blocked", status ?? 403, new URL(response.url()).hostname);
+      }
       if (response && (status === 429 || status === 503)) {
         // The fetcher defers a host that says this; a render must too, or the next render asks
         // again at the ordinary pace.
@@ -485,6 +503,8 @@ export class BrowserRenderer {
           else if (retain(html, page.url()) === "cap") { finalCaptureUnstored = true; incomplete = true; }
         }
       }
+      if (explicitBotChallenge({}, html, 200))
+        throw new SourceFetchError(`bot challenge while rendering ${page.url()}`, "blocked", 403, new URL(page.url()).hostname);
       // What came over the wire for the page itself, not the size of the DOM its scripts built.
       const bytes = response ? await within(response.request().sizes().then(sizes => sizes.responseBodySize), 2_000, 0) : 0;
       if (!job.abandoned) this.opts.traffic?.request(host, "browser", { status, bytes, durationMs: Date.now() - started });

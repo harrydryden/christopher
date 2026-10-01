@@ -1,5 +1,6 @@
 import { aiBudgetRefusalMessage, aiFeatureLabel, type AppSettings } from "@ava/core";
 import { createAiEngine, type AiFailure } from "@ava/ai";
+import { accountCanScore } from "@ava/db";
 import { budgetLimits, recordAiUsage, tryReserveAi, type AiHold } from "./budget";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
@@ -43,6 +44,7 @@ export function openAccountAiPass(deps: WorkerDeps, opts: {
     /** Why the last call produced nothing, as the engine classified it; the engine returns null either way. */
     failure: () => failure,
     admit: async (expectedUsd: number): Promise<{ refused: string } | { release: () => Promise<void> }> => {
+      if (!await accountCanScore(deps.db, userId)) return { refused: "Confirm your email address before using AI." };
       const now = deps.now();
       const admitted = await tryReserveAi(deps.db, opts.callSite, expectedUsd,
         budgetLimits(deps.env, now, { userId, settings: opts.settings }, { refId: opts.refId }), now, HOLD_MINUTES);

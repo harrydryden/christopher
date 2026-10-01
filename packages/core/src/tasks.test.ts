@@ -34,6 +34,7 @@ describe("task dedupe keys and priorities", () => {
       score_job: [{ userId: u, jobId: "j1" }, "score_job:u1:j1", 4],
       admit_scores: [{ userId: u, jobIds: ["j1"], requestKey: "h1" }, "admit_scores:u1:h1", 1],
       tag_reason: [{ decisionId: "x1" }, "tag_reason:x1", 1],
+      resume_reason_tags: [{ userId: u }, "resume_reason_tags:u1", 6],
       synthesize_profile: [{ userId: u }, "synthesize_profile:u1", 6],
       suggest_filters: [{ userId: u }, "suggest_filters:u1", 6],
       suggest_from_scans: [{ userId: u }, "suggest_from_scans:u1", 6],
@@ -73,7 +74,7 @@ describe("task deadlines", () => {
 
   it("names every task type once", () => {
     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
-    expect(TASK_TYPE_NAMES).toHaveLength(25);
+    expect(TASK_TYPE_NAMES).toHaveLength(26);
   });
 });
 

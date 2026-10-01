@@ -1,0 +1,66 @@
+{
+  "recordedAtUtc": "2026-10-01T21:52:53.449237+00:00",
+  "method": "Manual orchestration of agent-browser 0.27.0 commands against local Next dev server; synthetic account; no running worker, provider key or email send",
+  "origin": "http://127.0.0.1:3147",
+  "database": "ava_confirmation_ui_1001 on 127.0.0.1:55439",
+  "unconfirmed": {
+    "desktop": {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "frameworkOverlay": false
+    },
+    "phone": {
+      "width": 375,
+      "scrollWidth": 375,
+      "frameworkOverlay": false
+    },
+    "verifiedOnlyFieldsDisabled": true,
+    "startingPreferencesEditable": true,
+    "keyboardSave": {
+      "method": "fill Starting preferences, Tab to Save, Enter",
+      "focusBeforeSubmit": {
+        "tag": "BUTTON",
+        "text": "Save"
+      },
+      "persistedText": "I want operations roles in London, with clear ownership and a supportive team.",
+      "tasksAfterSave": 0
+    }
+  },
+  "confirmation": {
+    "method": "Called real completeAccountClaim on synthetic fixture via local TS script, not an email-delivery or password-proof test",
+    "verified": true,
+    "role": "member",
+    "tasks": [
+      {
+        "type": "synthesize_profile",
+        "status": "queued"
+      }
+    ]
+  },
+  "confirmedPhone": {
+    "width": 375,
+    "scrollWidth": 375,
+    "updatePreferenceProfileEnabled": true,
+    "confirmationNoticePresent": false,
+    "frameworkOverlay": false
+  },
+  "navigation": "Home opened with Roles and Choose preferences setup action",
+  "browserErrors": [],
+  "cleanup": {
+    "browserClosed": true,
+    "devServerExited": 0
+  },
+  "populatedQuestions": {
+    "fixture": "Inserted one synthetic profile version with a pinned statement and one unanswered team-style question; not model-generated",
+    "viewport": 375,
+    "scrollWidth": 375,
+    "pinnedAccessibleName": "Statements to keep in future updates",
+    "answerAccessibleName": "Answer: What would a supportive team look like for you?",
+    "keyboardSaveFocus": "Save answer",
+    "persistedVersion": 2,
+    "persistedAnswer": "Regular feedback and clear decisions.",
+    "aiCallRows": 0,
+    "browserErrors": [],
+    "devServerExit": 0
+  }
+}

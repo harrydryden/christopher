@@ -13,6 +13,7 @@ import { runMigrations } from "@ava/db/migrate";
 import { aiBudgetWindowStart } from "@ava/core";
 import { and, eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
+import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import type { User } from "@ava/db/schema";
 
 let database: Db;
@@ -165,7 +166,7 @@ describe("what the review panel loads on expand", () => {
     await database.update(schema.users).set({ role: "member", emailVerifiedAt: null }).where(eq(schema.users.id, user.id));
 
     const details = await detailsFor(job.id);
-    expect(details.cvBlocked).toBe("Confirm your email address to add companies, run discovery and build CVs.");
+    expect(details.cvBlocked).toBe(VERIFY_SENTENCE);
     expect(details.cvQuote).not.toBeNull();
   });
 

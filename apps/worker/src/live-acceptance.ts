@@ -1,9 +1,10 @@
-import { ats, discovery, type DiscoveryAiHooks, type SourceSpec, type SourceType } from "@ava/core";
+import { ats, discovery, type DiscoveryAiHooks, type FetchInit, type SourceSpec, type SourceType } from "@ava/core";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
-import type { BrowserRenderer } from "./browser";
+import type { BrowserRenderer, RenderOptions } from "./browser";
 import { observeHtmlListing } from "./live-acceptance-html";
 import { compareReferencePostings, canonicalPostingIdentity, type ReferencePostingSnapshot, type PostingComparison } from "./live-acceptance-postings";
 import { assessLiveAcceptanceCorpus, type CorpusCoverageEvidence } from "./live-acceptance-corpus";
+import { guardedDiscoveryFetchContext } from "./discovery-host-guard";
 
 export interface LiveAcceptanceCase {
   id: string;
@@ -299,7 +300,7 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
   const fetchContext = {
     fetchText: (url: string, init?: Parameters<typeof fetcher.fetchText>[1]) => fetcher.fetchText(url, init),
     fetchBytes: (url: string, init?: Parameters<typeof fetcher.fetchBytes>[1]) => fetcher.fetchBytes(url, init),
-    render: options.browser ? async (url: string, opts?: { scrollAndExpand?: boolean }) => {
+    render: options.browser ? async (url: string, opts?: RenderOptions) => {
       browserAttempts++;
       browserUrls.push(url);
       try {
@@ -318,7 +319,7 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
     ...fetchContext,
     resolveSpec: ats.specFromAnyUrl,
     findSpecsInText: ats.findAtsSpecsInText,
-    verifySpec: (spec: SourceSpec) => ats.getAdapter(spec.type).verify(spec, fetchContext),
+    verifySpec: (spec: SourceSpec, allowHost?: FetchInit["allowHost"], onChallenge?: (error: unknown, requestedUrl: string) => void) => ats.getAdapter(spec.type).verify(spec, guardedDiscoveryFetchContext(fetchContext, allowHost, onChallenge)),
     extractFromHtml: ats.extractPostingsFromHtml,
     ai: options.ai,
     maxFetches: options.maxFetches ?? DIAGNOSTIC_DISCOVERY_MAX_FETCHES,

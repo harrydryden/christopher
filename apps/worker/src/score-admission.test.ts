@@ -1,12 +1,13 @@
-import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, queueScoring, requestScores, schema, type Db, type Task } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { createDeps, type WorkerDeps } from "./context";
+import { AccountVerificationRequiredError, createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { ensureTestUser } from "./test-users";
 import { admitScores, handleAdmitScores } from "./score-admission";
 import { onAbandon } from "./handlers/abandon";
+import { handleRescoreAll, handleScoreJob, prepareScoreJob } from "./handlers/learning";
 
 const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 let deps: WorkerDeps;
@@ -45,6 +46,56 @@ async function view(userId: string, jobId: string) {
 async function task(type: "admit_scores" | "score_job") {
   return (await db.select().from(schema.tasks).where(eq(schema.tasks.type, type)))[0]!;
 }
+
+it("blocks legacy score requests for an unconfirmed member without a model call or budget hold", async () => {
+  const pair = await role("unconfirmed-admission@example.com");
+  await db.update(schema.users).set({ role: "member", emailVerifiedAt: null }).where(eq(schema.users.id, pair.userId));
+  await requestScores(db, [pair], now);
+  const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: "strong", rationale: "Fits." });
+  const ai = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
+  expect(await handleAdmitScores(await task("admit_scores"), ai)).toMatchObject({ queued: 0, blockedVerification: 1 });
+  expect((await view(pair.userId, pair.jobId)).scoreState).toBe("verification");
+  expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).toHaveLength(0);
+  expect(await prepareScoreJob(ai, pair.userId, pair.jobId)).toEqual({ done: { skipped: "email confirmation required" } });
+  expect(await handleScoreJob({ payload: pair } as unknown as Task, ai)).toEqual({ skipped: "email confirmation required" });
+  expect(await handleRescoreAll({ payload: { userId: pair.userId }, type: "rescore_all" } as unknown as Task, ai))
+    .toEqual({ skipped: "email confirmation required" });
+  expect(scoreJob).not.toHaveBeenCalled();
+  expect(await db.select().from(schema.aiReservations).where(eq(schema.aiReservations.userId, pair.userId))).toHaveLength(0);
+});
+
+it("rejects a direct per-account engine call before reserving for an unconfirmed member", async () => {
+  const pair = await role("unconfirmed-direct-ai@example.com");
+  await db.update(schema.users).set({ role: "member", emailVerifiedAt: null }).where(eq(schema.users.id, pair.userId));
+  const create = vi.fn();
+  const direct = await createDeps({ ...readEnv(), databaseUrl: url }, {
+    now: () => now,
+    aiClient: { messages: { create } } as unknown as WorkerDeps["aiClient"],
+  });
+  try {
+    await expect(direct.ai.tagReason({ reason: "Wrong location", decision: "skip", job: { title: "Operations Manager", company: "Acme" }, vocabulary: [] },
+      { userId: pair.userId, refType: "decision", refId: pair.jobId })).rejects.toBeInstanceOf(AccountVerificationRequiredError);
+    expect(create).not.toHaveBeenCalled();
+    expect(await db.select().from(schema.aiReservations).where(eq(schema.aiReservations.userId, pair.userId))).toHaveLength(0);
+    expect(await db.select().from(schema.aiCalls).where(eq(schema.aiCalls.userId, pair.userId))).toHaveLength(0);
+  } finally {
+    await direct.close();
+  }
+});
+
+it("retries a verification-blocked view after confirmation even with the last pass's input hash", async () => {
+  const pair = await role("confirmation-retry@example.com");
+  const ai = { ...deps, ai: { ...deps.ai, enabled: true } } as WorkerDeps;
+  const rescore = { payload: { userId: pair.userId }, type: "rescore_all" } as unknown as Task;
+  const first = await handleRescoreAll(rescore, ai) as { queued: number; inputsHash: string };
+  expect(first.queued).toBe(1);
+  await db.delete(schema.tasks);
+  await db.insert(schema.tasks).values({ type: "rescore_all", payload: { userId: pair.userId }, status: "done",
+    result: first, finishedAt: new Date(now.getTime() - 86_400_000) });
+  await db.update(schema.userJobs).set({ scoreState: "verification" })
+    .where(and(eq(schema.userJobs.userId, pair.userId), eq(schema.userJobs.jobId, pair.jobId)));
+  expect(await handleRescoreAll(rescore, ai)).toMatchObject({ queued: 1, inputsHash: first.inputsHash });
+});
 
 it("records exact requests, then a no-key worker settles them without futile score jobs", async () => {
   const pair = await role();

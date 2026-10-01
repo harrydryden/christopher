@@ -314,6 +314,8 @@ export function scoreStateText(
         return "Previous score; AI update unavailable";
       case "budget":
         return "Previous score; update stopped: budget spent";
+      case "verification":
+        return "Previous score; update waits for email confirmation";
       case "failed":
         return "Previous score; update failed; review manually";
       default:
@@ -327,6 +329,8 @@ export function scoreStateText(
       return "Waiting for scoring; review manually";
     case "budget":
       return "not scored: budget spent";
+    case "verification":
+      return "Confirm your email to start scoring";
     case "unavailable":
       return "AI scoring unavailable; review manually";
     case "failed":

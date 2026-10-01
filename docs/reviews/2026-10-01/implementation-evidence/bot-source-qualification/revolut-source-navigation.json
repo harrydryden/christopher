@@ -1,0 +1,23 @@
+{
+  "checkedAt": "2026-10-01",
+  "method": "Public web text reader; followed links in order, without solving a challenge or accessing an authenticated session",
+  "chain": [
+    {
+      "page": "https://www.revolut.com/",
+      "linkText": "Company",
+      "destination": "https://www.revolut.com/discover-our-company/"
+    },
+    {
+      "page": "https://www.revolut.com/discover-our-company/",
+      "linkText": "Join us",
+      "destination": "https://www.revolut.com/careers/"
+    }
+  ],
+  "listing": {
+    "url": "https://www.revolut.com/careers/",
+    "observedHeading": "We have 363 open positions",
+    "observedSearchLabel": "Search from 363 open positions",
+    "observedControls": ["Location", "Filter by teams"],
+    "scope": "No query or location filter in the linked URL; displayed count is site text, not a reviewed posting count"
+  }
+}

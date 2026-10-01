@@ -28,6 +28,7 @@ import {
 } from "./handlers/learning";
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { handleSuggestCompanies } from "./handlers/companies";
+import { handleResumeReasonTags } from "./handlers/resume-reason-tags";
 import { BudgetRefusedError } from "./budget";
 import { ensureTestUser } from "./test-users";
 
@@ -557,6 +558,63 @@ it("writes a reason's tags behind the task's fence", async () => {
   await expect(handleTagReason({ payload: { decisionId: decision!.id }, type: "tag_reason", attempts: 1 } as never, fenced)).rejects.toThrow("lease lost");
   const [after] = await db.select().from(schema.decisions).where(eq(schema.decisions.id, decision!.id));
   expect(after!.tags).toEqual([]);
+});
+
+it("does not call the tagging or synthesis models for an unconfirmed member's queued work", async () => {
+  const member = await ensureTestUser(db, "unconfirmed-learning@example.com", "member");
+  await db.update(schema.users).set({ emailVerifiedAt: null }).where(eq(schema.users.id, member.id));
+  const [decision] = await db.insert(schema.decisions).values({
+    userId: member.id, decision: "skip", reason: "Too junior", jobTitle: "Operations Manager", companyName: "Acme",
+  }).returning();
+  await db.insert(schema.userSettings).values({ userId: member.id, key: "seedProfile", value: "Operations leader" });
+  deps.invalidateSettings();
+
+  const tagReason = vi.fn().mockResolvedValue({ tags: ["seniority:too_junior"], proposedNewTags: [] });
+  const synthesizeProfile = vi.fn().mockResolvedValue({ markdown: "## Target roles\nOperations", openQuestions: [] });
+  const model = aiDeps({ tagReason, synthesizeProfile });
+  const tagTask = { payload: { decisionId: decision!.id }, type: "tag_reason", attempts: 1 } as never;
+  const profileTask = { payload: { userId: member.id, force: true }, type: "synthesize_profile", attempts: 1 } as never;
+  expect(await handleTagReason(tagTask, model)).toEqual({ skipped: "account missing or email confirmation required" });
+  expect(await handleSynthesizeProfile(profileTask, model)).toEqual({ skipped: "account missing or email confirmation required" });
+  expect(await handleSynthesizeProfile({ payload: { userId: "00000000-0000-0000-0000-000000000001" }, type: "synthesize_profile", attempts: 1 } as never, model))
+    .toEqual({ skipped: "account missing or email confirmation required" });
+  expect(tagReason).not.toHaveBeenCalled();
+  expect(synthesizeProfile).not.toHaveBeenCalled();
+
+  await db.update(schema.users).set({ emailVerifiedAt: now }).where(eq(schema.users.id, member.id));
+  expect(await handleTagReason(tagTask, model)).toMatchObject({ tags: ["seniority:too_junior"] });
+  expect(await handleSynthesizeProfile(profileTask, model)).toMatchObject({ version: 1 });
+  expect(tagReason).toHaveBeenCalledTimes(1);
+  expect(synthesizeProfile).toHaveBeenCalledTimes(1);
+});
+
+it("fans out pre-confirmation reason tags in bounded pages", async () => {
+  const member = await ensureTestUser(db, "confirmed-reasons@example.com", "member");
+  await db.insert(schema.decisions).values(Array.from({ length: 205 }, (_, i) => ({
+    userId: member.id, decision: "skip" as const, reason: `Reason ${i}`, jobTitle: `Old role ${i}`, companyName: "Acme",
+  })));
+  const payload = { userId: member.id };
+  const [current] = await db.insert(schema.tasks).values({ type: "resume_reason_tags", payload,
+    dedupeKey: `resume_reason_tags:${member.id}`, status: "running", startedAt: now }).returning();
+  expect(await handleResumeReasonTags({ payload, type: "resume_reason_tags", attempts: 1 } as never, aiDeps({})))
+    .toEqual({ queued: 100, continuing: true });
+  const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "tag_reason"));
+  expect(queued).toHaveLength(100);
+  const next = (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "resume_reason_tags")))
+    .find(row => row.id !== current!.id);
+  expect(next?.payload).toMatchObject({ userId: member.id, afterDecisionId: expect.any(String) });
+  await db.update(schema.tasks).set({ status: "done", finishedAt: now }).where(eq(schema.tasks.id, current!.id));
+  await db.update(schema.tasks).set({ status: "running", startedAt: now }).where(eq(schema.tasks.id, next!.id));
+  expect(await handleResumeReasonTags({ payload: next!.payload, type: "resume_reason_tags", attempts: 1 } as never, aiDeps({})))
+    .toEqual({ queued: 100, continuing: true });
+  const third = (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "resume_reason_tags")))
+    .find(row => row.id !== current!.id && row.id !== next!.id);
+  expect(third?.payload).toMatchObject({ userId: member.id, afterDecisionId: expect.any(String) });
+  await db.update(schema.tasks).set({ status: "done", finishedAt: now }).where(eq(schema.tasks.id, next!.id));
+  await db.update(schema.tasks).set({ status: "running", startedAt: now }).where(eq(schema.tasks.id, third!.id));
+  expect(await handleResumeReasonTags({ payload: third!.payload, type: "resume_reason_tags", attempts: 1 } as never, aiDeps({})))
+    .toEqual({ queued: 5, continuing: false });
+  expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "tag_reason"))).toHaveLength(205);
 });
 
 it("brings a shortlisted role's waiting score up to the shortlist's priority", async () => {

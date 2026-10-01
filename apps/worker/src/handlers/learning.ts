@@ -26,6 +26,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   if (!decision) return { skipped: "decision not found" };
   if (decision.superseded || decision.tagsEdited) return { skipped: "decision superseded or tags edited by user" };
   if (!decision.reason.trim()) return { skipped: "no reason text" };
+  if (!await accountCanScore(deps.db, decision.userId)) return { skipped: "account missing or email confirmation required" };
   const tagStop = await aiBudgetStop(deps, decision.userId);
   if (tagStop) return { skipped: tagStop };
 
@@ -154,6 +155,10 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
     await markScoreState(deps, userId, jobId, "ineligible");
     return { done: { skipped: "role does not match and is not shortlisted" } };
   }
+  if (!await accountCanScore(deps.db, userId)) {
+    await markScoreState(deps, userId, jobId, "verification");
+    return { done: { skipped: "email confirmation required" } };
+  }
   const preparedAt = deps.now();
   // What the score was computed from. It is kept on this account's own view of the role, so an
   // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
@@ -178,7 +183,7 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   // refused for an unavailable provider or an account whose spend and live holds filled its month.
   const scoreStop = await aiBudgetStop(deps, userId);
   if (scoreStop) {
-    await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : "budget");
+    await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : scoreStop === "email confirmation required" ? "verification" : "budget");
     return { done: { skipped: scoreStop } };
   }
   const [attempt] = await deps.db.update(schema.userJobs)
@@ -210,6 +215,11 @@ export async function checkScorePublication(deps: WorkerDeps, db: WorkerDeps["db
   const [view] = await db.select().from(schema.userJobs)
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).for("update").limit(1);
   if (!view) return false;
+  if (!await accountCanScore(db, userId)) {
+    await db.update(schema.userJobs).set({ scoreState: "verification", scoreStateAt: deps.now() })
+      .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    return false;
+  }
   const [choice] = await db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
   const ineligible: ScoreState | null = job.status !== "open" ? "closed"
@@ -428,6 +438,7 @@ async function accountOutcomes(deps: WorkerDeps, userId: string) {
 export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, force } = (task.payload ?? {}) as TaskPayloads["synthesize_profile"];
   if (!userId) return { skipped: "no account on task" };
+  if (!await accountCanScore(deps.db, userId)) return { skipped: "account missing or email confirmation required" };
   const profileStop = await aiBudgetStop(deps, userId);
   if (profileStop) return { skipped: profileStop };
   const settings = await deps.userSettings(userId);
@@ -673,6 +684,7 @@ async function rescoreInputs(deps: WorkerDeps, userId: string): Promise<string> 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, onlyInTable } = (task.payload ?? {}) as TaskPayloads["rescore_all"];
   if (!userId) return { skipped: "no account on task" };
+  if (!await accountCanScore(deps.db, userId)) return { skipped: "email confirmation required" };
   const inputsHash = await rescoreInputs(deps, userId);
   // The last full pass this account actually ran: when it finished, and what it scored from.
   const [last] = await deps.db.select({ finishedAt: schema.tasks.finishedAt, result: schema.tasks.result }).from(schema.tasks)
@@ -682,7 +694,7 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   const sameInputs = !!last && (last.result as { inputsHash?: string } | null)?.inputsHash === inputsHash;
   const retryable = sameInputs ? await deps.db.execute(sql`select 1 from user_jobs uj join jobs j on j.id = uj.job_id
     where uj.user_id = ${userId}::uuid and j.status = 'open' and uj.archived_at is null
-      and uj.score_state in ('unavailable', 'budget', 'failed')
+      and uj.score_state in ('unavailable', 'budget', 'verification', 'failed')
       and (uj.in_table or exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
         and d.superseded = false and d.decision = 'apply'))
       and not exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
@@ -706,7 +718,7 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
     .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), isNull(schema.userJobs.archivedAt),
       sql`not ${skipped}`, sql`(${schema.userJobs.inTable} or ${shortlisted})`,
-      sql`(${!retryOnly} or ${schema.userJobs.scoreState} in ('unavailable', 'budget', 'failed'))`)).orderBy(desc(shortlisted));
+      sql`(${!retryOnly} or ${schema.userJobs.scoreState} in ('unavailable', 'budget', 'verification', 'failed'))`)).orderBy(desc(shortlisted));
   // A shortlisted role's score is the one the person is waiting on: a background score already
   // queued for it is brought up to that priority rather than left where it was, and scored live.
   // The rest only reorder a table the person has already seen, so they are marked background and
@@ -715,6 +727,7 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   let queued = 0;
   let unavailable = 0;
   let budget = 0;
+  let verification = 0;
   for (const [shortlistedRows, options] of [
     [rows.filter(row => row.shortlisted), { priority: 1 }],
     [rows.filter(row => !row.shortlisted), { background: true }],
@@ -724,10 +737,13 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
       queued += admitted.queued;
       unavailable += admitted.blockedUnavailable;
       budget += admitted.blockedBudget;
+      verification += admitted.blockedVerification;
     }
   }
   // A pass that could not create model work has not rescored these inputs. Omitting `queued` keeps
   // the next request eligible when an operator configures AI or the account's budget resets.
-  if (!queued && (unavailable || budget)) return { skipped: unavailable ? "ai unavailable" : "account ai budget exceeded", unavailable, budget, inputsHash };
+  if (!queued && (unavailable || budget || verification))
+    return { skipped: verification ? "email confirmation required" : unavailable ? "ai unavailable" : "account ai budget exceeded",
+      unavailable, budget, verification, inputsHash };
   return { queued, inputsHash };
 }

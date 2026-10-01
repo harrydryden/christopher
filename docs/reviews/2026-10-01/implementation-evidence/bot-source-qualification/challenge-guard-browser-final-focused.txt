@@ -1,0 +1,11 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T22:00:23.514Z","level":"warn","msg":"render failed","data":{"url":"https://www.acmeind.example/challenge-header","error":"bot challenge while rendering https://www.acmeind.example/challenge-header"}}
+{"t":"2026-10-01T22:00:24.639Z","level":"info","msg":"render refused a request","data":{"url":"https://boards-api.greenhouse.io/guarded.js","error":"run-local challenged host"}}
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 18 skipped (20)
+   Start at  23:00:21
+   Duration  4.26s (tests 65%, transform 22%, import 12%)
+

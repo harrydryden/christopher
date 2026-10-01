@@ -1,0 +1,70 @@
+# *
+User-agent: *
+Allow: /sitemap-*.xml*
+Disallow: /api/
+Disallow: */email-verification
+Disallow: */help-centre
+Disallow: /*.json$
+Disallow: /*_buildManifest.js$
+Disallow: /*_middlewareManifest.js$
+Disallow: /*_ssgManifest.js$
+Disallow: /*embedded
+Disallow: /*/query:*
+Disallow: *?*
+Allow: *?amount=
+Allow: *?amount-to=
+Disallow: */api/*amount*
+
+# Localisation send money
+Disallow: /en-AT/money-transfer/send-money
+Disallow: /en-BE/money-transfer/send-money
+Disallow: /en-BG/money-transfer/send-money
+Disallow: /en-BR/money-transfer/send-money
+Disallow: /en-CL/money-transfer/send-money
+Disallow: /en-CZ/money-transfer/send-money
+Disallow: /en-CZ/money-transfer/send-money
+Disallow: /en-DE/money-transfer/send-money
+Disallow: /en-ES/money-transfer/send-money
+Disallow: /en-FR/money-transfer/send-money
+Disallow: /en-GR/money-transfer/send-money
+Disallow: /en-HR/money-transfer/send-money
+Disallow: /en-HU/money-transfer/send-money
+Disallow: /en-IT/money-transfer/send-money
+Disallow: /en-JP/money-transfer/send-money
+Disallow: /en-LT/money-transfer/send-money
+Disallow: /en-MX/money-transfer/send-money
+Disallow: /en-PL/money-transfer/send-money
+Disallow: /en-PT/money-transfer/send-money
+Disallow: /en-RO/money-transfer/send-money
+Disallow: /en-SK/money-transfer/send-money
+Disallow: /en-EC/money-transfer/send-money
+Disallow: /en-EE/money-transfer/send-money
+Disallow: /en-AZ/money-transfer/send-money
+Disallow: /en-LV/money-transfer/send-money
+Disallow: */international-transfers/
+
+# Localisation currency converter
+Disallow: /en-ES/currency-converter/convert
+Disallow: /en-BG/currency-converter/convert
+Disallow: /en-CZ/currency-converter/convert
+Disallow: /en-DA/currency-converter/convert
+Disallow: /en-DE/currency-converter/convert
+Disallow: /en-GR/currency-converter/convert
+Disallow: /en-AZ/currency-converter/convert
+Disallow: /en-FR/currency-converter/convert
+Disallow: /en-HR/currency-converter/convert
+Disallow: /en-HU/currency-converter/convert
+Disallow: /en-IT/currency-converter/convert
+Disallow: /en-JP/currency-converter/convert
+Disallow: /en-LT/currency-converter/convert
+Disallow: /en-NL/currency-converter/convert
+Disallow: /en-PL/currency-converter/convert
+Disallow: /en-BR/currency-converter/convert
+Disallow: /en-RO/currency-converter/convert
+Disallow: /en-LV/currency-converter/convert
+Disallow: /en-SE/currency-converter/convert
+Disallow: /en-SL/currency-converter/convert
+
+# Sitemap, Host
+Sitemap: https://www.revolut.com/sitemap-index.xml
+Host: https://www.revolut.com

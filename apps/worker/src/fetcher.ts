@@ -426,6 +426,15 @@ function retryAfterMs(headers: Record<string, string>): number {
 }
 
 const CHALLENGE_MARKERS = [/cf-browser-verification/i, /just a moment/i, /attention required!\s*\|\s*cloudflare/i, /captcha/i, /access denied/i, /perimeterx/i, /_incapsula_/i];
+/** Explicit markers only: an ordinary 403 saying "Access denied" is not proof of a challenge. */
+const EXPLICIT_CHALLENGE_MARKERS = [/cf-browser-verification/i, /just a moment/i, /attention required!\s*\|\s*cloudflare/i,
+  /captcha/i, /perimeterx/i, /_incapsula_/i, /window\._cf_chl_opt/i, /\/cdn-cgi\/challenge-platform\//i];
+const EXPLICIT_200_MARKERS = [/cf-browser-verification/i, /<title>\s*just a moment/i, /attention required!\s*\|\s*cloudflare/i,
+  /window\._cf_chl_opt/i, /\/cdn-cgi\/challenge-platform\//i];
+export function explicitBotChallenge(headers: Record<string, string>, body = "", status = 403): boolean {
+  return Object.entries(headers).some(([key, value]) => key.toLowerCase() === "cf-mitigated" && value.toLowerCase() === "challenge")
+    || (status === 200 ? EXPLICIT_200_MARKERS : EXPLICIT_CHALLENGE_MARKERS).some(re => re.test(body.slice(0, 20_000)));
+}
 
 export class PoliteFetcher {
   /** In-process pacing (tests, the CLI): each host's next free turn, as `reserveHost` keeps it in the table. */
@@ -445,14 +454,14 @@ export class PoliteFetcher {
   }
 
   /** Enforce the configured robots policy before a browser top-level navigation. */
-  async assertRobotsAllowed(url: string): Promise<void> {
-    return this.assertRobotsAllowedFor(url, "browser");
+  async assertRobotsAllowed(url: string, allowHost?: FetchInit["allowHost"]): Promise<void> {
+    return this.assertRobotsAllowedFor(url, "browser", allowHost);
   }
 
-  private async assertRobotsAllowedFor(url: string, via: "http" | "browser"): Promise<void> {
+  private async assertRobotsAllowedFor(url: string, via: "http" | "browser", allowHost?: FetchInit["allowHost"]): Promise<void> {
     const u = new URL(url);
     if (ats.isAtsHost(u.hostname) || !this.opts.respectRobots || !(await this.opts.respectRobots())) return;
-    if (await this.robotsAllows(url)) return;
+    if (await this.robotsAllows(url, allowHost)) return;
     this.opts.traffic?.reason(u.hostname, via, "robotsDenied");
     log.info(`${via} robots denied`, { host: u.hostname, url });
     throw new SourceFetchError(`robots.txt disallows ${url}`, "blocked", 999);
@@ -503,17 +512,22 @@ export class PoliteFetcher {
     return this.opts.now?.() ?? Date.now();
   }
 
-  private async robotsAllows(url: string): Promise<boolean> {
+  private async robotsAllows(url: string, allowHost?: FetchInit["allowHost"]): Promise<boolean> {
     const u = new URL(url);
     const origin = `${u.protocol}//${u.host}`;
     let entry = this.robotsCache.get(origin);
     if (!entry || this.now() - entry.at >= entry.ttlMs) {
-      let pending = this.robotsInFlight.get(origin);
-      if (!pending) {
-        pending = this.readRobots(origin, u.hostname).finally(() => this.robotsInFlight.delete(origin));
-        this.robotsInFlight.set(origin, pending);
+      if (allowHost) {
+        // A run-local refusal must neither join nor populate the shared robots promise/cache.
+        entry = await this.readRobots(origin, u.hostname, allowHost);
+      } else {
+        let pending = this.robotsInFlight.get(origin);
+        if (!pending) {
+          pending = this.readRobots(origin, u.hostname).finally(() => this.robotsInFlight.delete(origin));
+          this.robotsInFlight.set(origin, pending);
+        }
+        entry = await pending;
       }
-      entry = await pending;
     }
     const rules = entry.rules;
     if (!rules) return true;
@@ -530,10 +544,18 @@ export class PoliteFetcher {
   }
 
   /** Ask `origin` for its robots.txt and remember the answer for as long as it stands. */
-  private async readRobots(origin: string, host: string): Promise<RobotsEntry> {
+  private async readRobots(origin: string, host: string, allowHost?: FetchInit["allowHost"]): Promise<RobotsEntry> {
     let entry: RobotsEntry;
+    let guardDenied = false;
+    const guardedHost: FetchInit["allowHost"] = async hostname => {
+      try { await allowHost?.(hostname); }
+      catch (error) { guardDenied = true; throw error; }
+    };
     try {
-      const res = await this.rawFetch(`${origin}/robots.txt`, { timeoutMs: 8000 });
+      const res = await this.rawFetch(`${origin}/robots.txt`, { timeoutMs: 8000, allowHost: guardedHost }, async next => guardedHost(new URL(next).hostname));
+      await this.refuseStatus(res, `${origin}/robots.txt`, () => EXPLICIT_CHALLENGE_MARKERS.some(re => re.test(res.body.slice(0, 20_000))));
+      if (res.status === 200 && explicitBotChallenge(res.headers, res.body, 200))
+        throw this.blocked(new URL(res.url).hostname, `bot challenge on robots.txt at ${origin}`, 200, true);
       if (res.status === 429 || res.status === 503) await this.opts.deferHost?.(host, retryAfterMs(res.headers));
       entry = res.status === 200
         ? { at: this.now(), ttlMs: ROBOTS_TTL_MS, rules: parseRobots(res.body) }
@@ -541,7 +563,7 @@ export class PoliteFetcher {
     } catch (error) {
       // A robots.txt the guard refused says the site itself is somewhere we will not go, and one
       // never asked because the host is backing off says nothing at all: neither is "no rules".
-      if (error instanceof PrivateAddressError || error instanceof HostBusyError) throw error;
+      if (guardDenied || error instanceof PrivateAddressError || error instanceof HostBusyError || (error instanceof SourceFetchError && error.challengeHost)) throw error;
       entry = { at: this.now(), ttlMs: ROBOTS_RETRY_MS, rules: null };
     }
     this.robotsCache.delete(origin);
@@ -722,6 +744,7 @@ export class PoliteFetcher {
     const cacheKey = JSON.stringify([url, reqHeaders, init.maxBodyBytes ?? null]);
     const cacheable = (init.method ?? "GET") === "GET" && !init.body;
     const cached = cacheable ? this.responses.get(cacheKey) : undefined;
+    if (cached?.response.url) await init.allowHost?.(new URL(cached.response.url).hostname);
     const usable = cached && Date.now() - cached.at < REVALIDATE_TTL_MS ? cached : undefined;
     // A large listing is never in the body cache, so without this it is re-downloaded and re-parsed
     // every day however little it moved. The caller opts in because only it can supply the listing
@@ -810,9 +833,9 @@ export class PoliteFetcher {
   }
 
   /** Count a block against `host` and name it, for the caller to throw. */
-  private blocked(host: string, message: string, status: number): SourceFetchError {
+  private blocked(host: string, message: string, status: number, explicitChallenge = false): SourceFetchError {
     this.opts.traffic?.reason(host, "http", "blocked");
-    return new SourceFetchError(message, "blocked", status);
+    return new SourceFetchError(message, "blocked", status, explicitChallenge ? host : undefined);
   }
 
   /**
@@ -825,13 +848,16 @@ export class PoliteFetcher {
   private async refuseStatus(res: { status: number; url: string; headers: Record<string, string> }, url: string, challenged?: () => boolean): Promise<void> {
     // The host that answered, which after a redirect is not always the one asked.
     const host = new URL(res.url || url).hostname;
+    const explicitChallenge = explicitBotChallenge(res.headers) || challenged?.() === true;
     if (res.status === 429 || res.status === 503) {
       await this.opts.deferHost?.(host, retryAfterMs(res.headers));
-      if (challenged?.()) throw this.blocked(host, `blocked (${res.status}) fetching ${url}`, res.status);
+      if (explicitChallenge) throw this.blocked(host, `blocked (${res.status}) fetching ${url}`, res.status, true);
       this.opts.traffic?.reason(host, "http", "rateLimited");
       throw new SourceFetchError(`rate limited (${res.status}) fetching ${url}`, "rate_limited", res.status);
     }
-    if (res.status === 403) throw this.blocked(host, `blocked (${res.status}) fetching ${url}`, res.status);
+    if (res.status === 403) throw this.blocked(host, `blocked (${res.status}) fetching ${url}`, res.status, explicitChallenge);
+    if (explicitBotChallenge(res.headers))
+      throw this.blocked(host, `bot challenge fetching ${url}`, res.status, true);
   }
 
   /** Keep the validators for one large URL, newest last, and drop the oldest past the bound. */
@@ -842,12 +868,17 @@ export class PoliteFetcher {
   }
 
   async fetchText(url: string, init: FetchInit = {}): Promise<FetchResponse> {
+    await init.allowHost?.(new URL(url).hostname);
     await this.assertDestination(url);
-    await this.assertRobotsAllowedFor(url, "http");
-    const res = await this.rawFetch(url, init, next => this.assertRobotsAllowedFor(next, "http"));
-    await this.refuseStatus(res, url, () => CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000))));
-    if (res.status === 200 && CHALLENGE_MARKERS.slice(0, 3).some((re) => re.test(res.body.slice(0, 5000))) && res.body.length < 20_000) {
-      throw this.blocked(new URL(res.url || url).hostname, `bot challenge page at ${url}`, 403);
+    await this.assertRobotsAllowedFor(url, "http", init.allowHost);
+    const res = await this.rawFetch(url, init, async next => {
+      await init.allowHost?.(new URL(next).hostname);
+      await this.assertRobotsAllowedFor(next, "http", init.allowHost);
+    });
+    await init.allowHost?.(new URL(res.url).hostname);
+    await this.refuseStatus(res, url, () => EXPLICIT_CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000))));
+    if (res.status === 200 && explicitBotChallenge(res.headers, res.body, 200)) {
+      throw this.blocked(new URL(res.url || url).hostname, `bot challenge page at ${url}`, 403, true);
     }
     log.debug("fetch", { url, status: res.status, bytes: res.body.length });
     return res;
@@ -861,9 +892,14 @@ export class PoliteFetcher {
    * caught where it matters, by the caller refusing bytes that are not an image.
    */
   async fetchBytes(url: string, init: FetchInit = {}): Promise<FetchBytesResponse> {
+    await init.allowHost?.(new URL(url).hostname);
     await this.assertDestination(url);
-    await this.assertRobotsAllowedFor(url, "http");
-    const res = await this.rawFetchBytes(url, init, next => this.assertRobotsAllowedFor(next, "http"));
+    await this.assertRobotsAllowedFor(url, "http", init.allowHost);
+    const res = await this.rawFetchBytes(url, init, async next => {
+      await init.allowHost?.(new URL(next).hostname);
+      await this.assertRobotsAllowedFor(next, "http", init.allowHost);
+    });
+    await init.allowHost?.(new URL(res.url).hostname);
     await this.refuseStatus(res, url);
     log.debug("fetch bytes", { url, status: res.status, bytes: res.bytes.length });
     return res;

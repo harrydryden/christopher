@@ -133,6 +133,7 @@ afterAll(async () => { await deps?.close(); });
 
 beforeEach(async () => {
   await db.execute(sql`truncate tasks, cv_libraries, cv_library_reviews, ai_calls, ai_reservations, user_settings restart identity cascade`);
+  await db.update(schema.users).set({ role: "admin", emailVerifiedAt: now }).where(eq(schema.users.id, userId));
   deps.aiClient = undefined;
   deps.invalidateSettings();
 });
@@ -171,6 +172,19 @@ it("writes the rules baseline before it asks a model anything, then replaces it 
   ]);
   // The hold is given back: the call's real cost is in `ai_calls` and nothing is left reserved.
   expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
+});
+
+it("keeps the rules baseline without AI or a hold for a queued unconfirmed account", async () => {
+  await saveLibrary(1, libraryOf());
+  await db.update(schema.users).set({ role: "member", emailVerifiedAt: null }).where(eq(schema.users.id, userId));
+  const scripted = scriptedClient();
+  deps.aiClient = scripted.client;
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({
+    reviewed: 0, skipped: "email confirmation required", cost: 0,
+  });
+  expect((await reviews()).map(row => row.source)).toEqual(["rules", "rules"]);
+  expect(scripted.calls).toHaveLength(0);
+  expect(await db.select().from(schema.aiReservations).where(eq(schema.aiReservations.userId, userId))).toHaveLength(0);
 });
 
 it("reuses an unchanged entry's review across a save and sends only the entry whose row changed", async () => {

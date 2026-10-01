@@ -101,10 +101,10 @@ it("does not add a full rescore for an unconfirmed decision, then queues one aft
   await database.insert(schema.userJobs).values({ userId: user.id, jobId: job!.id, inTable: true });
 
   expect(await decide(job!.id, "skip", "Wrong sector")).toEqual({ ok: true });
-  expect(await taskTypes()).not.toContain("rescore_all");
+  expect(await taskTypes()).toEqual([]);
   await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
   expect(await decide(job!.id, "skip", "Role is too junior")).toEqual({ ok: true });
-  expect(await taskTypes()).toContain("rescore_all");
+  expect(await taskTypes()).toEqual(["rescore_all", "synthesize_profile", "tag_reason"]);
 });
 
 it("saves Library versions before confirmation and queues rescoring only after confirmation", async () => {

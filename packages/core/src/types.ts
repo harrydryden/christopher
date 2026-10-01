@@ -53,6 +53,8 @@ export interface SourceSpec {
 }
 
 export interface FetchInit {
+  /** Additional deny-only, run-local host guard, checked before cached reads and every redirect. */
+  allowHost?: (hostname: string) => void | Promise<void>;
   method?: "GET" | "POST" | "HEAD";
   headers?: Record<string, string>;
   body?: string;
@@ -143,7 +145,7 @@ export interface FetchContext {
    * Headless-browser render. Optional: when absent, discovery and scanning fall back to plain HTTP.
    * `signal` gives up the render: a queued one leaves the queue, a running one closes its page.
    */
-  render?: (url: string, opts?: { scrollAndExpand?: boolean; signal?: AbortSignal }) => Promise<RenderedPage>;
+  render?: (url: string, opts?: { scrollAndExpand?: boolean; signal?: AbortSignal; allowHost?: (hostname: string) => void | Promise<void> }) => Promise<RenderedPage>;
   log?: (msg: string, data?: unknown) => void;
   now?: () => Date;
 }
@@ -202,6 +204,8 @@ export class SourceFetchError extends Error {
     message: string,
     public readonly kind: "http" | "blocked" | "rate_limited" | "parse" | "timeout" | "network",
     public readonly status?: number,
+    /** Final response host only when an explicit bot challenge was observed. */
+    public readonly challengeHost?: string,
   ) {
     super(message);
     this.name = "SourceFetchError";

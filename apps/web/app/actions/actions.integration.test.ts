@@ -1063,7 +1063,7 @@ describe("bulk decisions", () => {
     expect((await decide(first, "apply", "Shared reason")).ok).toBe(true);
     const singleTaskTypes = [...new Set((await taskKeys()).map((task) => task.type))].sort();
     // One decision is not a fifth: A8 is queued every fifth decision, never on every one.
-    expect(singleTaskTypes).toEqual(["admit_scores", "synthesize_profile", "tag_reason"]);
+    expect(singleTaskTypes).toEqual(["admit_scores", "rescore_all", "synthesize_profile", "tag_reason"]);
     // Clear what the baseline wrote, so what follows is the group's own work alone.
     await database.execute(sql`delete from tasks`);
     await database.execute(sql`delete from job_events`);

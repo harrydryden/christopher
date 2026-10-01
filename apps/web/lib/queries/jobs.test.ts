@@ -249,6 +249,7 @@ describe("what a score state means", () => {
     expect(scoreStateText({ fitScore: null, scoreState: "queued", scoreStateAt: null })).toBe("Waiting for scoring; review manually");
 
     expect(scoreStateText({ fitScore: null, scoreState: "budget", scoreStateAt: now })).toBe("not scored: budget spent");
+    expect(scoreStateText({ fitScore: null, scoreState: "verification", scoreStateAt: now })).toBe("Confirm your email to start scoring");
     expect(scoreStateText({ fitScore: null, scoreState: "unavailable", scoreStateAt: now })).toBe("AI scoring unavailable; review manually");
     expect(scoreStateText({ fitScore: null, scoreState: "failed", scoreStateAt: now })).toBe("Could not score; review manually");
     expect(scoreStateText({ fitScore: null, scoreState: "scored", scoreStateAt: now })).toBe("No fit score returned; review manually");
@@ -265,6 +266,7 @@ describe("what a score state means", () => {
     expect(scoreStateText({ ...scored, scoreState: "queued" })).toBe("Previous score; update pending");
     expect(scoreStateText({ ...scored, scoreState: "unavailable" })).toBe("Previous score; AI update unavailable");
     expect(scoreStateText({ ...scored, scoreState: "budget" })).toBe("Previous score; update stopped: budget spent");
+    expect(scoreStateText({ ...scored, scoreState: "verification" })).toBe("Previous score; update waits for email confirmation");
     expect(scoreStateText({ ...scored, scoreState: "failed" })).toBe("Previous score; update failed; review manually");
   });
 

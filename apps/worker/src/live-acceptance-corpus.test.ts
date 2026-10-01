@@ -6,14 +6,14 @@ import { fullyCoveredCorpus } from "./live-acceptance-corpus.fixtures";
 const now = new Date("2026-10-01T12:00:00Z");
 
 describe("SPEC §9 golden-set composition", () => {
-  it("reports the curated manifest's raw HTML count separately from evidenced custom HTML", () => {
+  it("qualifies the curated manifest's source composition without asserting posting quality", () => {
     const report = assessLiveAcceptanceCorpus(LIVE_ACCEPTANCE_CASES, now);
-    expect(report).toMatchObject({ qualifies: false, counts: { selectedCases: 31, distinctCompanies: 31,
+    expect(report).toMatchObject({ qualifies: true, counts: { selectedCases: 31, distinctCompanies: 31,
       primaryHtml: 14, customHtml: 5, jsHeavy: 2, multiRegionWorkday: 2,
-      landingToExternalBoard: 1, botProtected: 0 },
+      landingToExternalBoard: 1, botProtected: 1 },
       atsTypes: ["ashby", "bamboohr", "eightfold", "greenhouse", "lever", "teamtailor", "workable", "workday"] });
-    expect(report.missingReasons).toHaveLength(1);
-    expect(report.missingReasons[0]).toMatch(/bot-protected/);
+    expect(report.missingReasons).toEqual([]);
+    expect(report.invalidEvidence).toEqual([]);
   });
 
   it("qualifies a complete, independently evidenced synthetic structure without asserting posting quality", () => {

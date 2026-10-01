@@ -51,6 +51,8 @@ export interface TaskPayloads {
    */
   poll_score_batch: ScoreBatchRecord;
   tag_reason: { decisionId: string };
+  /** Resume tagging reasons saved before confirmation, in bounded decision-id pages. */
+  resume_reason_tags: { userId: string; afterDecisionId?: string };
   synthesize_profile: { userId: string; force?: boolean };
   suggest_filters: { userId: string };
   suggest_from_scans: { userId: string };
@@ -144,6 +146,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   score_job: { priority: 4, dedupe: (p) => `score_job:${p.userId}:${p.jobId}` },
   admit_scores: { priority: 1, dedupe: (p) => `admit_scores:${p.userId}:${p.requestKey}` },
   tag_reason: { priority: 1, dedupe: (p) => `tag_reason:${p.decisionId}` },
+  resume_reason_tags: { priority: 6, dedupe: (p) => `resume_reason_tags:${p.userId}` },
   synthesize_profile: { priority: 6, dedupe: (p) => `synthesize_profile:${p.userId}` },
   suggest_filters: { priority: 6, dedupe: (p) => `suggest_filters:${p.userId}` },
   suggest_from_scans: { priority: 6, dedupe: (p) => `suggest_from_scans:${p.userId}` },

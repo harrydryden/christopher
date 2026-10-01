@@ -72,7 +72,7 @@ async function main() {
   const browser = browserEnabled ? new BrowserRenderer({
     userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
     beforeNavigate: host => fetcher.waitForHost(host),
-    allowNavigate: url => fetcher.assertRobotsAllowed(url),
+    allowNavigate: (url, allowHost) => fetcher.assertRobotsAllowed(url, allowHost),
     concurrency: 1,
   }) : undefined;
   const aiUsage: Array<Pick<AiUsageRecord, "callSite" | "model" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens" | "costUsd" | "durationMs" | "ok" | "error" | "failure" | "refType" | "refId">> = [];

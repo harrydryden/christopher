@@ -87,6 +87,9 @@ try {
   assert.match(await page.locator("main").innerText(), /Added from PDF/i);
   assert.doesNotMatch(await page.locator("main").innerText(), /View vacancy/);
   await page.getByText("Save your Library first.").waitFor();
+  const savedText = await page.locator("main").innerText();
+  assert.match(savedText, /Not scored/);
+  assert.doesNotMatch(savedText, /Score requested|Score pending|Why it matched/);
   await page.screenshot({ path: "/tmp/role-import-saved-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 375, height: 812 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "saved role fits a phone width");

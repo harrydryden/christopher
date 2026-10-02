@@ -48,7 +48,7 @@ export function CvReviewControls({ id, rows, decision, factualRowIds, assessment
     return finaliseCvDraft(id, previous, form);
   }
 
-  return <div className="space-y-4" id="cv-guided-review">
+  return <div className="space-y-4" id="cv-guided-review" tabIndex={-1}>
     {findings.length > 0 && <section className="space-y-3 border border-warn p-4" aria-labelledby="cv-review-heading">
       <div>
         <h3 id="cv-review-heading" className="ds-pixel text-11">Review flagged items</h3>

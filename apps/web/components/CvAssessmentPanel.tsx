@@ -196,10 +196,8 @@ export function CvAssessmentPanel({
           make changes.
         </p>
       ) : busy ? null : overPages ? (
-        // The three reasons `assertCvFinalisable` refuses on, said here rather than shown by the
-        // absence of a button: the assessment is stale, the CV is over its page limit, or a claim
-        // is still flagged. The sentence is the one that function would have thrown, computed on
-        // the page; what the panel can see for itself keeps the control closed either way.
+        // Findings can be dismissed or explicitly overridden. Page overflow still needs a valid
+        // layout, so explain that obstacle beside the review rather than offering a broken PDF.
         <div role="status" className="space-y-1 border border-warn p-3 text-14">
           {finaliseReason && (
             <p className="text-warn">Finalise is not available yet: {finaliseReason}</p>

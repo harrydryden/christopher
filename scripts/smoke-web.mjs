@@ -32,10 +32,10 @@ function run(cmd, args, opts = {}) {
 
 const PAGES = [
   // The three tabs are the whole role workflow; archived roles are a section inside Dismissed.
-  // The smoke account has nothing matched, which is exactly when the table opens on Shortlisted.
+  // The smoke account has no roles in either live tab, so Matched shows the first-use explanation.
   // The setup checklist explains the blank table: the smoke account has confirmed its address and
   // follows one company, and nothing else, so it reads "2 of 4 done" and cannot be hidden.
-  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "All setup steps", "2 of 4 done"], "Shortlisted"],
+  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "All setup steps", "2 of 4 done"], "Matched"],
   // The header carries the shared schedule: one scan a day for every follower.
   // Filters first: an account that has not chosen its gate is asked for it above the add form.
   ["/companies", ["Companies", "next scheduled scan", "Choose your filters first"]],

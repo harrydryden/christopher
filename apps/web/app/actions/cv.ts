@@ -1,5 +1,6 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
+import { cvReviewSections, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { cvImprovementOwner } from "@ava/core/cv-assessment";
 import { assertCvFinalisable } from "@ava/core/cv-review";
 import { z } from "zod";
@@ -51,17 +52,13 @@ function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
   const summary = String(form.get("summary") ?? "").trim();
   if (summary !== saved.summary) delete content.summarySources;
   content.summary = summary;
-  content.sections = content.sections.map((section, i) => ({
-    ...section,
-    ...(() => {
-      const bullets = String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean);
-      const skillItems = section.kind === "skill" && section.skillItems
-        ? String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean)
-        : section.skillItems;
-      const changed = JSON.stringify(bullets) !== JSON.stringify(section.bullets) || JSON.stringify(skillItems) !== JSON.stringify(section.skillItems);
-      return { bullets, ...(skillItems ? { skillItems } : {}), ...(changed ? { bulletSources: undefined } : {}) };
-    })(),
-  }));
+  const rows = saved.sections.map((section, i) => String(form.get(`${section.skillItems ? "skills" : "section"}-${i}`) ?? (section.skillItems ?? section.bullets).join("\n")));
+  const removed = JSON.parse(String(form.get("removedSkills") ?? "[]")) as string[];
+  const added = JSON.parse(String(form.get("addedSkills") ?? "[]")) as AddedSkillSection[];
+  if (!Array.isArray(removed) || !removed.every((id) => typeof id === "string") ||
+      !Array.isArray(added) || !added.every((section) => section && typeof section.entryId === "string" && typeof section.heading === "string" && Array.isArray(section.items) && section.items.every((item: unknown) => typeof item === "string")))
+    throw new UserFacingError("The skill edits could not be read. Refresh and try again.");
+  content.sections = cvReviewSections(saved, rows, removed, added);
   delete content.fitNotes;
   return CvContentSchema.parse(content);
 }
@@ -70,6 +67,10 @@ function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
 function cvContentIssues(error: z.ZodError): string {
   return error.issues.map((issue) => {
     const [field, index, item, position] = issue.path;
+    if (field === "sections" && typeof index === "number" && item === "bullets" && issue.code === "too_small")
+      return `Section ${index + 1} needs at least one bullet.`;
+    if (field === "sections" && typeof index === "number" && item === "skillItems" && issue.code === "too_small")
+      return `Skill section ${index + 1} needs at least one skill.`;
     const where = field === "summary" ? "Profile"
       : field === "sections" && typeof index === "number"
         ? `Section ${index + 1}${typeof position === "number" ? `, ${item === "skillItems" ? "skill" : "bullet"} ${position + 1}` : ""}`
@@ -599,6 +600,7 @@ export async function saveCvDraft(
               tailoringEnabled: true, quizCompleted: true, mode: "improve", improvements,
               ...(draft.assessment ? { sourceRubric: draft.assessment.rubric } : {}),
             },
+            reviewDecision: null,
           })
           .returning();
         await reserveCvCredit(tx, user.id, fitting!.id);
@@ -621,6 +623,7 @@ export async function saveCvDraft(
           // edit paid for a new rubric the saved assessment already had. Nothing else of the
           // parent's attempt comes with it; the revision is born clean.
           buildCheckpoint: draft.assessment ? { sourceRubric: draft.assessment.rubric } : null,
+          reviewDecision: null,
         })
         .returning();
       await enqueue("generate_cv", { draftId: saved!.id, mode: "assess", ...rubric }, tx);

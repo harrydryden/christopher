@@ -67,3 +67,19 @@ it("says the preview could not load when its check cannot be fetched", async () 
     expect(fetchSpy).not.toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); }
 });
+
+it("lets a reviewer add and remove a skill section without changing Library sections", () => {
+  act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} />));
+  const button = (label: string) => [...container.querySelectorAll("button")].find((element) => element.textContent === label)!;
+  act(() => button("Add skill section").click());
+  const skill = container.querySelector<HTMLInputElement>('[aria-label="Skill 1 in new section"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(skill, "Python");
+    skill.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toContain("manual-skill-");
+  expect(container.querySelector('[data-cv-editor-dirty="true"]')).not.toBeNull();
+  act(() => button("Remove skill section").click());
+  expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toBe("[]");
+  expect(container.querySelector('[data-cv-editor-dirty="false"]')).not.toBeNull();
+});

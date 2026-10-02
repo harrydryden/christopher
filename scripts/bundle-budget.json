@@ -1,11 +1,12 @@
 {
-  "$comment": "First-load JS per route, gzip level 9, in bytes. Updated for the 2 October JTBD controls after CI measured the built routes: role recovery and filters, company scan/Health actions, applications, Learning, and the Library evidence/conflict editor. Each revised route retains about 3% headroom; the shared root and unrelated default budget stay fixed. The Library's own page chunk is now a third >=20 KiB chunk (21.6 KiB in CI), rather than a new shared chunk. Checked by scripts/bundle-budget.mjs after the smoke build.",
+  "$comment": "First-load JS per route, gzip level 9, in bytes. Updated for the 2 October JTBD controls after CI measured the built routes: role recovery and filters, company scan/Health actions, applications, Learning, and the Library evidence/conflict editor. The saved manual role route reuses RolesTable's review and CV controls; its measured 127,499 B gets a 132,000 B route limit with about 3% headroom. The shared root and unrelated default budget stay fixed. The Library's own page chunk is now a third >=20 KiB chunk (21.6 KiB in CI), rather than a new shared chunk. Checked by scripts/bundle-budget.mjs after the smoke build.",
   "sharedRoot": 104000,
   "routes": {
     "/cv/[id]": 138000,
     "/companies/[id]": 140000,
     "/library": 142000,
     "/": 137000,
+    "/roles/[id]": 132000,
     "/applications": 129000,
     "/suggestions": 120000,
     "/settings": 117000,

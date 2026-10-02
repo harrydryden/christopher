@@ -9,7 +9,7 @@ import { enqueue } from "@/lib/enqueue";
 import { hasChosenGate } from "@/lib/queries/setup";
 import { getSettings, getSettingsFor } from "@/lib/settings";
 import { CHOOSE_GATE_SENTENCE } from "@/lib/setup";
-import { isUserFacingError, UserFacingError, zUuid } from "@/lib/validation";
+import { actionError, isUserFacingError, UserFacingError, zUuid } from "@/lib/validation";
 import { assertFollowCapacity } from "@/lib/follow-limits";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 import { revalidate } from "@/lib/action-helpers";
@@ -48,7 +48,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
         ? `${suggestion.name} is already in the shared catalogue; you now follow it and its matching roles are in your table.`
         : `${suggestion.name} is already in your companies. Suggestion marked as added.` };
   }).catch((error: unknown) => {
-    if (isUserFacingError(error)) return { ok: false as const, error: error.message };
+    if (isUserFacingError(error)) return actionError(error, "Could not follow this company.", "accept_suggestion_failed");
     throw error;
   });
   revalidate("/suggestions", "/companies", "/");

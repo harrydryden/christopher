@@ -15,9 +15,10 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 
 import { startRoleImport, retryRoleImport, saveImportedRole } from "./role-import";
 import { getRoleImport } from "@/lib/queries/role-imports";
-import { fetchRoleDetails } from "@/lib/queries/jobs";
+import { fetchRoleDetails, fetchRoleRows, parseRolesFilters } from "@/lib/queries/jobs";
 import { listPipeline } from "@/lib/queries/applications";
 import { requestCv } from "./cv";
+import { setRoleStage } from "./applications";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -69,6 +70,8 @@ it("saves an owned role and shortlist once, visible in Roles and Applications", 
   expect(role?.job.url).toBe("https://jobs.example.com/role/42");
   const pipeline = await listPipeline(user.id);
   expect(pipeline.rows.some(row => row.jobId === saved!.jobId && row.companyName === "Example")).toBe(true);
+  const exported = await fetchRoleRows(user.id, parseRolesFilters({ view: "user-shortlisted" }), false);
+  expect(exported.find(row => row.job.id === saved!.jobId)?.company.name).toBe("Example");
 });
 
 it("retries a failed PDF without exposing or duplicating its bytes", async () => {
@@ -136,6 +139,16 @@ it("lets a failed task recover by paste, and refuses another account's save and 
   expect(saved!.sourceBytes).toBeNull();
 });
 
+it("recovers a queued import whose task was pruned", async () => {
+  const user = (await database.select().from(schema.users))[0]!;
+  const [row] = await database.insert(schema.roleImports).values({ userId: user.id, kind: "link",
+    url: "https://jobs.example.com/pruned", fingerprint: "pruned-task", status: "queued" }).returning();
+  expect((await getRoleImport(user.id, row!.id))?.status).toBe("failed");
+  await expect(retryRoleImport(row!.id, { ok: true }, new FormData())).rejects.toThrow(/^redirect:\/roles\/add\//);
+  expect((await getRoleImport(user.id, row!.id))?.status).toBe("queued");
+  expect((await database.select().from(schema.tasks)).map(task => task.type)).toEqual(["import_role_description"]);
+});
+
 it("hands a private PDF role to the existing CV, quote and application path only on request", async () => {
   const user = (await database.select().from(schema.users))[0]!;
   const [row] = await database.insert(schema.roleImports).values({ userId: user.id, kind: "pdf",
@@ -169,4 +182,23 @@ it("hands a private PDF role to the existing CV, quote and application path only
     ],
   } });
   expect(await requestCv({ ok: true }, request)).toMatchObject({ ok: false, error: "Role not found." });
+});
+
+it("records an application stage for a saved manual role without a catalogue company", async () => {
+  const user = (await database.select().from(schema.users))[0]!;
+  const [row] = await database.insert(schema.roleImports).values({ userId: user.id, kind: "link",
+    url: "https://jobs.example.com/manual-stage", fingerprint: "manual-stage", status: "ready",
+    title: "Service Lead", companyName: "Private Employer", descriptionText: description }).returning();
+  const reviewed = new FormData();
+  reviewed.set("title", "Service Lead"); reviewed.set("companyName", "Private Employer");
+  reviewed.set("description", description);
+  await expect(saveImportedRole(row!.id, { ok: true }, reviewed)).rejects.toThrow(/^redirect:\/roles\//);
+  const [saved] = await database.select().from(schema.roleImports).where(eq(schema.roleImports.id, row!.id));
+  const stage = new FormData(); stage.set("status", "applied"); stage.set("appliedOn", "2026-09-20");
+  expect(await setRoleStage(saved!.jobId!, { ok: true }, stage)).toEqual({ ok: true });
+  expect((await database.select().from(schema.applications))[0]).toMatchObject({
+    jobId: saved!.jobId, companyName: "Private Employer", status: "applied",
+  });
+  const pipeline = await listPipeline(user.id);
+  expect(pipeline.rows.find(item => item.jobId === saved!.jobId)?.stage).toBe("applied");
 });

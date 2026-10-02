@@ -173,10 +173,11 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
       const view = await lockRoleView(tx, user.id, jobId);
       if (!view) throw new UserFacingError("Role not found.");
       const [role] = await tx
-        .select({ title: jobs.title, companyId: companies.id, companyName: companies.name })
+        .select({ title: jobs.title, companyId: companies.id,
+          companyName: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')` })
         .from(jobs)
-        .innerJoin(companies, eq(companies.id, jobs.companyId))
-        .where(eq(jobs.id, jobId))
+        .leftJoin(companies, eq(companies.id, jobs.companyId))
+        .where(and(eq(jobs.id, jobId), sql`(${jobs.manualOwnerId} is null or ${jobs.manualOwnerId} = ${user.id}::uuid)`))
         .limit(1);
       if (!role) throw new UserFacingError("Role not found.");
       companyId = role.companyId;

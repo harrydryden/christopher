@@ -29,10 +29,10 @@ export async function getRoleImport(userId: string, id: string) {
   const [active] = await db().select({ id: tasks.id }).from(tasks)
     .where(and(taskScope, inArray(tasks.status, ["queued", "running"]))).limit(1);
   if (active) return row;
-  const [latest] = await db().select({ status: tasks.status }).from(tasks)
-    .where(taskScope).orderBy(desc(tasks.createdAt), desc(tasks.id)).limit(1);
-  return latest?.status === "failed" ? { ...row, status: "failed" as const,
-    error: "The role could not be read. Retry or paste the full description." } : row;
+  // The import and task are committed together; without live work, even a pruned or anomalously
+  // completed task must leave a recovery path instead of a permanent "Processing" page.
+  return { ...row, status: "failed" as const,
+    error: "The role could not be read. Retry or paste the full description." };
 }
 
 export type VisibleRoleImport = NonNullable<Awaited<ReturnType<typeof getRoleImport>>>;

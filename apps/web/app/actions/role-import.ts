@@ -1,7 +1,7 @@
 "use server";
 
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { jobs, roleImports, tasks, userJobs, users } from "@ava/db";
 import { assertPublicHttpUrl, normalisePostingUrl, normalizeTitle, sha1, UnsafeUrlError } from "@ava/core";
@@ -92,9 +92,7 @@ export async function retryRoleImport(id: string, _previous: ActionResult, _form
         sql`${tasks.payload}->>'importId' = ${id}`);
       const [active] = row.status === "queued" ? await tx.select({ id: tasks.id }).from(tasks)
         .where(and(taskScope, inArray(tasks.status, ["queued", "running"]))).limit(1) : [];
-      const [latest] = row.status === "queued" ? await tx.select({ status: tasks.status }).from(tasks)
-        .where(taskScope).orderBy(desc(tasks.createdAt), desc(tasks.id)).limit(1) : [];
-      if (row.status !== "failed" && !(row.status === "queued" && !active && latest?.status === "failed")) return "unchanged" as const;
+      if (row.status !== "failed" && !(row.status === "queued" && !active)) return "unchanged" as const;
       if (!row.url && !row.sourceBytes) throw new UserFacingError("This PDF is no longer available. Upload it again.");
       await tx.update(roleImports).set({ status: "queued", error: null, updatedAt: new Date() })
         .where(eq(roleImports.id, id));
@@ -130,9 +128,7 @@ export async function saveImportedRole(id: string, _previous: ActionResult, form
         sql`${tasks.payload}->>'importId' = ${id}`);
       const [active] = row.status === "queued" ? await tx.select({ id: tasks.id }).from(tasks)
         .where(and(taskScope, inArray(tasks.status, ["queued", "running"]))).limit(1) : [];
-      const [latest] = row.status === "queued" ? await tx.select({ status: tasks.status }).from(tasks)
-        .where(taskScope).orderBy(desc(tasks.createdAt), desc(tasks.id)).limit(1) : [];
-      const failed = row.status === "failed" || (row.status === "queued" && !active && latest?.status === "failed");
+      const failed = row.status === "failed" || (row.status === "queued" && !active);
       if (row.status !== "ready" && !(failed && form.get("manualRecovery") === "1"))
         throw new UserFacingError("Wait for this role to finish reading before saving it.");
       if (row.truncated && description === row.descriptionText)

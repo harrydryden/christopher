@@ -39,3 +39,9 @@ export { BOOTSTRAP_USER_ID, BOOTSTRAP_EMAIL, DEFAULT_ADMIN_EMAILS, SEED_TAGS, ad
 
 export { createLibraryImport, getLibraryImport, getLibraryImportForWorker, listOpenLibraryImports, completeLibraryImport, resolveLibraryImport, pruneLibraryImports, type CreateLibraryImportInput, type LibraryImportOutcome, type LibraryImportRow, type LibraryImportSummary } from "./library-imports";
 export { createCvShare, findLiveCvShareByHash, recordCvShareView, listCvShares, revokeCvShare, addCvShareComment, listCvShareComments, resolveCvShareComment, countOpenCvShareComments, CvShareClosedError, type AddCvShareCommentInput, type CreateCvShareInput, type CvShareRefusal, type LiveCvShare } from "./cv-shares";
+export {
+  PLAN_CATALOG, CV_TOPUPS, COMPANY_BLOCK_SIZE, COMPANY_BLOCK_PRICE_GBP, TECHNICAL_COMPANY_LIMIT, WELCOME_CV_CREDITS,
+  BillingLimitError, ensureFreeEntitlement, getBillingSummary, getCompanyEntitlement, assertCanActivateCompanies,
+  reserveCvCredit, consumeCvCredit, releaseCvCredit, transferCvCredit, grantCvCredits, updateBillingAccount, recordBillingEvent,
+  type BillingSummary, type BillingWriter, type CvTopupKey,
+} from "./billing";

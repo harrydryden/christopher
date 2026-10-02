@@ -84,6 +84,11 @@ export const USER_ROLES = ["admin", "member"] as const;
 export const AUTH_PROVIDERS = ["google"] as const;
 export const AUTH_TOKEN_PURPOSES = ["password_reset", "email_verification"] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
+export const BILLING_PLANS = ["free", "search", "intensive"] as const;
+export const BILLING_STATUSES = ["active", "past_due", "cancelled"] as const;
+export const CREDIT_GRANT_SOURCES = ["welcome", "monthly", "topup", "admin"] as const;
+export const CREDIT_RESERVATION_STATUSES = ["reserved", "consumed", "released"] as const;
+export const CREDIT_LEDGER_KINDS = ["grant", "reserve", "release", "consume", "transfer"] as const;
 
 // ---------------------------------------------------------------------------
 // Accounts and sessions
@@ -180,6 +185,99 @@ export const userSettings = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.key] })],
 );
+
+// ---------------------------------------------------------------------------
+// Plans, CV credits and company capacity
+// ---------------------------------------------------------------------------
+
+/** One commercial entitlement per account. Stripe ids are nullable while the account is Free. */
+export const billingAccounts = pgTable(
+  "billing_accounts",
+  {
+    userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    plan: text("plan", { enum: BILLING_PLANS }).notNull().default("free"),
+    status: text("status", { enum: BILLING_STATUSES }).notNull().default("active"),
+    stripeCustomerId: text("stripe_customer_id"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    /** Paid plans may add ten monitored-company places per block. */
+    companyBlocks: integer("company_blocks").notNull().default(0),
+    currentPeriodStart: ts("current_period_start"),
+    currentPeriodEnd: ts("current_period_end"),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    graceEndsAt: ts("grace_ends_at"),
+    createdAt: tsNow("created_at"),
+    updatedAt: tsNow("updated_at"),
+  },
+  (t) => [
+    uniqueIndex("billing_accounts_customer_uidx").on(t.stripeCustomerId).where(sql`${t.stripeCustomerId} is not null`),
+    uniqueIndex("billing_accounts_subscription_uidx").on(t.stripeSubscriptionId).where(sql`${t.stripeSubscriptionId} is not null`),
+  ],
+);
+
+/** Credits arrive in grants so expiry and provenance remain explainable. */
+export const creditGrants = pgTable(
+  "credit_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    source: text("source", { enum: CREDIT_GRANT_SOURCES }).notNull(),
+    units: integer("units").notNull(),
+    remaining: integer("remaining").notNull(),
+    expiresAt: ts("expires_at"),
+    /** Invoice, Checkout Session or operator idempotency key. */
+    externalRef: text("external_ref"),
+    createdAt: tsNow("created_at"),
+  },
+  (t) => [
+    uniqueIndex("credit_grants_external_uidx").on(t.source, t.externalRef).where(sql`${t.externalRef} is not null`),
+    index("credit_grants_spend_idx").on(t.userId, t.expiresAt, t.createdAt),
+  ],
+);
+
+/** A build holds one grant before work starts, then consumes or releases it exactly once. */
+export const creditReservations = pgTable(
+  "credit_reservations",
+  {
+    draftId: uuid("draft_id").primaryKey(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    grantId: uuid("grant_id").notNull().references(() => creditGrants.id, { onDelete: "restrict" }),
+    status: text("status", { enum: CREDIT_RESERVATION_STATUSES }).notNull().default("reserved"),
+    reservedAt: tsNow("reserved_at"),
+    settledAt: ts("settled_at"),
+  },
+  (t) => [index("credit_reservations_user_status_idx").on(t.userId, t.status)],
+);
+
+/** Append-only audit of every balance movement. */
+export const creditLedger = pgTable(
+  "credit_ledger",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    grantId: uuid("grant_id").references(() => creditGrants.id, { onDelete: "restrict" }),
+    draftId: uuid("draft_id"),
+    kind: text("kind", { enum: CREDIT_LEDGER_KINDS }).notNull(),
+    delta: integer("delta").notNull(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    note: text("note"),
+    createdAt: tsNow("created_at"),
+  },
+  (t) => [index("credit_ledger_user_created_idx").on(t.userId, t.createdAt)],
+);
+
+/** Stripe retries events; this receipt makes local fulfilment idempotent too. */
+export const billingEvents = pgTable("billing_events", {
+  eventId: text("event_id").primaryKey(),
+  type: text("type").notNull(),
+  processedAt: tsNow("processed_at"),
+});
+
+export type BillingPlan = (typeof BILLING_PLANS)[number];
+export type BillingStatus = (typeof BILLING_STATUSES)[number];
+export type CreditGrantSource = (typeof CREDIT_GRANT_SOURCES)[number];
+export type BillingAccount = typeof billingAccounts.$inferSelect;
+export type CreditGrant = typeof creditGrants.$inferSelect;
+export type CreditReservation = typeof creditReservations.$inferSelect;
 
 // ---------------------------------------------------------------------------
 // Shared company catalogue

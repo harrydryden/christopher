@@ -4,6 +4,7 @@ import type { Db } from "./client";
 import { tagVocabulary, users } from "./schema";
 import { enqueueStandard } from "./tasks";
 import { lockAccountScoreInput } from "./score-fence";
+import { ensureFreeEntitlement } from "./billing";
 
 /** The owner account the multi-user migration creates for a deployment that already held data. */
 export const BOOTSTRAP_USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -115,10 +116,12 @@ export async function createUser(db: Db, input: CreateUserInput, options: { admi
     if (target) {
       const [updated] = await tx.update(users).set(values).where(eq(users.id, target.id)).returning();
       await seedTagVocabulary(tx, updated!.id);
+      await ensureFreeEntitlement(tx, updated!.id);
       return { user: updated!, claimedBootstrap: updated!.id === BOOTSTRAP_USER_ID, pending: !values.claimedAt };
     }
     const [created] = await tx.insert(users).values({ ...values, createdAt: now }).returning();
     await seedTagVocabulary(tx, created!.id);
+    await ensureFreeEntitlement(tx, created!.id);
     return { user: created!, claimedBootstrap: false, pending: !values.claimedAt };
   });
 }

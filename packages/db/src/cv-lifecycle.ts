@@ -10,6 +10,7 @@ import {
   restoreRetention,
   type CvRetentionPlan,
 } from "./cv-retention";
+import { consumeCvCredit, releaseCvCredit } from "./billing";
 
 /**
  * Asked to remove a CV a worker is building.
@@ -202,6 +203,8 @@ export async function completeCv(
     .update(cvDrafts)
     .set({ ...values, status: "ready" })
     .where(eq(cvDrafts.id, id));
+  // Direct edits and free re-assessments have no reservation; a paid build consumes its hold.
+  await consumeCvCredit(tx, id);
   // A CV that built supersedes every failed attempt at this role, older or newer than it.
   await pruneFailedCvDrafts(tx, draft, 0);
   if (draft.archivedAt) return true;
@@ -268,6 +271,9 @@ export async function actionCvs(
     // nothing else — and the plans can no longer delete an in-flight row whatever the action.
     if (action === "archive") for (const row of building) selectedIds.delete(row.id);
     if (!selectedIds.size) return;
+    if (action === "archive" || action === "delete") {
+      for (const id of selectedIds) await releaseCvCredit(tx, id, action === "delete" ? "CV deleted before completion" : "CV build archived before completion");
+    }
     if (action === "delete") {
       await tx.delete(cvDrafts).where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId)));
       return;
@@ -365,6 +371,7 @@ export async function abandonCvDraft(
       .set({ status: "failed", error: error.slice(0, 1000), buildStage: null, ...(failure ? { failure } : {}) })
       .where(and(eq(cvDrafts.id, id), inArray(cvDrafts.status, ["queued", "generating"])))
       .returning({ id: cvDrafts.id });
+    if (rows.length) await releaseCvCredit(tx, id, "CV build stopped before completion");
     return rows.length ? { userId: draft.userId } : null;
   });
 }

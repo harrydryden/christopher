@@ -173,7 +173,7 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
   // explanation of a build that stopped, so only a task the queue gave up on has one of those.
   const taskError = budgetFailure ? null : task?.status === "failed" ? task.error ?? null : null;
   const failureMessage = budgetFailure
-    ? "CV generation is unavailable right now. Your CV credit was returned. Please try again later."
+    ? "CV generation is unavailable right now. No CV credit was used. Please try again later."
     : failure?.message ?? draft.error ?? "This build stopped before it finished.";
   const resumeNote = resumeNoteFor(draft.buildCheckpoint);
   const base = {
@@ -300,7 +300,7 @@ export function failureWayForward(
   const done = { retry: canRetry, retryNote: canRetry ? "When you have done that, retry generation." : null };
   switch (action) {
     case "raise_budget":
-      return { links: [], note: "Your credit was returned. Please try again later.", retry: canRetry, retryNote: null };
+      return { links: [], note: "No CV credit was used. Please try again later.", retry: canRetry, retryNote: null };
     case "fix_library":
       return { links: [{ label: "Open the Library", href: "/library" }], note: null, ...done };
     case "shorten_or_raise_pages":

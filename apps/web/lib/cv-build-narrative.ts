@@ -497,7 +497,7 @@ function interruptedMeta(startedAt: Date, stoppedAt: Date | null | undefined): s
 
 /** The failure's own sentence for a failed step, whichever of the places the worker put it. */
 function failureNote(step: CvJournalStep): string | null {
-  if (step.motion === "admit_budget") return "This CV build stopped before completion. Your CV credit was returned.";
+  if (step.motion === "admit_budget") return "This CV build stopped before completion. No CV credit was used.";
   return step.failure?.message ?? text(step.detail, "error") ?? step.error ?? null;
 }
 

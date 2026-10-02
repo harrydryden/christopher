@@ -69,7 +69,7 @@ it("calls a build stopped when nothing is working on it, whatever the draft stil
 
   // The draft's own error, when it has one, is the sentence the person should read.
   const explained = cvBuildState(draft({ error: "Your monthly AI budget is spent." }), null, now);
-  expect(explained.message).toBe("CV generation is unavailable right now. Your CV credit was returned. Please try again later.");
+  expect(explained.message).toBe("CV generation is unavailable right now. No CV credit was used. Please try again later.");
 
   // A task that reported itself done without publishing the draft is stopped too.
   expect(cvBuildState(draft(), task({ status: "done" }), now).phase).toBe("stopped");
@@ -240,7 +240,7 @@ it("names the failure, its heading and the person's way forward on a failed draf
   expect(state.phase).toBe("failed");
   expect(state.tone).toBe("red");
   expect(state.title).toBe("CV generation unavailable");
-  expect(state.message).toBe("CV generation is unavailable right now. Your CV credit was returned. Please try again later.");
+  expect(state.message).toBe("CV generation is unavailable right now. No CV credit was used. Please try again later.");
   expect(state.action).toBe("raise_budget");
 
   // Attempts spent on something the system was resolving: the heading says so, and the way out is
@@ -271,7 +271,7 @@ it("names the failure, its heading and the person's way forward on a failed draf
 it("offers each failure the page that fixes it, and the retry only where it would work", () => {
   expect(failureWayForward("raise_budget", { canRetry: true })).toEqual({
     links: [],
-    note: "Your credit was returned. Please try again later.",
+    note: "No CV credit was used. Please try again later.",
     retry: true,
     retryNote: null,
   });

@@ -76,7 +76,7 @@ it("keeps provider budget figures out of the CV progress line", () => {
     now,
   );
   expect(refused.text).toBe("Could not prepare this CV stage");
-  expect(refused.note).toBe("This CV build stopped before completion. Your CV credit was returned.");
+  expect(refused.note).toBe("This CV build stopped before completion. No CV credit was used.");
   expect(refused.glyph).toBe("✗");
   expect(refused.tone).toBe("red");
 });

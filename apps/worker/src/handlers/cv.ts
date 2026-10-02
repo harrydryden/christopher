@@ -97,7 +97,7 @@ export const CV_BUSY_MESSAGE = "Another worker is still finishing this build";
 
 /** What the person is told when the budget stopped holding capacity for a build still running. */
 export const CV_HOLD_LOST_MESSAGE =
-  "This CV build stopped before completion. Your CV credit will be returned.";
+  "This CV build stopped before completion. No CV credit will be used.";
 
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
   "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt" | "buildCheckpoint" | "failure" | "gapQuiz">>;
@@ -401,7 +401,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
               leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });
             const refusal = new CvBuildStop("budget_exhausted",
-              "CV generation is unavailable right now. Your CV credit will be returned. Please try again later.", { motion: "admit_budget" });
+              "CV generation is unavailable right now. No CV credit will be used. Please try again later.", { motion: "admit_budget" });
             // After publication a refusal only means the optional work is not done: the step
             // closes as skipped here, because nothing downstream fails it or ever will.
             if (published) await journal.close(step, "skipped", { reason: keptBecause(refusal.message) });

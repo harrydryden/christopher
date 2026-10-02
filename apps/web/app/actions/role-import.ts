@@ -154,7 +154,7 @@ export async function saveImportedRole(id: string, _previous: ActionResult, form
       let companyId: string | null = null;
       if (website) {
         // A manual role can use shared branding without following or scanning the company.
-        const [created] = await tx.insert(companies).values({ name: companyName,
+        const [created] = await tx.insert(companies).values({ name: website.domain,
           domain: website.domain, homepageUrl: website.homepageUrl, addedBy: user.id,
           status: "archived", archivedAt: new Date(),
         }).onConflictDoNothing().returning({ id: companies.id });

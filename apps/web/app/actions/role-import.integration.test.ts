@@ -29,7 +29,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await pool?.end(); });
 beforeEach(async () => {
-  await database.execute(sql`truncate tasks, users restart identity cascade`);
+  await database.execute(sql`truncate tasks, users, companies restart identity cascade`);
   ({ cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
 });
 
@@ -85,7 +85,7 @@ it("attaches a manual PDF role to company branding without following or discover
   await expect(saveImportedRole(row!.id, { ok: true }, reviewed)).rejects.toThrow(/^redirect:\/roles\//);
   const [company] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "example.com"));
   const [job] = await database.select().from(schema.jobs).where(eq(schema.jobs.manualOwnerId, user.id));
-  expect(company).toMatchObject({ domain: "example.com", homepageUrl: "https://www.example.com/", status: "archived" });
+  expect(company).toMatchObject({ name: "example.com", domain: "example.com", homepageUrl: "https://www.example.com/", status: "archived" });
   expect(job).toMatchObject({ companyId: company!.id, companyLabel: "Example Ltd", manualOwnerId: user.id, shared: false });
   expect(await database.select().from(schema.companySubscriptions)).toHaveLength(0);
   expect((await database.select().from(schema.tasks)).map(task => task.type)).toEqual(["discover"]);

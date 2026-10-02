@@ -182,6 +182,7 @@ export function CvAssessmentPanel({
         </div>
       )}
       <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
+      {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} canFinalise={!overPages} />}
       <CvEvaluationTable rows={rows} />
       <div className="flex flex-wrap items-center gap-3 text-14">
         <a className="font-medium text-fg underline" href="/library">
@@ -211,9 +212,7 @@ export function CvAssessmentPanel({
             </p>
           )}
         </div>
-      ) : (
-        <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} />
-      )}
+      ) : null}
     </section>
   );
 }

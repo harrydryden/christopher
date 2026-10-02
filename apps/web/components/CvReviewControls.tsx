@@ -9,13 +9,14 @@ import { CvContentBlockLink } from "./CvWorkspace";
 import type { ActionResult } from "@/lib/action-result";
 
 /** An assessment finding stays visible after dismissal; dismissal is a user choice, not verification. */
-export function CvReviewControls({ id, rows, decision, factualRowIds, assessmentHash, assessedAt }: {
+export function CvReviewControls({ id, rows, decision, factualRowIds, assessmentHash, assessedAt, canFinalise }: {
   id: string;
   rows: CvEvaluationRow[];
   decision: CvReviewDecision | null;
   factualRowIds: string[];
   assessmentHash: string;
   assessedAt: string;
+  canFinalise: boolean;
 }) {
   const findings = rows.filter((row) => row.change !== "None" && row.change !== "Comment");
   const [selected, setSelected] = useState(0);
@@ -82,12 +83,12 @@ export function CvReviewControls({ id, rows, decision, factualRowIds, assessment
       </div>}
       {error && <p role="alert" className="text-12 text-danger">{error}</p>}
     </section>}
-    <SettingsForm action={finalise} submitLabel="Finalise this CV" submitDisabled={remainingFacts.length > 0}
+    {canFinalise && <SettingsForm action={finalise} submitLabel="Finalise this CV" submitDisabled={remainingFacts.length > 0}
       secondaryActions={remainingFacts.length > 0 ? <button type="submit" name="skipReview" value="on" className="border border-warn px-3 py-2 text-12 font-medium">Skip review and finalise anyway</button> : undefined}>
       <label className="text-14"><input name="reviewed" type="checkbox" required /> I confirm this saved CV is the version I want to finalise, including any unresolved findings.</label>
       <input name="assessmentHash" type="hidden" value={assessmentHash} />
       <input name="assessedAt" type="hidden" value={assessedAt} />
       {remainingFacts.length > 0 && <p className="text-12 text-warn">{remainingFacts.length} factual {remainingFacts.length === 1 ? "finding is" : "findings are"} still open. You can dismiss each one or explicitly finalise anyway. The findings and score remain unchanged.</p>}
-    </SettingsForm>
+    </SettingsForm>}
   </div>;
 }

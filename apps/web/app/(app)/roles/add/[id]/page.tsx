@@ -55,7 +55,7 @@ export default async function ReviewImportedRolePage({ params }: { params: Promi
       </SettingsForm>
     </Card>}
     {row.status === "saved" && <Card title="Role saved">
-      <p className="mb-3 text-14">This role is in Shortlisted.</p>
+      <p className="mb-3 text-14">This role has been saved. Open it to review its current status or build a CV.</p>
       <Link prefetch={false} href={row.jobId ? `/roles/${row.jobId}` : "/?view=user-shortlisted#roles"} className="underline">Open saved role</Link>
     </Card>}
   </div>;

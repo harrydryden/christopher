@@ -49,11 +49,17 @@ const FIRST = role("11111111-1111-4111-8111-111111111111", "Head of Operations")
 const SECOND = role("22222222-2222-4222-8222-222222222222", "Operations Manager");
 
 it("shows a saved PDF role without inventing a company page or vacancy link", async () => {
-  const pdf = { ...FIRST, manual: true, url: null, companyId: FIRST.id, workflowStatus: "user-shortlisted" as const, stage: "shortlisted" as const };
+  const pdf = { ...FIRST, manual: true, url: null, companyId: FIRST.id, workflowStatus: "user-shortlisted" as const, stage: "shortlisted" as const,
+    fitScore: null, scoreState: "requested" as const, scoreStateText: "Score pending; review manually" };
   await act(async () => root.render(<RolesTable rows={[pdf]} companies={{}} initiallyExpandedId={pdf.id} emptyState={null} />));
   expect(container.textContent).toContain("Added from PDF");
   expect(container.querySelector(`a[href="/companies/${pdf.id}"]`)).toBeNull();
   expect(container.textContent).not.toContain("View vacancy");
+  expect(container.textContent).toContain("You added this role from a PDF");
+  expect(container.textContent).toContain("Not scored");
+  expect(container.textContent).not.toContain("Why it matched");
+  expect(container.textContent).not.toContain("Score pending");
+  expect(container.textContent).not.toContain("Score requested");
 });
 
 /** A server answer the test hands over when it chooses, so the page can be read in between. */

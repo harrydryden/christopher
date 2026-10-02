@@ -312,8 +312,9 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
         </TD>
         <TD className={`${styles.roleFit} whitespace-nowrap`}>
           <span className="block md:hidden text-muted">Fit: </span>
-          {/* A missing or previous score carries its current update status. */}
-          <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
+          {row.manual && row.fitScore === null
+            ? <span className="text-muted">Not scored</span>
+            : <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />}
         </TD>
         <TD className={`${styles.roleAction} text-right`}>
           {row.workflowStatus === "user-shortlisted" ? <Link prefetch={false} href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
@@ -338,7 +339,10 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 <p className="text-14 font-semibold text-fg">{row.title}</p>
                 <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
                 {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
-                <div>
+                {row.manual ? <div>
+                  <h3 className="ds-label mb-1">Added by you</h3>
+                  <p className="text-13 text-muted">You added this role from a {row.url ? "link" : "PDF"}. It was not selected by your role filters.</p>
+                </div> : <div>
                   <h3 className="ds-label mb-1">Why it matched</h3>
                   {row.keywordTerms.length > 0 && (
                     <div className="mb-1 flex flex-wrap gap-1.5">
@@ -346,8 +350,8 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                     </div>
                   )}
                   {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
-                </div>
-                {(row.fitScore !== null || row.scoreStateText) && (
+                </div>}
+                {(row.fitScore !== null || (!row.manual && row.scoreStateText)) && (
                   <div>
                     <h3 className="ds-label mb-1">Fit</h3>
                     <div className="flex flex-wrap items-center gap-2">
@@ -356,7 +360,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                       {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
                     </div>
                     {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
-                    {(row.scoreState === "failed" || row.scoreState === "requested" || row.scoreState === "queued") && !archived && <RetryScore jobId={row.id} scoreState={row.scoreState} />}
+                    {(row.scoreState === "failed" || row.scoreState === "requested" || row.scoreState === "queued") && !archived && !row.manual && <RetryScore jobId={row.id} scoreState={row.scoreState} />}
                   </div>
                 )}
                 <div>

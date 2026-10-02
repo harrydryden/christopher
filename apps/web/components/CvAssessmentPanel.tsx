@@ -1,11 +1,13 @@
 import { cvMaxPages, type CvContent, type CvLibrary } from "@ava/core/cv";
 import type { CvAssessment } from "@ava/core/cv-assessment";
 import { diagnoseCvQuality } from "@ava/core/cv-quality";
-import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
+import { assessCvDraft } from "@/app/actions/cv";
+import { cvReviewDecisionCurrent, type CvReviewDecision } from "@ava/core/cv-review";
 import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvLazyWidgets";
 import { RebuildButton } from "./CvDraftEditor";
 import { SettingsForm } from "./SettingsForm";
+import { CvReviewControls } from "./CvReviewControls";
 
 /**
  * The Library moved on after this revision was written, said where its evidence is judged.
@@ -38,6 +40,7 @@ export function CvAssessmentPanel({
   finaliseReason = null,
   blocked = null,
   comments = [],
+  reviewDecision = null,
 }: {
   id: string;
   assessment: CvAssessment | null;
@@ -65,6 +68,7 @@ export function CvAssessmentPanel({
    * opinion beside the reviewer's findings — and never change a score, a status or a rating.
    */
   comments?: CvCommentInput[];
+  reviewDecision?: CvReviewDecision | null;
 }) {
   if (!assessment || !current)
     return (
@@ -103,6 +107,8 @@ export function CvAssessmentPanel({
   // finalisation the action would refuse.
   const overPages = assessment.pageCount > cvMaxPages(content?.theme);
   const rows = cvEvaluationRows(assessment, content, library, comments);
+  const decision = cvReviewDecisionCurrent(reviewDecision, assessment) ? reviewDecision : null;
+  const factualRowIds = flagged.map((claim) => `claim:${claim.claimId}`);
   const essentialGaps = rows.filter(
     (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;
@@ -188,7 +194,7 @@ export function CvAssessmentPanel({
           Finalised. Download this saved revision or create a new revision to
           make changes.
         </p>
-      ) : busy ? null : finaliseReason || overPages || flagged.length ? (
+      ) : busy ? null : overPages ? (
         // The three reasons `assertCvFinalisable` refuses on, said here rather than shown by the
         // absence of a button: the assessment is stale, the CV is over its page limit, or a claim
         // is still flagged. The sentence is the one that function would have thrown, computed on
@@ -196,12 +202,6 @@ export function CvAssessmentPanel({
         <div role="status" className="space-y-1 border border-warn p-3 text-14">
           {finaliseReason && (
             <p className="text-warn">Finalise is not available yet: {finaliseReason}</p>
-          )}
-          {flagged.length > 0 && (
-            <p className={finaliseReason ? "" : "text-warn"}>
-              Resolve the Fact and Uncertain claims in the table, then save and reassess before
-              finalising.
-            </p>
           )}
           {overPages && (
             <p className={finaliseReason ? "" : "text-warn"}>
@@ -212,15 +212,7 @@ export function CvAssessmentPanel({
           )}
         </div>
       ) : (
-        <SettingsForm
-          action={finaliseCvDraft.bind(null, id)}
-          submitLabel="Finalise this CV"
-        >
-          <label className="text-14">
-            <input name="reviewed" type="checkbox" required /> I have reviewed
-            the wording, score and evidence gaps for this revision.
-          </label>
-        </SettingsForm>
+        <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} />
       )}
     </section>
   );

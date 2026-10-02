@@ -2,7 +2,7 @@
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { cvReviewSections, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { cvImprovementOwner } from "@ava/core/cv-assessment";
-import { assertCvFinalisable } from "@ava/core/cv-review";
+import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@ava/core/cv-review";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -18,6 +18,7 @@ import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capac
 import { lockRoleView } from "@/lib/decisions";
 import { cvCreditOffer } from "@/lib/cv-credit";
 import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
+import { cvEvaluationRows } from "@/lib/cv-evaluation";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { userSettings as userSettingsTable } from "@ava/db/schema";
@@ -772,6 +773,39 @@ export async function assessCvDraft(
   return ok();
 }
 
+/** Record a person's choice to leave one finding as it stands on this assessed revision. */
+export async function dismissCvReviewItem(id: string, rowId: string, inputHash: string, assessedAt: string): Promise<ActionResult> {
+  const user = await requireUser();
+  try {
+    zUuid().parse(id);
+    if (!rowId || rowId.length > 250) return fail("Choose a finding to dismiss.");
+    await db().transaction(async (tx) => {
+      const [draft] = await tx.select().from(cvDrafts)
+        .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id))).for("update");
+      if (!draft?.content || !draft.assessment || draft.status !== "ready" || draft.finalisedAt ||
+          !cvAssessmentCurrent(draft.assessment, draft.content, draft.jobDescription, draft.librarySnapshot))
+        throw new UserFacingError("Reload and assess the saved revision before reviewing its findings.");
+      if (draft.assessment.inputHash !== inputHash || draft.assessment.assessedAt !== assessedAt)
+        throw new UserFacingError("The assessment changed. Reload before dismissing a finding.");
+      const finding = cvEvaluationRows(draft.assessment, draft.content, draft.librarySnapshot)
+        .find((row) => row.id === rowId && row.change !== "None" && row.change !== "Comment");
+      if (!finding) throw new UserFacingError("This finding is no longer on the saved assessment. Reload the CV.");
+      const previous = cvReviewDecisionCurrent(draft.reviewDecision, draft.assessment) ? draft.reviewDecision! : null;
+      const reviewDecision: CvReviewDecision = {
+        inputHash: draft.assessment.inputHash,
+        assessedAt: draft.assessment.assessedAt,
+        dismissedRowIds: [...new Set([...(previous?.dismissedRowIds ?? []), rowId])],
+        skipped: previous?.skipped ?? false,
+      };
+      await tx.update(cvDrafts).set({ reviewDecision }).where(eq(cvDrafts.id, id));
+    });
+  } catch (error) {
+    return actionError(error, "Could not save this review decision. Please try again.");
+  }
+  revalidatePath(`/cv/${id}`);
+  return ok();
+}
+
 export async function finaliseCvDraft(
   id: string,
   _prev: ActionResult,
@@ -785,12 +819,22 @@ export async function finaliseCvDraft(
         "Review the score, evidence gaps and factual wording before finalising.",
       );
     /** The revision as it can be finalised, or the sentence that says why it cannot. */
-    const finalisable = <T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "assessment" | "jobDescription" | "librarySnapshot">>(draft: T | undefined) => {
+    const skipReview = form.get("skipReview") === "on";
+    const seenHash = form.get("assessmentHash");
+    const seenAt = form.get("assessedAt");
+    const finalisable = <T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "assessment" | "jobDescription" | "librarySnapshot" | "reviewDecision">>(draft: T | undefined) => {
       if (!draft?.content || draft.status !== "ready")
         throw new UserFacingError("Wait for this revision’s assessment to finish.");
+      if ((seenHash && draft.assessment?.inputHash !== seenHash) || (seenAt && draft.assessment?.assessedAt !== seenAt))
+        throw new UserFacingError("The assessment changed. Reload before finalising this revision.");
       // What the reviewer found missing is written for the person reading it.
       try {
-        assertCvFinalisable({ ...draft, content: draft.content });
+        assertCvFinalisable({ ...draft, content: draft.content,
+          reviewDecision: skipReview && draft.assessment ? {
+            inputHash: draft.assessment.inputHash, assessedAt: draft.assessment.assessedAt,
+            dismissedRowIds: cvReviewDecisionCurrent(draft.reviewDecision, draft.assessment) ? draft.reviewDecision!.dismissedRowIds : [],
+            skipped: true,
+          } : draft.reviewDecision });
       } catch (failure) {
         throw new UserFacingError(failure instanceof Error ? failure.message : "This CV cannot be finalised yet.");
       }
@@ -799,7 +843,7 @@ export async function finaliseCvDraft(
     // Only what the check and the render read: the build checkpoint, gap quiz and the rest of the
     // row stay in the database. The locked re-read below is the whole row.
     const [read] = await db()
-      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot })
+      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot, reviewDecision: cvDrafts.reviewDecision })
       .from(cvDrafts)
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     const checked = finalisable(read);
@@ -824,7 +868,11 @@ export async function finaliseCvDraft(
       if (!current.finalisedAt)
         await tx
           .update(cvDrafts)
-          .set({ finalisedAt: new Date() })
+          .set({ finalisedAt: new Date(), ...(skipReview && current.assessment ? { reviewDecision: {
+            inputHash: current.assessment.inputHash, assessedAt: current.assessment.assessedAt,
+            dismissedRowIds: cvReviewDecisionCurrent(current.reviewDecision, current.assessment) ? current.reviewDecision!.dismissedRowIds : [],
+            skipped: true,
+          } satisfies CvReviewDecision } : {}) })
           .where(eq(cvDrafts.id, id));
     });
     // Kept under the hash of what was rendered, which the transaction has just confirmed is still

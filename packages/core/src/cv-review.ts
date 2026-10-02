@@ -314,11 +314,28 @@ export function cvAssessmentCurrent(
     return false;
   }
 }
+/** A person's decision about findings on one assessed, saved CV revision. It does not alter the assessment. */
+export type CvReviewDecision = {
+  inputHash: string;
+  assessedAt: string;
+  dismissedRowIds: string[];
+  skipped: boolean;
+};
+
+export function cvReviewDecisionCurrent(
+  decision: CvReviewDecision | null | undefined,
+  assessment: CvAssessment | null | undefined,
+): boolean {
+  return !!decision && !!assessment && decision.inputHash === assessment.inputHash &&
+    decision.assessedAt === assessment.assessedAt;
+}
+
 export function assertCvFinalisable(input: {
   content: CvContent;
   jobDescription: string;
   librarySnapshot: CvLibrary;
   assessment?: CvAssessment | null;
+  reviewDecision?: CvReviewDecision | null;
 }) {
   if (
     !cvAssessmentCurrent(
@@ -335,7 +352,9 @@ export function assertCvFinalisable(input: {
   const maxPages = cvMaxPages(input.content.theme);
   if (assessment.pageCount < 1 || assessment.pageCount > maxPages)
     throw new Error(`Fit this CV to ${maxPages} ${maxPages === 1 ? "page" : "pages"} before finalising it.`);
-  if (assessment.review.claims.some((claim) => claim.status !== "supported"))
+  const decision = cvReviewDecisionCurrent(input.reviewDecision, assessment) ? input.reviewDecision : null;
+  if (assessment.review.claims.some((claim) => claim.status !== "supported" &&
+      !decision?.skipped && !decision?.dismissedRowIds.includes(`claim:${claim.claimId}`)))
     throw new Error(
       "Resolve the flagged factual claims, then reassess before finalising.",
     );

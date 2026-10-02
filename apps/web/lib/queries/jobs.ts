@@ -70,8 +70,8 @@ function roleRowSelection(latest: LatestApplication, userId: string) {
     company: {
       id: sql<string>`coalesce(${companies.id}, ${jobs.id})`,
       name: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')`,
-      faviconUrl: companies.faviconUrl,
-      logoFetchedAt: companies.logoFetchedAt,
+      faviconUrl: sql<string | null>`${companies.faviconUrl}`,
+      logoFetchedAt: sql<Date | null>`${companies.logoFetchedAt}`,
       homepageUrl: sql<string>`coalesce(${companies.homepageUrl}, '')`,
       domain: sql<string>`coalesce(${companies.domain}, '')`,
     },

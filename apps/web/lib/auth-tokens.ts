@@ -38,17 +38,21 @@ export async function peekAuthToken(raw: string, purpose: TokenPurpose, now: Dat
 }
 
 /** Mark the token used and return its account, or null when it is unknown, spent or expired. */
-export async function consumeAuthToken(raw: string, purpose: TokenPurpose, now: Date = new Date()): Promise<{ userId: string } | null> {
+export async function consumeAuthTokenIn(writer: Pick<ReturnType<typeof db>, "select" | "update">,
+  raw: string, purpose: TokenPurpose, now: Date = new Date()): Promise<{ userId: string } | null> {
   if (!raw || raw.length > 200) return null;
   const tokenHash = hashToken(raw);
-  return db().transaction(async (tx) => {
-    const [row] = await tx
-      .select({ id: authTokens.id, userId: authTokens.userId })
-      .from(authTokens)
-      .where(and(eq(authTokens.tokenHash, tokenHash), eq(authTokens.purpose, purpose), isNull(authTokens.usedAt), gt(authTokens.expiresAt, now)))
-      .for("update");
-    if (!row) return null;
-    await tx.update(authTokens).set({ usedAt: sql`now()` }).where(eq(authTokens.id, row.id));
-    return { userId: row.userId };
-  });
+  const [row] = await writer
+    .select({ id: authTokens.id, userId: authTokens.userId })
+    .from(authTokens)
+    .where(and(eq(authTokens.tokenHash, tokenHash), eq(authTokens.purpose, purpose), isNull(authTokens.usedAt), gt(authTokens.expiresAt, now)))
+    .for("update");
+  if (!row) return null;
+  await writer.update(authTokens).set({ usedAt: sql`now()` }).where(eq(authTokens.id, row.id));
+  return { userId: row.userId };
+}
+
+/** Standalone use retains the original one-transaction token operation. */
+export async function consumeAuthToken(raw: string, purpose: TokenPurpose, now: Date = new Date()): Promise<{ userId: string } | null> {
+  return db().transaction(tx => consumeAuthTokenIn(tx, raw, purpose, now));
 }

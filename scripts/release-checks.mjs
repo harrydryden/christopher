@@ -193,6 +193,9 @@ export function readOperationalSample(value) {
     ["slowQueries", vitals?.slowQueries, count],
     ["dbTotal", db?.total, count],
     ["dbIdle", db?.idle, count],
+    ["heapUsedMb", vitals?.heapUsedMb, nonNegative],
+    ["heapLimitMb", vitals?.heapLimitMb, nonNegative],
+    ["rssMb", vitals?.rssMb, nonNegative],
   ]) {
     if (raw === undefined) continue;
     sample[key] = read(raw);
@@ -313,6 +316,16 @@ export function operationalFailures(samples, thresholds = OPERATIONAL_THRESHOLDS
   }
   failures.push(...monitorFindings(latest.monitor, thresholds).fail);
   return failures;
+}
+
+/** Only the bounded memory readings and worker identity appear in a failed run; never log the status body. */
+export function operationalFailureDiagnostics(samples) {
+  const reading = value => typeof value === "number" ? String(value) : "not reported";
+  return samples.map((sample, index) =>
+    `sample ${index + 1} at ${sample.sampledAt ?? "time unavailable"} from ${JSON.stringify(sample.workerId ?? "worker unavailable")}: ` +
+    `heapUsedMb=${reading(sample.heapUsedMb)}, heapLimitMb=${reading(sample.heapLimitMb)}, ` +
+    `heapFraction=${reading(sample.heapFraction)}, rssMb=${reading(sample.rssMb)}`,
+  ).join("\n");
 }
 
 /**

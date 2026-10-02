@@ -2,6 +2,8 @@ import type { User, UserRole } from "./schema";
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import { tagVocabulary, users } from "./schema";
+import { enqueueStandard } from "./tasks";
+import { lockAccountScoreInput } from "./score-fence";
 
 /** The owner account the multi-user migration creates for a deployment that already held data. */
 export const BOOTSTRAP_USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -130,6 +132,9 @@ export async function completeAccountClaim(db: Db, userId: string, options: { ad
   const now = options.now ?? new Date();
   const adminEmails = options.adminEmails ?? adminEmailsFrom();
   return db.transaction(async (tx) => {
+    // Writers of pre-confirmation preferences hold this fence. Whichever commits first owns
+    // queuing its follow-up, so a save cannot fall between our snapshot and eligibility change.
+    await lockAccountScoreInput(tx as unknown as Db, userId, "exclusive");
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
     const [user] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user || isPlaceholderEmail(user.email)) return null;
@@ -143,6 +148,25 @@ export async function completeAccountClaim(db: Db, userId: string, options: { ad
       })
       .where(eq(users.id, userId))
       .returning();
+    if (updated && user.role !== "admin" && !user.emailVerifiedAt) {
+      const saved = await tx.execute<{ seed: boolean; decisions: boolean; views: boolean; reasons: boolean }>(sql`
+        select
+          exists(select 1 from user_settings where user_id = ${userId}::uuid and key = 'seedProfile'
+            and length(btrim(coalesce(value #>> '{}', ''))) > 0) as seed,
+          exists(select 1 from decisions where user_id = ${userId}::uuid and superseded = false) as decisions,
+          exists(select 1 from user_jobs uj join jobs j on j.id = uj.job_id
+            where uj.user_id = ${userId}::uuid and uj.archived_at is null and j.status = 'open'
+              and (uj.in_table or exists (select 1 from decisions d where d.user_id = uj.user_id
+                and d.job_id = uj.job_id and d.superseded = false and d.decision = 'apply'))
+              and not exists (select 1 from decisions d where d.user_id = uj.user_id
+                and d.job_id = uj.job_id and d.superseded = false and d.decision = 'skip')) as views,
+          exists(select 1 from decisions where user_id = ${userId}::uuid and superseded = false
+            and tags_edited = false and jsonb_array_length(tags) = 0 and length(btrim(reason)) > 0) as reasons`);
+      const work = saved.rows[0];
+      if (work?.seed || work?.decisions) await enqueueStandard(tx, "synthesize_profile", { userId, force: true });
+      if (work?.views) await enqueueStandard(tx, "rescore_all", { userId, onlyInTable: true });
+      if (work?.reasons) await enqueueStandard(tx, "resume_reason_tags", { userId });
+    }
     return updated ?? null;
   });
 }

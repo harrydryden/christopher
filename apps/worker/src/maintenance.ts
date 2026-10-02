@@ -2,6 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { pruneHttpHostDaily } from "@ava/db";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
+import { reconcileOrphanScores } from "./score-orphans";
 
 /** Rows one retention statement may touch. Small enough to hold its locks for a moment only. */
 export const RETENTION_BATCH = 5_000;
@@ -125,9 +126,18 @@ export async function maintainHistory(deps: WorkerDeps, options: MaintenanceOpti
   // vendor behave last spring"; `pruneHttpHostDaily` owns that number.
   await prune("http_host_daily", limit => pruneHttpHostDaily(deps.db, 400, limit));
 
+  // Repair old waiting labels whose admission, score and provider-batch tasks are all gone. This
+  // uses the same hourly claim and its own short budget; it changes state only, never AI spend.
+  if (!options.signal?.aborted) {
+    const repaired = await reconcileOrphanScores(deps.db, { batch: Math.min(batch, 200), budgetMs: budget, signal: options.signal, clock });
+    report.score_orphans = { rows: repaired.rows, backlog: repaired.backlog, ...(repaired.error ? { error: repaired.error } : {}) };
+    if (repaired.error) log.warn("score orphan reconciliation failed; maintenance continues", { error: repaired.error });
+    if (repaired.rows) log.info("reconciled historical score waiting states", { rows: repaired.rows, examined: repaired.examined });
+  }
+
   const pruned = Object.fromEntries(Object.entries(report).filter(([, outcome]) => outcome.rows > 0).map(([table, outcome]) => [table, outcome.rows]));
-  if (Object.keys(pruned).length) log.info("pruned history", pruned);
+  if (Object.keys(pruned).length) log.info("maintenance changed rows", pruned);
   const behind = Object.entries(report).filter(([, outcome]) => outcome.backlog && !outcome.error).map(([table]) => table);
-  if (behind.length) log.warn("retention backlog; continuing next hour", { tables: behind, batch, budgetMs: budget });
+  if (behind.length) log.warn("maintenance backlog; continuing next hour", { tables: behind, batch, budgetMs: budget });
   return report;
 }

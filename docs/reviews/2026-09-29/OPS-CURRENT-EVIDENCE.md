@@ -1,0 +1,21 @@
+# Current operational evidence — 29 September 2026
+
+Checked at **13:45 UTC**. This is a read-only snapshot of GitHub Actions and the available Render connection, not a hosted recovery or production-quality qualification.
+
+## Identified deployment and access boundary
+
+The repository remote is [`harrydryden/christopher`](https://github.com/harrydryden/christopher). Its `main` branch points to [`ebb346b1fa64e34c16447fffb0d47afbbfd890ac`](https://github.com/harrydryden/christopher/commit/ebb346b1fa64e34c16447fffb0d47afbbfd890ac), committed at 21:16:59 UTC on 28 September. Local `render.yaml` is expressly a **template**, not the configuration of the existing `christopher-worker` and `christopher-db`; it says their dashboard settings are the source of truth. Its `autoDeploy: true` therefore cannot establish the live service's setting.
+
+The Render connector is available, but `list_services` returned **“no workspace selected”** and required confirmation before a workspace ID could be used. A read-only workspace listing found one accessible workspace, **Harry's workspace** (`tea-da1dkajl550s73fel3og`); none was selected. No Render service, deployment, log, health or resource-metric call succeeded. In particular, there is no verified Render service ID, live deployment SHA, auto-deploy setting, recent error count, CPU/memory series or database status from this check. A workspace name alone does not identify the AVA worker.
+
+## GitHub observations
+
+The latest `main` [CI run for `ebb346b`](https://github.com/harrydryden/christopher/actions/runs/36485054175) **failed** on 28 September. Its `check`, `browser-and-smoke`, `lighthouse` and `worker-image` jobs succeeded; `order-independence` failed one shuffled worker test, `src/cv-replay.test.ts > keeps the replay transaction's own timeouts through a rebuild longer than a lease renewal interval` (`expected 83 to be greater than 100`, seed 380). The consequent [Release run](https://github.com/harrydryden/christopher/actions/runs/36486124405) was **skipped**, so it supplies no successful release-identity verification for that SHA. The new local evaluation-qualification job has not run on `main`.
+
+The [scheduled Operational status run](https://github.com/harrydryden/christopher/actions/runs/36542834769) succeeded at 08:28 UTC on 29 September against `ebb346b`. Its read-only gate takes three worker-status samples and checks health, worker-input identity and configured queue, crash and performance thresholds. Its aggregate output reported **0 ready tasks, 0 running tasks, 0 crash recoveries in the preceding 24 hours, and 0 failed or stalled provider calls out of 0 calls in the preceding hour**. This supports that the configured operational endpoint passed the gate *then*. It does not disclose the running Render deploy SHA, prove the service's dashboard auto-deploy setting, measure a live 5xx rate or demonstrate model reliability when no provider calls were observed. It also predates the local changes in this review branch.
+
+## Remaining hosted qualification
+
+Confirm the Render workspace, then identify the AVA service by its repository linkage before reading its current service configuration, deployment and metrics. Re-run CI and release identity on the implementation commit, inspect hosted worker/web status and errors, and complete the live provider, 50-company soak and hosted restore evidence separately. The successful scheduled gate and local tests do not replace those checks or raise J9's operational score by themselves.
+
+Local review of the release architecture found that the strict evaluation job gates the **Release workflow**, but cannot by itself prevent Vercel or Render from automatically promoting a pushed commit before that workflow finishes. The next development must make production promotion depend on successful CI and verified evaluation for the exact candidate SHA, then run the existing identity checks. Provider-side settings need to agree with that mechanism. A failed or unqualified candidate must demonstrably remain off production; a successful post-deployment identity check alone does not establish that protection. The template's `autoDeploy: true` is a reason to inspect configuration, not proof that the existing service currently has automatic deployment enabled.

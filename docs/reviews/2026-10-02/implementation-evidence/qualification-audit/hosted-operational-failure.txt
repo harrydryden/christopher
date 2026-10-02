@@ -1,0 +1,5 @@
+Read-only GitHub run36931172888, 2 October2026 London.
+read-only-gate	UNKNOWN STEP	2026-10-01T21:49:19.6941537Z   OPERATIONAL_EXPECTED_SHA: ebb346b1fa64e34c16447fffb0d47afbbfd890ac
+read-only-gate	UNKNOWN STEP	2026-10-01T21:49:51.1818735Z if (failures.length) throw new Error(`Operational gate failed:\n- ${failures.join("\n- ")}`);
+read-only-gate	UNKNOWN STEP	2026-10-01T21:49:51.1819285Z Error: Operational gate failed:
+read-only-gate	UNKNOWN STEP	2026-10-01T21:49:51.1819496Z - worker heap pressure is sustained at or above 85%

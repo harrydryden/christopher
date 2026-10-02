@@ -7,10 +7,10 @@
  * confirmation link completed with the account's password, or a reset link used to set a password.
  */
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, normaliseEmail, promoteIfEntitled, type CreateUserResult } from "@ava/db";
+import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, lockAccountScoreInput, normaliseEmail, promoteIfEntitled, type CreateUserResult, type Db } from "@ava/db";
 import { authAccounts, authTokens, cvVersions, sessions, users, type User } from "@ava/db/schema";
 import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@ava/core";
-import { consumeAuthToken, issueAuthToken, peekAuthToken } from "./auth-tokens";
+import { consumeAuthTokenIn, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
 import { sendEmail } from "./email";
 import type { GoogleProfile } from "./google";
@@ -99,15 +99,27 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
     .innerJoin(users, eq(users.id, authAccounts.userId))
     .where(and(eq(authAccounts.provider, "google"), eq(authAccounts.providerAccountId, profile.sub)))
     .limit(1);
-  if (linked) return { user: await promoteIfEntitled(db(), linked.user, adminEmails()), created: false };
+  if (linked) {
+    // Linking and claiming are separate transactions. If the claim's saved-work enqueue rolled
+    // back after the link was inserted, a verified Google sign-in must retry that claim.
+    if (!linked.user.emailVerifiedAt && profile.emailVerified) {
+      const claimed = await completeAccountClaim(db(), linked.user.id, { adminEmails: adminEmails() });
+      if (!claimed) throw new Error("This account cannot sign in.");
+      return { user: claimed, created: false };
+    }
+    return { user: await promoteIfEntitled(db(), linked.user, adminEmails()), created: false };
+  }
   if (!profile.emailVerified) throw new Error("Google has not verified this email address, so it cannot be used to sign in.");
   if (emailProblem(email)) throw new Error("Google returned an unusable email address.");
 
   const [existing] = await db().select().from(users).where(eq(users.email, email)).limit(1);
   if (existing) {
-    const unproven = !existing.emailVerifiedAt && !!existing.passwordHash;
     await db().transaction(async (tx) => {
-      if (unproven) {
+      await lockAccountScoreInput(tx as unknown as Db, existing.id, "exclusive");
+      const [current] = await tx.select({ emailVerifiedAt: users.emailVerifiedAt, passwordHash: users.passwordHash })
+        .from(users).where(eq(users.id, existing.id)).for("update");
+      if (!current) throw new Error("This account cannot sign in.");
+      if (!current.emailVerifiedAt && current.passwordHash) {
         await tx.update(users).set({ passwordHash: null }).where(eq(users.id, existing.id));
         await tx.delete(sessions).where(eq(sessions.userId, existing.id));
       }
@@ -143,6 +155,7 @@ export async function changePassword(user: User, currentPassword: string, nextPa
   if (problem) throw new Error(problem);
   const passwordHash = await hashPassword(nextPassword);
   await db().transaction(async (tx) => {
+    await lockAccountScoreInput(tx as unknown as Db, user.id, "exclusive");
     await tx.update(users).set({ passwordHash }).where(eq(users.id, user.id));
     await tx.update(authTokens).set({ usedAt: new Date() }).where(and(eq(authTokens.userId, user.id), isNull(authTokens.usedAt)));
     if (keepSessionId) await tx.delete(sessions).where(and(eq(sessions.userId, user.id), ne(sessions.id, keepSessionId)));
@@ -165,14 +178,21 @@ export async function requestPasswordReset(email: string, origin: string | null)
 export async function resetPasswordWithToken(token: string, password: string): Promise<User | null> {
   const problem = passwordProblem(password);
   if (problem) throw new Error(problem);
-  const consumed = await consumeAuthToken(token, "password_reset");
-  if (!consumed) return null;
-  await db().update(users).set({ passwordHash: await hashPassword(password) }).where(eq(users.id, consumed.userId));
-  const user = await completeAccountClaim(db(), consumed.userId, { adminEmails: adminEmails() });
-  if (!user) return null;
-  // Whoever held the old password is signed out everywhere.
-  await db().delete(sessions).where(eq(sessions.userId, user.id));
-  return user;
+  const peek = await peekAuthToken(token, "password_reset");
+  if (!peek) return null;
+  const passwordHash = await hashPassword(password);
+  return db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as Db, peek.userId, "exclusive");
+    const consumed = await consumeAuthTokenIn(tx, token, "password_reset");
+    if (!consumed || consumed.userId !== peek.userId) return null;
+    const user = await completeAccountClaim(tx as unknown as Db, consumed.userId, { adminEmails: adminEmails() });
+    if (!user) throw new Error("This account cannot be claimed.");
+    // Claim takes ava:users before updating this row, the same order as registration.
+    const [updated] = await tx.update(users).set({ passwordHash }).where(eq(users.id, user.id)).returning();
+    // Whoever held the old password is signed out everywhere, in the same commit as the reset.
+    await tx.delete(sessions).where(eq(sessions.userId, user.id));
+    return updated ?? user;
+  });
 }
 
 export async function sendVerificationEmail(user: User, origin: string | null): Promise<{ delivered: boolean }> {
@@ -218,10 +238,14 @@ export async function confirmEmailWithToken(token: string, proof: { sessionUserI
     const ok = await verifyPassword(proof.password ?? "", hash);
     if (!user?.passwordHash || !ok) return { status: "password" };
   }
-  const consumed = await consumeAuthToken(token, "email_verification");
-  if (!consumed || consumed.userId !== preview.userId) return { status: "invalid" };
-  const user = await completeAccountClaim(db(), consumed.userId, { adminEmails: adminEmails() });
-  return user ? { status: "done", user } : { status: "invalid" };
+  return db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as Db, preview.userId, "exclusive");
+    const consumed = await consumeAuthTokenIn(tx, token, "email_verification");
+    if (!consumed || consumed.userId !== preview.userId) return { status: "invalid" };
+    const user = await completeAccountClaim(tx as unknown as Db, consumed.userId, { adminEmails: adminEmails() });
+    if (!user) throw new Error("This account cannot be claimed.");
+    return { status: "done", user };
+  });
 }
 
 /** A reset link an administrator can hand to someone when email delivery is not set up. Works once, for an hour. */

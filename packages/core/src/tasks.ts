@@ -26,6 +26,8 @@ export interface TaskPayloads {
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };
+  /** Resolve a Workday listing's counted locations for exactly one observed revision. */
+  fetch_locations: { jobId: string; locationRevision: string };
   /**
    * One account's fit score for one role. `live` marks a role that batch scoring handed back —
    * its batch request expired or errored, or the batch could not be sent — so the queue runs it
@@ -34,6 +36,9 @@ export interface TaskPayloads {
    * the queue leaves it alone unless it is also marked `live`.
    */
   score_job: { userId: string; jobId: string; live?: boolean; background?: boolean };
+  /** Exact, bounded score requests. The worker checks its own model and account budget before
+   * creating score_job tasks; a view's mutable state is never the request ledger. */
+  admit_scores: { userId: string; jobIds: string[]; requestKey: string; background?: boolean; onlyUnscored?: boolean };
   /**
    * Batch scoring's collector: gathers the queued `score_job` work into one Message Batches
    * request. Shared work — it serves every account with roles waiting — so it names none.
@@ -46,6 +51,8 @@ export interface TaskPayloads {
    */
   poll_score_batch: ScoreBatchRecord;
   tag_reason: { decisionId: string };
+  /** Resume tagging reasons saved before confirmation, in bounded decision-id pages. */
+  resume_reason_tags: { userId: string; afterDecisionId?: string };
   synthesize_profile: { userId: string; force?: boolean };
   suggest_filters: { userId: string };
   suggest_from_scans: { userId: string };
@@ -85,6 +92,8 @@ export interface TaskPayloads {
    * the id of the row, so an upload never travels through the queue.
    */
   import_library_document: { userId: string; importId: string };
+  /** Read a private role link or PDF into an account-owned confirmation draft. */
+  import_role_description: { userId: string; importId: string };
   /**
    * One pass of the one-off backfill that re-encodes stored company logos as small WebP images,
    * as a capture now stores them. A pass takes a bounded batch in company order after
@@ -107,7 +116,7 @@ export type TaskType = keyof TaskPayloads;
  * change to what `evaluateGate` (gate.ts) decides for a posting must bump this number, and
  * `gate-reevaluation-version.test.ts` fails until it is bumped and its digest recorded.
  */
-export const GATE_REEVALUATION_VERSION = 1;
+export const GATE_REEVALUATION_VERSION = 2;
 
 /**
  * The types a person is waiting for. The queue's interactive lane serves these first, and ageing
@@ -115,7 +124,7 @@ export const GATE_REEVALUATION_VERSION = 1;
  * the lane cannot disagree about which types count.
  */
 export const INTERACTIVE_TASK_TYPES = [
-  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document",
+  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "import_library_document", "import_role_description",
 ] as const satisfies readonly TaskType[];
 
 /** The shared daily scan and its fan-out: the scan lane's own work. */
@@ -135,8 +144,11 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   scan_company: { priority: 5, dedupe: (p) => `scan_company:${p.companyId}` },
   run_daily: { priority: 5, dedupe: () => "run_daily" },
   fetch_description: { priority: 4, dedupe: (p) => `fetch_description:${p.jobId}` },
+  fetch_locations: { priority: 4, dedupe: (p) => `fetch_locations:${p.jobId}:${p.locationRevision}` },
   score_job: { priority: 4, dedupe: (p) => `score_job:${p.userId}:${p.jobId}` },
+  admit_scores: { priority: 1, dedupe: (p) => `admit_scores:${p.userId}:${p.requestKey}` },
   tag_reason: { priority: 1, dedupe: (p) => `tag_reason:${p.decisionId}` },
+  resume_reason_tags: { priority: 6, dedupe: (p) => `resume_reason_tags:${p.userId}` },
   synthesize_profile: { priority: 6, dedupe: (p) => `synthesize_profile:${p.userId}` },
   suggest_filters: { priority: 6, dedupe: (p) => `suggest_filters:${p.userId}` },
   suggest_from_scans: { priority: 6, dedupe: (p) => `suggest_from_scans:${p.userId}` },
@@ -158,6 +170,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   // the import, not the account: two documents brought in the same minute are two extractions, and
   // re-reading one that failed is the same piece of work rather than a second one.
   import_library_document: { priority: 1, dedupe: (p) => `import_library_document:${p.importId}` },
+  import_role_description: { priority: 1, dedupe: (p) => `import_role_description:${p.importId}` },
   collect_score_batch: { priority: 4, dedupe: () => "collect_score_batch" },
   poll_score_batch: { priority: 4, dedupe: (p) => `poll_score_batch:${p.batchId}` },
   // Housekeeping nobody is waiting for: behind everything else, and one walk at a time — a second
@@ -242,6 +255,7 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   review_library: 4 * 60_000,
   // A conversion or a page fetch, then one model call over a document of up to 40,000 characters.
   import_library_document: 4 * 60_000,
+  import_role_description: 4 * 60_000,
   // One high-effort call of up to 8,000 streamed tokens with up to five web searches: a minute to
   // begin, two or more to write, and the searches between. Two minutes failed it mid-answer, so
   // the call was paid for and made again.

@@ -1,0 +1,78 @@
+
+> @ava/web@0.1.0 build /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+> next build
+
+   ▲ Next.js 15.5.25
+   - Experiments (use with caution):
+     · serverActions
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 5.7s
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/9) ...
+   Generating static pages (2/9) 
+   Generating static pages (4/9) 
+   Generating static pages (6/9) 
+ ✓ Generating static pages (9/9)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                 Size  First Load JS
+┌ ƒ /                                    1.24 kB         126 kB
+├ ○ /_not-found                            990 B         103 kB
+├ ƒ /account                             1.11 kB         103 kB
+├ ƒ /admin                                2.9 kB         108 kB
+├ ƒ /admin/catalogue                      2.9 kB         108 kB
+├ ƒ /admin/health                          168 B         106 kB
+├ ƒ /admin/settings                      1.11 kB         103 kB
+├ ƒ /api/applications/[id]/pdf             182 B         102 kB
+├ ƒ /api/companies/[id]/logo               182 B         102 kB
+├ ƒ /api/cron                              182 B         102 kB
+├ ƒ /api/cv/[id]/pdf                       195 B         106 kB
+├ ƒ /api/cv/[id]/progress                  195 B         106 kB
+├ ƒ /api/cv/library                        182 B         102 kB
+├ ƒ /api/cv/library/imports                182 B         102 kB
+├ ƒ /api/cv/library/reviews                195 B         106 kB
+├ ƒ /api/cv/manage                         195 B         106 kB
+├ ƒ /api/cv/preview                        182 B         102 kB
+├ ƒ /api/export.csv                        182 B         102 kB
+├ ƒ /api/health                            182 B         102 kB
+├ ƒ /api/newsletters                       182 B         102 kB
+├ ƒ /api/performance                       182 B         102 kB
+├ ƒ /api/scan-status                       182 B         102 kB
+├ ƒ /api/work-status                       195 B         106 kB
+├ ○ /apple-icon.png                          0 B            0 B
+├ ƒ /applications                        6.12 kB         118 kB
+├ ƒ /auth/google                           182 B         102 kB
+├ ƒ /auth/google/callback                  182 B         102 kB
+├ ƒ /auth/verify                           195 B         106 kB
+├ ƒ /companies                           1.43 kB         110 kB
+├ ƒ /companies/[id]                       4.3 kB         129 kB
+├ ƒ /cv                                    182 B         102 kB
+├ ƒ /cv/[id]                             10.4 kB         120 kB
+├ ƒ /cv/library                            182 B         102 kB
+├ ƒ /forgot-password                       195 B         106 kB
+├ ƒ /health                                168 B         106 kB
+├ ○ /icon.svg                                0 B            0 B
+├ ƒ /learning                            1.67 kB         104 kB
+├ ƒ /library                             21.6 kB         131 kB
+├ ƒ /login                                 195 B         106 kB
+├ ○ /manifest.webmanifest                  182 B         102 kB
+├ ƒ /reset-password                        195 B         106 kB
+├ ƒ /settings                            3.38 kB         105 kB
+├ ƒ /share/[token]                         182 B         102 kB
+├ ƒ /share/[token]/comments                182 B         102 kB
+├ ƒ /signup                                195 B         106 kB
+└ ƒ /suggestions                         6.73 kB         112 kB
++ First Load JS shared by all             102 kB
+  ├ chunks/6082-b83f939ffe2da964.js      45.6 kB
+  ├ chunks/b5588b94-88a6e820bcf5c884.js  54.3 kB
+  └ other shared chunks (total)          2.08 kB
+
+
+ƒ Middleware                             92.1 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

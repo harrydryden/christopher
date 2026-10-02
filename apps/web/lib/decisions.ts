@@ -6,6 +6,7 @@
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { decisions, jobEvents, userJobs } from "@ava/db/schema";
+import { requestScores, lockAccountScoreInput, accountCanScore, type Db } from "@ava/db";
 import type { db } from "./db";
 import { enqueue, enqueueMany } from "./enqueue";
 import { UserFacingError } from "./validation";
@@ -106,7 +107,10 @@ export async function restoreDismissedApplications(tx: Tx, userId: string, jobId
  * decision row each, one `decided` event each, and the same tasks — and all or nothing: a role that
  * is not this account's writes nothing at all, and is refused with `notFound`.
  */
-export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists."): Promise<void> {
+export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists.", options: { queueFollowUps?: boolean } = {}): Promise<Array<{ jobId: string; id: string }>> {
+  const queueFollowUps = options.queueFollowUps !== false;
+  if (queueFollowUps) await lockAccountScoreInput(tx as unknown as Db, userId, "exclusive");
+  const canScore = queueFollowUps && await accountCanScore(tx as unknown as Db, userId);
   const ids = [...new Set(jobIds)].sort();
   const now = new Date();
 
@@ -127,7 +131,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
     await restoreDismissedApplications(tx, userId, unskipped);
     // A skipped role is left out of scoring (its score has no reader); undone, it needs one again.
     // The handler decides whether it is still in the table.
-    await enqueueMany("score_job", unskipped.map(jobId => ({ userId, jobId })), tx);
+    await requestScores(tx as unknown as Db, unskipped.map(jobId => ({ userId, jobId })), now, { priority: 1 });
     // A role the gate no longer admits was only in the table because a decision held it: the
     // gate's archive, stamped as such, so the view comes back by itself once the gate admits it.
     const drops = rows.filter(row => !row.inTable && !row.archivedAt).map(row => row.jobId);
@@ -140,8 +144,11 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
       })));
     }
     await tx.insert(jobEvents).values(ids.map(jobId => ({ jobId, userId, type: "decided" as const, payload: { decision: null } })));
-    await enqueue("synthesize_profile", { userId, force: true }, tx);
-    return;
+    if (canScore) {
+      await enqueue("synthesize_profile", { userId, force: true }, tx);
+      await enqueue("rescore_all", { userId, onlyInTable: true }, tx);
+    }
+    return [];
   }
 
   await tx.update(userJobs).set({ archivedAt: null, updatedAt: now })
@@ -149,11 +156,27 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
 
   const inserted = await tx.execute<{ id: string; job_id: string }>(sql`
     insert into decisions (user_id, job_id, decision, reason, job_title, company_name, job_location, job_department, description_snippet, fit_score_at_decision)
-    select ${userId}::uuid, j.id, ${decision}, ${reason}, j.title, coalesce(c.name, ''), j.location, j.department,
+    select ${userId}::uuid, j.id, ${decision}, ${reason}, j.title, coalesce(c.name, j.company_label, ''),
+           case j.location_resolution
+             when 'pending' then case
+               when j.location_fetched_at is null or coalesce(loc.names, nullif(j.location, '')) is null then 'Locations awaiting verification'
+               else concat('Previously verified locations: ', coalesce(loc.names, nullif(j.location, '')), ' — Locations awaiting verification')
+             end
+             when 'unavailable' then case
+               when j.location_fetched_at is null or coalesce(loc.names, nullif(j.location, '')) is null then 'Locations could not be verified'
+               else concat('Previously verified locations: ', coalesce(loc.names, nullif(j.location, '')), ' — Locations could not be verified')
+             end
+             else coalesce(loc.names, j.location)
+           end,
+           j.department,
            left(j.description_text, 300), v.fit_score
     from jobs j
     join user_jobs v on v.job_id = j.id and v.user_id = ${userId}::uuid
     left join companies c on c.id = j.company_id
+    left join lateral (
+      select string_agg(place.name, '; ' order by place.position) as names
+      from jsonb_array_elements_text(j.locations) with ordinality as place(name, position)
+    ) loc on true
     where j.id in (${idList(ids)})
     returning id, job_id`);
   const insertedRows = [...inserted.rows];
@@ -165,9 +188,13 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
     from user_jobs v
     where v.user_id = ${userId}::uuid and v.job_id in (${idList(ids)})`);
 
-  if (decision === "apply") await enqueueMany("score_job", ids.map(jobId => ({ userId, jobId })), tx);
+  if (decision === "apply" && queueFollowUps) await requestScores(tx as unknown as Db, ids.map(jobId => ({ userId, jobId })), now, { priority: 1 });
   if (decision === "skip") await withdrawLiveApplications(tx, userId, ids);
-  if (reason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
-  await enqueue("synthesize_profile", { userId, force: false }, tx);
-  await queueFilterSuggestionsOnCrossing(tx, userId, before);
+  if (canScore) {
+    if (reason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
+    await enqueue("synthesize_profile", { userId, force: false }, tx);
+    await enqueue("rescore_all", { userId, onlyInTable: true }, tx);
+    await queueFilterSuggestionsOnCrossing(tx, userId, before);
+  }
+  return insertedRows.map(row => ({ jobId: row.job_id, id: row.id }));
 }

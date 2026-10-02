@@ -1,5 +1,6 @@
-import { answerOpenQuestion, acceptFilterSuggestion, rejectFilterSuggestion, rescoreAllRoles, resynthesizeNow, savePinnedStatements, saveSeedProfile, savePreferenceProfile, acceptReasonTag, suggestFromScansNow } from "@/app/actions/learning";
-import { saveDecisionTags } from "@/app/actions/decisions";
+import { acceptFilterSuggestionSetting, rejectFilterSuggestionSetting, rescoreAllRolesSetting, resynthesizeNowSetting, savePinnedStatementsSetting, saveSeedProfileSetting, savePreferenceProfileSetting, acceptReasonTagSetting, suggestFromScansNowSetting } from "@/app/actions/learning";
+import Link from "next/link";
+import { ProfileComparison } from "@/components/ProfileComparison";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -11,28 +12,42 @@ import { describeEvidenceItem, describeFilterSuggestion } from "@/lib/filterSugg
 import { getCalibration, getPreferenceProfile, listPendingFilterSuggestionsResolved, listProfileVersions, getReasonTagEditor } from "@/lib/queries/learning";
 import { getSettings } from "@/lib/settings";
 import { selectClass } from "@/components/Field";
-import { SearchForm, SearchPending } from "@/components/SearchForm";
-import { requireUser } from "@/lib/auth";
+import { SettingsForm } from "@/components/SettingsForm";
+import { ReasonTagList } from "@/components/ReasonTagList";
+import { SeedProfileEditor } from "@/components/SeedProfileEditor";
+import { OpenQuestionEditors } from "@/components/OpenQuestionEditors";
+import { LearningProfileEditor } from "@/components/LearningProfileEditor";
+import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { RefusalNotice } from "@/components/RefusalNotice";
+import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
 export const dynamic = "force-dynamic";
 
-export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string; error?: string }> }) {
+export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string | string[]; tagsPage?: string | string[]; error?: string }> }) {
   const user = await requireUser();
+  const unverified = needsEmailConfirmation(user);
   const sp = await searchParams;
-  const requestedVersion = sp.v ? Number(sp.v) : undefined;
+  const hasRequestedVersion = sp.v !== undefined;
+  const requestedVersion = typeof sp.v === "string" && /^[1-9]\d*$/.test(sp.v) && Number(sp.v) <= 2147483647
+    ? Number(sp.v) : undefined;
+  const invalidVersion = hasRequestedVersion && requestedVersion === undefined;
   const now = new Date();
 
   const [profile, versions, calibration, suggestions, settings, tags] = await Promise.all([
-    getPreferenceProfile(user.id, Number.isFinite(requestedVersion) ? requestedVersion : undefined),
+    invalidVersion ? Promise.resolve(null) : getPreferenceProfile(user.id, requestedVersion),
     listProfileVersions(user.id),
     getCalibration(user.id),
     listPendingFilterSuggestionsResolved(user.id),
     getSettings(),
-    getReasonTagEditor(user.id),
+    getReasonTagEditor(user.id, sp.tagsPage),
   ]);
 
-  const isLatest = versions.length === 0 || (profile && profile.version === versions[0]?.version);
+  // On the default route the profile read can race the version list. Keep its editors mounted;
+  // their submitted version still prevents an obsolete write. Only an explicit history view is read-only.
+  const unavailableVersion = hasRequestedVersion && !profile;
+  const isLatest = !unavailableVersion && (!hasRequestedVersion || (profile && profile.version === versions[0]?.version));
+  const previousVersion = profile ? versions.find(version => version.version < profile.version) : undefined;
+  const previousProfile = previousVersion ? await getPreferenceProfile(user.id, previousVersion.version) : null;
 
   return (
     <div className="space-y-6">
@@ -40,28 +55,23 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         title="Learning"
         actions={
           <>
-            <form action={resynthesizeNow}>
-              <Button type="submit" size="sm">
-                Re-synthesise now
-              </Button>
-            </form>
-            <form action={rescoreAllRoles}>
-              <Button type="submit" size="sm" variant="ghost">
-                Re-score all
-              </Button>
-            </form>
+            <SettingsForm action={resynthesizeNowSetting} submitLabel="Update preference profile" submitDisabled={unverified} />
+            <SettingsForm action={rescoreAllRolesSetting} submitLabel="Re-score all" submitDisabled={unverified} />
           </>
         }
       />
 
       <RefusalNotice sentence={sp.error} className="mb-4" />
+      {unverified && <VerifyNotice />}
 
       <Card
         title="Preference profile"
         actions={
           versions.length > 1 && (
-            <SearchForm action="/learning" className="flex items-center gap-2">
-              <select name="v" defaultValue={profile?.version} className={`w-auto py-1 text-12 ${selectClass}`}>
+            <form method="get" action="/learning" target="_blank" rel="noopener" className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="tagsPage" value={tags.page > 1 ? tags.page : ""} />
+              <label htmlFor="profile-version" className="text-12">Saved version</label>
+              <select id="profile-version" key={profile?.version ?? 0} name="v" defaultValue={profile?.version ?? versions[0]?.version} className={`w-auto py-1 text-12 ${selectClass}`}>
                 {versions.map((v) => (
                   <option key={v.version} value={v.version}>
                     v{v.version}
@@ -69,14 +79,16 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                 ))}
               </select>
               <Button type="submit" size="sm">
-                View
+                View in new tab
               </Button>
-              <SearchPending />
-            </SearchForm>
+            </form>
           )
         }
       >
-        {profile ? (
+        {unavailableVersion ? <div className="space-y-2 text-14">
+          <p role="status">This saved profile version is not available.</p>
+          <Link href={tags.page > 1 ? `/learning?tagsPage=${tags.page}` : "/learning"} className="inline-flex min-h-11 items-center underline">Return to current profile</Link>
+        </div> : profile ? (
           <div>
             <p className="mb-2 text-12 text-muted">
               Version {profile.version}
@@ -84,118 +96,53 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
               {profile.model && ` · ${profile.model}`}
             </p>
             <SafeMarkdown markdown={profile.markdown} />
+            {previousProfile && <ProfileComparison previous={previousProfile} current={profile} />}
           </div>
         ) : (
-          <EmptyState title="No profile yet" description="It is written from your decisions once you have made a few." />
+          <EmptyState title="No profile yet" description={unverified
+            ? "Save your starting preferences and decisions now. Your preference profile can be updated once you confirm your email address."
+            : "Your profile is built from your starting preferences and decisions. You can request an update above."} />
         )}
       </Card>
 
       {isLatest && <Card title="Edit preference profile">
-        <form action={savePreferenceProfile} className="flex flex-col gap-2">
-          <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
-          <label htmlFor="profile-markdown" className="text-14">Your current preferences</label>
-          <textarea id="profile-markdown" name="markdown" required maxLength={50000} rows={10} defaultValue={profile?.markdown ?? settings.seedProfile}
-            className="w-full border border-line-muted px-2 py-1.5 text-14" />
-          <p className="text-12 text-muted">Saving creates a new version and re-scores open roles.</p>
-          <div><Button type="submit" variant="primary" size="sm">Save profile version</Button></div>
-        </form>
+        <LearningProfileEditor action={savePreferenceProfileSetting} name="markdown" id="profile-markdown"
+          label="Your current preferences" text={profile?.markdown ?? settings.seedProfile} version={profile?.version ?? 0}
+          rows={10} disabled={unverified} submitLabel="Save profile version" description="Saving creates a new version and re-scores open roles."
+          required maxLength={50000} />
       </Card>}
 
       {isLatest && <Card title="Pinned statements">
         <p className="mb-2 text-12 text-muted">
           One per line, kept verbatim by every future synthesis.
         </p>
-        <form action={savePinnedStatements} className="flex flex-col gap-2">
-          <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
-          <textarea
-            name="pinnedStatements"
-            rows={4}
-            defaultValue={(profile?.pinnedStatements ?? []).join("\n")}
-            className="w-full border border-line-muted px-2 py-1.5 text-14 outline-none focus:border-line"
-          />
-          <div>
-            <Button type="submit" variant="primary" size="sm">
-              Save
-            </Button>
-          </div>
-        </form>
+        <LearningProfileEditor action={savePinnedStatementsSetting} name="pinnedStatements" id="pinned-statements"
+          label="Statements to keep in future updates" text={(profile?.pinnedStatements ?? []).join("\n")}
+          version={profile?.version ?? 0} rows={4} disabled={unverified} submitLabel="Save" />
       </Card>}
 
       <Card title="Open questions">
-        {!profile || profile.openQuestions.length === 0 ? (
-          <EmptyState title="No open questions" description="Questions about your decisions appear here." />
-        ) : (
-          <div className="space-y-3">
-            {profile.openQuestions.map((q) => (
-              <div key={q.id} className="border border-line-muted p-3 text-14">
-                <p className="mb-1.5 text-fg">{q.question}</p>
-                {q.answer ? (
-                  <p className="text-muted">
-                    <span className="font-medium">Answered: </span>
-                    {q.answer}
-                  </p>
-                ) : isLatest ? (
-                  <form action={answerOpenQuestion.bind(null, q.id)} className="flex items-end gap-2">
-                    <input type="hidden" name="profileVersion" value={profile.version} />
-                    <input
-                      name="answer"
-                      required
-                      placeholder="Your answer…"
-                      className="flex-1 border border-line-muted px-2 py-1 text-14 outline-none focus:border-line"
-                    />
-                    <Button type="submit" size="sm">
-                      Save answer
-                    </Button>
-                  </form>
-                ) : <p className="text-12 text-muted">Answer on the latest profile.</p>}
-              </div>
-            ))}
-          </div>
-        )}
+        <OpenQuestionEditors questions={profile?.openQuestions ?? []} profileVersion={profile?.version ?? 0} isLatest={Boolean(isLatest)} disabled={unverified} />
       </Card>
 
-      <Card title="Seed profile">
+      <Card title="Starting preferences">
         <p className="mb-2 text-12 text-muted">
-          What you wrote at setup; never overwritten.
+          Your starting preferences. Profile updates do not replace these.
         </p>
-        <form action={saveSeedProfile} className="flex flex-col gap-2">
-          <textarea
-            name="seedProfile"
-            rows={4}
-            defaultValue={settings.seedProfile}
-            className="w-full border border-line-muted px-2 py-1.5 text-14 outline-none focus:border-line"
-          />
-          <div>
-            <Button type="submit" variant="primary" size="sm">
-              Save
-            </Button>
-          </div>
-        </form>
+        <SeedProfileEditor text={settings.seedProfile} action={saveSeedProfileSetting} />
       </Card>
 
       <Card title="Reason tags">
-        <p className="mb-3 text-14 text-muted">Tags on your 20 most recent decisions. Your edits are kept.</p>
+        <p className="mb-3 text-14 text-muted">Review the reasons behind your decisions, including older ones. Your edited tags are kept when the profile is updated.</p>
         {tags.vocabulary.filter(tag => !tag.accepted).map(tag => (
-          <form key={tag.tag} action={acceptReasonTag.bind(null, tag.tag)} className="mb-2 flex items-center gap-3">
+          <div key={tag.tag} className="mb-2 flex items-center gap-3">
             <span className="text-14">{tag.tag}{tag.description ? ` — ${tag.description}` : ""}</span>
-            <Button type="submit" size="sm">Accept tag</Button>
-          </form>
+            <SettingsForm action={acceptReasonTagSetting.bind(null, tag.tag)} submitLabel="Accept tag" />
+          </div>
         ))}
-        {tags.recent.length === 0 && <EmptyState title="No decisions yet" description="Shortlist or skip a role to start recording your preferences." />}
-        {tags.recent.map(decision => (
-          <section key={decision.id} className="mb-2 border border-line-muted p-3">
-            <h3 className="text-14">{decision.jobTitle} · {decision.companyName} · {decision.decision}</h3>
-            <p className="my-2 text-14 text-muted">{decision.reason}</p>
-            <form action={saveDecisionTags.bind(null, decision.id)} className="flex flex-col gap-2">
-              <label htmlFor={`tags-${decision.id}`} className="text-12">Reason tags (Ctrl or Command for several)</label>
-              <select id={`tags-${decision.id}`} name="tags" multiple defaultValue={decision.tags}
-                className="min-h-28 border border-line-muted p-2 text-14">
-                {tags.vocabulary.filter(tag => tag.accepted).map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}</option>)}
-              </select>
-              <div><Button type="submit" size="sm">Save tags</Button></div>
-            </form>
-          </section>
-        ))}
+        <ReasonTagList recent={tags.recent} options={tags.vocabulary.filter(tag => tag.accepted)} disabled={unverified}
+          page={tags.page} totalPages={tags.totalPages} totalDecisions={tags.totalDecisions}
+          profileVersionParam={requestedVersion === undefined ? undefined : String(requestedVersion)} />
       </Card>
 
       <Card title="Calibration">
@@ -224,9 +171,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
       </Card>
 
       <Card title="Filter suggestions" actions={
-        <form action={suggestFromScansNow}>
-          <Button type="submit" size="sm" title="Read the latest scan of every company for role words and seniority labels your filters are turning away">Mine recent scans</Button>
-        </form>
+        <SettingsForm action={suggestFromScansNowSetting} submitLabel="Mine recent scans" submitDisabled={unverified} />
       }>
         <p className="mb-3 text-12 text-muted">Terms your filters turn away that would admit roles in your locations. Accepting adds the term.</p>
         {suggestions.length === 0 ? (
@@ -249,16 +194,8 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                   </ul>
                 )}
                 <div className="mt-2 flex gap-1.5">
-                  <form action={acceptFilterSuggestion.bind(null, suggestion.id)}>
-                    <Button type="submit" variant="primary" size="sm">
-                      Accept
-                    </Button>
-                  </form>
-                  <form action={rejectFilterSuggestion.bind(null, suggestion.id)}>
-                    <Button type="submit" size="sm">
-                      Reject
-                    </Button>
-                  </form>
+                  <SettingsForm action={acceptFilterSuggestionSetting.bind(null, suggestion.id)} submitLabel="Accept" submitDisabled={unverified} />
+                  <SettingsForm action={rejectFilterSuggestionSetting.bind(null, suggestion.id)} submitLabel="Reject" />
                 </div>
               </div>
             ))}

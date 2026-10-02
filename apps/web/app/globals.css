@@ -223,7 +223,7 @@ a {
 /* One focus ring for the whole app. Components must not set their own colour:
    a Tailwind `focus-visible:outline-*` utility outranks this rule, which is how
    buttons ended up focusing a different colour from every other control. */
-:is(input, select, textarea, button, a):focus-visible {
+:is(input, select, textarea, button, a, summary, [contenteditable="true"]):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
@@ -262,10 +262,10 @@ kbd {
 }
 
 @utility ds-label {
-  font-size: 10px;
-  line-height: 1.4;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 500;
+  letter-spacing: normal;
   color: var(--fg-muted);
 }
 
@@ -333,4 +333,14 @@ kbd {
   [class*="animate-"] {
     animation: none !important;
   }
+}
+
+/* Phone forms remain legible without Safari zooming the field on focus. Controls use the
+   same 44px touch target as primary buttons; checkboxes retain their labelled compact glyph. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="range"]), select, textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  button, summary { min-height: 44px; }
 }

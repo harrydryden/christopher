@@ -44,6 +44,18 @@ the same learning loop.
    interface's reads behind it. It refuses to finish if any migration in the journal was left
    unapplied; writing a migration is covered in `packages/db/README.md`.
 
+   For partial HTML publication, apply migration `0050_html_partial_publication` before deploying
+   the worker or interface that reads its progress. It adds generation cursors and first-scan
+   seeding state, plus a fetch-time observation on staged pages. Existing staged pages are dated
+   from their generation start, not migration time. An older worker can append a page before
+   handover without the new field; its 1970 database default means “observation time unknown”,
+   which the new worker treats conservatively as the generation start. After migration, stop and
+   drain every old worker, start the new worker, then deploy the interface. Do not run old and new
+   workers against the same HTML checkpoint: old code ignores the published cursor and freshness
+   fences. Check that the new worker has resumed or completed active checkpoints. Once it has
+   published pages, pause the worker and roll forward if a fault appears; reverting worker code
+   against an active published checkpoint needs a separately tested recovery procedure.
+
 4. Generate the secret the interface needs:
 
    ```bash
@@ -246,6 +258,12 @@ state such as `awaiting_evidence`; the corresponding interface must be live befo
 left at that checkpoint. A database missing migrations altogether is a different thing — the
 "every page 500s right after deploy" row below.
 
+**Score-admission transition (29 September 2026).** The `admit_scores` task is a new queue protocol. Its `requested` and `failed` view states and task type use existing text columns, so this transition adds no SQL enum migration. Before enabling the new web producer, every worker or serverless fallback that can claim from the shared queue must understand `admit_scores`; an old worker can claim and fail an unknown task. Stage compatible consumers first (or pause claims during a coordinated release), verify their release identities, then enable the producer. This is a protocol-specific exception to the lifecycle order above: review both requirements if a release also introduces a new CV checkpoint. On rollback, stop the new producer first and let compatible consumers drain outstanding admission requests before reverting them. Do not delete pending requests to make an older worker appear healthy. The local verification report does not certify this hosted rollout.
+
+**Historical score recovery (migration 0049).** Apply the additive partial index on waiting score views before the recovery worker. Hourly maintenance repairs old requested/queued labels only where no active admission, score or provider-batch task owns the exact account–role pair. It processes at most 200 candidate rows per transaction with statement/lock timeouts and a run budget, skips locked views, preserves saved scores and spends no AI budget. Legacy null timestamps qualify; stamped rows have a ten-minute grace. A backlog continues in later maintenance runs. The index is retained on rollback; it does not require a destructive data migration. The index build uses the normal transactional migration runner and can briefly block table writes, so its hosted duration must be checked during the authorised rollout. The failed-role Retry score control uses the compatible admission protocol above.
+
+**Score publication fence (migration 0053).** The additive `user_jobs.score_attempt_version` column orders live and batch answers. Publication now takes transaction-scoped global and account input fences; every new web and worker writer of those inputs must take the matching exclusive fence. Stop or drain old web and worker writers before enabling the new publisher, apply migration 0053, then start compatible code on every writer. An old process does not honour the fence, so a mixed-version rollout cannot guarantee score freshness. Batch records submitted before the change have no attempt version: their billed result is recorded, but the score is not published and fresh scoring is queued where needed. Keep the new column on rollback and stop the new writer before reverting code; check in-flight batches and score tasks before resuming an older version.
+
 **Caching and response headers.** Every signed-in page and RSC payload is `private, no-store`, and
 nothing per account may ever say `public`, `s-maxage` or `CDN-Cache-Control`: Next's `Vary` leaves
 out `Cookie`, so a cacheable page would be served to the next account. The one response the CDN
@@ -445,9 +463,19 @@ job holds them to the registry (`scripts/check-evaluation-reports.ts`):
   run graded the shipped prompts. No live run can happen in CI, so by default this is a warning
   (the job still passes, and its log says `warning: Every committed report at the shipped prompt
   set … is marked unverified`). With `AVA_EVAL_GATE_REQUIRE_VERIFIED` set to anything but empty,
-  `0` or `false`, it is a failure: set it where a release must be vouched for by a live run, for
-  example `AVA_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts`
-  before promoting a prompt change. The pull-request CI job does not set it.
+  `0` or `false`, it is a failure. The Release workflow now runs
+  `AVA_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts` on the exact
+  commit whose main-branch CI passed; both web and worker identity checks depend on that job. It
+  requires a published, passing, verified CV replay at the shipped prompt set, and the newest replay
+  must be verified so the evaluated routes cannot point at a newer fixture. The current committed
+  replay is marked unverified, so release qualification remains red until a live report is
+  reviewed and committed. The pull-request CI job still permits an explicitly unverified fixture
+  while checking prompt identity and replay health.
+
+This workflow verifies external web and worker deployments after main-branch CI. It does not
+control Vercel or Render auto-deploy; a provider may deploy the commit before qualification runs.
+Preventing delivery of an unqualified commit requires provider-side promotion or deployment
+protection configured and verified separately.
 
 `docs/evaluations/cv-replay/report.json` is that report. It is written by the replay command:
 

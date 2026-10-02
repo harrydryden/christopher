@@ -1,0 +1,379 @@
+{
+  "observations": [
+    {
+      "url": "https://careers.datadoghq.com/all-jobs/",
+      "startedAt": "2026-09-29T14:28:53.655Z",
+      "finishedAt": "2026-09-29T14:29:11.885Z",
+      "status": 200,
+      "incomplete": true,
+      "captureCount": 20,
+      "capturedBytes": 4060413,
+      "finalBytes": 202068,
+      "uniqueRoles": 190,
+      "captures": [
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203288,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 10,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203310,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 10,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202876,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 20,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202030,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 30,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202867,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 40,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202360,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 50,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203615,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 60,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202057,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 70,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203394,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 80,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202470,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 90,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203271,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 100,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202413,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 110,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202564,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 120,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203688,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 130,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203728,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 140,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203727,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 150,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 204151,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 160,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 203356,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 170,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202831,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 180,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://careers.datadoghq.com/all-jobs/",
+          "bytes": 202417,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 190,
+          "expansionControl": true,
+          "nextPage": null
+        }
+      ]
+    },
+    {
+      "url": "https://www.cloudflare.com/careers/jobs/",
+      "startedAt": "2026-09-29T14:29:11.888Z",
+      "finishedAt": "2026-09-29T14:29:49.446Z",
+      "status": 200,
+      "incomplete": true,
+      "captureCount": 9,
+      "capturedBytes": 4305883,
+      "finalBytes": 735483,
+      "uniqueRoles": 225,
+      "captures": [
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 261612,
+          "rolesInCapture": 25,
+          "uniqueSoFar": 25,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 327321,
+          "rolesInCapture": 50,
+          "uniqueSoFar": 50,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 378098,
+          "rolesInCapture": 75,
+          "uniqueSoFar": 75,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 429178,
+          "rolesInCapture": 100,
+          "uniqueSoFar": 100,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 480132,
+          "rolesInCapture": 125,
+          "uniqueSoFar": 125,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 530993,
+          "rolesInCapture": 150,
+          "uniqueSoFar": 150,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 581726,
+          "rolesInCapture": 175,
+          "uniqueSoFar": 175,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 632694,
+          "rolesInCapture": 200,
+          "uniqueSoFar": 200,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://www.cloudflare.com/careers/jobs/",
+          "bytes": 684129,
+          "rolesInCapture": 225,
+          "uniqueSoFar": 225,
+          "expansionControl": true,
+          "nextPage": null
+        }
+      ]
+    },
+    {
+      "url": "https://stripe.com/careers/search",
+      "startedAt": "2026-09-29T14:29:49.447Z",
+      "finishedAt": "2026-09-29T14:30:02.862Z",
+      "status": 200,
+      "incomplete": true,
+      "captureCount": 13,
+      "capturedBytes": 4743093,
+      "finalBytes": 366660,
+      "uniqueRoles": 153,
+      "captures": [
+        {
+          "url": "https://stripe.com/careers/search",
+          "bytes": 371075,
+          "rolesInCapture": 5,
+          "uniqueSoFar": 5,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=2",
+          "bytes": 363077,
+          "rolesInCapture": 11,
+          "uniqueSoFar": 16,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=3",
+          "bytes": 356955,
+          "rolesInCapture": 14,
+          "uniqueSoFar": 29,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=4",
+          "bytes": 353629,
+          "rolesInCapture": 15,
+          "uniqueSoFar": 44,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=5",
+          "bytes": 359924,
+          "rolesInCapture": 18,
+          "uniqueSoFar": 61,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=6",
+          "bytes": 365301,
+          "rolesInCapture": 8,
+          "uniqueSoFar": 69,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=7",
+          "bytes": 363539,
+          "rolesInCapture": 18,
+          "uniqueSoFar": 87,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=8",
+          "bytes": 364108,
+          "rolesInCapture": 16,
+          "uniqueSoFar": 103,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=9",
+          "bytes": 368042,
+          "rolesInCapture": 12,
+          "uniqueSoFar": 114,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=10",
+          "bytes": 370924,
+          "rolesInCapture": 11,
+          "uniqueSoFar": 124,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=11",
+          "bytes": 368672,
+          "rolesInCapture": 10,
+          "uniqueSoFar": 134,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=12",
+          "bytes": 363911,
+          "rolesInCapture": 13,
+          "uniqueSoFar": 147,
+          "expansionControl": true,
+          "nextPage": null
+        },
+        {
+          "url": "https://stripe.com/careers/search?page=13",
+          "bytes": 373936,
+          "rolesInCapture": 6,
+          "uniqueSoFar": 153,
+          "expansionControl": true,
+          "nextPage": null
+        }
+      ]
+    }
+  ]
+}

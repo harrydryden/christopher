@@ -1,0 +1,47 @@
+{
+  "fixture": "synthetic mocked 25-page HTML listing; no live site, model, email or background worker",
+  "mode": "partial",
+  "at": "2026-10-01T16:17:53.034Z",
+  "observations": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "roleVisible": true,
+      "setupText": "Monitoring setup · 3 of 4 done Hide setup Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps",
+      "healthExcerpt": "Skip to main content Last scan not yet · Following 1 company · 20 new role matches · 0 new company matches Roles Companies Applications Library Learning Health Settings Fixture reviewer Sign out Preferences Learning Health Account HEALTH NEEDS YOU (0) NOTHING NEEDS YOU No company-specific issues are recorded. Check the background worker below for monitoring status. LISTING SCAN PROGRESS (1) Matching roles can appear before a long listing check finishes. An incomplete check cannot confirm that all roles have been seen. Pager fixture WAITING FOR MONITORING https://pager.example/listing?page=0 20 pages checked so far You can review any matching roles already found in Roles. Monitoring must resume before the remaining pages can be checked. Review roles Monitoring is interrupted. An administrator needs to restore the background worker before this read can continue. BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans",
+      "keyboardLinkReachedRole": true,
+      "rolesWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "healthWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "pageErrors": [],
+      "blockedExternalRequests": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "roleVisible": true,
+      "setupText": "Monitoring setup · 3 of 4 done Hide setup Check the first scan · A complete successful scan confirms the first check finished. Matching roles may appear sooner. All setup steps",
+      "healthExcerpt": "Skip to main content Last scan not yet · Following 1 company · 20 new role matches · 0 new company matches Menu Preferences Learning Health Account HEALTH NEEDS YOU (0) NOTHING NEEDS YOU No company-specific issues are recorded. Check the background worker below for monitoring status. LISTING SCAN PROGRESS (1) Matching roles can appear before a long listing check finishes. An incomplete check cannot confirm that all roles have been seen. Pager fixture WAITING FOR MONITORING https://pager.example/listing?page=0 20 pages checked so far You can review any matching roles already found in Roles. Monitoring must resume before the remaining pages can be checked. Review roles Monitoring is interrupted. An administrator needs to restore the background worker before this read can continue. BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history. N",
+      "keyboardLinkReachedRole": true,
+      "rolesWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "healthWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "pageErrors": [],
+      "blockedExternalRequests": []
+    }
+  ]
+}

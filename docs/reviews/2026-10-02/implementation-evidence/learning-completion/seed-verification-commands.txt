@@ -1,0 +1,9 @@
+All commands ran in /Users/h_dryden/Documents/New project/christopher-jtbd-review after the seed guard and two-page editor integration.
+
+pnpm --filter @ava/web typecheck
+Exit code: 0
+Output: seed-web-typecheck.txt
+
+TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:55439/learning_recovery_1001' pnpm --filter @ava/web exec vitest run components/SeedProfileEditor.test.tsx app/actions/learning.integration.test.ts app/actions/verified-work.integration.test.ts app/actions/settings.integration.test.ts app/server-actions-auth.integration.test.ts --no-file-parallelism
+Exit code: 0
+Output: seed-final-tests.txt

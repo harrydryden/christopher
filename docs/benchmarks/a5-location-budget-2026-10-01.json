@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-01",
+  "method": "Local mocked scoreJobBatchRequest; no provider request or billed usage. Input token count is engine byte/3 reservation proxy. USD values use repository pricing metadata, not provider charges.",
+  "model": "claude-sonnet-5",
+  "profileChars": 8000,
+  "decisionChars": 12000,
+  "evidenceChars": 10000,
+  "descriptionChars": 6000,
+  "scenarios": {
+    "ordinary70": {
+      "count": 70,
+      "locationEvidenceBytes": 1813,
+      "requestTextBytes": 40037,
+      "engineInputProxyTokens": 13346,
+      "liveReserveUsd": 0.036931,
+      "batchReserveUsd": 0.020309,
+      "lastLocationPresent": true,
+      "partial": false
+    },
+    "ascii1000": {
+      "count": 1000,
+      "locationEvidenceBytes": 12089,
+      "requestTextBytes": 50313,
+      "engineInputProxyTokens": 16771,
+      "liveReserveUsd": 0.043782,
+      "batchReserveUsd": 0.023734,
+      "lastLocationPresent": true,
+      "partial": true
+    },
+    "cjk1000": {
+      "count": 1000,
+      "locationEvidenceBytes": 11659,
+      "requestTextBytes": 49883,
+      "engineInputProxyTokens": 16628,
+      "liveReserveUsd": 0.043495,
+      "batchReserveUsd": 0.023591,
+      "lastLocationPresent": true,
+      "partial": true
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 import { memo, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { decide, decideRoles, archiveRoles, roleDetails } from "@/app/actions/decisions";
+import { decideWithUndoToken, decideRolesWithUndoTokens, undoDecisionIfCurrent, undoDecisionsIfCurrent, archiveRoles, roleDetails } from "@/app/actions/decisions";
 import { requestCv } from "@/app/actions/cv";
 import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } from "@/components/Badge";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
@@ -11,16 +11,16 @@ import { Button, buttonClass } from "@/components/Button";
 import { Monogram } from "@/components/brand/Monogram";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
+import { RetryScore } from "@/components/RetryScore";
 import type { RoleCompaniesVM, RoleCompanyVM, RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 import { missingDecisionReason } from "@/lib/decision-reason";
 import { reportRoleRefusal } from "@/lib/role-refusals";
+import { claimRoleRevision, discardLegacyRoleUndos, forgetRoleUndo, hasLegacyRoleUndos, isCurrentRoleRevision, recentRoleUndos, rememberRoleUndo, ROLE_UNDO_CHANGED, type RoleUndoEntry } from "./role-undo-history";
+import styles from "./RolesTable.module.css";
 
 import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
-
-/** How long the undo notice stays. Long enough to read a line and reach for it, short enough to leave. */
-const NOTICE_MS = 5000;
 
 /** Roughly what fits in the collapsed height; below it there is nothing to show more of. */
 const COLLAPSED_DESCRIPTION_CHARS = 400;
@@ -170,7 +170,7 @@ interface RowActions {
  * The reason box for one row: it owns what is typed, so typing renders only this box. Enter saves
  * (R-7.2) with the text in hand; Shift+Enter is a new line; Escape closes.
  */
-function ReasonBox({ jobId, box, busy, actions }: { jobId: string; box: ReasonBoxState; busy: boolean; actions: RowActions }) {
+function ReasonBox({ jobId, title, companyName, box, busy, actions }: { jobId: string; title: string; companyName: string; box: ReasonBoxState; busy: boolean; actions: RowActions }) {
   const [text, setText] = useState(box.prefill);
   const field = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => { if (box.focus) field.current?.focus(); }, [box.focus]);
@@ -191,7 +191,10 @@ function ReasonBox({ jobId, box, busy, actions }: { jobId: string; box: ReasonBo
         {["Wrong location", "Wrong seniority", "Not interested"].map(reason => <Button key={reason} size="sm" variant="ghost" disabled={box.pending}
           onClick={() => setText(reason)}>{reason}</Button>)}
       </div>}
-      <textarea disabled={box.pending}
+      <label htmlFor={`role-reason-${jobId}`} className="text-13 font-semibold text-fg">
+        {box.kind === "skip" ? "Why dismiss" : "Why shortlist"} {title} at {companyName}{box.kind === "skip" ? "?" : "? (optional)"}
+      </label>
+      <textarea id={`role-reason-${jobId}`} disabled={box.pending}
         ref={field}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -257,9 +260,10 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
   const buildHere = row.stage === "shortlisted" && detail?.state === "ready";
   return (
     <>
-      <TR highlighted={highlighted} className={selected ? "bg-sunken" : ""}>
-        <TD>
-          <input
+      <TR highlighted={highlighted} className={`${styles.roleRow} ${selected ? "bg-sunken" : ""}`}>
+        <TD className={styles.roleSelect}>
+          <label className="inline-flex min-h-11 min-w-11 items-center">
+            <input
             type="checkbox"
             className="h-4 w-4 m-0 mt-0.5 align-middle"
             aria-label={`Select ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`}
@@ -267,40 +271,52 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
             checked={selected}
             disabled={groupBusy}
             onChange={() => actions.toggleSelected(row.id)}
-          />
+            />
+          </label>
         </TD>
-        {!hideCompany && <TD>
-          <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
+        {!hideCompany && <TD className={styles.roleCompany}>
+          {row.manual ? <span className="flex items-center gap-1.5">{row.companyName}</span> : <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
             {/* The same icon the company page shows: the captured logo when there is one,
                 and the browser's own chain behind it. A bare <img> here is why Hims had a
                 logo on its company page and a blank square on its roles. */}
             <CompanyFavicon src={company.iconSrc} domain={company.domain} size={14} />
             <span className="max-w-[12rem] truncate">{row.companyName}</span>
-          </Link>
+          </Link>}
         </TD>}
-        <TD id={`role-row-${row.id}`} className="max-w-[22rem]">
+        <TD id={`role-row-${row.id}`} className={`${styles.roleTitle} max-w-[22rem]`}>
           <span className="flex flex-wrap items-center gap-2">
             <button type="button" disabled={boxPending} onClick={() => actions.toggleExpanded(row.id)} aria-expanded={expanded} className="text-left font-semibold text-fg hover:underline">
               {row.title}
             </button>
-            {row.addedByYou && <Badge tone="neutral">Added by you</Badge>}
+            {row.addedByYou && !row.manual && <Badge tone="neutral">Added by you</Badge>}
+            {row.manual && <Badge tone="neutral">{row.url ? "Added from link" : "Added from PDF"}</Badge>}
             {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
             {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
           </span>
           <p className="mt-1 text-12 text-muted"><span title={liveForTitle(row)}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
         </TD>
-        <TD className="max-w-[10rem]">
+        <TD className={`${styles.roleLocation} max-w-[10rem]`}>
+          <span className="md:hidden text-muted">Location: </span>
           <div className="flex flex-wrap items-center gap-1">
-            <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>
+            {row.locations.length > 3 ? (
+              <details>
+                <summary className="cursor-pointer">{row.locations[0]} + {row.locations.length - 1} more locations</summary>
+                <ul className="mt-2 space-y-1 text-12 [overflow-wrap:anywhere]">
+                  {row.locations.map((location, index) => <li key={`${location}-${index}`}>{location}</li>)}
+                </ul>
+              </details>
+            ) : <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>}
             {row.remote && <Badge tone="blue">Remote</Badge>}
             {!row.location && row.locations.length === 0 && !row.remote && <span className="text-muted">—</span>}
           </div>
         </TD>
-        <TD className="whitespace-nowrap">
-          {/* A blank score says which of its five causes it is, rather than one dash. */}
-          <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
+        <TD className={`${styles.roleFit} whitespace-nowrap`}>
+          <span className="block md:hidden text-muted">Fit: </span>
+          {row.manual && row.fitScore === null
+            ? <span className="text-muted">Not scored</span>
+            : <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />}
         </TD>
-        <TD className="text-right">
+        <TD className={`${styles.roleAction} text-right`}>
           {row.workflowStatus === "user-shortlisted" ? <Link prefetch={false} href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
           : archived ? <Button size="sm" disabled={archivingAny || boxPending} onClick={() => actions.archiveRow(row.id)}>{archivingThis ? "Restoring…" : "Restore"}</Button>
           : <Button
@@ -316,14 +332,17 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
         </TD>
       </TR>
       {expanded && (
-        <tr id={`role-review-${row.id}`} className="bg-sunken">
+        <tr id={`role-review-${row.id}`} className={`${styles.reviewRow} bg-sunken`}>
           <td colSpan={hideCompany ? 5 : 6} className="p-4">
-            <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]">
+            <div className={`${styles.reviewBody} grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]`}>
               <div className="space-y-3">
                 <p className="text-14 font-semibold text-fg">{row.title}</p>
                 <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
                 {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
-                <div>
+                {row.manual ? <div>
+                  <h3 className="ds-label mb-1">Added by you</h3>
+                  <p className="text-13 text-muted">You added this role from a {row.url ? "link" : "PDF"}. It was not selected by your role filters.</p>
+                </div> : <div>
                   <h3 className="ds-label mb-1">Why it matched</h3>
                   {row.keywordTerms.length > 0 && (
                     <div className="mb-1 flex flex-wrap gap-1.5">
@@ -331,8 +350,8 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                     </div>
                   )}
                   {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
-                </div>
-                {(row.fitScore !== null || row.scoreStateText) && (
+                </div>}
+                {(row.fitScore !== null || (!row.manual && row.scoreStateText)) && (
                   <div>
                     <h3 className="ds-label mb-1">Fit</h3>
                     <div className="flex flex-wrap items-center gap-2">
@@ -341,6 +360,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                       {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
                     </div>
                     {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
+                    {(row.scoreState === "failed" || row.scoreState === "requested" || row.scoreState === "queued") && !archived && !row.manual && <RetryScore jobId={row.id} scoreState={row.scoreState} />}
                   </div>
                 )}
                 <div>
@@ -363,7 +383,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                       )}
                     </>
                   ) : (
-                    <p className="text-13 text-muted">No description stored. Open the vacancy.</p>
+                    <p className="text-13 text-muted">No description stored.{row.url ? " Open the vacancy." : ""}</p>
                   ))}
                 </div>
                 {detail?.state === "ready" && detail.details.archiveNotes.map((note, i) => <p key={i} className="text-12 text-muted">{note}</p>)}
@@ -372,14 +392,15 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
                 <div className="flex flex-wrap items-center gap-4 text-12">
                   {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
-                  <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
+                  {row.url && <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>}
                   {company.homepageUrl && <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Website ↗</a>}
                 </div>
               </div>
               <div className="space-y-3">
+                <p className="text-14 font-semibold text-fg">{row.title}<span className="block text-13 font-normal text-muted">{row.companyName}</span></p>
                 <h3 className="ds-label">{ROLE_STATUS_LABELS[row.workflowStatus]}</h3>
                 {boxed ? (
-                  <ReasonBox key={boxed.opened} jobId={row.id} box={boxed} busy={busy} actions={actions} />
+                  <ReasonBox key={boxed.opened} jobId={row.id} title={row.title} companyName={row.companyName} box={boxed} busy={busy} actions={actions} />
                 ) : row.decision ? (
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
@@ -413,8 +434,11 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
   );
 });
 
-export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir }: {
+export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir, historyScope, initiallyExpandedId }: {
   hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode;
+  /** Account id; recent Undo survives the keyed table's filters and pages within this browser tab. */
+  historyScope?: string;
+  initiallyExpandedId?: string;
   /** The rows' companies, once each (`buildRoleCompanies` over the same rows). */
   companies: RoleCompaniesVM;
   /** One href per sortable column, built by the server with the filters in hand. */
@@ -458,9 +482,10 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   // if the server lists it: held longer, a row the server later drops (decided in another tab,
   // closed by a scan) would be put back on the page from memory.
   useEffect(() => {
-    // Rows kept only for an undo nobody can press any more (the notice has moved on) are let go too.
+    // Keep a row while its recent Undo is available, so it can return instantly on this page.
+    const undoable = new Set((historyScope ? recentRoleUndos(historyScope) : recentUndos).map(entry => entry.jobId));
     for (const id of departed.current.keys()) {
-      if (id !== noticeRef.current?.jobId && !inFlight.current.has(id) && !returningRef.current.has(id)) departed.current.delete(id);
+      if (id !== noticeRef.current?.jobId && !undoable.has(id) && !inFlight.current.has(id) && !returningRef.current.has(id)) departed.current.delete(id);
     }
     setReturning(ids => {
       const settled = [...ids].filter(id => !inFlight.current.has(id));
@@ -541,7 +566,7 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
    * One call for the whole selection: it is saved together or not at all. The rows it moves leave
    * at once; if the server refuses, they come back still selected, with its sentence in the bar.
    */
-  function runGroup(label: string, run: () => Promise<{ ok: true; message?: string } | { ok: false; error: string }>, leaving: (row: RoleRowVM) => boolean) {
+  function runGroup(label: string, run: () => Promise<{ ok: true; message?: string } | { ok: false; error: string }>, leaving: (row: RoleRowVM) => boolean, onSaved?: (ids: string[]) => void) {
     if (groupBusy || selectedIds.length === 0) return;
     const ids = selectedIds;
     const reason = groupReason;
@@ -561,6 +586,7 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       try {
         const result = await run();
         if (!result.ok) putBack(result.error);
+        else onSaved?.(ids);
       } catch {
         putBack("Could not save. Reload and retry.");
       } finally { setGroupPending(null); }
@@ -572,20 +598,43 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
     // The server refuses this too; asking first keeps the rows where they are.
     const missing = missingDecisionReason(decision, reason);
     if (missing) { setGroupError(missing); return; }
-    runGroup(decision === null ? "Undoing…" : "Saving…", () => decideRoles(ids, decision, reason),
-      row => archived || (row.decision?.decision ?? null) !== decision);
+    const selectedRows = rows.filter(row => ids.includes(row.id));
+    if (decision === null && selectedRows.some(row => !row.decision?.id)) {
+      setGroupError("Select only roles with decisions to undo. Reload roles if a decision changed.");
+      return;
+    }
+    const expected = decision === null ? selectedRows.map(row => ({ jobId: row.id, decisionId: row.decision!.id })) : [];
+    const labelled = selectedRows.map(row => ({ id: row.id, text: decision ? decidedText(row, decision) : "" }));
+    let tokens: Record<string, string> = {};
+    runGroup(decision === null ? "Undoing…" : "Saving…", async () => {
+      if (decision === null) return undoDecisionsIfCurrent(expected);
+      const result = await decideRolesWithUndoTokens(ids, decision, reason);
+      if (result.ok) tokens = result.decisionIds;
+      return result;
+    },
+      row => archived || (row.decision?.decision ?? null) !== decision,
+      () => {
+        if (!historyScope) return;
+        for (const item of labelled) {
+          if (decision === null) forgetRoleUndo(historyScope, item.id);
+          else if (tokens[item.id]) rememberRoleUndo(historyScope, { jobId: item.id, text: item.text, decisionId: tokens[item.id], revision: claimRoleRevision(historyScope, item.id) });
+        }
+      });
   }
 
   // The cursor starts on the first row rather than nowhere, so the first `a` or `s` acts on
   // something and the shortcuts under the table are about a row the reader can see.
   const [highlightIndex, setHighlightIndex] = useState(keyboard && inputRows.length > 0 ? 0 : -1);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(initiallyExpandedId ?? null);
   const [details, setDetails] = useState<Record<string, DetailState>>({});
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
   const [flashError, setFlashError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ jobId: string; text: string } | null>(null);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [notice, setNotice] = useState<RoleUndoEntry | null>(null);
+  const [recentUndos, setRecentUndos] = useState<RoleUndoEntry[]>([]);
+  const [legacyUndo, setLegacyUndo] = useState(false);
+  const [undoingIds, setUndoingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const savedDecisionIds = useRef(new Map<string, string>());
   const noticeRef = useRef(notice);
   noticeRef.current = notice;
   const reasonBoxRef = useRef(reasonBox);
@@ -593,18 +642,25 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   /** Tells one opening of a reason box from the next, so a re-opened box starts from its prefill. */
   const boxOpenings = useRef(0);
 
-  /** One notice at a time: the newest decision replaces whatever was there. */
-  function showNotice(jobId: string, text: string) {
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    setNotice({ jobId, text });
-    noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
+  useEffect(() => {
+    if (!historyScope) return;
+    const refresh = () => {
+      setRecentUndos(recentRoleUndos(historyScope));
+      setLegacyUndo(hasLegacyRoleUndos(historyScope));
+    };
+    refresh();
+    window.addEventListener(ROLE_UNDO_CHANGED, refresh);
+    return () => window.removeEventListener(ROLE_UNDO_CHANGED, refresh);
+  }, [historyScope]);
+
+  function showNotice(jobId: string, text: string): RoleUndoEntry {
+    const entry = { jobId, text, revision: historyScope ? claimRoleRevision(historyScope, jobId) : (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) };
+    setNotice(entry);
+    return entry;
   }
-  function clearNotice() {
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = null;
-    setNotice(null);
+  function clearNotice(jobId?: string) {
+    setNotice(current => !jobId || current?.jobId === jobId ? null : current);
   }
-  useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
 
   /** The evidence a decision needs, fetched once per row when it expands and kept for the page. */
   function loadDetails(jobId: string) {
@@ -618,6 +674,12 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       }
     });
   }
+
+  useEffect(() => {
+    if (initiallyExpandedId) loadDetails(initiallyExpandedId);
+    // The initial id belongs to this table's lifetime; later toggles load their own details.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initiallyExpandedId]);
 
   function toggleExpanded(jobId: string) {
     const next = expandedId === jobId ? null : jobId;
@@ -659,15 +721,20 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
     }
     const index = rows.findIndex(row => row.id === jobId);
     const previous = index >= 0 ? rows[index] : undefined;
+    if (decision === null && !previous?.decision?.id) {
+      setFlashError("This decision changed. Reload roles before resetting it.");
+      return;
+    }
     const leaves = archived || previous?.decision?.decision !== decision;
+    const previousUndo = historyScope ? recentRoleUndos(historyScope).find(entry => entry.jobId === jobId) : undefined;
+    let decisionNotice: RoleUndoEntry | null = null;
 
     if (leaves) {
       if (previous) departed.current.set(jobId, { row: previous, index, company: companyOf(previous) });
       setRemovedIds(ids => withId(ids, jobId));
       setReturning(ids => withoutId(ids, jobId));
       if (box) setReasonBox(null);
-      if (decision === null) clearNotice();
-      else if (previous) showNotice(jobId, decidedText(previous, decision));
+      if (decision !== null && previous) decisionNotice = showNotice(jobId, decidedText(previous, decision));
     } else if (box) {
       // Re-saving the decision the row already has (a new reason): the row stays, so the box waits.
       setReasonBox(b => (b ? { ...b, pending: true, error: null } : b));
@@ -675,10 +742,14 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
 
     const title = previous?.title ?? "this role";
     const refused = (error: string) => {
+      // The old decision still stands. Restore its Undo even if this table was replaced while
+      // the attempted re-decision was in flight.
+      if (previousUndo && historyScope && decisionNotice && isCurrentRoleRevision(historyScope, decisionNotice))
+        rememberRoleUndo(historyScope, { ...previousUndo, revision: claimRoleRevision(historyScope, jobId) });
       if (reportedElsewhere(title, error)) return;
       if (leaves) {
         setRemovedIds(ids => withoutId(ids, jobId));
-        if (noticeRef.current?.jobId === jobId) clearNotice();
+        if (noticeRef.current?.jobId === jobId) clearNotice(jobId);
       }
       if (box && !leaves) setReasonBox(b => (b?.jobId === jobId ? { ...b, pending: false, error } : b));
       else if (box && reasonBoxRef.current === null) {
@@ -690,12 +761,27 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
     };
 
     rowWrite(jobId, async () => {
-      const result = await decide(jobId, decision, reason);
+      const result = decision !== null
+        ? await decideWithUndoToken(jobId, decision, reason)
+        : await undoDecisionIfCurrent(jobId, previous!.decision!.id);
       if (!result.ok) { refused(result.error); return false; }
+      if ("decisionId" in result && typeof result.decisionId === "string") savedDecisionIds.current.set(jobId, result.decisionId);
       if (!leaves) {
         if (box) setReasonBox(b => (b?.jobId === jobId ? null : b));
-        if (decision === null) clearNotice();
-        else if (previous) showNotice(jobId, decidedText(previous, decision));
+        if (decision !== null && previous) decisionNotice = showNotice(jobId, decidedText(previous, decision));
+      }
+      if (decision === null) {
+        clearNotice(jobId);
+        if (historyScope) forgetRoleUndo(historyScope, jobId);
+        else setRecentUndos(entries => entries.filter(entry => entry.jobId !== jobId));
+      } else if (decisionNotice) {
+        if (historyScope) {
+          const decisionId = savedDecisionIds.current.get(jobId);
+          if (decisionId) rememberRoleUndo(historyScope, { ...decisionNotice, decisionId });
+          else setFlashError("Saved, but Undo is unavailable until you reload roles.");
+        }
+        else setRecentUndos(entries => [decisionNotice!, ...entries.filter(entry => entry.jobId !== jobId)].slice(0, 5));
+        clearNotice(jobId);
       }
       return true;
     }, refused);
@@ -705,24 +791,52 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
    * The notice's way back: the row returns at once and the decision is undone. Pressed while the
    * decision is still being saved, the undo waits for it, and has nothing to do if it was refused.
    */
-  function undoDecision(jobId: string) {
+  function undoDecision(jobId: string, entry?: RoleUndoEntry) {
+    if (entry && historyScope && !isCurrentRoleRevision(historyScope, entry)) {
+      forgetRoleUndo(historyScope, jobId);
+      return;
+    }
+    if (undoingIds.has(jobId)) return;
     const prior = inFlight.current.get(jobId);
-    clearNotice();
+    const wasRemoved = removedIds.has(jobId);
+    const wasReturning = returning.has(jobId);
+    clearNotice(jobId);
+    setUndoingIds(ids => withId(ids, jobId));
     setFlashError(null);
     setRemovedIds(ids => withoutId(ids, jobId));
     setReturning(ids => withId(ids, jobId));
     const title = titleOf(jobId);
     const refused = (error: string) => {
       if (reportedElsewhere(`the undo of ${title}`, error)) return;
-      setRemovedIds(ids => withId(ids, jobId));
-      setReturning(ids => withoutId(ids, jobId));
-      setFlashError(error);
+      setRemovedIds(ids => wasRemoved ? withId(ids, jobId) : withoutId(ids, jobId));
+      setReturning(ids => wasReturning ? withId(ids, jobId) : withoutId(ids, jobId));
+      setFlashError(`Could not undo ${title}: ${error}`);
+      setUndoingIds(ids => withoutId(ids, jobId));
     };
     rowWrite(jobId, async () => {
       // A refused decision has already put the row back: there is nothing to undo.
-      if (prior && !(await prior)) { setReturning(ids => withoutId(ids, jobId)); return false; }
-      const result = await decide(jobId, null, "");
+      if (prior && !(await prior)) {
+        setReturning(ids => withoutId(ids, jobId));
+        setUndoingIds(ids => withoutId(ids, jobId));
+        if (historyScope) forgetRoleUndo(historyScope, jobId);
+        else setRecentUndos(entries => entries.filter(entry => entry.jobId !== jobId));
+        return false;
+      }
+      if (entry && historyScope && !isCurrentRoleRevision(historyScope, entry)) {
+        setUndoingIds(ids => withoutId(ids, jobId));
+        setReturning(ids => withoutId(ids, jobId));
+        return false;
+      }
+      const expectedDecisionId = entry?.decisionId ?? savedDecisionIds.current.get(jobId);
+      if (!expectedDecisionId) {
+        refused("This Undo has no decision token. Reload roles to review the latest decision.");
+        return false;
+      }
+      const result = await undoDecisionIfCurrent(jobId, expectedDecisionId);
       if (!result.ok) { refused(result.error); return false; }
+      if (historyScope) forgetRoleUndo(historyScope, jobId);
+      else setRecentUndos(entries => entries.filter(entry => entry.jobId !== jobId));
+      setUndoingIds(ids => withoutId(ids, jobId));
       return true;
     }, refused);
   }
@@ -760,7 +874,7 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
           if (row) { e.preventDefault(); toggleSelected(row.id); }
           break;
         case "o":
-          if (row) window.open(row.url, "_blank", "noopener,noreferrer");
+          if (row?.url) window.open(row.url, "_blank", "noopener,noreferrer");
           break;
         case "a":
           // R-6.1: shortlisting asks for a line rather than taking the decision silently. Enter on
@@ -810,21 +924,40 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
     toggleDescription: () => setDescriptionOpen(open => !open),
   }), []);
 
-  const undoNotice = notice && (
-    <p role="status" aria-live="polite" className="mt-3 flex flex-wrap items-center gap-3 border-2 border-line-muted px-3 py-1.5 text-13 text-fg">
-      <span>{notice.text}</span>
-      <button type="button" onClick={() => undoDecision(notice.jobId)} className="text-13 font-semibold underline hover:text-muted">Undo</button>
-    </p>
+  const history = keyboard ? recentUndos.filter(entry => entry.jobId !== notice?.jobId) : [];
+  const undoNotice = (notice || history.length > 0 || (keyboard && legacyUndo)) && (
+    <section aria-label="Recent decisions" className="mt-3 border-2 border-line-muted px-3 py-2 text-13 text-fg">
+      <h3 className="font-semibold">Recent decisions · Undo</h3>
+      {keyboard && legacyUndo && <p className="mt-1 text-13 text-warn">
+        Older Undo entries cannot be checked against the latest decision.{" "}
+        <button type="button" className="min-h-11 font-semibold underline" onClick={() => {
+          if (historyScope) discardLegacyRoleUndos(historyScope);
+          window.location.reload();
+        }}>Reload roles</button>
+      </p>}
+      <ul className="mt-1 space-y-1">
+        {notice && <li role="status" aria-live="polite" className="flex flex-wrap items-center justify-between gap-2">
+          <span>{notice.text}{undoingIds.has(notice.jobId) ? " · Undoing…" : " · Saving…"}</span>
+          <button type="button" disabled={undoingIds.has(notice.jobId)} onClick={() => undoDecision(notice.jobId, notice)}
+            className="min-h-11 text-13 font-semibold underline hover:text-muted">Undo</button>
+        </li>}
+        {history.map(entry => <li key={entry.jobId} className="flex flex-wrap items-center justify-between gap-2">
+          <span>{entry.text}</span>
+          <button type="button" disabled={undoingIds.has(entry.jobId)} onClick={() => undoDecision(entry.jobId, entry)}
+            aria-label={`Undo ${entry.text}`} className="min-h-11 text-13 font-semibold underline hover:text-muted">
+            {undoingIds.has(entry.jobId) ? "Undoing…" : "Undo"}
+          </button>
+        </li>)}
+      </ul>
+    </section>
   );
+  const errorNotice = flashError && <p role="alert" className="mb-2 border-2 border-danger px-3 py-1.5 text-14 text-danger">{flashError}</p>;
 
-  if (rows.length === 0 && !notice) return <>{emptyState}</>;
-  if (rows.length === 0) return <div>{emptyState}{undoNotice}</div>;
+  if (rows.length === 0) return <div>{errorNotice}{emptyState}{undoNotice}</div>;
 
   return (
-    <div>
-      {flashError && (
-        <p className="mb-2 border-2 border-danger px-3 py-1.5 text-14 text-danger">{flashError}</p>
-      )}
+    <div className={styles.cards}>
+      {errorNotice}
       {selectedIds.length > 0 && (
         <div role="group" aria-label="Actions for the selected roles" className="mb-3 flex flex-col gap-2 border-2 border-line bg-sunken px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -895,7 +1028,7 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
             <SortTH label="Role" sortKey="title" links={sortLinks} sort={sort} dir={dir} />
             <SortTH label="Location" sortKey="location" links={sortLinks} sort={sort} dir={dir} />
             <SortTH label="Fit" sortKey="fit" links={sortLinks} sort={sort} dir={dir} />
-            <TH><span className="sr-only">Action</span></TH>
+            <TH>Action</TH>
           </tr>
         </THead>
         <TBody>

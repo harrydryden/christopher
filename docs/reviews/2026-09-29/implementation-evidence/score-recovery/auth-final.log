@@ -1,0 +1,32 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-10-01T15:58:19.364Z","level":"info","event":"slow_database_query","durationMs":327,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:19.697Z","level":"info","event":"slow_database_query","durationMs":285,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:19.966Z","level":"info","event":"slow_database_query","durationMs":253,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:20.257Z","level":"info","event":"slow_database_query","durationMs":277,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:21.628Z","level":"info","event":"slow_database_query","durationMs":397,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:24.144Z","level":"info","event":"slow_database_query","durationMs":263,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:25.637Z","level":"info","event":"slow_database_query","durationMs":732,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:26.386Z","level":"info","event":"slow_database_query","durationMs":708,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:27.262Z","level":"info","event":"slow_database_query","durationMs":795,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:27.774Z","level":"info","event":"slow_database_query","durationMs":474,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:28.342Z","level":"info","event":"slow_database_query","durationMs":532,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:28.785Z","level":"info","event":"slow_database_query","durationMs":397,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:29.129Z","level":"info","event":"slow_database_query","durationMs":311,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:29.565Z","level":"info","event":"slow_database_query","durationMs":410,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:30.177Z","level":"info","event":"slow_database_query","durationMs":558,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:30.784Z","level":"info","event":"slow_database_query","durationMs":308,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:31.073Z","level":"info","event":"slow_database_query","durationMs":274,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:31.413Z","level":"info","event":"slow_database_query","durationMs":312,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:31.715Z","level":"info","event":"slow_database_query","durationMs":278,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:32.205Z","level":"info","event":"slow_database_query","durationMs":440,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:34.380Z","level":"info","event":"slow_database_query","durationMs":404,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:34.698Z","level":"info","event":"slow_database_query","durationMs":304,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T15:58:36.276Z","level":"info","event":"slow_database_query","durationMs":320,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+
+ Test Files  1 passed (1)
+      Tests  160 passed (160)
+   Start at  16:58:17
+   Duration  18.93s (tests 94%, import 3%, transform 3%)
+

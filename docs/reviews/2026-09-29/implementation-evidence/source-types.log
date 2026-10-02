@@ -1,0 +1,14 @@
+> ava@0.1.0 typecheck /Users/h_dryden/Documents/New project/christopher-jtbd-review
+> pnpm -r typecheck
+
+Scope: 5 of 6 workspace projects
+packages/core typecheck$ tsc --noEmit -p tsconfig.json
+packages/core typecheck: Done
+packages/ai typecheck$ tsc --noEmit -p tsconfig.json
+packages/db typecheck$ tsc --noEmit -p tsconfig.json
+packages/ai typecheck: Done
+packages/db typecheck: Done
+apps/worker typecheck$ tsc --noEmit -p tsconfig.json
+apps/worker typecheck: Done
+apps/web typecheck$ tsc --noEmit -p tsconfig.json
+apps/web typecheck: Done

@@ -55,7 +55,8 @@ export function confidenceFor(candidate: Pick<DiscoveryCandidate, "method" | "co
   const extraMethods = Math.max(0, (ctx.methodCount ?? 1) - 1);
   score += extraMethods * 0.02;
   if (candidate.companyName && ctx.homepageCompanyName && !companyNamesMatch(candidate.companyName, ctx.homepageCompanyName)) {
-    score -= IDENTITY_PENALTY;
+    // Several references to the same board must not outvote an explicit identity contradiction.
+    score = Math.min(score - IDENTITY_PENALTY, AUTO_ACCEPT_CONFIDENCE - 0.01);
   } else if (!candidate.companyName && ctx.identityUnconfirmed) {
     // However many methods found it, a board nothing ties to the company is for a person to confirm.
     score = Math.min(score - IDENTITY_PENALTY, AUTO_ACCEPT_CONFIDENCE - 0.05);

@@ -22,12 +22,13 @@ it("names the statuses for a person and leaves archive out of the tab strip", ()
   expect(ROLE_TABS).not.toContain("archived");
 });
 
-it("opens on Matched while anything is new, and on Shortlisted once nothing is", () => {
+it("opens on Matched while anything is new or both tabs are empty, and on a populated Shortlisted tab", () => {
   expect(defaultRoleTab({ "auto-matched": 4, "user-shortlisted": 0 })).toBe("auto-matched");
   expect(defaultRoleTab({ "auto-matched": 1 })).toBe("auto-matched");
   expect(defaultRoleTab({ "auto-matched": 0, "user-shortlisted": 3 })).toBe("user-shortlisted");
-  // A caller that has not counted the tab at all lands where an empty Matched tab would send it.
-  expect(defaultRoleTab({})).toBe("user-shortlisted");
+  // An empty account or archived-only account needs the Matched explanation, not an empty shortlist.
+  expect(defaultRoleTab({})).toBe("auto-matched");
+  expect(defaultRoleTab({ "auto-matched": 0, "user-shortlisted": 0, archived: 17 })).toBe("auto-matched");
   expect(defaultRoleTab({ "user-shortlisted": 2 })).toBe("user-shortlisted");
 });
 

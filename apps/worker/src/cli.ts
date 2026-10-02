@@ -29,6 +29,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { schema, enqueueStandard, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@ava/db";
+import { admitScores } from "./score-admission";
 import { runMigrations } from "@ava/db/migrate";
 import {
   discovery,
@@ -171,7 +172,9 @@ async function main() {
             console.log(`added ${domain} (${created.id}) and followed it as ${user.email}`);
           } else {
             const settings = await deps.userSettings(user.id);
-            const outcome = await reevaluateGate(deps.db, user.id, settings, deps.now(), { companyId: company.id });
+            const outcome = await reevaluateGate(deps.db, user.id, settings, deps.now(), { companyId: company.id }, {
+              scoreCandidates: async (writer, pairs) => (await admitScores(deps, pairs, { db: writer, onlyUnscored: true, settings: new Map([[user.id, settings]]) })).queued,
+            });
             console.log(`already tracked: ${domain}; ${subscription.created || subscription.reactivated ? "now" : "already"} followed by ${user.email} (${outcome.created} matching roles added)`);
           }
         }
@@ -294,7 +297,7 @@ async function main() {
         const rows = await deps.db
           .select({
             company: schema.companies.name,
-            website: schema.companies.homepageUrl,
+            companyLabel: schema.jobs.companyLabel,
             title: schema.jobs.title,
             url: schema.jobs.url,
             location: schema.jobs.location,
@@ -308,8 +311,9 @@ async function main() {
           })
           .from(schema.userJobs)
           .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
-          .innerJoin(schema.companies, eq(schema.companies.id, schema.jobs.companyId))
-          .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.inTable, true), sql`${schema.userJobs.archivedAt} is null`))
+          .leftJoin(schema.companies, eq(schema.companies.id, schema.jobs.companyId))
+          .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.inTable, true), sql`${schema.userJobs.archivedAt} is null`,
+            sql`(${schema.jobs.origin} <> 'manual' or ${schema.jobs.manualOwnerId} = ${user.id})`))
           .orderBy(desc(schema.jobs.firstSeenAt));
         console.log(["COMPANY", "ROLE", "LOCATION", "LIVE", "STATUS", "FIT", "LINK"].join(" | "));
         for (const r of rows) {
@@ -317,13 +321,13 @@ async function main() {
           const status = displayStatus({ status: r.status, postedAt: r.postedAt, firstSeenAt: r.firstSeenAt, closedAt: r.closedAt }, now);
           console.log(
             [
-              r.company.slice(0, 20),
+              (r.company ?? r.companyLabel ?? "—").slice(0, 20),
               r.title.slice(0, 40),
               (r.location ?? (r.remote ? "Remote" : "—")).slice(0, 24),
               `${formatDuration(live.days)}${live.basis === "first_seen" ? "*" : ""}`,
               status,
               r.fitScore ?? "—",
-              r.url,
+              r.url ?? "—",
             ].join(" | "),
           );
         }

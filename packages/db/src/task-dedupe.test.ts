@@ -12,11 +12,13 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { createDb } from "./client";
 import { runMigrations } from "./migrate";
 import { cvDrafts, tasks, users } from "./schema";
-import { activeTaskFor, enqueueTask } from "./tasks";
+import { activeTaskFor, enqueueTask, enqueueTasks, taskRow } from "./tasks";
 
 const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
 beforeAll(() => runMigrations(db));
-beforeEach(() => db.execute(sql`truncate tasks`));
+// Scans and HTML continuation generations carry task foreign keys. This disposable fixture owns
+// no scan data, but Postgres still requires CASCADE when truncating a referenced parent table.
+beforeEach(() => db.execute(sql`truncate tasks cascade`));
 afterAll(() => pool.end());
 
 const key = "review_library:00000000-0000-4000-8000-000000000001";
@@ -108,5 +110,71 @@ describe("the dedupe key", () => {
       return (await tx.execute(sql`explain select * from tasks where dedupe_key = ${key} and status in ('queued', 'running') limit 1`)).rows;
     });
     expect(JSON.stringify(plan)).toContain("tasks_dedupe_active_idx");
+  });
+});
+
+describe("forced profile synthesis", () => {
+  const userId = "00000000-0000-4000-8000-000000000003";
+  const profileKey = `synthesize_profile:${userId}`;
+  const profile = (force: boolean, options: { priority?: number; runAfter?: Date; promote?: boolean } = {}) =>
+    enqueueTask(db, "synthesize_profile", { userId, force }, { dedupeKey: profileKey, ...options });
+  const queued = async () => (await db.select().from(tasks).where(eq(tasks.dedupeKey, profileKey)))[0]!;
+
+  it("upgrades a queued row without changing its time or priority, and does not downgrade it", async () => {
+    const later = new Date(Date.now() + 3600_000);
+    const id = await profile(false, { priority: 6, runAfter: later });
+    expect(await profile(true, { priority: 1 })).toBeNull();
+    expect(await queued()).toMatchObject({ id, payload: { userId, force: true }, priority: 6, runAfter: later });
+    expect(await profile(false, { priority: 0 })).toBeNull();
+    expect(await profile(true, { priority: 0 })).toBeNull();
+    expect(await queued()).toMatchObject({ id, payload: { userId, force: true }, priority: 6, runAfter: later });
+
+    await claim(id!);
+    const followUp = await profile(true);
+    expect(followUp).toBeTruthy();
+    expect(followUp).not.toBe(id);
+    expect((await db.select().from(tasks).where(eq(tasks.id, id!)))[0]!.payload).toEqual({ userId, force: true });
+  });
+
+  it.each([
+    ["normal first", 250], ["forced first", 250], ["normal first", 1], ["forced first", 1],
+  ] as const)("keeps the first row's scheduling and force in a non-promoted batch: %s, chunk %i", async (order, chunkSize) => {
+    const later = new Date(Date.now() + 3600_000);
+    const earlier = new Date(Date.now() + 1800_000);
+    const normal = taskRow("synthesize_profile", { userId, force: false }, { priority: 6, runAfter: later });
+    const forced = taskRow("synthesize_profile", { userId, force: true }, { priority: 1, runAfter: earlier });
+    const batch = order === "normal first" ? [normal, forced, forced] : [forced, normal, forced];
+    expect(await enqueueTasks(db, batch, chunkSize)).toBe(1);
+    expect(await queued()).toMatchObject({
+      payload: { userId, force: true },
+      priority: order === "normal first" ? 6 : 1,
+      runAfter: order === "normal first" ? later : earlier,
+    });
+    expect(await enqueueTasks(db, [normal])).toBe(0);
+    expect((await queued()).payload).toEqual({ userId, force: true });
+  });
+
+  it("upgrades an existing queued row through the batched path without promoting it", async () => {
+    const later = new Date(Date.now() + 3600_000);
+    const id = await profile(false, { priority: 6, runAfter: later });
+    expect(await enqueueTasks(db, [taskRow("synthesize_profile", { userId, force: true }, { priority: 1 })])).toBe(0);
+    expect(await queued()).toMatchObject({ id, payload: { userId, force: true }, priority: 6, runAfter: later });
+  });
+
+  it("upgrades force in the promotion path even when priority and start time do not improve", async () => {
+    const later = new Date(Date.now() + 3600_000);
+    const id = await profile(false, { priority: 6, runAfter: later });
+    expect(await profile(true, { priority: 6, runAfter: later, promote: true })).toBeNull();
+    expect(await queued()).toMatchObject({ id, payload: { userId, force: true }, priority: 6, runAfter: later });
+  });
+
+  it.each(["normal first", "forced first"])("carries force through priority selection in a promoted batch: %s", async order => {
+    const id = await profile(false, { priority: 6 });
+    const normal = taskRow("synthesize_profile", { userId, force: false }, { priority: 1 });
+    const forced = taskRow("synthesize_profile", { userId, force: true }, { priority: 4 });
+    expect(await enqueueTasks(db, order === "normal first" ? [normal, forced] : [forced, normal], 250, true)).toBe(0);
+    expect(await queued()).toMatchObject({ id, payload: { userId, force: true }, priority: 1 });
+    expect(await profile(false, { priority: 0, promote: true })).toBeNull();
+    expect(await queued()).toMatchObject({ id, payload: { userId, force: true }, priority: 0 });
   });
 });

@@ -1,0 +1,20 @@
+{
+  "observedAtUtc": "2026-09-29T15:53:03.936Z",
+  "method": "One guarded public HTTP GET through PoliteFetcher with robots and host pacing enabled; diagnostic user-agent identity, no browser or paid provider",
+  "url": "https://careers.datadoghq.com/all-jobs/",
+  "status": 200,
+  "responseBytes": 117524,
+  "bodySha256": "37be0d4b46326461f85596c5a1e0ba3bd6505edfea56bf7de3185ba0c99f52a7",
+  "coreStaticPostings": 0,
+  "coreHarvestedLinks": 155,
+  "coreAtsSpecsInText": 0,
+  "mainRegionEvidence": [
+    "Visible heading: Job Openings",
+    "<div id=\"job-openings\" class=\"ais-InstantSearch\"> contains the results controls",
+    "Empty <div id=\"searchbox\">, <div id=\"hits\"> and <div id=\"pagination\"> mounts",
+    "Empty jobs-available-job-openings-section count placeholder",
+    "First-party /assets/scripts/main-KPF7CSFQ.js bundle"
+  ],
+  "currentRenderHeuristicGap": "The static page has many anchors and substantial text, no loading/fetching phrase or JobBoard marker, and no directly empty element whose own id/class names jobs. It does not trigger the current rich-loading or empty-jobs-mount render heuristics even though role results are client-mounted.",
+  "boundedGenericRegressionProposal": "A first-party, unfiltered explicit complete-listing hop with a jobs/openings heading or parent container, an empty results mount, and search/pagination controls should receive one browser render. If that render still contains fewer than three distinct roles, retain confirmation confidence. A content-rich informational page with a generic empty div must remain unrendered."
+}

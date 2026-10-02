@@ -120,3 +120,17 @@ it("refuses a main website the worker will never fetch", async () => {
   const [unchanged] = await database.select().from(schema.companies).where(eq(schema.companies.id, company.id));
   expect(unchanged!.homepageUrl).toBe("https://acme.example");
 });
+
+it("checks a corrected homepage again while retaining the old source for confirmation", async () => {
+  const { company, source } = await fixture();
+  const form = new FormData();
+  form.set("name", "Acme");
+  form.set("homepageUrl", "https://corrected.example/");
+  expect(await saveCatalogueCompany(company.id, { ok: true }, form)).toEqual({ ok: true });
+  const queued = await database.select({ type: schema.tasks.type, payload: schema.tasks.payload }).from(schema.tasks);
+  expect(queued).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: "discover", payload: expect.objectContaining({ companyId: company.id, logoOnly: true }) }),
+    expect.objectContaining({ type: "discover", payload: expect.objectContaining({ companyId: company.id, reason: "manual" }) }),
+  ]));
+  expect((await database.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)))[0]!.status).toBe("active");
+});

@@ -11,6 +11,8 @@ import { buildSetupChecklist } from "@/lib/setup";
 import { requireUser } from "@/lib/auth";
 import { fetchRoleCounts, type RawSearchParams } from "@/lib/queries/jobs";
 import { Suspense } from "react";
+import Link from "next/link";
+import { buttonLinkClass } from "@/components/Button";
 export const dynamic = "force-dynamic";
 
 /**
@@ -34,9 +36,9 @@ const STRIP_LIMIT = 5;
  */
 async function Setup({ userId }: { userId: string }) {
   const checklist = buildSetupChecklist(await setupStatus(userId));
-  if (checklist.complete) return null;
   const counts = await fetchRoleCounts(userId);
   if (Object.values(counts).every((n) => n === 0)) return <SetupChecklist checklist={checklist} variant="explanation" />;
+  if (checklist.complete) return null;
   return checklist.dismissed ? null : <SetupChecklist checklist={checklist} variant="card" />;
 }
 
@@ -61,7 +63,8 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const user = await requireUser();
   return <div>
     <Suspense><WorkNotice userId={user.id} /></Suspense>
-    <PageHeader title="Roles" />
+    <PageHeader title="Roles" description="Add a job link or PDF, then build a CV."
+      actions={<Link prefetch={false} href="/roles/add" className={buttonLinkClass("primary")}>Add a role</Link>} />
     <Suspense><Setup userId={user.id} /></Suspense>
     <Suspense><Suggestions userId={user.id} /></Suspense>
     <RoleWorkspace userId={user.id} searchParams={await searchParams} />

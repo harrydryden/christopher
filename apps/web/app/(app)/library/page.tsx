@@ -71,6 +71,8 @@ export default async function LibraryPage({ searchParams }: {
         <SettingsForm
           action={saveCvWritingPreferences}
           key={JSON.stringify(writing)}
+          submitLabel="Save writing preferences"
+          successMessage="Writing preferences saved."
           secondaryActions={<span className="text-12 text-muted">{library ? `Library version ${library.version}` : "No library saved yet"}</span>}
         >
           <input type="hidden" name="previousPreferences" value={JSON.stringify(writing)} />

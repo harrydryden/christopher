@@ -36,6 +36,7 @@ import { and, eq, ne } from "drizzle-orm";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { HostBusyError } from "../fetcher";
 import { log } from "../log";
+import { admitScores } from "../score-admission";
 
 const MAX_DESCRIPTION = 30_000;
 
@@ -119,11 +120,11 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     .select({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title })
     .from(schema.jobs)
     .where(eq(schema.jobs.companyId, companyId));
-  const known = stored.find((job) => job.url === url || normalisePostingUrl(job.url) === canonical);
+  const known = stored.find((job) => job.url === url || (job.url !== null && normalisePostingUrl(job.url) === canonical));
   if (known) {
     return deps.db.transaction(async (tx) => {
       await deps.assertOwnership?.(tx as unknown as Db);
-      return adoptExistingView(known.id, { db: tx as unknown as Db }, { userId, settings, now });
+      return adoptExistingView(known.id, { ...deps, db: tx as unknown as Db }, { userId, settings, now });
     });
   }
 
@@ -247,9 +248,9 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     // Another import of the same URL got there first — the same posting, not a second one.
     if (!created) {
       const [raced] = await tx.select({ id: schema.jobs.id }).from(schema.jobs)
-        .where(and(eq(schema.jobs.sourceId, row.sourceId), eq(schema.jobs.externalKey, row.externalKey))).limit(1);
+        .where(and(eq(schema.jobs.sourceId, source.id), eq(schema.jobs.externalKey, row.externalKey))).limit(1);
       if (!raced) throw new Error(`Could not store the posting at ${host}`);
-      return adoptExistingView(raced.id, { db: tx as unknown as Db }, { userId, settings, now });
+      return adoptExistingView(raced.id, { ...deps, db: tx as unknown as Db }, { userId, settings, now });
     }
     await tx.insert(schema.jobEvents).values({ jobId: created.id, type: "discovered", payload: { method: "user" } });
 
@@ -264,15 +265,18 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
       keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
       excluded: verdict.excluded, locationOk: verdict.locationOk,
       inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now, addedByUrl: true,
-      // The score is queued in the same transaction, so the view says so from the moment it exists.
-      scoreState: "queued", scoreStateAt: now,
+      // Runtime admission below records whether a score can actually be queued.
     }).onConflictDoNothing();
-    await enqueueStandard(tx, "score_job", { userId, jobId: created.id }, { priority: 1 });
+    await admitScores(deps, [{ userId, jobId: created.id }], { db: tx as unknown as Db, priority: 1, onlyUnscored: true, settings: new Map([[userId, settings]]) });
 
     // Everyone else who follows the company meets it as they would any other new posting: their
     // own gate decides, and nothing is forced into anybody else's table.
     for (const follower of followers) {
-      await reevaluateGate(tx as unknown as Db, follower.userId, follower.settings, now, { jobId: created.id });
+      await reevaluateGate(tx as unknown as Db, follower.userId, follower.settings, now, { jobId: created.id }, {
+        scoreCandidates: async (writer, pairs) => (await admitScores(deps, pairs, {
+          db: writer, onlyUnscored: true, settings: new Map([[follower.userId, follower.settings]]),
+        })).queued,
+      });
     }
 
     // A page that gave up a title and little else is worth one more read: the adapter, the page
@@ -295,7 +299,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
  */
 async function adoptExistingView(
   jobId: string,
-  deps: Pick<WorkerDeps, "db">,
+  deps: WorkerDeps,
   who: { userId: string; settings: AppSettings; now: Date },
 ): Promise<ImportResult> {
   const { userId, settings, now } = who;
@@ -307,21 +311,20 @@ async function adoptExistingView(
   }, settings.gate);
   const [view] = await deps.db.select({ inTable: schema.userJobs.inTable, archivedAt: schema.userJobs.archivedAt, addedByUrl: schema.userJobs.addedByUrl, fitScore: schema.userJobs.fitScore, scoredAt: schema.userJobs.scoredAt })
     .from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
-  const score = () => enqueueStandard(deps.db, "score_job", { userId, jobId }, { priority: 1 });
+  const score = () => admitScores(deps, [{ userId, jobId }], { db: deps.db, priority: 1, onlyUnscored: true, settings: new Map([[userId, settings]]) });
   if (!view) {
     const inserted = await deps.db.insert(schema.userJobs).values({
       userId, jobId,
       keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
       excluded: verdict.excluded, locationOk: verdict.locationOk,
       inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now, addedByUrl: true,
-      scoreState: "queued", scoreStateAt: now,
+      scoreState: null, scoreStateAt: null,
     }).onConflictDoNothing().returning({ userId: schema.userJobs.userId });
     if (inserted.length) await score();
   } else if (!view.inTable || view.archivedAt || !view.addedByUrl) {
     const unscored = view.fitScore === null && view.scoredAt === null && job.status === "open";
     await deps.db.update(schema.userJobs).set({
       inTable: true, archivedAt: null, gateArchivedAt: null, addedByUrl: true, updatedAt: now,
-      ...(unscored ? { scoreState: "queued" as const, scoreStateAt: now } : {}),
     }).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
     if (unscored) await score();
   }

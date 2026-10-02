@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-01T21:52:11.113Z",
+  "mode": "discovery_only",
+  "discoveryBudget": {
+    "mode": "production",
+    "maxFetches": 40,
+    "maxDurationMs": 120000,
+    "note": "Matches the production discovery crawl defaults of 40 fetches and 120 seconds per case; the worker task has its own deadline."
+  },
+  "concurrency": {
+    "cases": 3,
+    "source": "http_default",
+    "productionShape": false,
+    "note": "Concurrent case execution is a stress diagnostic; shared browser queue wait counts inside each case's discovery budget."
+  },
+  "browser": {
+    "enabled": false,
+    "skipCode": "browser_not_requested",
+    "aiEnabled": false
+  },
+  "ai": {
+    "enabled": false,
+    "skipCode": "ai_not_requested",
+    "calls": []
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "Extraction starts from each labelled source, independently of discovery. Completion is not an end-to-end success or posting-recall claim.",
+    "HTML diagnostics traverse HTTP/browser listings and reject unverified empty results; they do not exercise the worker cache, learned recipes or AI extraction recovery.",
+    "Machine-enumerated posting references produce diagnostic comparisons only; they do not qualify human-reviewed full-site recall/precision.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Browser fallback is disabled; AI fallback is disabled; no database or account data is read or written.",
+    "No paid model request is made without --ai and an explicit --ai-max-usd cap."
+  ],
+  "scope": {
+    "selectedCaseIds": [
+      "revolut"
+    ],
+    "requiredCaseIds": [
+      "anduril",
+      "airbnb",
+      "stripe",
+      "openai",
+      "notion",
+      "anthropic",
+      "netflix",
+      "figma",
+      "datadog",
+      "cloudflare",
+      "canonical",
+      "automattic",
+      "gitlab",
+      "wise",
+      "salesforce",
+      "siemens",
+      "spotify",
+      "mozilla",
+      "basecamp",
+      "monzo",
+      "revolut",
+      "zapier",
+      "linear",
+      "vercel",
+      "render",
+      "shieldai",
+      "trailofbits",
+      "chip",
+      "3m",
+      "workday",
+      "r2"
+    ],
+    "fullCorpusSelected": false
+  },
+  "goldenSetCompositionQualified": false,
+  "corpusCoverage": {
+    "qualifies": false,
+    "criterionScope": "SPEC §9 golden-set composition only; automatic source choice, manual resolution, posting accuracy, recipe reproduction, cost and operations require separate evidence",
+    "counts": {
+      "selectedCases": 1,
+      "distinctCompanies": 1,
+      "primaryHtml": 1,
+      "customHtml": 0,
+      "jsHeavy": 0,
+      "multiRegionWorkday": 0,
+      "landingToExternalBoard": 0,
+      "botProtected": 1
+    },
+    "atsTypes": [],
+    "invalidEvidence": [],
+    "missingReasons": [
+      "golden-set corpus has 0 independently checked primary ATS types; at least 8 are required",
+      "golden-set corpus has 0 evidenced custom HTML cases; at least 5 are required",
+      "golden-set corpus has 0 evidenced JavaScript-heavy cases; at least 2 are required",
+      "golden-set corpus has 0 evidenced multi-region Workday companies; at least 2 are required",
+      "golden-set corpus lacks an evidenced careers landing-to-external-board hop"
+    ]
+  },
+  "acceptanceCriterionScope": "This verdict covers the reporter's labelled source choice, extraction and corpus-composition checks only; SPEC §9 manual resolution, recipe reproduction and the 50-company operating budget require separate evidence.",
+  "postingReferences": null,
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "golden-set corpus has 0 independently checked primary ATS types; at least 8 are required",
+      "golden-set corpus has 0 evidenced custom HTML cases; at least 5 are required",
+      "golden-set corpus has 0 evidenced JavaScript-heavy cases; at least 2 are required",
+      "golden-set corpus has 0 evidenced multi-region Workday companies; at least 2 are required",
+      "golden-set corpus lacks an evidenced careers landing-to-external-board hop",
+      "30 required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus",
+      "labelled automatic discovery agreement is 0.0%, below 80%",
+      "1 case(s) lack an independent role-count label",
+      "1 case(s) lack a qualifying independent posting-identity snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 0,
+    "sourceMismatches": 1,
+    "labelledAutomaticMatchesAt085": 0,
+    "automaticResolvedAt085": 0,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "countDisagreements": 0,
+    "discoveryAccuracy": 0,
+    "extractionExactCountAgreement": null,
+    "postingIdentityLabelled": 0,
+    "postingIdentityFailures": 0,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "revolut",
+        "company": "Revolut",
+        "homepageUrl": "https://www.revolut.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.revolut.com/careers/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Checked 1 October: Revolut's official Company page links Join us to its unfiltered, company-owned searchable careers listing. An ordinary identified-client GET returned an explicit Cloudflare managed challenge; the previous Greenhouse board candidate was stale. Source and protection labels do not qualify posting completeness.",
+        "sourceEvidenceUrls": [
+          "https://www.revolut.com/",
+          "https://www.revolut.com/discover-our-company/",
+          "https://www.revolut.com/careers/"
+        ],
+        "sourceCheckedAt": "2026-10-01",
+        "coverage": {
+          "botProtected": {
+            "evidenceUrl": "https://www.revolut.com/careers/",
+            "checkedAt": "2026-10-01",
+            "note": "Robots-permitted ordinary GET returned HTTP 403 with Cf-Mitigated: challenge and a Cloudflare challenge-platform body; retained in docs/reviews/2026-10-01/implementation-evidence/bot-source-qualification/revolut-challenge.json. This is an observed client challenge, not universal inaccessibility."
+          }
+        }
+      },
+      "result": {
+        "id": "revolut",
+        "company": "Revolut",
+        "startedAt": "2026-10-01T21:52:07.840Z",
+        "durationMs": 3273,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 4,
+          "verifications": 3,
+          "maxFetches": 40,
+          "maxDurationMs": 120000,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

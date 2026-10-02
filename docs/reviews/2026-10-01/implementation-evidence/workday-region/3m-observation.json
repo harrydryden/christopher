@@ -1,0 +1,8 @@
+{
+  "url": "https://3m.wd1.myworkdayjobs.com/wday/cxs/3m/Search/jobs",
+  "method": "POST",
+  "purpose": "Read-only unfiltered public listing query; first page only",
+  "checkedAt": "2026-10-01T20:21:37.643304+00:00",
+  "status": 200,
+  "sha256": "8b6d411d86f2295dd5fe27430f5ace8eb40c97a4e2b0224bf8154b3c44768c27"
+}

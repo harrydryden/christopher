@@ -19,7 +19,7 @@ import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { SettingsForm } from "@/components/SettingsForm";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { manageRoleCv, setRoleStage, updateApplication } from "@/app/actions/applications";
-import { requestCv } from "@/app/actions/cv";
+import { quoteCvBuild, requestCv } from "@/app/actions/cv";
 import { historyLine, type NextStepNote } from "@/lib/application-dates";
 import { relativeTime } from "@/lib/format";
 import type { PipelineCvQuote, PipelineRow } from "@/lib/queries/applications";
@@ -59,7 +59,8 @@ function cvLabel(row: PipelineRow): string {
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 /** The status control writes through the role when there is one, and by row id when there is not. */
@@ -73,6 +74,8 @@ function StatusPanel({ row }: { row: PipelineRow }) {
   const action = statusAction(row);
   const current = row.application?.status ?? null;
   const [status, setStatus] = useState<ApplicationStatus>(current ?? "applying");
+  const [appliedOnValue, setAppliedOnValue] = useState(row.application?.appliedOn ?? "");
+  const [appliedOnEdited, setAppliedOnEdited] = useState(false);
   const history = [...(row.application?.history ?? [])].reverse();
   // A row with no posting behind it is keyed by its company and role, which carries spaces; an
   // element id may not.
@@ -122,7 +125,13 @@ function StatusPanel({ row }: { row: PipelineRow }) {
               <select
                 name="status"
                 value={status}
-                onChange={(event) => setStatus(event.target.value as ApplicationStatus)}
+                onChange={(event) => {
+                  const next = event.target.value as ApplicationStatus;
+                  setStatus(next);
+                  // Seed today only when Applied is explicitly chosen as a submission. If that
+                  // choice changes to a later stage untouched, its date must become unknown again.
+                  if (!row.application?.appliedOn && !appliedOnEdited) setAppliedOnValue(next === "applied" ? today() : "");
+                }}
                 className={selectClass}
               >
                 {APPLICATION_STATUSES.map((value) => (
@@ -142,18 +151,19 @@ function StatusPanel({ row }: { row: PipelineRow }) {
           </div>
           {/* Outside the label on purpose: inside it, the sentence becomes part of the select's accessible name. */}
           <p className="text-12 text-muted">Withdrawn also dismisses the role.</p>
-          {/* Nothing has been submitted while a CV is still being written, so there is no date to
-              record until the status says there is. */}
+          {/* Only submission has a required date. A later status may be known without it. */}
           {status !== "applying" && (
             <label className="grid gap-1.5">
-              <span className={labelClass}>Application date</span>
+              <span className={labelClass}>Application date{status === "applied" ? "" : " (optional)"}</span>
               <input
                 type="date"
                 name="appliedOn"
-                required
-                defaultValue={row.application?.appliedOn || today()}
+                required={status === "applied"}
+                value={appliedOnValue}
+                onChange={(event) => { setAppliedOnValue(event.target.value); setAppliedOnEdited(true); }}
                 className={`max-w-xs ${inputClass}`}
               />
+              {status !== "applied" && <span className="text-12 text-muted">Leave blank, or clear an incorrect date, if you do not know when you applied.</span>}
             </label>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
@@ -205,13 +215,39 @@ function StatusPanel({ row }: { row: PipelineRow }) {
 
 /** The build form, or the sentence that says why it cannot be pressed, once the price is in. */
 function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: PipelineRow; jobId: string; quotes: QuoteSource; unverified: boolean; buildLabel: string }) {
+  const [description, setDescription] = useState("");
+  const [checked, setChecked] = useState<{ description: string; quote: PipelineCvQuote } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const quoteRequest = useRef(0);
+  const replacement = description.trim();
+  const hasReplacement = !!replacement;
+  const checkedSame = hasReplacement && checked?.description === replacement;
   // An unconfirmed account is never priced, so it never waits on the stream.
   const quote = unverified ? undefined : (isThenable(quotes) ? use(quotes) : quotes)[jobId];
+  const shown = hasReplacement ? (checkedSame ? checked!.quote : null) : quote;
   // Why the build cannot be asked for, in the order the person would meet it: the account is not
   // confirmed yet, or its budget will not admit this build. Both are the action's own refusals,
   // said at the control rather than after it.
-  const blocked = unverified ? UNVERIFIED : quote?.refusal ?? null;
+  const blocked = unverified ? UNVERIFIED : null;
   const blockedId = `cv-blocked-${row.key.replace(/\s+/g, "-")}`;
+  async function checkEstimate() {
+    const snapshot = description.trim();
+    if (!snapshot) return;
+    const request = ++quoteRequest.current;
+    setChecking(true);
+    setQuoteError("");
+    try {
+      const result = await quoteCvBuild(jobId, snapshot);
+      if (request !== quoteRequest.current) return;
+      if (result.ok) setChecked({ description: snapshot, quote: { line: result.line, refusal: result.refusal } });
+      else setQuoteError(result.error);
+    } catch {
+      if (request === quoteRequest.current) setQuoteError("Could not check this estimate. Try again.");
+    } finally {
+      if (request === quoteRequest.current) setChecking(false);
+    }
+  }
   return blocked ? (
     // The wall and the budget are both discovered here rather than after the redirect: the
     // control says what it would cost, and says why it cannot be pressed when it cannot.
@@ -222,7 +258,9 @@ function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: P
       </div>
     </div>
   ) : (
-    <SettingsForm action={requestCv} submitLabel={buildLabel}>
+    <SettingsForm action={requestCv} submitLabel={buildLabel}
+      submitDisabled={!shown || !!shown.refusal || checking}
+      submitDescribedBy={shown?.refusal ? blockedId : undefined}>
       <input type="hidden" name="jobId" value={jobId} />
       <label className="grid gap-1.5">
         <span className={labelClass}>Paste a replacement description</span>
@@ -230,11 +268,31 @@ function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: P
           name="description"
           rows={3}
           maxLength={60000}
+          value={description}
+          onChange={(event) => {
+            const next = event.target.value;
+            setDescription(next);
+            if (next.trim() !== checked?.description) {
+              ++quoteRequest.current;
+              setChecking(false);
+              setChecked(null);
+              setQuoteError("");
+            }
+          }}
           placeholder="Optional. Leave empty to use the stored description."
           className={`resize-y ${inputClass}`}
         />
       </label>
-      {quote && <p className="text-12 text-muted">{quote.line}</p>}
+      {hasReplacement && <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" onClick={() => void checkEstimate()} disabled={checking}>
+          {checking ? "Checking estimate…" : checkedSame ? "Check estimate again" : "Check pasted advert estimate"}
+        </Button>
+        {!checkedSame && !checking && <span className="text-12 text-muted">Check the price of this exact text before building.</span>}
+      </div>}
+      {shown && <p className="text-12 text-muted">{hasReplacement ? "Pasted advert estimate: " : "Stored advert estimate: "}{shown.line}</p>}
+      {shown?.refusal && <p id={blockedId} className="text-13 text-warn">{shown.refusal}{!hasReplacement ? " A shorter pasted advert may fit." : ""}</p>}
+      {quoteError && <p role="alert" className="text-13 text-danger">{quoteError}</p>}
+      {!shown && !hasReplacement && <p role="status" className="text-13 text-warn">Could not price this build. Reload and try again.</p>}
     </SettingsForm>
   );
 }
@@ -347,6 +405,15 @@ export function ApplicationsTable({
   emptyState: React.ReactNode;
 }) {
   const [expandedKey, setExpandedKey] = useState<string | null>(openKey ?? null);
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobile(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   // A `?job=` link, and the CV column's own Build CV, both open the row on its CV section.
   const [focusedCvKey, setFocusedCvKey] = useState<string | null>(openKey ?? null);
   function openCv(key: string) { setExpandedKey(key); setFocusedCvKey(key); }
@@ -356,7 +423,14 @@ export function ApplicationsTable({
   useEffect(() => { setPatched({}); }, [inputRows]);
   const rows = inputRows.map((row) => patched[row.key] ?? row);
   if (!rows.length) return <>{emptyState}</>;
+  const detailsFor = (row: PipelineRow) => <div className="grid gap-6 md:grid-cols-2">
+    <StatusPanel row={row} />
+    <CvPanel row={row} focus={focusedCvKey === row.key} quotes={quotes} unverified={unverified}
+      onPatched={(fresh) => setPatched((previous) => ({ ...previous, [fresh.key]: fresh }))} />
+  </div>;
   return (
+    <>
+    <div className="hidden md:block">
     <Table>
       <THead>
         <tr>
@@ -430,19 +504,10 @@ export function ApplicationsTable({
                   {staleHints[row.key] && <span className="mt-1 block text-12 text-muted">{staleHints[row.key]}</span>}
                 </TD>
               </TR>
-              {expanded && (
+              {expanded && !isMobile && (
                 <tr id={`application-${row.key}`} className="bg-sunken">
                   <td colSpan={5} className="p-4">
-                    <div className="grid gap-6 md:grid-cols-2">
-                      <StatusPanel row={row} />
-                      <CvPanel
-                        row={row}
-                        focus={focusedCvKey === row.key}
-                        quotes={quotes}
-                        unverified={unverified}
-                        onPatched={(fresh) => setPatched((previous) => ({ ...previous, [fresh.key]: fresh }))}
-                      />
-                    </div>
+                    {detailsFor(row)}
                   </td>
                 </tr>
               )}
@@ -451,5 +516,37 @@ export function ApplicationsTable({
         })}
       </TBody>
     </Table>
+    </div>
+    <div className="divide-y divide-line-faint border-2 border-line md:hidden" aria-label="Applications">
+      {rows.map((row) => {
+        const expanded = expandedKey === row.key;
+        return <article key={row.key} className="min-w-0 p-4">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              {row.companyId ? <Link prefetch={false} href={`/companies/${row.companyId}`} className="inline-flex max-w-full items-center gap-1.5 text-13 text-muted underline">
+                <CompanyFavicon src={row.companyIcon?.src ?? null} domain={row.companyIcon?.domain} size={14} />
+                <span className="truncate">{row.companyName}</span>
+              </Link> : <span className="block truncate text-13 text-muted">{row.companyName}</span>}
+              <button type="button" onClick={() => { setExpandedKey(expanded ? null : row.key); setFocusedCvKey(null); }}
+                aria-expanded={expanded} aria-controls={`application-${row.key}`}
+                className="mt-1 block min-h-11 w-full text-left font-semibold leading-snug text-fg underline-offset-2 hover:underline">{row.jobTitle}</button>
+            </div>
+            <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>
+          </div>
+          {row.jobUrl && <a href={row.jobUrl} target="_blank" rel="noopener noreferrer" className="mt-1 block min-h-11 py-2 text-13 underline">View vacancy ↗</a>}
+          {nextSteps[row.key] && <p className={`mt-2 text-13 ${nextSteps[row.key]!.overdue ? "text-warn" : "text-muted"}`}>{nextSteps[row.key]!.line}</p>}
+          {staleHints[row.key] && <p className="mt-2 text-12 text-muted">{staleHints[row.key]}</p>}
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-13">
+            {row.cv ? <Link prefetch={false} href={`/cv/${row.cv.id}`} className="min-h-11 py-2 underline">CV: {cvLabel(row)}</Link>
+              : row.jobId ? <Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openCv(row.key)}>Build CV</Button>
+              : <span className="text-muted">No CV</span>}
+            <time dateTime={new Date(row.updatedAt).toISOString()} className="text-12 text-muted">Updated {relativeTime(new Date(row.updatedAt))}</time>
+          </div>
+          {row.archivedCvId && <p className="text-12 text-muted">Previous CV archived</p>}
+          {expanded && isMobile && <div id={`application-${row.key}`} className="mt-4 border-t border-line-faint pt-4">{detailsFor(row)}</div>}
+        </article>;
+      })}
+    </div>
+    </>
   );
 }

@@ -1,0 +1,41 @@
+
+> ava@0.1.0 smoke:web /Users/h_dryden/Documents/New project/christopher-jtbd-review
+> node scripts/smoke-web.mjs --no-build
+
+starting on :3139…
+  200  /  (44587 bytes)
+  200  /companies  (49975 bytes)
+  200  /suggestions  (38343 bytes)
+  200  /suggestions?view=sources  (32692 bytes)
+  200  /suggestions?view=history  (32603 bytes)
+  200  /learning  (46451 bytes)
+  200  /health  (41398 bytes)
+  200  /settings  (60946 bytes)
+  200  /account  (38071 bytes)
+  200  /admin  (64521 bytes)
+  200  /admin/settings  (115362 bytes)
+  200  /admin/catalogue  (64438 bytes)
+  200  /admin/health  (104408 bytes)
+  307  /cv  -> /applications
+  200  /library  (47537 bytes)
+  200  /applications  (38899 bytes)
+  200  /?archive=1  (46549 bytes)
+  200  /?view=auto-matched  (44058 bytes)
+  200  /?view=user-shortlisted  (44550 bytes)
+  200  /?view=user-shortlisted&since=7d  (44786 bytes)
+  200  /?view=user-dismissed  (46526 bytes)
+  200  /?view=archived  (46514 bytes)
+  200  /api/scan-status  (124 bytes)
+  200  /api/export.csv  (129 bytes)
+  200  /companies/7c82749b-4d85-42b5-9687-ecf46cfe9477  (73929 bytes)
+  200  RSC /  (19030 bytes)
+  200  RSC /companies/7c82749b-4d85-42b5-9687-ecf46cfe9477  (33307 bytes)
+  200  /login  (security headers)
+  200  /share/not-a-real-token  (security headers)
+  404  /api/companies/7c82749b-4d85-42b5-9687-ecf46cfe9477/logo
+  200  /api/companies/7c82749b-4d85-42b5-9687-ecf46cfe9477/logo?v=1790688137117  then 304
+  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, what the two saves cost, why finalising is unavailable, a failed build's way forward, the Library's ready-to-build line, Confirm all, its unsaved-changes bar and guard, and the applications table's stage, CV cell and archive/restore/delete, and a share link read without a session with a note left on it
+  quiz skip timing: response headers 44 ms · queued render 850 ms · response finished
+  CV tailoring browser flow passed: optional quiz, confirmed Library version, immutable snapshot, continuation, skip resume, narrative, dashboard state, and responsive same-row evidence tags
+
+all pages rendered

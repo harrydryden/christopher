@@ -69,6 +69,8 @@ import {
 import {
   decide,
   decideRoles,
+  undoDecisionIfCurrent,
+  undoDecisionsIfCurrent,
   saveDecisionTags,
   archiveRoles,
 } from "./decisions";
@@ -96,6 +98,12 @@ import {
 
 /** Every role on this account's live tabs, or in its archive: the table before any display filter. */
 const tableCount = (userId: string, archived = false) => countRoles(userId, parseRolesFilters({ decision: "all" }), archived);
+async function currentToken(jobId: string): Promise<{ jobId: string; decisionId: string }> {
+  const [standing] = await database.select({ id: schema.decisions.id }).from(schema.decisions)
+    .where(and(eq(schema.decisions.userId, user.id), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false)));
+  if (!standing) throw new Error(`No standing decision for ${jobId}`);
+  return { jobId, decisionId: standing.id };
+}
 import { saveAiBudget, saveAiSettings, saveGate } from "./settings";
 import {
   addCompanies,
@@ -258,15 +266,18 @@ describe("authenticated mutations", () => {
       .where(eq(schema.companies.id, company.id));
     expect(updated!.homepageUrl).toBe("https://www.corrected.example/");
     expect(updated!.domain).toBe("corrected.example");
-    const logoTasks = await database.select().from(schema.tasks);
-    expect(logoTasks).toHaveLength(1);
-    expect(logoTasks[0]!.payload).toMatchObject({
+    const tasks = await database.select().from(schema.tasks);
+    expect(tasks).toHaveLength(2);
+    const logoTask = tasks.find(task => (task.payload as { logoOnly?: boolean }).logoOnly);
+    const discoveryTask = tasks.find(task => task.type === "discover" && !(task.payload as { logoOnly?: boolean }).logoOnly);
+    expect(logoTask?.payload).toMatchObject({
       companyId: company.id,
       logoOnly: true,
       homepageUrl: "https://www.corrected.example/",
     });
+    expect(discoveryTask?.payload).toMatchObject({ companyId: company.id });
     await saveCatalogueCompany(company.id, { ok: true }, form);
-    expect(await database.select().from(schema.tasks)).toHaveLength(1);
+    expect(await database.select().from(schema.tasks)).toHaveLength(2);
     expect((await database.select().from(schema.careerSources))[0]!.url).toBe(
       source.url,
     );
@@ -325,7 +336,7 @@ describe("authenticated mutations", () => {
       .where(eq(schema.decisions.jobId, job.id));
     expect(rows).toHaveLength(2);
     expect(rows.filter((r) => !r.superseded)).toHaveLength(1);
-    await decide(job.id, null, "");
+    expect(await undoDecisionIfCurrent(job.id, (await currentToken(job.id)).decisionId)).toEqual({ ok: true });
     rows = await database
       .select()
       .from(schema.decisions)
@@ -433,6 +444,7 @@ describe("learning controls", () => {
       .values({ userId: user.id, tag: "seniority:overqualified", accepted: false });
     const form = new FormData();
     form.append("tags", "seniority:overqualified");
+    form.set("expectedTags", JSON.stringify({ tags: decision!.tags, tagsEdited: decision!.tagsEdited }));
     await expect(saveDecisionTags(decision!.id, form)).rejects.toThrow(
       "accepted",
     );
@@ -822,7 +834,7 @@ describe("four-status role workflow", () => {
     expect((await read("user-shortlisted")).total).toBe(1);
     expect((await decide(job.id, "skip", "Wrong seniority")).ok).toBe(true);
     expect((await read("user-dismissed")).total).toBe(1);
-    expect((await decide(job.id, null, "")).ok).toBe(true);
+    expect((await undoDecisionIfCurrent(job.id, (await currentToken(job.id)).decisionId)).ok).toBe(true);
     expect((await read("archived")).total).toBe(1);
     expect((await archiveRoles([job.id], false)).ok).toBe(false);
     expect((await decide(job.id, "apply", "")).ok).toBe(true);
@@ -943,7 +955,7 @@ describe("the decision fan-out", () => {
     expect(await suggestTasks()).toHaveLength(2);
 
     // Undoing four of them leaves six standing, so the next decision is not a fifth either.
-    expect((await decideRoles(ids.slice(0, 4), null, "")).ok).toBe(true);
+    expect((await undoDecisionsIfCurrent(await Promise.all(ids.slice(0, 4).map(currentToken)))).ok).toBe(true);
     await database.execute(sql`delete from tasks where type = 'suggest_filters'`);
     expect((await decide(ids[0]!, "apply", "")).ok).toBe(true);
     expect(await suggestTasks()).toHaveLength(0);
@@ -1052,7 +1064,7 @@ describe("bulk decisions", () => {
     expect((await decide(first, "apply", "Shared reason")).ok).toBe(true);
     const singleTaskTypes = [...new Set((await taskKeys()).map((task) => task.type))].sort();
     // One decision is not a fifth: A8 is queued every fifth decision, never on every one.
-    expect(singleTaskTypes).toEqual(["score_job", "synthesize_profile", "tag_reason"]);
+    expect(singleTaskTypes).toEqual(["admit_scores", "rescore_all", "synthesize_profile", "tag_reason"]);
     // Clear what the baseline wrote, so what follows is the group's own work alone.
     await database.execute(sql`delete from tasks`);
     await database.execute(sql`delete from job_events`);
@@ -1075,21 +1087,26 @@ describe("bulk decisions", () => {
     expect(new Set(decided.map((event) => event.jobId))).toEqual(new Set(ids));
     expect(decided.every((event) => event.userId === user.id && event.payload.reason === "Shared reason")).toBe(true);
 
-    // Exactly the tasks the same roles decided one at a time would queue: one per role where the
-    // dedupe key names a role or a decision, one per account where it names the account.
+    // The same exact score intent as individual decisions, bounded in one account request.
+    // Tagging remains per decision; profile synthesis and suggestions remain per account.
     const tasks = await taskKeys();
     // The hundredth standing decision is a fifth, so the group queues the one A8 call those
     // hundred decisions taken one at a time would have queued (deduped by the account).
     expect([...new Set(tasks.map((task) => task.type))].sort()).toEqual([...singleTaskTypes, "suggest_filters"].sort());
-    expect(new Set(tasks.filter((task) => task.type === "score_job").map((task) => task.dedupeKey)))
-      .toEqual(new Set(ids.map((id) => `score_job:${user.id}:${id}`)));
+    const admissions = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "admit_scores"));
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0]!.payload.userId).toBe(user.id);
+    expect(admissions[0]!.payload.jobIds).toEqual([...ids].sort());
+    expect(admissions[0]!.payload.onlyUnscored).toBeUndefined();
+    expect(tasks.filter(task => task.type === "score_job")).toHaveLength(0);
+    expect((await database.select().from(schema.userJobs)).every(view => view.scoreState === "requested")).toBe(true);
     expect(new Set(tasks.filter((task) => task.type === "tag_reason").map((task) => task.dedupeKey)))
       .toEqual(new Set(active.map((row) => `tag_reason:${row.id}`)));
     expect(tasks.filter((task) => task.type === "synthesize_profile")).toHaveLength(1);
     expect(tasks.filter((task) => task.type === "suggest_filters")).toHaveLength(1);
 
     // Undoing the group supersedes every one of them and keeps the audit record.
-    expect(await decideRoles(ids, null, "")).toEqual({ ok: true });
+    expect(await undoDecisionsIfCurrent(await Promise.all(ids.map(currentToken)))).toEqual({ ok: true });
     expect((await database.select().from(schema.decisions)).every((row) => row.superseded)).toBe(true);
     expect((await database.select().from(schema.jobEvents)).filter((event) => event.type === "decided" && event.payload.decision === null)).toHaveLength(100);
   }, 120_000);

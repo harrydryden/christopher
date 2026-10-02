@@ -1,0 +1,38 @@
+{
+  "workerId": "score-ux-harness",
+  "taskId": "7db2ea43-54d2-4158-90e1-0af66f144dd7",
+  "roleId": "0ce91711-e037-4d25-b319-a9111f0a2912",
+  "before": {
+    "score_state": "requested",
+    "fit_score": null
+  },
+  "taskClaimed": "running",
+  "ownershipFenced": true,
+  "handlerResult": {
+    "queued": 0,
+    "unavailable": 1,
+    "budget": 0,
+    "blockedUnavailable": 1,
+    "blockedBudget": 0,
+    "skipped": 0
+  },
+  "completed": true,
+  "after": {
+    "score_state": "unavailable",
+    "fit_score": null
+  },
+  "taskAfter": {
+    "status": "done",
+    "result": {
+      "budget": 0,
+      "queued": 0,
+      "skipped": 0,
+      "unavailable": 1,
+      "blockedBudget": 0,
+      "blockedUnavailable": 1
+    }
+  },
+  "aiCallsBefore": 0,
+  "aiCallsAfter": 0,
+  "scoreTasksForRole": 1
+}

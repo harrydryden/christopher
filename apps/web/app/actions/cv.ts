@@ -5,7 +5,7 @@ import { assertCvFinalisable } from "@ava/core/cv-review";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@ava/db";
+import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput } from "@ava/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type AppSettings, type CvContent, type CvWritingPreferences } from "@ava/core";
@@ -15,7 +15,7 @@ import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
-import { cvBuildQuote } from "@/lib/cv-quote";
+import { cvBuildQuote, cvQuoteLine } from "@/lib/cv-quote";
 import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -176,6 +176,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
   let nextId = draftId;
   try {
     nextId = await db().transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
       await lockCvDraft(tx, draftId);
       const [draft] = await tx.select().from(cvDrafts)
         .where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, user.id))).limit(1).for("update");
@@ -341,6 +342,27 @@ export async function manageCvs(_prev: ActionResult, form: FormData): Promise<Ac
   return ok();
 }
 
+/** Price the exact pasted advert before a person can request this build. No draft is written. */
+export async function quoteCvBuild(jobId: string, description: string): Promise<
+  { ok: true; line: string; refusal: string | null } | { ok: false; error: string }
+> {
+  const user = await requireVerifiedUser();
+  try {
+    const id = zUuid().parse(jobId);
+    const text = description.trim();
+    if (!text) return { ok: false, error: "Paste an advert before checking its price." };
+    if (text.length > 60_000) return { ok: false, error: "Keep the job description under 60,000 characters." };
+    const [role] = await db().select({ id: jobs.id }).from(userJobs).innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+      .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id))).limit(1);
+    if (!role) throw new UserFacingError("Role not found.");
+    const quote = await cvBuildQuote(user.id, id, new Date(), { description: text });
+    return { ok: true, line: cvQuoteLine(quote), refusal: quote.refusal };
+  } catch (error) {
+    const result = actionError(error, "Could not check this estimate. Try again.");
+    return { ok: false, error: result.ok ? "Could not check this estimate. Try again." : result.error };
+  }
+}
+
 export async function requestCv(
   _prev: ActionResult,
   form: FormData,
@@ -366,11 +388,12 @@ export async function requestCv(
     }
     // The role must be one this account can see.
     const [row] = await db()
-      .select({ job: jobs, company: companies.name })
+      .select({ job: jobs, company: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')` })
       .from(userJobs)
       .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-      .innerJoin(companies, eq(jobs.companyId, companies.id))
-      .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id)));
+      .leftJoin(companies, eq(jobs.companyId, companies.id))
+      .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id),
+        sql`(${jobs.manualOwnerId} is null or ${jobs.manualOwnerId} = ${user.id}::uuid)`));
     if (!row) return fail("Role not found.");
     const supplied = String(form.get("description") ?? "").trim();
     if (
@@ -444,7 +467,7 @@ export async function requestCv(
           companyName: row.company,
           jobDescription: description,
           jobSource: {
-            kind: supplied ? "user_supplied" : "company_snapshot",
+            kind: supplied || row.job.origin === "manual" ? "user_supplied" : "company_snapshot",
             url: row.job.url,
             capturedAt: new Date().toISOString(),
             method: supplied
@@ -473,7 +496,7 @@ export async function requestCv(
         await tx.insert(applications).values({
           userId: user.id, jobId: id, cvId: null, pdfBase64: null,
           jobTitle: row.job.title, companyName: row.company,
-          appliedOn: new Date().toISOString().slice(0, 10), status: "applying", notes: "",
+          appliedOn: null, status: "applying", notes: "",
           history: [{ status: "applying", at: new Date().toISOString(), notes: "" }],
         });
       return draft!.id;

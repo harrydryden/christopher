@@ -1,0 +1,14 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-10-01T23:08:58.095Z","level":"info","event":"slow_database_query","durationMs":251,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T23:09:00.775Z","level":"info","event":"slow_database_query","durationMs":251,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T23:09:02.269Z","level":"info","event":"slow_database_query","durationMs":290,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T23:09:03.693Z","level":"info","event":"slow_database_query","durationMs":411,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T23:09:04.115Z","level":"info","event":"slow_database_query","durationMs":362,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+{"t":"2026-10-01T23:09:10.047Z","level":"info","event":"slow_database_query","durationMs":305,"statement":"truncate users, companies, tasks, ai_calls, ai_reservations, auth_tokens restart identity cascade"}
+
+ Test Files  5 passed (5)
+      Tests  205 passed (205)
+   Start at  00:08:56
+   Duration  19.76s (tests 87%, import 9%, transform 2%, environment 2%)

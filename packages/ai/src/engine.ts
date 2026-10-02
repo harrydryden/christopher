@@ -40,11 +40,12 @@ import { BATCH_PRICE_MULTIPLIER, estimateBatchCostUsd, estimateCostUsd, estimate
 import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import type * as S from "./schemas";
-import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, outputFormat, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
+import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, outputFormat, resolveRoute, type Effort, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
 import { canonicalEvidence, evidenceBlockId } from "./evidence";
 import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./claim-memo";
 import { AiGovernor, abortableSleep, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
+import { scoreLocationEvidence } from "./score-location-evidence";
 import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, type BreakerStats } from "./breaker";
 
 export type { Effort } from "./prompt-registry";
@@ -358,6 +359,8 @@ interface CallInput {
    * `cvModel` the CV builder does — so the engine does not have to be rebuilt to say so.
    */
   model?: string;
+  /** A route pinned with a score's fresh settings, immune to a stale engine settings cache. */
+  pinnedRoute?: { model: string; effort: Effort };
   /** A ceiling sized to this call's input, below the entry's own (A3 sizes it to the page). */
   maxTokens?: number;
   /** Fires once the response has begun, which is when a prefix this call caches becomes readable by others. */
@@ -1089,9 +1092,11 @@ export class AiEngine {
    * live path adds the refusal fallback; a batched request goes without it, as the Batches API
    * refuses that parameter.
    */
-  private async buildRequest(entry: PromptEntry, call: Pick<CallInput, "user" | "model" | "maxTokens">, recorded: Omit<Ref, "signal" | "priority">) {
+  private async buildRequest(entry: PromptEntry, call: Pick<CallInput, "user" | "model" | "maxTokens" | "pinnedRoute">, recorded: Omit<Ref, "signal" | "priority">) {
     const callSite = entry.callSite;
-    const { route, model } = await this.routeFor(entry, call.model);
+    const { route, model } = call.pinnedRoute
+      ? { route: { model: call.pinnedRoute.model, effort: call.pinnedRoute.effort }, model: call.pinnedRoute.model }
+      : await this.routeFor(entry, call.model);
     const { system, content } = layoutFor(entry, typeof call.user === "string" ? { tail: call.user } : call.user);
     const texts = [...system.map(block => block.text), ...(typeof content === "string" ? [content] : content.map(block => block.text))];
     const maxTokens = call.maxTokens ?? entry.maxTokens;
@@ -1622,7 +1627,7 @@ export class AiEngine {
 
   // A5 ---------------------------------------------------------------------
   async scoreJob(input: ScoreJobInput, ref: Ref = {}): Promise<ScoreJobResult | null> {
-    const result = await this.run<S.FitScoreOutput>(PROMPTS.A5, { user: scoreJobUser(input) }, ref);
+    const result = await this.run<S.FitScoreOutput>(PROMPTS.A5, { user: scoreJobUser(input), pinnedRoute: input.route }, ref);
     return result ? finishScore(result) : null;
   }
 
@@ -1651,12 +1656,12 @@ export class AiEngine {
   async scoreJobBatchRequest(input: ScoreJobInput): Promise<BatchScoreRequest> {
     const entry = PROMPTS.A5;
     const user = scoreJobUser(input);
-    const { model, request, meta, maxTokens } = await this.buildRequest(entry, { user }, {});
+    const { model, request, meta, maxTokens } = await this.buildRequest(entry, { user, pinnedRoute: input.route }, {});
     const estimate = estimateStage(entry, {
       stableBytes: user.stable.map(block => Buffer.byteLength(block)),
       tailBytes: Buffer.byteLength(user.tail),
       outputTokens: maxTokens,
-    }, { callSiteModel: model });
+    }, { callSiteModel: model, ...(input.route ? { routes: { A5: input.route } } : {}) });
     return { params: request, meta, model, estimateUsd: Number((estimate * BATCH_PRICE_MULTIPLIER).toFixed(6)) };
   }
 
@@ -1812,7 +1817,7 @@ export class AiEngine {
        * a shortlist is what someone hoped for, an acceptance is what they chose, and a rejection
        * is evidence about fit rather than about their preferences.
        */
-      outcomes?: Array<{ title: string; company: string; status: string; appliedOn: string }>;
+      outcomes?: Array<{ title: string; company: string; status: string; appliedOn: string | null }>;
     },
     ref: Ref = {},
   ): Promise<{ markdown: string; openQuestions: Array<{ id: string; question: string }> } | null> {
@@ -1825,7 +1830,7 @@ export class AiEngine {
       input.outcomes?.length
         ? "Outcomes the person reached, which weigh more than a decision: an accepted offer is what they want, a rejection is a signal about fit.\n" +
           P.wrap("outcomes", input.outcomes.slice(0, 50)
-            .map(outcome => `- [${outcome.status}] ${outcome.title} @ ${outcome.company} (applied ${outcome.appliedOn})`).join("\n"))
+            .map(outcome => `- [${outcome.status}] ${outcome.title} @ ${outcome.company}${outcome.appliedOn ? ` (applied ${outcome.appliedOn})` : ""}`).join("\n"))
         : "",
       input.disagreements?.length
         ? P.wrap(
@@ -2236,8 +2241,13 @@ export function decisionDigest(decisions: DecisionForDigest[], opts: { maxItems?
   for (const d of sorted.slice(0, maxItems)) {
     const reason = (d.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
     const tags = d.tags.length ? ` #${d.tags.join(" #")}` : "";
-    const line = `- [${d.decision}] ${d.title} @ ${d.company}${d.location ? ` (${d.location})` : ""}${reason ? ` — ${reason}` : ""}${tags}`;
-    if (used + line.length + 1 > maxChars) break;
+    const location = d.location?.trim();
+    // Keep the actual decision's title, reason and tags in the digest even when its stored
+    // employer location list is enormous. The complete list remains on the decision record.
+    const digestLocation = location && location.length > 1_000
+      ? "multiple/long location listing omitted from this summary" : location;
+    const line = `- [${d.decision}] ${d.title} @ ${d.company}${digestLocation ? ` (${digestLocation})` : ""}${reason ? ` — ${reason}` : ""}${tags}`;
+    if (used + line.length + 1 > maxChars) continue;
     lines.push(line);
     used += line.length + 1;
   }
@@ -2344,9 +2354,11 @@ function validate<T>(schema: z.ZodType, value: unknown): { data: T } | { error: 
 export interface ScoreJobInput {
   profileMarkdown: string;
   decisionDigest: string;
+  /** Model and effort resolved with the same fresh settings as this score's fingerprint. */
+  route?: { model: string; effort: Effort };
   /** The evidence that bears on this role, already bounded (`scoringEvidence` in core). */
   evidence?: string;
-  job: { title: string; company: string; location?: string; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
+  job: { title: string; company: string; location?: string; locations?: string[]; locationTerms?: string[]; locationStatus?: "pending" | "unavailable"; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
 }
 
 /** One fit score, clamped and checked. */
@@ -2399,7 +2411,10 @@ function scoreJobUser(input: ScoreJobInput): { stable: string[]; tail: string } 
   const jobText = [
     `Title: ${j.title}`,
     `Company: ${j.company}`,
-    j.location ? `Location: ${j.location}` : null,
+    j.locations?.length ? scoreLocationEvidence(j.locations, j.locationTerms) : null,
+    !j.locations?.length && j.location ? `Location: ${j.location}` : null,
+    j.locationStatus === "pending" ? "Location: awaiting verification of the current places" : null,
+    j.locationStatus === "unavailable" ? "Location: current places could not be verified" : null,
     j.department ? `Department: ${j.department}` : null,
     j.employmentType ? `Employment type: ${j.employmentType}` : null,
     j.keywordTerms?.length ? `Matched keywords: ${j.keywordTerms.join(", ")}` : null,

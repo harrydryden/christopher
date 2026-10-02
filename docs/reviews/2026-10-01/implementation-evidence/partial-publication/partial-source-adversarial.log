@@ -1,0 +1,18 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T16:11:32.147Z","level":"info","msg":"slow database query","data":{"durationMs":291,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:11:32.504Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"partial","postings":20,"new":20,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":0,"claimRequests":0,"claimRevalidated":0,"heapUsedMb":72,"ms":65}}
+{"t":"2026-10-01T16:11:32.781Z","level":"info","msg":"slow database query","data":{"durationMs":264,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:11:33.160Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"partial","postings":21,"new":20,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":0,"claimRequests":0,"claimRevalidated":0,"heapUsedMb":72,"ms":41}}
+{"t":"2026-10-01T16:11:33.458Z","level":"info","msg":"slow database query","data":{"durationMs":288,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:11:33.922Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"ok","postings":1,"new":1,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":90,"claimRequests":1,"claimRevalidated":0,"heapUsedMb":80,"ms":66}}
+{"t":"2026-10-01T16:11:33.967Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"partial","postings":21,"new":20,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":0,"claimRequests":0,"claimRevalidated":0,"heapUsedMb":82,"ms":30}}
+{"t":"2026-10-01T16:11:34.287Z","level":"info","msg":"slow database query","data":{"durationMs":314,"statement":"truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, setting"}}
+{"t":"2026-10-01T16:11:34.971Z","level":"info","msg":"source scanned","data":{"company":"Pager","type":"html","status":"ok","postings":21,"new":21,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":334,"claimRequests":2,"claimRevalidated":0,"heapUsedMb":85,"ms":39}}
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  17:11:29
+   Duration  5.13s (tests 77%, transform 11%, import 11%)
+

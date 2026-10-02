@@ -1,0 +1,10 @@
+                       value                       |         updated_at
+---------------------------------------------------+----------------------------
+ "Newer starting preferences saved from Learning." | 2026-10-01 23:11:32.134+00
+(1 row)
+
+                                                                                                                                                                                                                                                         to_jsonb
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"id": "89b9db2a-2704-4832-aa14-07a489dba834", "type": "rescore_all", "error": null, "result": null, "status": "queued", "payload": {"userId": "cf03d104-f4b9-4f97-b4b5-dcf689df80b6", "onlyInTable": true}, "attempts": 0, "priority": 5, "locked_at": null, "locked_by": null, "run_after": "2026-10-01T23:09:05.058296+00:00", "created_at": "2026-10-01T23:09:05.058296+00:00", "dedupe_key": "rescore_all:cf03d104-f4b9-4f97-b4b5-dcf689df80b6", "started_at": null, "finished_at": null, "max_attempts": 3}
+ {"id": "ecb25ac3-3fcf-4efd-9c4e-8a0318f8dd4c", "type": "synthesize_profile", "error": null, "result": null, "status": "queued", "payload": {"force": true, "userId": "cf03d104-f4b9-4f97-b4b5-dcf689df80b6"}, "attempts": 0, "priority": 6, "locked_at": null, "locked_by": null, "run_after": "2026-10-01T23:09:05.058296+00:00", "created_at": "2026-10-01T23:09:05.058296+00:00", "dedupe_key": "synthesize_profile:cf03d104-f4b9-4f97-b4b5-dcf689df80b6", "started_at": null, "finished_at": null, "max_attempts": 3}
+(2 rows)

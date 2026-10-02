@@ -1,0 +1,40 @@
+{
+  "observedAtUtc": "2026-09-29T14:29:42Z",
+  "method": "Read-only HTTP GETs to the public first-party SearchJobs page and its advertised RSS link. No job application, account, or provider request was made.",
+  "pages": [
+    {
+      "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+      "httpStatus": 200,
+      "bodySha256": "155361a8dfd99f5aac325a6846869662b7a7dc20aefee2ec85b68056987db608",
+      "bodyBytes": 162369,
+      "observed": "1 - 6 of 999+ results; six extracted posting links; Next points to ?folderRecordsPerPage=6&folderOffset=6. No visible page-size selector was found in the page HTML."
+    },
+    {
+      "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=50&folderOffset=0",
+      "httpStatus": 200,
+      "bodySha256": "cc537231bb4b1386cf254139af579a0aa1e889a8d6766704c86293194e33e821",
+      "bodyBytes": 162952,
+      "observed": "Still 1 - 6 of 999+; six extracted postings; Next resets folderRecordsPerPage to 6."
+    },
+    {
+      "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=100&folderOffset=0",
+      "httpStatus": 200,
+      "bodySha256": "cea8fe52fd536e015dde4d2eac708bc40dc184603be2e06aed2ddeb059e6b456",
+      "bodyBytes": 162958,
+      "observed": "Still 1 - 6 of 999+; six extracted postings; Next resets folderRecordsPerPage to 6."
+    },
+    {
+      "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/feed/?folderRecordsPerPage=6",
+      "httpStatus": 200,
+      "bodySha256": "af2f593d89cc3aae771411afe0766d9fb34a0465a15a598fb0e4c2ef5f0f37fb",
+      "observed": "Advertised RSS feed returns 20 item elements; no complete-board evidence."
+    },
+    {
+      "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/feed/?folderRecordsPerPage=100",
+      "httpStatus": 200,
+      "bodySha256": "34d26c425835dd92a1fe72aac666d92f8193578112d2923355f89982de37ef62",
+      "observed": "RSS still returns 20 item elements."
+    }
+  ],
+  "interpretation": "The observed page-size overrides do not work. At six HTML postings per page, 999+ requires at least 167 pages; with the current two-second first-party host delay, that alone exceeds the three-minute scan task deadline. The real total and any other supported export are not established by these requests."
+}

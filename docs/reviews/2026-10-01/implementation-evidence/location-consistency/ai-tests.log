@@ -1,0 +1,9 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/ai
+
+
+ Test Files  2 passed (2)
+      Tests  117 passed (117)
+   Start at  22:08:42
+   Duration  2.73s (tests 37%, transform 37%, import 26%)
+

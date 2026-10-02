@@ -6,7 +6,9 @@ import { handleDiscover } from "./discover";
 import { handleRunDaily } from "./daily";
 import { handleScanCompany } from "./scan";
 import { handleFetchDescription } from "./description";
+import { handleFetchLocations } from "./locations";
 import { handleImportPosting } from "./import-posting";
+import { handleImportRoleDescription } from "./import-role-description";
 import { handleProfileCompany, handleSuggestCompanies } from "./companies";
 import {
   handleReevaluateGate,
@@ -21,6 +23,8 @@ import { handleMonitorSource, handleExtractDocument, handleVerifyCompany } from 
 import { handleSuggestFromScans } from "./suggest-from-scans";
 import { handleCollectScoreBatch, handlePollScoreBatch } from "./score-batch";
 import { handleReencodeLogos } from "./reencode-logos";
+import { handleAdmitScores } from "../score-admission";
+import { handleResumeReasonTags } from "./resume-reason-tags";
 
 export const handlers: HandlerMap = {
   extract_document: handleExtractDocument,
@@ -31,9 +35,13 @@ export const handlers: HandlerMap = {
   run_daily: handleRunDaily,
   scan_company: handleScanCompany,
   fetch_description: handleFetchDescription,
+  fetch_locations: handleFetchLocations,
   import_posting: handleImportPosting,
+  import_role_description: handleImportRoleDescription,
   score_job: handleScoreJob,
+  admit_scores: handleAdmitScores,
   tag_reason: handleTagReason,
+  resume_reason_tags: handleResumeReasonTags,
   synthesize_profile: handleSynthesizeProfile,
   suggest_filters: handleSuggestFilters,
   suggest_from_scans: handleSuggestFromScans,

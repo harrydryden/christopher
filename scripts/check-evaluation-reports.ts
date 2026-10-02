@@ -4,8 +4,9 @@
  *   pnpm exec tsx scripts/check-evaluation-reports.ts [--write]
  *
  * Reads every `docs/evaluations/<name>/report.json` and fails when the prompts that ship have not
- * been graded (scripts/evaluation-report-gate.mjs decides; docs/DEPLOY.md, "Evaluation reports and
- * the prompt set", says what to do about a failure). It also fails when
+ * been graded. Release qualification sets `AVA_EVAL_GATE_REQUIRE_VERIFIED=1` to require a verified
+ * published replay; ordinary pull-request CI accepts an explicitly unverified fixture with a
+ * warning (scripts/evaluation-report-gate.mjs decides; docs/DEPLOY.md explains failures). It also fails when
  * packages/core/src/evaluated-routes.ts — the graded routes Health compares the `stageRoutes`
  * setting against — no longer matches the newest replay report; `--write` regenerates it.
  */

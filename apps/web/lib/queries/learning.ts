@@ -8,8 +8,8 @@ import { extractSuggestionValue } from "@/lib/filterSuggestions";
  * what "Admitted 9 roles" counts: `saveSettingsAndGate` runs the re-evaluation but returns nothing,
  * and the number a person cares about is what appeared in their table, not what was written.
  */
-export async function countRolesInTable(userId: string): Promise<number> {
-  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(userJobs)
+export async function countRolesInTable(userId: string, writer: Pick<ReturnType<typeof db>, "select"> = db()): Promise<number> {
+  const [row] = await writer.select({ n: sql<number>`count(*)::int` }).from(userJobs)
     .where(and(eq(userJobs.userId, userId), eq(userJobs.inTable, true), isNull(userJobs.archivedAt)));
   return row?.n ?? 0;
 }
@@ -84,10 +84,25 @@ export async function listPendingFilterSuggestionsResolved(userId: string): Prom
   });
 }
 
-export async function getReasonTagEditor(userId: string) {
-  const [vocabulary, recent] = await Promise.all([
+export const REASON_TAG_PAGE_SIZE = 20;
+
+function requestedReasonTagPage(value: unknown): number {
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return 1;
+  const page = Number(value);
+  return Number.isSafeInteger(page) ? page : 1;
+}
+
+export async function getReasonTagEditor(userId: string, requestedPage?: unknown) {
+  const standing = and(eq(decisions.userId, userId), eq(decisions.superseded, false));
+  const [vocabulary, [count]] = await Promise.all([
     db().select().from(tagVocabulary).where(eq(tagVocabulary.userId, userId)).orderBy(tagVocabulary.tag),
-    db().select().from(decisions).where(and(eq(decisions.userId, userId), eq(decisions.superseded, false))).orderBy(desc(decisions.createdAt)).limit(20),
+    db().select({ n: sql<number>`count(*)::int` }).from(decisions).where(standing),
   ]);
-  return { vocabulary, recent };
+  const totalDecisions = count?.n ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalDecisions / REASON_TAG_PAGE_SIZE));
+  const page = Math.min(requestedReasonTagPage(requestedPage), totalPages);
+  const recent = await db().select().from(decisions).where(standing)
+    .orderBy(desc(decisions.createdAt), desc(decisions.id))
+    .limit(REASON_TAG_PAGE_SIZE).offset((page - 1) * REASON_TAG_PAGE_SIZE);
+  return { vocabulary, recent, page, totalPages, totalDecisions };
 }

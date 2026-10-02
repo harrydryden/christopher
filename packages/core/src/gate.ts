@@ -33,6 +33,8 @@ export interface GateInput {
   location?: string | null;
   locations?: string[] | null;
   remote?: boolean | null;
+  /** Counted Workday places must be resolved before a geographic filter can admit the role. */
+  locationResolution?: "pending" | "resolved" | "unavailable" | null;
 }
 
 export interface GateResult {
@@ -247,6 +249,8 @@ function locate(input: GateInput, compiled: CompiledLocation) {
   const joined = texts.join(" | ");
   const remote = input.remote === true || looksRemote(joined);
   if (compiled.terms.length === 0) return { ok: true, terms: [] as string[], remote };
+  if (input.locationResolution === "pending" || input.locationResolution === "unavailable")
+    return { ok: false, terms: [] as string[], remote };
 
   const hits: string[] = [];
   const { wantedGroups } = compiled;

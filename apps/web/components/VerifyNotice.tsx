@@ -6,7 +6,7 @@
  * beside every control it disables, so the two can never say different things.
  */
 
-export const VERIFY_SENTENCE = "Confirm your email address to add companies, run discovery and build CVs.";
+export const VERIFY_SENTENCE = "Confirm your email address to use AI scoring, add companies, run discovery and build CVs.";
 
 /** The sentence beside a disabled control, in the warning tone the banner's subject deserves. */
 export function VerifyNotice({ className = "" }: { className?: string }) {

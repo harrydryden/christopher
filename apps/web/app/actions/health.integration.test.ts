@@ -24,7 +24,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { disableSource, markSourceConfirmed, pasteDiscoveryUrl, pauseCompany, rediscoverCompany, useDiscoveryCandidate } from "./companies";
-import { keepCurrentSource, retryTask } from "./health";
+import { keepCurrentSource, retryLocationCheck, retryTask } from "./health";
 import { countHealthItems, healthItems } from "@/lib/queries/health";
 
 const CANDIDATES = [
@@ -78,9 +78,54 @@ it("confirms a candidate into the source a scan reads, and queues that scan", as
   const [resolved] = await database.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, run!.id));
   expect(resolved).toMatchObject({ status: "resolved", chosenSourceId: sources[0]!.id });
   expect((await tasksOf("scan_company")).map((task) => task.payload)).toEqual([{ companyId: company.id, trigger: "manual" }]);
+  const [firstScan] = await tasksOf("scan_company");
+  await database.update(schema.tasks).set({ status: "done", finishedAt: new Date() }).where(eq(schema.tasks.id, firstScan!.id));
+  await useDiscoveryCandidate(run!.id, 0);
+  expect((await tasksOf("scan_company")).map(task => task.id)).toEqual([firstScan!.id]);
   // Resolved is resolved: the item has gone, and so has the sidebar's count of it.
   expect(await healthItems(user.id)).toEqual([]);
   expect(await countHealthItems(user.id)).toBe(0);
+});
+
+it("rolls back source confirmation when its scan cannot be queued", async () => {
+  const { company, run } = await fixture({ candidates: CANDIDATES });
+  await database.execute(sql`alter table tasks add constraint health_candidate_queue_check check (type <> 'scan_company')`);
+  try {
+    await expect(useDiscoveryCandidate(run!.id, 0)).rejects.toThrow();
+    expect(await sourcesOf(company.id)).toEqual([]);
+    const [unchanged] = await database.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, run!.id));
+    expect(unchanged).toMatchObject({ status: "needs_confirmation", chosenSourceId: null });
+    expect(await tasksOf("scan_company")).toEqual([]);
+  } finally {
+    await database.execute(sql`alter table tasks drop constraint health_candidate_queue_check`);
+  }
+});
+
+it("lets a verified follower restart a failed or backfilled Workday location check once", async () => {
+  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "location-retry@example.com", "member"));
+  const [company] = await database.insert(schema.companies).values({ name: "Workday Co", domain: "workdayco.test", homepageUrl: "https://workdayco.test" }).returning();
+  await subscribeToCompany(database, user.id, company!.id);
+  const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "workday", url: "https://workdayco.wd1.myworkdayjobs.com/External", status: "active" }).returning();
+  const [job] = await database.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id,
+    externalKey: "id:1", title: "Boston role", normalizedTitle: "boston role", url: "https://workdayco.wd1.myworkdayjobs.com/External/job/role",
+    locationLabel: "2 Locations", locationResolution: "unavailable", locationRevision: null, locationError: "temporary failure" }).returning();
+
+  await retryLocationCheck(job!.id);
+  const [updated] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job!.id));
+  expect(updated).toMatchObject({ locationResolution: "pending", locationError: null });
+  expect(updated!.locationRevision).toMatch(/^[0-9a-f]{40}$/);
+  await retryLocationCheck(job!.id);
+  const locationTasks = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_locations"));
+  expect(locationTasks).toHaveLength(1);
+  expect(locationTasks[0]!.payload).toEqual({ jobId: job!.id, locationRevision: updated!.locationRevision });
+
+  const outsider = await signInTestUser(database, process.env.SESSION_SECRET!, "location-outsider@example.com", "member");
+  const [privateJob] = await database.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id,
+    externalKey: "id:private", title: "Private pasted role", normalizedTitle: "private pasted role", url: "https://workdayco.wd1.myworkdayjobs.com/External/job/private",
+    shared: false, addedBy: outsider.user.id, locationLabel: "2 Locations", locationResolution: "unavailable", locationRevision: "private-revision" }).returning();
+  await expect(retryLocationCheck(privateJob!.id)).rejects.toThrow("redirect:/health?error=This+location+check+is+no+longer+available");
+  session = outsider.cookie;
+  await expect(retryLocationCheck(job!.id)).rejects.toThrow("redirect:/health?error=This+location+check+is+no+longer+available");
 });
 
 it("turns a pasted URL into a discovery task for that URL alone", async () => {

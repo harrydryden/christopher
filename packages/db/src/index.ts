@@ -7,10 +7,13 @@ export * from "./schema";
 export * as schema from "./schema";
 export { createDb, getDb, poolErrorCount, poolStats, slowQueryCount, type Db, type CreateDbOptions, type SlowQuery } from "./client";
 export { databaseBackends, BACKENDS_ALERT_AT, WEB_BACKENDS_CAP, type DatabaseBackends } from "./backends";
-export { enqueueTask, enqueueTasks, enqueueStandard, queueScoring, taskRow, pendingTaskCounts, taskById, activeTaskFor, notifyTaskWorkers, TASKS_CHANNEL, type EnqueueOptions, type TaskWriter } from "./tasks";
+export { enqueueTask, enqueueTasks, enqueueStandard, queueScoring, requestScores, taskRow, pendingTaskCounts, taskById, activeTaskFor, notifyTaskWorkers, TASKS_CHANNEL, type EnqueueOptions, type TaskWriter } from "./tasks";
 
-export { reevaluateGate, archiveNonMatches, isGateArchive, gateCompiler, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, REEVALUATE_CLOSED_DAYS, type ViewUpdate, type ViewVerdict, type GateScope, type ArchiveScope, type ReevaluateOptions } from "./gate";
-export { appendProfile, latestProfileFor } from "./profiles";
+export { reevaluateGate, archiveNonMatches, isGateArchive, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, REEVALUATE_CLOSED_DAYS, type ViewUpdate, type ViewVerdict, type GateScope, type ArchiveScope, type ReevaluateOptions } from "./gate";
+export { locationRevisionFor, requestLocationEnrichment, type LocationRevisionInput, type LocationEnrichmentCandidate } from "./location-enrichment";
+export { reserveLocationRead, WORKDAY_LOCATION_READS_PER_HOUR } from "./location-read-budget";
+export { appendProfile, latestProfileFor, ProfileVersionConflictError } from "./profiles";
+export { lockScoreModelInput, lockAccountScoreInput, accountCanScore } from "./score-fence";
 export { latestCvLibrary } from "./cv-library";
 export { claimableTaskSql, workloadMetrics } from "./scaling";
 export { topStatements, resetStatements, formatStatementTotals, type StatementTotal, type StatementTotals } from "./pg-stat";

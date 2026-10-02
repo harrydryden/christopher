@@ -1,0 +1,13 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+··················stderr | app/actions/applications.integration.test.ts > withdraws and records the skip in one transaction, or neither
+{"event":"action_failed","errorType":"Error","fingerprint":"2bfeaca0"}
+
+···························································
+
+ Test Files  7 passed (7)
+      Tests  77 passed (77)
+   Start at  22:30:45
+   Duration  14.15s (tests 76%, import 19%, transform 5%)
+

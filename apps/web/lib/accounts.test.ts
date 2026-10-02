@@ -3,7 +3,7 @@
  * owner's takeover, password sign-in, Google linking, single-use confirmation and reset links, throttling.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, createDb, DEFAULT_ADMIN_EMAILS, SEED_TAGS, schema, type Db } from "@ava/db";
+import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, completeAccountClaim, createDb, DEFAULT_ADMIN_EMAILS, lockAccountScoreInput, SEED_TAGS, schema, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -11,8 +11,9 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { adminEmails, authenticateWithPassword, changePassword, confirmEmailWithToken, previewVerification, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail, signInWithGoogle } from "./accounts";
-import { consumeAuthToken, issueAuthToken } from "./auth-tokens";
+import { consumeAuthToken, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { clearAttempts, LIMITS, reserveRateLimits } from "./rate-limit";
+import { getSettingsFor, saveSettingsAndGate } from "./settings";
 
 const PASSWORD = "correct horse battery staple";
 const OWNER = "owner@example.com";
@@ -38,6 +39,8 @@ function tokenFromLog(log: { mock: { calls: unknown[][] } }, path: string): stri
   return mails.at(-1)?.text.match(/token=([A-Za-z0-9_-]+)/)?.[1] ?? "";
 }
 const sessionsFor = (userId: string) => database.select().from(schema.sessions).where(eq(schema.sessions.userId, userId));
+const taskTypesFor = async (userId: string) => (await database.execute<{ type: string }>(sql`select type from tasks
+  where payload->>'userId' = ${userId} order by type`)).rows.map(row => row.type);
 const openRegistration = () => database.insert(schema.settings).values({ key: "registrationOpen", value: true });
 async function confirmationToken(userId: string) {
   const log = vi.spyOn(console, "info").mockImplementation(() => {});
@@ -135,6 +138,235 @@ describe("who may register and what they get", () => {
       expect(done.user.emailVerifiedAt).not.toBeNull();
     }
     expect(await confirmEmailWithToken(token, { sessionUserId: user.id })).toEqual({ status: "invalid" });
+  });
+
+  it("recovers saved decisions and shortlisted scoring once, with bounded reason fan-out", async () => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: "learning-before-proof@example.com", password: PASSWORD });
+    await database.insert(schema.userSettings).values({ userId: user.id, key: "seedProfile", value: "Operations leader" });
+    const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "claim-acme.example", homepageUrl: "https://claim-acme.example" }).returning();
+    const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://claim-acme.example/jobs" }).returning();
+    const [job] = await database.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id,
+      externalKey: "one", title: "Operations Lead", normalizedTitle: "operations lead", url: "https://claim-acme.example/jobs/one" }).returning();
+    await database.insert(schema.userJobs).values({ userId: user.id, jobId: job!.id, inTable: false });
+    await database.insert(schema.decisions).values([
+      { userId: user.id, jobId: job!.id, decision: "apply" as const, reason: "Good scope", jobTitle: "Operations Lead", companyName: "Acme" },
+      ...Array.from({ length: 204 }, (_, i) => ({ userId: user.id, decision: "skip" as const,
+        reason: `Reason ${i}`, jobTitle: `Old role ${i}`, companyName: "Past company" })),
+    ]);
+    expect(await taskTypesFor(user.id)).toEqual([]);
+
+    const token = await confirmationToken(user.id);
+    expect((await confirmEmailWithToken(token, { sessionUserId: user.id })).status).toBe("done");
+    expect(await taskTypesFor(user.id)).toEqual(["rescore_all", "resume_reason_tags", "synthesize_profile"]);
+    await database.execute(sql`delete from tasks`);
+    await completeAccountClaim(database, user.id, { adminEmails: [OWNER] });
+    expect(await taskTypesFor(user.id)).toEqual([]);
+  });
+
+  it.each(["reset", "google"] as const)("recovers a saved seed through %s confirmation", async channel => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: `${channel}-seed@example.com`, password: PASSWORD });
+    await database.insert(schema.userSettings).values({ userId: user.id, key: "seedProfile", value: "Operations leader" });
+    if (channel === "reset") {
+      const token = await issueAuthToken(user.id, "password_reset");
+      expect((await resetPasswordWithToken(token, PASSWORD))?.id).toBe(user.id);
+    } else {
+      expect((await signInWithGoogle({ sub: "claim-seed-google", email: user.email, emailVerified: true })).user.id).toBe(user.id);
+    }
+    expect(await taskTypesFor(user.id)).toEqual(["synthesize_profile"]);
+  });
+
+  it("rolls back confirmation if its saved-work task cannot be queued", async () => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: "claim-rollback@example.com", password: PASSWORD });
+    await database.insert(schema.decisions).values({ userId: user.id, decision: "skip", reason: "Wrong sector",
+      jobTitle: "Operations", companyName: "Acme" });
+    await database.execute(sql`alter table tasks add constraint reject_resume_reasons check (type <> 'resume_reason_tags') not valid`);
+    try {
+      await expect(completeAccountClaim(database, user.id, { adminEmails: [OWNER] })).rejects.toThrow();
+      const [after] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+      expect(after!.emailVerifiedAt).toBeNull();
+      expect(await taskTypesFor(user.id)).toEqual([]);
+    } finally {
+      await database.execute(sql`alter table tasks drop constraint reject_resume_reasons`);
+    }
+    expect((await completeAccountClaim(database, user.id, { adminEmails: [OWNER] }))?.emailVerifiedAt).not.toBeNull();
+    expect(await taskTypesFor(user.id)).toEqual(["resume_reason_tags", "synthesize_profile"]);
+  });
+
+  it("retries a linked Google claim after a saved-work enqueue rolled back", async () => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: "google-claim-retry@example.com", password: PASSWORD });
+    await database.insert(schema.userSettings).values({ userId: user.id, key: "seedProfile", value: "Operations leader" });
+    const profile = { sub: "google-claim-retry", email: user.email, emailVerified: true };
+    await database.execute(sql`alter table tasks add constraint reject_google_resume check (type <> 'synthesize_profile') not valid`);
+    try {
+      await expect(signInWithGoogle(profile)).rejects.toThrow();
+      const [after] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+      expect(after!.emailVerifiedAt).toBeNull();
+      expect(await taskTypesFor(user.id)).toEqual([]);
+      expect(await database.select().from(schema.authAccounts).where(eq(schema.authAccounts.userId, user.id))).toHaveLength(1);
+    } finally {
+      await database.execute(sql`alter table tasks drop constraint reject_google_resume`);
+    }
+    expect((await signInWithGoogle(profile)).user.emailVerifiedAt).not.toBeNull();
+    expect(await taskTypesFor(user.id)).toEqual(["synthesize_profile"]);
+    await database.execute(sql`delete from tasks`);
+    await signInWithGoogle(profile);
+    expect(await taskTypesFor(user.id)).toEqual([]);
+  });
+
+  it("does not erase a password set while a Google link waits for the account fence", async () => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: "google-reset-race@example.com", password: PASSWORD });
+    await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000) });
+    let release!: () => void;
+    let locked!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const lockReady = new Promise<void>(resolve => { locked = resolve; });
+    const reset = database.transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as Db, user.id, "exclusive");
+      await tx.update(schema.users).set({ emailVerifiedAt: new Date(), passwordHash: "new-password-hash" })
+        .where(eq(schema.users.id, user.id));
+      locked();
+      await held;
+    });
+    await lockReady;
+    const linking = signInWithGoogle({ sub: "google-reset-race", email: user.email, emailVerified: true });
+    try {
+      let waiting = false;
+      for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+        const state = await database.execute<{ waiting: boolean }>(sql`select exists (
+          select 1 from pg_locks l where l.locktype = 'advisory' and l.granted = false
+            and l.classid = 874302 and l.objid = hashtext(${user.id})::oid
+            and l.database = (select oid from pg_database where datname = current_database())
+        ) as waiting`);
+        waiting = state.rows[0]?.waiting === true;
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+    } finally {
+      release();
+      await reset;
+    }
+    expect((await linking).user.emailVerifiedAt).not.toBeNull();
+    const [stored] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(stored!.passwordHash).toBe("new-password-hash");
+    expect(await sessionsFor(user.id)).toHaveLength(1);
+  });
+
+  it.each(["confirmation", "reset"] as const)("keeps a %s link and account state on saved-work enqueue failure", async channel => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: `${channel}-atomic@example.com`, password: PASSWORD });
+    await database.insert(schema.userSettings).values({ userId: user.id, key: "seedProfile", value: "Operations leader" });
+    await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000) });
+    const token = channel === "confirmation" ? await confirmationToken(user.id) : await issueAuthToken(user.id, "password_reset");
+    const nextPassword = "a different and valid password";
+    await database.execute(sql`alter table tasks add constraint reject_atomic_claim check (type <> 'synthesize_profile') not valid`);
+    try {
+      if (channel === "confirmation")
+        await expect(confirmEmailWithToken(token, { sessionUserId: user.id })).rejects.toThrow();
+      else await expect(resetPasswordWithToken(token, nextPassword)).rejects.toThrow();
+      expect(await peekAuthToken(token, channel === "confirmation" ? "email_verification" : "password_reset"))
+        .toEqual({ userId: user.id });
+      const [after] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+      expect(after!.emailVerifiedAt).toBeNull();
+      expect(after!.passwordHash).toBe(user.passwordHash);
+      expect(await sessionsFor(user.id)).toHaveLength(1);
+      expect(await taskTypesFor(user.id)).toEqual([]);
+    } finally {
+      await database.execute(sql`alter table tasks drop constraint reject_atomic_claim`);
+    }
+    if (channel === "confirmation")
+      expect((await confirmEmailWithToken(token, { sessionUserId: user.id })).status).toBe("done");
+    else {
+      expect((await resetPasswordWithToken(token, nextPassword))?.emailVerifiedAt).not.toBeNull();
+      expect(await sessionsFor(user.id)).toHaveLength(0);
+      expect((await authenticateWithPassword(user.email, nextPassword)).status).toBe("ok");
+    }
+    expect(await taskTypesFor(user.id)).toEqual(["synthesize_profile"]);
+    expect(await peekAuthToken(token, channel === "confirmation" ? "email_verification" : "password_reset")).toBeNull();
+  });
+
+  it("waits for a concurrent pre-confirmation save and includes it in recovery", async () => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: "claim-race@example.com", password: PASSWORD });
+    let release!: () => void;
+    let locked!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const lockReady = new Promise<void>(resolve => { locked = resolve; });
+    const save = database.transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as Db, user.id, "exclusive");
+      await tx.insert(schema.userSettings).values({ userId: user.id, key: "seedProfile", value: "Operations leadership" });
+      locked();
+      await held;
+    });
+    await lockReady;
+    let claimed = false;
+    const confirmation = completeAccountClaim(database, user.id, { adminEmails: [OWNER] }).then(result => {
+      claimed = true;
+      return result;
+    });
+    try {
+      // Observe the claim waiting on this exact account fence, rather than assuming a delay
+      // proves the competing transaction reached the lock.
+      let waiting = false;
+      for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+        const state = await database.execute<{ waiting: boolean }>(sql`select exists (
+          select 1 from pg_locks l where l.locktype = 'advisory' and l.granted = false
+            and l.classid = 874302 and l.database = (select oid from pg_database where datname = current_database())
+        ) as waiting`);
+        waiting = state.rows[0]?.waiting === true;
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+      expect(claimed).toBe(false);
+    } finally {
+      release();
+      await save;
+    }
+    expect((await confirmation)?.emailVerifiedAt).not.toBeNull();
+    expect(await taskTypesFor(user.id)).toEqual(["synthesize_profile"]);
+  });
+
+  it("lets a gate save waiting behind confirmation queue its own verified follow-up", async () => {
+    await openRegistration();
+    const { user } = await registerWithPassword({ email: "claim-gate-race@example.com", password: PASSWORD });
+    let release!: () => void;
+    let locked!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const lockReady = new Promise<void>(resolve => { locked = resolve; });
+    const usersLock = database.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+      locked();
+      await held;
+    });
+    await lockReady;
+    const confirmation = completeAccountClaim(database, user.id, { adminEmails: [OWNER] });
+    try {
+      let accountLocked = false;
+      for (let attempt = 0; attempt < 100 && !accountLocked; attempt++) {
+        const state = await database.execute<{ locked: boolean }>(sql`select exists (
+          select 1 from pg_locks l where l.locktype = 'advisory' and l.granted = true
+            and l.classid = 874302 and l.objid = hashtext(${user.id})::oid
+            and l.database = (select oid from pg_database where datname = current_database())
+        ) as locked`);
+        accountLocked = state.rows[0]?.locked === true;
+        if (!accountLocked) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(accountLocked).toBe(true);
+      const settings = await getSettingsFor(user.id);
+      const gateSave = saveSettingsAndGate(user.id, { gate: { ...settings.gate, includeKeywords: ["strategy"] } });
+      release();
+      await usersLock;
+      expect((await confirmation)?.emailVerifiedAt).not.toBeNull();
+      await gateSave;
+      expect(await taskTypesFor(user.id)).toContain("rescore_all");
+    } finally {
+      release();
+      await usersLock;
+    }
   });
 
   it("promotes a verified member whose address is listed later, at the next sign-in", async () => {

@@ -8,13 +8,25 @@ Run a small representative observation first:
 node scripts/live-acceptance.mjs --ids anduril,openai,spotify --output docs/live-acceptance-latest.json
 ```
 
-Run all 25 manifest entries only after reviewing the small run:
+Run all entries in the current manifest only after reviewing the small run:
 
 ```bash
 node scripts/live-acceptance.mjs --output docs/live-acceptance-latest.json
 ```
 
-Use `--discovery-only` to omit direct extraction from the labelled source. HTTP-only runs default to three concurrent cases through one shared fetcher. Browser or AI runs default to one case at a time, matching the candidate worker's serial company-verification lane. `--concurrency 1`, `2` or `3` makes the configuration explicit; AI requires one. Concurrent browser runs remain useful stress diagnostics, but shared-browser queue time consumes each case's discovery budget. Discovery uses a 16-logical-fetch and 45-second budget checked between operations; an in-flight adapter operation and the separate extraction phase may take longer. The fetcher honours robots.txt, response-size limits, per-request timeouts, host pacing and server back-off.
+## Offline golden-set composition check
+
+```bash
+node scripts/live-acceptance.mjs --check-corpus
+```
+
+This inspects the selected manifest without HTTP, browser, database or provider initialisation. It prints an inspectable `corpusCoverage` report and exits **0** when SPEC §9 composition is evidenced, **2** when composition is blocked, or **1** for an execution/input error. The ordinary live CLI supplies the complete manifest's required case IDs to the verdict, so `--ids` subsets remain diagnostics even if their own composition passes. A passing composition check establishes only corpus breadth; automatic source choice, manual resolution, posting recall/precision, recipe reproduction and operating capacity have separate gates.
+
+`LiveAcceptanceCase.coverage` holds optional dated `{ evidenceUrl, checkedAt, note }` entries for `customHtml`, `jsHeavy`, `multiRegionWorkday`, `landingToExternalBoard` and `botProtected`. The case must have an independently checked primary source, dated source evidence and a substantive note; each stratum's URL must appear in `sourceEvidenceUrls`. Custom HTML requires a primary `html` source, and multi-region Workday requires a primary `workday` source. ATS breadth counts distinct checked **primary** ATS types, never generic HTML/JSON-LD/RSS or an equivalent alternate board. Duplicate companies cannot inflate coverage.
+
+The [1 October offline preflight](reviews/2026-10-01/implementation-evidence/corpus-qualification/current-manifest-preflight.json) is blocked at **30 distinct cases, seven ATS families, five evidenced custom HTML cases, two JavaScript-heavy cases, one landing-to-board hop, zero evidenced multi-region Workday cases and zero bot-protected cases**. The earlier [20/25 automatic source-agreement observation](reviews/2026-09-29/implementation-evidence/DISCOVERY-PRODUCTION-BUDGET-FINAL-25.md) belongs to the previous 25-case manifest; it has not been rerun or extrapolated to these 30 cases.
+
+Use `--discovery-only` to omit extraction from the labelled source. Schema 2 explicitly names that phase `labelled_source_diagnostic`: it starts from the reference URL even when discovery fails, so its completion is not an end-to-end success. HTML observations traverse HTTP next pages and, when supplied, browser expansion captures. Unverified empty markup, an unfinished control, pagination limits and partial browser results cannot be reported complete. This diagnostic does not exercise the worker’s persisted recipe/cache or AI extraction recovery. HTTP-only runs default to three concurrent cases through one shared fetcher. Browser or AI runs default to one case at a time, matching the candidate worker's serial company-verification lane. `--concurrency 1`, `2` or `3` makes the configuration explicit; AI requires one. Concurrent browser runs remain useful stress diagnostics, but shared-browser queue time consumes each case's discovery budget. Discovery uses a 16-logical-fetch and 45-second budget checked between operations; an in-flight adapter operation and the separate extraction phase may take longer. The fetcher honours robots.txt, response-size limits, per-request timeouts, host pacing and server back-off.
 
 Use `--browser` to attach the worker's production `BrowserRenderer` to that same discovery context. Unless `--ai` is also supplied, this remains an AI-free, database-free run. The renderer has one slot, shares the fetcher's host pacing, and asks the fetcher to enforce robots.txt before every top-level document request, including redirects. The report distinguishes browser attempts, completed renders and `robots_denied`/`browser_error` failures. The runner closes its browser in a `finally` block.
 
@@ -99,3 +111,23 @@ The independent source-specific enumerators found 2,419 posting identities. Adap
 The oracle is machine-derived and independently implemented, not human-reviewed. It does not alter the acceptance manifest or its labels and does not establish the SPEC threshold. In particular, four ATS types and two HTML sources remain short of the golden-set composition of at least eight ATS types and five custom HTML pages.
 
 The generic HTML location extraction was subsequently corrected. A no-network replay against the same response hashes is in `live-snapshots/2026-09-20-extraction-accuracy-after-fix/extraction-accuracy-report.json`: all 2,419 identities remain true positives, with no false positives, false negatives or title/location/URL mismatches. The pre-fix report is retained separately rather than rewritten.
+
+## Optional posting-identity references (schema 2)
+
+```sh
+pnpm acceptance:live -- --browser --ids datadog,zapier --concurrency 1 \
+  --posting-references docs/reviews/2026-09-29/implementation-evidence/source-audit/posting-references.json \
+  --output docs/live-acceptance-references.json
+```
+
+The input is `{ "snapshots": [...] }`. Each snapshot contains `caseId`, `sourceUrl`, `capturedAt` (ISO timestamp with timezone), `evidenceUrl`, `rawSha256`, optional sibling `rawPath`, `enumerationMethod`, `reviewStatus`, `completeScope`, and exact `postingUrls`. A supplied raw file must match its SHA-256 before any live requests run. A reference cannot qualify without that raw file and hash check, or unless its source matches the case’s labelled source or explicitly reviewed equivalent. API snapshots for an unattested first-party HTML site remain useful diagnostics but are not a bound full-site label. Duplicate/unknown case references or malformed metadata are refused.
+
+For a human-reviewed reference to qualify, also record `reviewAttestation` with `reviewer` (a non-empty reviewer name or ID), `reviewedAt` (ISO timestamp with timezone), `scopeEvidence` (at least 20 characters and three words describing which listing pages and filters the reviewer checked), and `fullScopeAttested: true` when `completeScope: true`. The reviewer must independently check the unfiltered full listing; an automated count or adapter diagnostic does not supply this attestation. Capture must precede or equal review, and review must precede or equal the observation. Malformed supplied attestation is refused; an older snapshot with `human_reviewed` and `completeScope: true` but no `reviewAttestation` stays readable as a diagnostic and explicitly does not qualify. Do not fill in reviewer identity or scope evidence from machine output. These checks validate recorded provenance syntax and chronology; they cannot authenticate a person or prove that the claimed review happened. The minimum text length is not a quality assessment of the scope evidence.
+
+Per-case comparisons report missing and unexpected unique URLs, duplicates, recall and precision. `observedRoleCount` and count agreement use unique canonical posting URLs; `rawObservedRoleCount` retains the adapter row count. Fragments and the known tracking fields `utm_*`/`gh_src` are ignored; requisition, location and other identity/scope parameters are preserved. There is no title similarity or fuzzy URL matching. Empty-denominator ratios are reported as 1; the complementary metric still catches missing or unexpected postings. Counts alone cannot establish identity accuracy.
+
+`machine_enumerated` snapshots remain diagnostic even at perfect agreement. Qualification requires an independently human-reviewed, explicitly attested complete-scope reference captured no more than 24 hours before the observation, no future timestamp, and a complete extraction. Only qualifying comparisons contribute to acceptance posting metrics. A subset run can never qualify the full corpus: the report names selected and required IDs and blocks full-corpus acceptance while any required case is unselected. Every selected case needs its own qualifying reference; each case must meet its recall threshold (HTML 90%, other adapters 98%) and precision 98%, so a large board cannot average away a small board’s failure. Source agreement, manual count checks where supplied, and extraction completion remain separate gates.
+
+Scoring requires unique selected case IDs and exactly one result per reported case. Duplicate selected IDs, duplicate results and results for unknown IDs are rejected before aggregation; a selected case with no result remains a blocked diagnostic, not a passing result. A directly observed wrong automatic source, labelled count disagreement or posting-identity failure still fails even when another result is missing. A missing case alone is not counted as an observed count disagreement.
+
+The two initial public API snapshots have `reviewStatus: "machine_enumerated"` and `completeScope: false`; neither certifies the complete first-party site or satisfies acceptance. A live page can change after snapshot capture, so discrepancies require inspection rather than automatically changing the reference.

@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@ava/core";
 import type { Db } from "./client";
 import { tasks } from "./schema";
@@ -13,7 +14,8 @@ export interface EnqueueOptions {
    * priority and start time instead of dropping the request. A person's request — a shortlist
    * score, a gate re-evaluation after a save — used to be absorbed into the background row already
    * waiting for the same work, and waited at that row's place in the queue. The waiting row's
-   * payload never changes. A CV build, whose key is held while it runs as well, is never promoted:
+   * payload normally stays as it was, except that a forced profile synthesis stays forced. A CV
+   * build, whose key is held while it runs as well, is never promoted:
    * its request is dropped as before.
    */
   promote?: boolean;
@@ -88,17 +90,58 @@ export async function enqueueStandard<T extends TaskType>(db: TaskWriter, type: 
  * The ids of the rows actually inserted: a deduplicated or promoted row is not one. When anything
  * was inserted or brought forward, a listening worker is woken in the same transaction.
  */
-async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean): Promise<string[]> {
+async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean): Promise<Array<{ id: string; payload: Record<string, unknown>; inserted: boolean }>> {
   if (!rows.length) return [];
+  // Without promotion, the first row for a key supplies its payload and scheduling options.
+  // Combine only the force bit before splitting inserts from forced UPSERTs, so the split cannot
+  // let a later forced request replace that first row's priority or start time.
+  const batch: EnqueueRow[] = [];
+  const synthesisByKey = new Map<string, number>();
+  for (const row of rows) {
+    if (!promote && row.type === "synthesize_profile" && row.dedupeKey) {
+      const index = synthesisByKey.get(row.dedupeKey);
+      if (index !== undefined) {
+        if (row.payload.force === true) {
+          const first = batch[index]!;
+          batch[index] = { ...first, payload: { ...first.payload, force: true } };
+        }
+        continue;
+      }
+      synthesisByKey.set(row.dedupeKey, batch.length);
+    }
+    batch.push(row);
+  }
   // A CV build's key lives in an index of its own, and one statement can promote against one index.
-  const promoted = promote ? rows.filter(row => row.type !== "generate_cv") : [];
-  const dropped = promote ? rows.filter(row => row.type === "generate_cv") : rows;
-  const ids: string[] = [];
+  const promoted = promote ? batch.filter(row => row.type !== "generate_cv") : [];
+  const forced = promote ? [] : batch.filter(row => row.type === "synthesize_profile" && row.payload.force === true);
+  const dropped = promote ? batch.filter(row => row.type === "generate_cv")
+    : batch.filter(row => row.type !== "synthesize_profile" || row.payload.force !== true);
+  const accepted: Array<{ id: string; payload: Record<string, unknown>; inserted: boolean }> = [];
   let written = false;
   if (dropped.length) {
-    const inserted = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id });
-    ids.push(...inserted.map(row => row.id));
+    const inserted = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id, payload: tasks.payload });
+    accepted.push(...inserted.map(row => ({ ...row, inserted: true })));
     written ||= inserted.length > 0;
+  }
+  if (forced.length) {
+    // A queued weekly synthesis may be waiting when a person pins or answers something. Upgrade
+    // that one row durably, without changing its priority or time.
+    const byKey = new Map<string, EnqueueRow>();
+    const unkeyed: EnqueueRow[] = [];
+    for (const row of forced) {
+      if (row.dedupeKey) byKey.set(row.dedupeKey, row);
+      else unkeyed.push(row);
+    }
+    const upserted = await db.insert(tasks).values([...byKey.values(), ...unkeyed].map(valuesFor))
+      .onConflictDoUpdate({
+        target: tasks.dedupeKey,
+        targetWhere: sql`${tasks.status} = 'queued' and ${tasks.startedAt} is null and ${tasks.type} <> 'generate_cv' and ${tasks.dedupeKey} is not null`,
+        set: { payload: sql`jsonb_set(${tasks.payload}, '{force}', 'true'::jsonb, true)` },
+        setWhere: sql`${tasks.type} = 'synthesize_profile' and ${tasks.payload}->'force' is distinct from 'true'::jsonb`,
+      })
+      .returning({ id: tasks.id, payload: tasks.payload, inserted: sql<boolean>`(xmax = 0)` });
+    accepted.push(...upserted);
+    written ||= upserted.length > 0;
   }
   if (promoted.length) {
     const upserted = await db.insert(tasks).values(promoted.map(valuesFor))
@@ -109,18 +152,26 @@ async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean)
         // A promoted score is one somebody now waits on, so it stops being background work.
         set: {
           priority: sql`least(${tasks.priority}, excluded.priority)`, runAfter: sql`least(${tasks.runAfter}, excluded.run_after)`,
-          payload: sql`case when excluded.payload ? 'background' then ${tasks.payload} else ${tasks.payload} - 'background' end`,
+          payload: sql`case when ${tasks.type} = 'synthesize_profile'
+            then case when ${tasks.payload}->'force' = 'true'::jsonb or excluded.payload->'force' = 'true'::jsonb
+              then jsonb_set(${tasks.payload}, '{force}', 'true'::jsonb, true) else ${tasks.payload} end
+            when ${tasks.type} = 'admit_scores'
+            then case when ${tasks.payload} ? 'background' and excluded.payload ? 'background'
+              then excluded.payload else excluded.payload - 'background' end
+            when excluded.payload ? 'background' then ${tasks.payload} else ${tasks.payload} - 'background' end`,
         },
         setWhere: sql`${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after
-          or (${tasks.payload} ? 'background' and not excluded.payload ? 'background')`,
+          or (${tasks.payload} ? 'background' and not excluded.payload ? 'background')
+          or (${tasks.type} = 'synthesize_profile' and excluded.payload->'force' = 'true'::jsonb
+            and ${tasks.payload}->'force' is distinct from 'true'::jsonb)`,
       })
-      .returning({ id: tasks.id, inserted: sql<boolean>`(xmax = 0)` });
-    ids.push(...upserted.filter(row => row.inserted).map(row => row.id));
+      .returning({ id: tasks.id, payload: tasks.payload, inserted: sql<boolean>`(xmax = 0)` });
+    accepted.push(...upserted);
     // A promoted row is work that can start sooner, which is worth a wake as much as a new one.
     written ||= upserted.length > 0;
   }
   if (written) await notifyTaskWorkers(db);
-  return ids;
+  return accepted;
 }
 
 /**
@@ -136,14 +187,15 @@ export async function enqueueTask(
   payload: Record<string, unknown>,
   options: EnqueueOptions = {},
 ): Promise<string | null> {
-  const [id] = await insertTasks(db, [{ ...options, type, payload }], options.promote === true);
-  return id ?? null;
+  const [row] = await insertTasks(db, [{ ...options, type, payload }], options.promote === true);
+  return row?.inserted ? row.id : null;
 }
 
 /**
  * Insert many tasks in multi-row statements, with the defaults `enqueueTask` uses and the same
  * dedupe rule: a row whose key already has a task waiting to start — or is repeated within the
- * batch — is skipped. Returns how many were inserted. `chunkSize` bounds one statement's
+ * batch — is skipped, except that a forced profile synthesis upgrades a queued match. Returns
+ * how many were inserted. `chunkSize` bounds one statement's
  * parameters.
  *
  * With `promote`, a batch that names one key twice keeps its most urgent row, because one
@@ -157,26 +209,28 @@ export async function enqueueTasks(db: TaskWriter, rows: EnqueueRow[], chunkSize
     for (const row of rows) {
       if (!row.dedupeKey) { unkeyed.push(row); continue; }
       const held = byKey.get(row.dedupeKey);
-      if (!held || (row.priority ?? 5) < (held.priority ?? 5)) byKey.set(row.dedupeKey, row);
+      const chosen = !held || (row.priority ?? 5) < (held.priority ?? 5) ? row : held;
+      if (chosen.type === "synthesize_profile" && (held?.payload.force === true || row.payload.force === true))
+        byKey.set(row.dedupeKey, { ...chosen, payload: { ...chosen.payload, force: true } });
+      else byKey.set(row.dedupeKey, chosen);
     }
     batch = [...byKey.values(), ...unkeyed];
   }
   let inserted = 0;
   for (let offset = 0; offset < batch.length; offset += chunkSize)
-    inserted += (await insertTasks(db, batch.slice(offset, offset + chunkSize), promote)).length;
+    inserted += (await insertTasks(db, batch.slice(offset, offset + chunkSize), promote)).filter(row => row.inserted).length;
   return inserted;
 }
 
 /**
- * Queue a score for each (account, role) and say so on the account's view, so the table reads
- * "scoring" rather than a blank it cannot tell from "not scored: budget spent". Through
- * `enqueueTasks`, so a listening worker is woken rather than left to its idle poll. A pair's
+ * Queue a score for each (account, role) admitted by the worker. Through
+ * `insertTasks`, so a listening worker is woken rather than left to its idle poll. A pair's
  * `priority` replaces the ordinary one; `promote` brings a waiting score up to it. `background`
  * marks the tasks for the batch collector (a rescore pass nobody waits on). Returns how many tasks
  * were inserted.
  */
 export async function queueScoring(
-  db: TaskWriter,
+  db: Db,
   pairs: ReadonlyArray<{ userId: string; jobId: string; priority?: number }>,
   now: Date,
   opts: { promote?: boolean; background?: boolean } = {},
@@ -184,12 +238,64 @@ export async function queueScoring(
   let queued = 0;
   for (let offset = 0; offset < pairs.length; offset += 250) {
     const batch = pairs.slice(offset, offset + 250);
-    queued += await enqueueTasks(db, batch.map(({ userId, jobId, priority }) =>
-      taskRow("score_job", opts.background ? { userId, jobId, background: true } : { userId, jobId },
-        priority === undefined ? {} : { priority })), 250, opts.promote);
-    await db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${now}
-      from jsonb_to_recordset(${JSON.stringify(batch.map(({ userId, jobId }) => ({ userId, jobId })))}::jsonb) as v("userId" uuid, "jobId" uuid)
-      where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
+    queued += await db.transaction(async tx => {
+      // A score request, orphan repair and provider-batch hand-back all lock the view before
+      // touching task rows. Keep this exported helper in the same order even outside admission.
+      await tx.execute(sql`select uj.user_id, uj.job_id from user_jobs uj
+        join jsonb_to_recordset(${JSON.stringify(batch.map(({ userId, jobId }) => ({ userId, jobId })))}::jsonb)
+          as v("userId" uuid, "jobId" uuid) on uj.user_id = v."userId" and uj.job_id = v."jobId"
+        order by uj.user_id, uj.job_id for update of uj`);
+      const accepted = await insertTasks(tx, batch.map(({ userId, jobId, priority }) =>
+        taskRow("score_job", opts.background ? { userId, jobId, background: true } : { userId, jobId },
+          priority === undefined ? {} : { priority })), opts.promote === true);
+      if (accepted.length) await tx.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${now}
+        from jsonb_to_recordset(${JSON.stringify(accepted.map(row => ({ userId: row.payload.userId, jobId: row.payload.jobId })))}::jsonb) as v("userId" uuid, "jobId" uuid)
+        where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
+      return accepted.filter(row => row.inserted).length;
+    });
+  }
+  return queued;
+}
+
+/**
+ * Record exact web-origin score requests without claiming a model is available. The request task
+ * is the durable ledger: a score result may change a view's state before admission runs. Callers
+ * may pass a transaction, in which case request, view state and wake-up commit together.
+ */
+export async function requestScores(
+  db: Db,
+  pairs: ReadonlyArray<{ userId: string; jobId: string }>,
+  now: Date,
+  opts: { priority?: number; background?: boolean; onlyUnscored?: boolean } = {},
+): Promise<number> {
+  const byUser = new Map<string, Set<string>>();
+  for (const { userId, jobId } of pairs) {
+    const jobs = byUser.get(userId) ?? new Set<string>();
+    jobs.add(jobId);
+    byUser.set(userId, jobs);
+  }
+  let queued = 0;
+  for (const [userId, ids] of byUser) {
+    const jobIds = [...ids].sort();
+    for (let offset = 0; offset < jobIds.length; offset += 250) {
+      const chunk = jobIds.slice(offset, offset + 250);
+      queued += await db.transaction(async tx => {
+        const requested = await tx.execute<{ job_id: string }>(sql`update user_jobs uj set score_state = 'requested', score_state_at = ${now}
+          where uj.user_id = ${userId}::uuid and uj.job_id in (${sql.join(chunk.map(id => sql`${id}::uuid`), sql`, `)})
+            and (${!opts.onlyUnscored} or (uj.fit_score is null and uj.scored_at is null))
+          returning uj.job_id`);
+        const actual = requested.rows.map(row => row.job_id).sort();
+        if (!actual.length) return 0;
+        const requestKey = createHash("sha1").update(JSON.stringify([actual, !!opts.onlyUnscored])).digest("hex");
+        const payload = { userId, jobIds: actual, requestKey,
+          ...(opts.background ? { background: true } : {}),
+          ...(opts.onlyUnscored ? { onlyUnscored: true } : {}) };
+        const admitted = await insertTasks(tx, [taskRow("admit_scores", payload, {
+          priority: opts.priority ?? (opts.background ? 4 : 1),
+        })], true);
+        return admitted.filter(row => row.inserted).length;
+      });
+    }
   }
   return queued;
 }

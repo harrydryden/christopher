@@ -8,11 +8,11 @@
  * follower and posting, created only once the posting passes that follower's gate.
  */
 import { withSpan } from "../otel";
-import { schema, taskRow, enqueueTasks, queueScoring, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, type Task, type ViewUpdate } from "@ava/db";
+import { schema, taskRow, enqueueTasks, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, locationRevisionFor, type Task, type ViewUpdate } from "@ava/db";
 import {
   ats,
-  aiBudgetWindowStart,
   classifyScan,
+  deriveExternalKey,
   keyPostings,
   listingShrank,
   looksRemote,
@@ -35,18 +35,24 @@ import {
   type SourceSpec,
   type SystemSettings,
   SOURCE_FAILING_AFTER,
+  stripHtml,
 } from "@ava/core";
-import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, or, isNull, gte } from "drizzle-orm";
 import type { CareerSource } from "@ava/db";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
-import { accountsWithBudget } from "../budget";
+import { admitScores } from "../score-admission";
 import { HostBusyError, statusKind } from "../fetcher";
 import { withResourceLease } from "../lease";
+import { TaskDeferred } from "../queue";
+import { appendHtmlCheckpointPage, clearHtmlCheckpoint, htmlSourceFingerprint, HtmlCheckpointChanged,
+  HTML_GENERATION_MAX_PAGES, loadHtmlCheckpoint, pruneHtmlCheckpoints, recordHtmlCheckpointMetrics, restartHtmlCheckpoint,
+  type HtmlCheckpoint } from "../html-scan-checkpoint";
 import { log } from "../log";
+import { listingCaptureCount, listingCaptures } from "../listing-captures";
 import { loadUserSettingsMany } from "../settings";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
@@ -87,6 +93,11 @@ const budgetSpentReason = (limit: number) => `Scan stopped after its budget of $
  * wait. Past this the source records a failed scan for the day (counted against nothing).
  */
 const MAX_HOST_BUSY_DEFERRALS = 6;
+/** One HTTP listing pass stays comfortably below the three-minute task deadline at a 2s host pace. */
+const HTML_PAGES_PER_TASK_PASS = 20;
+const HTML_GENERATION_MAX_POSTINGS = 5_000;
+/** Leave at least eighty seconds of a three-minute claim for final reconciliation and queue work. */
+export const HTML_CLAIM_FETCH_BUDGET_MS = 100_000;
 
 /**
  * Taken off a failing source's backoff so that "one day" means the next daily run: the scan ran
@@ -123,19 +134,32 @@ export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<u
 }
 
 async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
+  const claimStartedAtMs = Date.now();
   const payload = task.payload as ScanPayload;
   const settings = await deps.settings();
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   if (!company) return { skipped: "company not found" };
   if (company.status !== "active") return { skipped: "company is not active" };
 
+  // A final scan commit may outlive the queue's completion write. The task/source marker lets a
+  // reclaimed task skip that source without repeating user admissions, miss counts or closure.
+  const committed = await deps.db.select({ sourceId: schema.scans.sourceId }).from(schema.scans).where(eq(schema.scans.taskId, task.id));
+  const completedSourceIds = new Set(committed.map(row => row.sourceId));
+  // The scan transaction commits before this idempotent housekeeping step. Reclaimed work must
+  // finish it even when the scan marker says not to reconcile the source a second time.
+  for (const sourceId of completedSourceIds) await archiveNonMatches(deps.db, { sourceId });
+  await pruneHtmlCheckpoints(deps.db, deps.now());
+
   let sources = await deps.db
     .select()
     .from(schema.careerSources)
-    .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"]), payload.trigger === "schedule" ? or(isNull(schema.careerSources.nextScanAt), sql`${schema.careerSources.nextScanAt} <= ${deps.now()}`) : undefined));
+    .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"]), payload.trigger === "schedule" ? or(isNull(schema.careerSources.nextScanAt), sql`${schema.careerSources.nextScanAt} <= ${deps.now()}`) : undefined))
+    .orderBy(schema.careerSources.createdAt, schema.careerSources.id);
 
   if (payload.sourceIds) sources = sources.filter(s => payload.sourceIds!.includes(s.id));
+  sources = sources.filter(s => !completedSourceIds.has(s.id));
   if (sources.length === 0) {
+    if (completedSourceIds.size) return { sources: completedSourceIds.size, resumed: true };
     log.warn("company has no active source", { company: company.name });
     return { skipped: "no active source" };
   }
@@ -143,11 +167,14 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   // The scan is shared, so one follower's "rescan now" must not fetch a board the system read
   // minutes ago for someone else. A source with no scan yet (just confirmed) is always read.
   if (payload.trigger !== "schedule" && !payload.scanRunId) {
+    const staged = await deps.db.select({ sourceId: schema.htmlScanGenerations.sourceId }).from(schema.htmlScanGenerations)
+      .where(eq(schema.htmlScanGenerations.taskId, task.id));
+    const stagedIds = new Set(staged.map(row => row.sourceId));
     const cutoff = new Date(deps.now().getTime() - MANUAL_RESCAN_INTERVAL_MS);
     const recent = await deps.db.select({ sourceId: schema.scans.sourceId }).from(schema.scans)
       .where(and(inArray(schema.scans.sourceId, sources.map(s => s.id)), sql`${schema.scans.startedAt} >= ${cutoff}`, inArray(schema.scans.status, ["ok", "partial"])));
     const fresh = new Set(recent.map(r => r.sourceId));
-    const stale = sources.filter(s => !fresh.has(s.id));
+    const stale = sources.filter(s => stagedIds.has(s.id) || !fresh.has(s.id));
     if (stale.length === 0) return { skipped: "scanned recently", sources: sources.length };
     sources = stale;
   }
@@ -156,12 +183,20 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   let totalClosed = 0;
   const statuses: ScanStatus[] = [];
   const retries = payload.hostBusyRetries ?? 0;
+  const continuationBusyRetries = (task.result as { busyRetries?: number } | null)?.busyRetries ?? 0;
   const deferred: string[] = [];
   let retryAt: Date | null = null;
   for (const source of sources) {
     const outcome = await withSpan("scan.fetch", { "source.type": source.type }, () =>
-      scanSource(deps, company, source, settings, payload.scanRunId ?? null, { deferWhenHostBusy: retries < MAX_HOST_BUSY_DEFERRALS }));
+      scanSource(deps, company, source, settings, payload.scanRunId ?? null, { deferWhenHostBusy: Math.max(retries, continuationBusyRetries) < MAX_HOST_BUSY_DEFERRALS, taskId: task.id, taskAttempt: task.attempts, claimStartedAtMs }));
+    if (outcome.continueAt) {
+      return new TaskDeferred(outcome.continueAt, { sourceId: source.id, htmlPages: outcome.pagesStaged,
+        busyRetries: continuationBusyRetries, reason: "Reading a paged HTML listing" });
+    }
     if (outcome.retryAt) {
+      const [checkpoint] = source.type === "html" ? await deps.db.select({ id: schema.htmlScanGenerations.id, pageCount: sql<number>`(select count(*)::int from html_scan_pages p where p.generation_id = ${schema.htmlScanGenerations.id})` })
+        .from(schema.htmlScanGenerations).where(and(eq(schema.htmlScanGenerations.taskId, task.id), eq(schema.htmlScanGenerations.sourceId, source.id))).limit(1) : [];
+      if (checkpoint) return new TaskDeferred(outcome.retryAt, { sourceId: source.id, htmlPages: checkpoint.pageCount, busyRetries: continuationBusyRetries + 1, reason: "Host pacing paused HTML listing continuation" });
       deferred.push(source.id);
       if (!retryAt || outcome.retryAt > retryAt) retryAt = outcome.retryAt;
       continue;
@@ -190,6 +225,9 @@ interface SourceOutcome {
   postingsFound: number;
   /** Set when nothing was read because the host is paced until then; no scan was recorded. */
   retryAt?: Date;
+  /** The same task will resume this source from its durable HTML page checkpoint. */
+  continueAt?: Date;
+  pagesStaged?: number;
 }
 
 interface Follower {
@@ -202,6 +240,37 @@ interface Follower {
 /** Description-based matching needs the detail text before the gate can decide anything. */
 function needsDescription(gate: GateSettings): boolean {
   return gate.matchFields.includes("description") && gate.includeKeywords.length > 0;
+}
+
+type LocationState = Pick<typeof schema.jobs.$inferSelect,
+  "location" | "locations" | "locationResolution" | "locationLabel" | "locationRevision" | "locationFetchedAt" | "locationError">;
+
+/** A counted Workday label is not a place. Keep a detail result while its listing revision stands. */
+function locationStateFor(source: CareerSource, posting: RawPosting,
+  stored: LocationState | undefined, externalKey: string, now: Date): LocationState | null {
+  if (source.type !== "workday") return null;
+  if (posting.locationResolution !== "pending" || !posting.locationLabel) {
+    return stored?.locationResolution ? {
+      location: posting.location ?? null, locations: posting.locations ?? (posting.location ? [posting.location] : []),
+      locationResolution: null, locationLabel: null, locationRevision: null, locationFetchedAt: null, locationError: null,
+    } : null;
+  }
+  const locationRevision = locationRevisionFor({ sourceId: source.id, externalKey, url: posting.url,
+    title: posting.title, locationLabel: posting.locationLabel }, now);
+  if (stored?.locationRevision === locationRevision && stored.locationResolution === "resolved" && stored.locations.length) {
+    return { location: stored.location, locations: stored.locations, locationResolution: "resolved",
+      locationLabel: posting.locationLabel, locationRevision, locationFetchedAt: stored.locationFetchedAt, locationError: null };
+  }
+  if (stored?.locationRevision === locationRevision && stored.locationResolution === "unavailable") {
+    return { location: stored.location, locations: stored.locations, locationResolution: "unavailable", locationLabel: posting.locationLabel,
+      locationRevision, locationFetchedAt: stored.locationFetchedAt, locationError: stored.locationError };
+  }
+  // A refresh is unproven until its detail arrives. Keep the last resolved names as provisional
+  // evidence for existing views, but the pending flag still blocks all new restricted admissions.
+  const lastNames = stored?.locationResolution && stored.locations.length ? stored.locations : [];
+  return { location: lastNames.length ? stored!.location : null, locations: lastNames,
+    locationResolution: "pending", locationLabel: posting.locationLabel, locationRevision,
+    locationFetchedAt: lastNames.length ? stored!.locationFetchedAt : null, locationError: null };
 }
 
 /**
@@ -221,23 +290,13 @@ async function loadFollowers(db: WorkerDeps["db"], companyId: string, opts: { lo
   });
 }
 
-/**
- * The followers among `wanted` with budget left this month, in one read for them all. Same rule as
- * `aiBudgetStop`: an account whose spend plus what its calls in flight hold has reached its budget
- * has its roles left unscored, so a month a running CV build is holding queues no scores to fail.
- */
-function followersWithBudget(db: WorkerDeps["db"], followers: Follower[], wanted: Set<string>, now: Date): Promise<Set<string>> {
-  return accountsWithBudget(db, followers.filter(f => wanted.has(f.userId))
-    .map(f => ({ userId: f.userId, since: aiBudgetWindowStart(now, f.settings.aiBudgetResetAt), budgetUsd: f.settings.aiBudgetUsd })));
-}
-
 async function scanSource(
   deps: WorkerDeps,
   company: typeof schema.companies.$inferSelect,
   source: CareerSource,
   settings: SystemSettings,
   scanRunId: string | null,
-  opts: { deferWhenHostBusy?: boolean } = {},
+  opts: { deferWhenHostBusy?: boolean; taskId?: string; taskAttempt?: number; claimStartedAtMs?: number } = {},
 ): Promise<SourceOutcome> {
   const started = Date.now();
   // Recorded on the worker's clock so the manual-rescan guard compares like with like.
@@ -283,14 +342,17 @@ async function scanSource(
   const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
     // Only the first request of a scan is the listing itself; a description, a departments index or
     // a second listing page says nothing about whether the board as a whole moved, so only this one
-    // asks to be revalidated and only this one may be answered from the last snapshot.
+    // asks to be revalidated. HTML never reuses the full listing from this first-page signal.
     const isListing = requests === 0;
     spend();
     let response = await baseCtx.fetchText(url, isListing ? { ...init, revalidateLargeBody: true } : init);
     count(response);
     if (isListing) listingHash = response.contentHash;
     if (isListing && response.unchanged) {
-      const stored = await lastOkSnapshot();
+      // Reuse the whole listing only when the adapter explicitly proves that its first response
+      // contains every posting and mapped field. A paged feed's first page says nothing about later
+      // pages, even if its bytes are identical to yesterday's.
+      const stored = ats.getAdapter(source.type).completeFromFirstResponse ? await lastOkSnapshot() : null;
       if (stored && stored.postings.length > 0 && stored.listingHash && stored.listingHash === response.contentHash) throw new ListingUnchanged(stored);
       // Nothing to reuse: a 304 left no body, so ask again without the validators.
       if (!response.body) {
@@ -329,12 +391,34 @@ async function scanSource(
   let incomplete = false;
   let updatedRecipe: HtmlRecipe | undefined;
   let reusedListing = false;
+  let longHtmlListing = false;
   let hostBusy: HostBusyError | null = null;
+  let publicationOnly = false;
+  let publicationMetricStartedAtMs: number | undefined;
+  let continuationAt: Date | undefined;
+  let stagedPageCount: number | undefined;
+  let unstagedPositivePostings: RawPosting[] = [];
+  let unstagedObservedAt: Date | undefined;
 
   try {
     if (source.type === "html") {
-      const outcome = await scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot);
+      const outcome = await scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot, opts.taskId, undefined, opts.claimStartedAtMs);
+      if (outcome.continueAt) {
+        const metricsThroughMs = Date.now();
+        await recordHtmlCheckpointMetrics(deps, opts.taskId!, source,
+          { requests, fetchedBytes, revalidated, activeDurationMs: metricsThroughMs - started }, opts.taskAttempt ?? 1);
+        publicationOnly = true;
+        publicationMetricStartedAtMs = metricsThroughMs;
+        continuationAt = outcome.continueAt;
+        stagedPageCount = outcome.pagesStaged;
+        // Descriptions are queued from published roles; fetching them inline would extend the
+        // listing claim past its page budget and delay the first useful results.
+        longHtmlListing = true;
+      }
+      longHtmlListing ||= outcome.longListing ?? false;
       postings = outcome.postings;
+      unstagedPositivePostings = outcome.extraPostings ?? [];
+      unstagedObservedAt = outcome.extraObservedAt;
       fetchMethod = outcome.method;
       droppedByValidation = outcome.dropped;
       contentHash = outcome.contentHash;
@@ -385,8 +469,43 @@ async function scanSource(
   }
 
   if (hostBusy && opts.deferWhenHostBusy) {
-    log.info("host busy: source scan deferred", { company: company.name, url: source.url, host: hostBusy.host, retryAt: hostBusy.retryAt.toISOString() });
-    return { status: "failed", newCount: 0, closedCount: 0, postingsFound: 0, retryAt: hostBusy.retryAt };
+    if (opts.taskId && source.type === "html") {
+      const [generation] = await deps.db.select({ id: schema.htmlScanGenerations.id }).from(schema.htmlScanGenerations)
+        .where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId), eq(schema.htmlScanGenerations.sourceId, source.id))).limit(1);
+      if (generation) {
+        const metricsThroughMs = Date.now();
+        await recordHtmlCheckpointMetrics(deps, opts.taskId, source,
+          { requests, fetchedBytes, revalidated, activeDurationMs: metricsThroughMs - started }, opts.taskAttempt ?? 1);
+        publicationMetricStartedAtMs = metricsThroughMs;
+      }
+    }
+    if (source.type === "html" && opts.taskId) {
+      publicationOnly = true;
+      continuationAt = hostBusy.retryAt;
+      postings = [];
+    } else {
+      log.info("host busy: source scan deferred", { company: company.name, url: source.url, host: hostBusy.host, retryAt: hostBusy.retryAt.toISOString() });
+      return { status: "failed", newCount: 0, closedCount: 0, postingsFound: 0, retryAt: hostBusy.retryAt };
+    }
+  }
+  if (source.type === "html" && opts.taskId && !publicationOnly) {
+    const [pending] = await deps.db.select({
+      published: schema.htmlScanGenerations.publishedPageCount,
+      pages: sql<number>`(select count(*)::int from html_scan_pages p where p.generation_id = ${schema.htmlScanGenerations.id})`,
+    }).from(schema.htmlScanGenerations).where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId),
+      eq(schema.htmlScanGenerations.sourceId, source.id))).limit(1);
+    // A rolling old worker can leave more than one unpublished batch. Drain it over claims before
+    // the terminal transaction clears the checkpoint; never silently lose the tail.
+    if (pending && pending.pages - pending.published > HTML_PAGES_PER_TASK_PASS) {
+      const metricsThroughMs = Date.now();
+      await recordHtmlCheckpointMetrics(deps, opts.taskId, source,
+        { requests, fetchedBytes, revalidated, activeDurationMs: metricsThroughMs - started }, opts.taskAttempt ?? 1);
+      publicationOnly = true;
+      publicationMetricStartedAtMs = metricsThroughMs;
+      continuationAt = new Date(deps.now().getTime() + 1000);
+      stagedPageCount = pending.pages;
+      longHtmlListing = true;
+    }
   }
 
   const previousOk = await deps.db
@@ -462,14 +581,21 @@ async function scanSource(
   const unresolved = new Set<string>();
   const deferred = new Set<string>();
   if (fetchOk && descriptionGates.length) {
-    if (ats.descriptionsFetchedPerPosting(source.type)) {
+    // A counted Workday place cannot pass a restricted location gate yet, so the ordinary inline
+    // admission planner would not even consider its description. Queue that text independently:
+    // either detail may finish first, and the second re-runs the follower gate.
+    if (source.type === "workday") for (const posting of postings)
+      if (posting.locationResolution === "pending" && !posting.descriptionText && !savedByUrl.get(posting.url)?.hasText)
+        deferred.add(posting.url);
+    if (ats.descriptionsFetchedPerPosting(source.type) || longHtmlListing) {
       for (const posting of postings) {
         if (!posting.descriptionText && !savedByUrl.get(posting.url)?.hasText) deferred.add(posting.url);
       }
     } else {
       // The listing is read; what descriptions may cost is the ordinary budget from here.
       requestLimit = Math.min(requestLimit, requests + MAX_REQUESTS_PER_SCAN);
-      for (const gate of descriptionGates) for (const url of await prepareForAdmission(postings, spec, ctx, gate, rejectionCache)) unresolved.add(url);
+      for (const gate of descriptionGates) for (const url of await prepareForAdmission(
+        postings.filter(posting => !deferred.has(posting.url)), spec, ctx, gate, rejectionCache)) unresolved.add(url);
     }
   }
   await rejectionCache.save();
@@ -517,23 +643,90 @@ async function scanSource(
   await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
   const [current] = await tx.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)).for("update");
   // A user can disable or replace a source while the network request is in flight.
-  if (!current || !["active", "failing"].includes(current.status) || current.url !== source.url || current.apiUrl !== source.apiUrl) {
+  if (!current || !["active", "failing"].includes(current.status) || htmlSourceFingerprint(current) !== htmlSourceFingerprint(source)) {
     return { status: "partial", newCount: 0, closedCount: 0, postingsFound: postings.length };
   }
+  if (opts.taskId) {
+    const [already] = await tx.select().from(schema.scans).where(and(eq(schema.scans.taskId, opts.taskId), eq(schema.scans.sourceId, source.id))).limit(1);
+    if (already) return { status: already.status, newCount: already.newCount, closedCount: already.closedCount, postingsFound: already.postingsFound };
+  }
+  // The source is locked first in every checkpoint transaction. Read the durable unpublished
+  // interval only after locking its generation; a reclaimed claimant cannot replay old pages.
+  const [generation] = opts.taskId && source.type === "html"
+    ? await tx.select().from(schema.htmlScanGenerations)
+      .where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId), eq(schema.htmlScanGenerations.sourceId, source.id))).for("update").limit(1)
+    : [];
+  if (publicationOnly && !generation) throw new HtmlCheckpointChanged("HTML publication checkpoint disappeared");
+  if (generation && generation.sourceFingerprint !== htmlSourceFingerprint(source)) {
+    throw new HtmlCheckpointChanged("HTML publication source changed");
+  }
+  const unpublished = generation ? await tx.select().from(schema.htmlScanPages)
+    .where(and(eq(schema.htmlScanPages.generationId, generation.id), gte(schema.htmlScanPages.pageIndex, generation.publishedPageCount)))
+    .orderBy(schema.htmlScanPages.pageIndex).limit(HTML_PAGES_PER_TASK_PASS) : [];
+  const observedByKey = new Map<string, Date>();
+  const latestByKey = new Map<string, RawPosting>();
+  for (const page of unpublished) for (const posting of (page.postings as SnapshotPosting[]).map(revivePosting)) {
+    const key = deriveExternalKey(posting);
+    // A rolling old worker may omit observed_at. Its database sentinel means only that this
+    // generation had started, never that the role was seen in 1970 or at publication time.
+    const observedAt = page.observedAt.getTime() === 0 ? generation!.startedAt : page.observedAt;
+    const previous = observedByKey.get(key);
+    if (previous && previous > observedAt) continue;
+    observedByKey.set(key, observedAt);
+    latestByKey.set(key, posting);
+  }
+  if (generation && unstagedObservedAt && !publicationOnly) for (const posting of unstagedPositivePostings) {
+    const key = deriveExternalKey(posting);
+    if (observedByKey.has(key) && observedByKey.get(key)! > unstagedObservedAt) continue;
+    observedByKey.set(key, unstagedObservedAt);
+    latestByKey.set(key, posting);
+  }
+  if (generation && !unpublished.length && generation.publishedPageCount === 0 && !publicationOnly) {
+    // The first page can switch to the legacy rendered path before an HTTP page is staged.
+    // The generation's start is conservative evidence time for that fallback.
+    for (const posting of postings) {
+      const key = deriveExternalKey(posting);
+      observedByKey.set(key, generation.startedAt);
+      latestByKey.set(key, posting);
+    }
+  }
+  if (generation && latestByKey.size) {
+    const enrichedByKey = new Map(keyPostings(postings).keyed.map(posting => [posting.externalKey, posting]));
+    for (const [key, raw] of latestByKey) {
+      const enriched = enrichedByKey.get(key);
+      if (enriched?.url === raw.url && enriched.descriptionText !== undefined) {
+        latestByKey.set(key, { ...raw, descriptionText: enriched.descriptionText });
+      }
+    }
+  }
+  const positivePostings = generation && latestByKey.size
+    ? [...latestByKey.entries()].filter(([key]) => !current.lastOkScanAt || observedByKey.get(key)! > current.lastOkScanAt).map(([, posting]) => posting)
+    : generation ? [] : postings;
+  // Any newer complete observation means this old traversal no longer proves absence, even if
+  // its later pages were fetched after that complete scan. The positive interval still applies.
+  const staleCoverage = !!generation && !!current.lastOkScanAt && current.lastOkScanAt >= generation.startedAt;
   const commitDeps = { ...deps, db: tx as unknown as WorkerDeps["db"] };
   committed = true;
-  return commitScan(commitDeps);
+  return commitScan(commitDeps, { generation, unpublishedCount: unpublished.length, observedByKey,
+    positivePostings, staleCoverage, sourceLastOkAt: current.lastOkScanAt });
   });
   // Idempotent and takes a transaction of its own, so it runs after this scan has committed
   // instead of extending the window in which the source's row lock is held.
-  if (committed) await archiveNonMatches(deps.db, { sourceId: source.id });
+  if (committed && !publicationOnly) await archiveNonMatches(deps.db, { sourceId: source.id });
   return outcome;
 
-  async function commitScan(deps: WorkerDeps): Promise<SourceOutcome> {
+  async function commitScan(deps: WorkerDeps, publication: {
+    generation?: typeof schema.htmlScanGenerations.$inferSelect;
+    unpublishedCount: number;
+    observedByKey: Map<string, Date>;
+    positivePostings: RawPosting[];
+    staleCoverage: boolean;
+    sourceLastOkAt: Date | null;
+  }): Promise<SourceOutcome> {
   // First, before anything is written: the gates the verdicts below come from, read now that the
   // network work is done and held until this commits (see `loadFollowers`).
   const followers = await loadFollowers(deps.db, company.id, { lockGates: true });
-  if (updatedRecipe) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
+  if (updatedRecipe && !publicationOnly && !publication.staleCoverage) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
   const sourceRows = await deps.db
     .select({
       origin: schema.jobs.origin,
@@ -544,6 +737,11 @@ async function scanSource(
       descriptionHash: schema.jobs.descriptionHash,
       url: schema.jobs.url,
       locations: schema.jobs.locations,
+      locationResolution: schema.jobs.locationResolution,
+      locationLabel: schema.jobs.locationLabel,
+      locationRevision: schema.jobs.locationRevision,
+      locationFetchedAt: schema.jobs.locationFetchedAt,
+      locationError: schema.jobs.locationError,
       department: schema.jobs.department,
       employmentType: schema.jobs.employmentType,
       remote: schema.jobs.remote,
@@ -558,6 +756,7 @@ async function scanSource(
       location: schema.jobs.location,
       normalizedTitle: schema.jobs.normalizedTitle,
       closedAt: schema.jobs.closedAt,
+      lastSeenAt: schema.jobs.lastSeenAt,
     })
     .from(schema.jobs)
     .where(eq(schema.jobs.sourceId, source.id));
@@ -568,12 +767,53 @@ async function scanSource(
   const existingRows = sourceRows.filter((row) => row.origin !== "user");
   const existing: ExistingJob[] = existingRows.map((r) => ({ ...r, status: r.status, closedAt: r.closedAt }));
 
-  const result = reconcile(existing, postings, { mode, now: deps.now(), closeAfterMissing: settings.closeAfterMissingScans });
-  const isFirstScan = existing.length === 0 && previousOkCount === null;
+  const sourceByKey = new Map(sourceRows.map(row => [row.externalKey, row]));
+  const safePostings = publication.positivePostings.filter(posting => {
+    const observedAt = publication.observedByKey.get(deriveExternalKey(posting));
+    if (!observedAt) return true;
+    const stored = sourceByKey.get(deriveExternalKey(posting));
+    return !stored || stored.lastSeenAt < observedAt;
+  }).map(posting => {
+    const stored = sourceByKey.get(deriveExternalKey(posting));
+    const observedAt = publication.observedByKey.get(deriveExternalKey(posting));
+    // A detail fetch after this page is stronger text evidence. Its stored text is loaded below
+    // for the current gate, and the old inline text must neither overwrite nor confirm it.
+    return observedAt && stored?.descriptionFetchedAt && stored.descriptionFetchedAt >= observedAt
+      ? { ...posting, descriptionText: undefined } : posting;
+  });
+  const locationByKey = new Map(safePostings.map(posting => {
+    const key = deriveExternalKey(posting);
+    return [key, locationStateFor(source, posting, sourceByKey.get(key), key, deps.now())] as const;
+  }));
+  if (publication.generation && followers.some(follower => needsDescription(follower.settings.gate))) {
+    const withoutText = safePostings.filter(posting => !posting.descriptionText);
+    const storedWithText = withoutText.length ? await deps.db.select({ externalKey: schema.jobs.externalKey })
+      .from(schema.jobs).where(and(eq(schema.jobs.sourceId, source.id),
+        inArray(schema.jobs.externalKey, withoutText.map(posting => deriveExternalKey(posting))),
+        sql`${schema.jobs.descriptionText} is not null`)) : [];
+    const hasText = new Set(storedWithText.map(row => row.externalKey));
+    for (const posting of withoutText) if (!hasText.has(deriveExternalKey(posting))) deferred.add(posting.url);
+  }
+  const result = reconcile(existing, safePostings, { mode: publicationOnly || publication.generation ? "partial" : mode,
+    now: deps.now(), closeAfterMissing: settings.closeAfterMissingScans });
+  const coverageExisting = publication.generation
+    ? existing.filter(job => sourceByKey.get(job.externalKey)!.lastSeenAt < publication.generation!.startedAt)
+    : existing;
+  const coverage = publicationOnly ? null : reconcile(coverageExisting, postings, {
+    mode: publication.staleCoverage ? "partial" : mode, now: deps.now(), closeAfterMissing: settings.closeAfterMissingScans,
+  });
+  const firstScanCandidate = existing.length === 0 && (publication.generation
+    ? publication.sourceLastOkAt === null : previousOkCount === null);
+  if (publication.generation && publication.generation.seedFirstScan === null) {
+    await deps.db.update(schema.htmlScanGenerations).set({ seedFirstScan: firstScanCandidate })
+      .where(eq(schema.htmlScanGenerations.id, publication.generation.id));
+  }
+  const isFirstScan = (publication.generation?.seedFirstScan ?? firstScanCandidate) && !publication.staleCoverage;
 
   let newCount = 0;
   const scoreQueue: Array<{ userId: string; jobId: string }> = [];
   const descriptionQueue = new Set<string>();
+  const locationQueue = new Map<string, string>();
   const viewInserts: Array<typeof schema.userJobs.$inferInsert> = [];
 
   // A role somebody added by URL, which this listing now carries, is the same vacancy. The scan
@@ -585,12 +825,17 @@ async function scanSource(
     .select({
       id: schema.jobs.id, url: schema.jobs.url, externalKey: schema.jobs.externalKey,
       location: schema.jobs.location, locations: schema.jobs.locations, department: schema.jobs.department,
+      locationResolution: schema.jobs.locationResolution, locationLabel: schema.jobs.locationLabel,
+      locationRevision: schema.jobs.locationRevision, locationFetchedAt: schema.jobs.locationFetchedAt,
+      locationError: schema.jobs.locationError,
       employmentType: schema.jobs.employmentType, remote: schema.jobs.remote, salaryText: schema.jobs.salaryText,
       postedAt: schema.jobs.postedAt, descriptionText: schema.jobs.descriptionText,
+      lastSeenAt: schema.jobs.lastSeenAt,
     })
     .from(schema.jobs)
     .where(and(eq(schema.jobs.companyId, company.id), eq(schema.jobs.origin, "user")));
-  const userByUrl = new Map(userRows.map((row) => [normalisePostingUrl(row.url), row]));
+  const userByUrl = new Map<string, (typeof userRows)[number]>();
+  for (const row of userRows) if (row.url) userByUrl.set(normalisePostingUrl(row.url), row);
   // (source, external_key) is unique. A scanned row already holding the key the listing gives this
   // posting means the two are not the same row after all, so both are left as they are.
   const keyOwner = new Map(sourceRows.map((row) => [row.externalKey, row.id]));
@@ -601,6 +846,8 @@ async function scanSource(
   const newRows: Array<typeof schema.jobs.$inferInsert> = [];
   for (const insert of result.inserts) {
     const candidate = userByUrl.get(normalisePostingUrl(insert.url));
+    const observedAt = publication.observedByKey.get(insert.externalKey) ?? deps.now();
+    if (publication.generation && candidate && candidate.lastSeenAt >= observedAt) continue;
     const holder = keyOwner.get(insert.externalKey);
     if (candidate && !adoptedIds.has(candidate.id) && (holder === undefined || holder === candidate.id)) {
       adoptions.push({ job: candidate, insert });
@@ -614,15 +861,20 @@ async function scanSource(
         title: insert.title,
         normalizedTitle: normalizeTitle(insert.title),
         url: insert.url,
-        location: insert.location ?? null,
-        locations: insert.locations ?? (insert.location ? [insert.location] : []),
+        location: locationByKey.get(insert.externalKey)?.location ?? insert.location ?? null,
+        locations: locationByKey.get(insert.externalKey)?.locations ?? insert.locations ?? (insert.location ? [insert.location] : []),
+        locationResolution: locationByKey.get(insert.externalKey)?.locationResolution ?? null,
+        locationLabel: locationByKey.get(insert.externalKey)?.locationLabel ?? null,
+        locationRevision: locationByKey.get(insert.externalKey)?.locationRevision ?? null,
+        locationFetchedAt: locationByKey.get(insert.externalKey)?.locationFetchedAt ?? null,
+        locationError: locationByKey.get(insert.externalKey)?.locationError ?? null,
         department: insert.department ?? null,
         employmentType: insert.employmentType ?? null,
         remote: insert.remote ?? looksRemote([insert.location, ...(insert.locations ?? [])].filter(Boolean).join(" ")),
         salaryText: insert.salaryText ?? null,
         postedAt: insert.postedAt ?? null,
-        firstSeenAt: deps.now(),
-        lastSeenAt: deps.now(),
+        firstSeenAt: observedAt,
+        lastSeenAt: observedAt,
         seeded: isFirstScan,
         repostOfJobId: insert.repostOfJobId ?? null,
         descriptionText: insert.descriptionText?.slice(0, 30_000) ?? null,
@@ -632,7 +884,20 @@ async function scanSource(
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
       });
   }
-  type Admissible = { id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; remote: boolean | null; descriptionText: string | null };
+  type Admissible = { id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; locationResolution: LocationState["locationResolution"]; locationRevision: string | null; remote: boolean | null; descriptionText: string | null };
+  const queueLocationIfPotential = (row: Admissible) => {
+    if (row.locationResolution !== "pending" || !row.locationRevision) return;
+    if (followers.some(follower => {
+      if (!follower.settings.gate.locationTerms.length) return false;
+      const verdict = follower.gate.evaluate({ title: row.title, department: row.department,
+        description: row.descriptionText, location: row.location, locations: row.locations,
+        remote: row.remote, locationResolution: row.locationResolution });
+      // A description-matching gate may still be waiting for its detail text. A title exclusion
+      // is already decisive, but the missing description must not become a false keyword reject.
+      if (needsDescription(follower.settings.gate) && !row.descriptionText) return !verdict.excluded;
+      return verdict.keywordMatched && !verdict.excluded;
+    })) locationQueue.set(row.id, row.locationRevision);
+  };
   /**
    * Offer a posting new to these followers to each one's gate: a view for every follower it
    * admits, and then either its description or their scores queued.
@@ -642,7 +907,7 @@ async function scanSource(
     for (const follower of followers) {
       if (skip?.(follower.userId)) continue;
       if (undecided(row.url) && needsDescription(follower.settings.gate)) continue;
-      const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
+      const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote, locationResolution: row.locationResolution });
       if (!verdict.inTable) continue;
       admitted.push(follower.userId);
       viewInserts.push(newView(follower.userId, row.id, viewVerdict(verdict, true), seeded, deps.now()));
@@ -657,14 +922,21 @@ async function scanSource(
     // description task re-runs every follower's gate and queues the score then, text or no text.
     // Scoring it now on the title alone would pay for the same role twice.
     else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
+    queueLocationIfPotential(row);
   };
   const adopted: Admissible[] = [];
   for (const { job, insert } of adoptions) {
+    const locationState = locationByKey.get(insert.externalKey);
     const fields = {
       title: insert.title,
       url: insert.url,
-      location: insert.location ?? job.location,
-      locations: insert.locations ?? (insert.location ? [insert.location] : job.locations),
+      location: locationState ? locationState.location : insert.location ?? job.location,
+      locations: locationState ? locationState.locations : insert.locations ?? (insert.location ? [insert.location] : job.locations),
+      locationResolution: locationState?.locationResolution ?? null,
+      locationLabel: locationState?.locationLabel ?? null,
+      locationRevision: locationState?.locationRevision ?? null,
+      locationFetchedAt: locationState?.locationFetchedAt ?? null,
+      locationError: locationState?.locationError ?? null,
       department: insert.department ?? job.department,
       remote: insert.remote ?? job.remote,
     };
@@ -676,7 +948,7 @@ async function scanSource(
       // it is the company's posting, shared like any other, even if it was pasted from elsewhere.
       origin: "scan",
       shared: true,
-      lastSeenAt: deps.now(),
+      lastSeenAt: publication.observedByKey.get(insert.externalKey) ?? deps.now(),
       missingScans: 0,
       firstMissedAt: null,
       status: "open",
@@ -693,10 +965,10 @@ async function scanSource(
   }
   for (let offset = 0; offset < newRows.length; offset += 100) {
     const created = await deps.db.insert(schema.jobs).values(newRows.slice(offset, offset + 100)).onConflictDoNothing()
-      .returning({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title, department: schema.jobs.department, location: schema.jobs.location, locations: schema.jobs.locations, remote: schema.jobs.remote, descriptionText: schema.jobs.descriptionText });
+      .returning({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title, department: schema.jobs.department, location: schema.jobs.location, locations: schema.jobs.locations, locationResolution: schema.jobs.locationResolution, locationRevision: schema.jobs.locationRevision, remote: schema.jobs.remote, descriptionText: schema.jobs.descriptionText });
     newCount += created.length;
     if (created.length) await deps.db.insert(schema.jobEvents).values(created.map(row => ({ jobId: row.id, type: "discovered" as const, payload: { method: fetchMethod, seeded: isFirstScan } })));
-    for (const row of created) admit(row, isFirstScan);
+    for (const row of created) if (row.url) admit({ ...row, url: row.url }, isFirstScan);
   }
   // An adopted role is new to every follower but whoever pasted it, so each follower without a
   // view of it meets it now, exactly as they would a new posting, rather than a day later.
@@ -707,7 +979,7 @@ async function scanSource(
   }
 
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
-  const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
+  const observed = new Map(keyPostings(safePostings).keyed.map((p) => [p.externalKey, p]));
   const updates: Array<Record<string, unknown>> = [];
   const descriptionWrites: Array<Record<string, unknown>> = [];
   // Rows whose description the listing gave again unchanged: their `description_fetched_at` moves
@@ -716,6 +988,7 @@ async function scanSource(
   const updateEvents: Array<typeof schema.jobEvents.$inferInsert> = [];
   const seenIds = new Set(result.seen);
   const seenRows = existingRows.filter((j) => seenIds.has(j.id));
+  const seenById = new Map(seenRows.map(row => [row.id, row]));
   // Stored text is only read for a gate that matches on it, and only where the listing gave none.
   // The copy taken before the listing was fetched is topped up for any row a `fetch_description`
   // task has written since, and for every row when no follower read descriptions back then.
@@ -742,10 +1015,16 @@ async function scanSource(
   for (const row of seenRows) {
     const job = row;
     const posting = observed.get(job.externalKey)!;
+    const locationState = locationByKey.get(job.externalKey);
     const fields = {
       title: posting.title, url: posting.url,
-      location: posting.location ?? job.location,
-      locations: posting.locations ?? (posting.location ? [posting.location] : job.locations),
+      location: locationState ? locationState.location : posting.location ?? job.location,
+      locations: locationState ? locationState.locations : posting.locations ?? (posting.location ? [posting.location] : job.locations),
+      locationResolution: locationState ? locationState.locationResolution : job.locationResolution,
+      locationLabel: locationState ? locationState.locationLabel : job.locationLabel,
+      locationRevision: locationState ? locationState.locationRevision : job.locationRevision,
+      locationFetchedAt: locationState ? locationState.locationFetchedAt : job.locationFetchedAt,
+      locationError: locationState ? locationState.locationError : job.locationError,
       department: posting.department ?? job.department,
       employmentType: posting.employmentType ?? job.employmentType,
       remote: posting.remote ?? job.remote,
@@ -768,7 +1047,9 @@ async function scanSource(
       changedFields.push("descriptionText");
       if (job.descriptionSource !== "direct") changedFields.push("descriptionSource");
       if (job.descriptionTruncated !== truncated) changedFields.push("descriptionTruncated");
-    } else if (freshHash !== undefined || (inlineHash.has(posting.url) && inlineHash.get(posting.url) === job.descriptionHash)) {
+    } else if ((!publication.generation || !job.descriptionFetchedAt ||
+        job.descriptionFetchedAt < (publication.observedByKey.get(job.externalKey) ?? deps.now())) &&
+      (freshHash !== undefined || (inlineHash.has(posting.url) && inlineHash.get(posting.url) === job.descriptionHash))) {
       descriptionConfirmed.push(job.id);
     }
     const descriptionText = posting.descriptionText?.slice(0, 30_000) ?? savedTextByKey.get(job.externalKey) ?? null;
@@ -784,15 +1065,17 @@ async function scanSource(
     for (const follower of followers) {
       const gate = follower.settings.gate;
       if (undecided(posting.url) && needsDescription(gate)) continue;
-      const verdict = follower.gate.evaluate({ ...fields, description: follower.gate.matchesDescription ? descriptionText : undefined });
       const view = viewByKey.get(`${follower.userId}:${job.id}`);
+      const { verdict, held } = gateWithRetainedLocations(follower.gate,
+        { ...fields, description: follower.gate.matchesDescription ? descriptionText : undefined },
+        { status: job.status, locationFetchedAt: fields.locationFetchedAt }, view);
       const inTable = inTableFor(verdict, follower.userId, job, view);
       if (view) {
         // A scan leaves `hidden` as it is.
         const update = viewUpdate(follower.userId, job.id, view, viewVerdict(verdict, inTable));
         if (update) viewUpdates.push(update);
         // A view whose scoring completed without a score is not paid for again on unchanged inputs.
-        if (inTable && (changedFields.length || !view.inTable || (view.fitScore === null && view.scoredAt === null))) scoreQueue.push({ userId: follower.userId, jobId: job.id });
+        if (!held && inTable && (changedFields.length || !view.inTable || (view.fitScore === null && view.scoredAt === null))) scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else if (inTable) {
         viewInserts.push(newView(follower.userId, job.id, viewVerdict(verdict, true), false, deps.now()));
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
@@ -805,6 +1088,7 @@ async function scanSource(
     // keeps the age rule whatever the feed says: a failed or empty read leaves no text but does
     // move `description_fetched_at`, and `updated_at` will never move on our account.
     if (deferred.has(posting.url) && descriptionAged) descriptionQueue.add(job.id);
+    if (job.status === "open") queueLocationIfPotential({ id: job.id, ...fields, descriptionText });
   }
   // Being seen is positive evidence in every mode that reconciles: a partial scan that lists a role
   // proves it is still there as surely as an ok one does, so either resets the miss count. What a
@@ -814,15 +1098,31 @@ async function scanSource(
       ? sql`case when ${inArray(schema.jobs.id, descriptionConfirmed)} then ${deps.now()}::timestamptz else ${schema.jobs.descriptionFetchedAt} end`
       : undefined;
     for (let offset = 0; offset < result.seen.length; offset += 5000) {
-      await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null, ...(confirmed ? { descriptionFetchedAt: confirmed } : {}) })
-        .where(inArray(schema.jobs.id, result.seen.slice(offset, offset + 5000)));
+      const slice = result.seen.slice(offset, offset + 5000);
+      if (publication.generation) {
+        const times = slice.map(id => {
+          const row = seenById.get(id)!;
+          return { id, observedAt: publication.observedByKey.get(row.externalKey) ?? deps.now() };
+        });
+        await deps.db.execute(sql`update jobs j set last_seen_at=v."observedAt", missing_scans=0, first_missed_at=null
+          from jsonb_to_recordset(${JSON.stringify(times)}::jsonb) as v(id uuid, "observedAt" timestamptz)
+          where j.id=v.id`);
+        if (confirmed) await deps.db.update(schema.jobs).set({ descriptionFetchedAt: confirmed })
+          .where(inArray(schema.jobs.id, slice));
+      } else {
+        await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null, ...(confirmed ? { descriptionFetchedAt: confirmed } : {}) })
+          .where(inArray(schema.jobs.id, slice));
+      }
     }
   }
   for (let offset = 0; offset < updates.length; offset += 250) {
     await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
+      location_resolution=v."locationResolution", location_label=v."locationLabel", location_revision=v."locationRevision",
+      location_fetched_at=v."locationFetchedAt", location_error=v."locationError",
       department=v.department, employment_type=v."employmentType", remote=v.remote, salary_text=v."salaryText", posted_at=v."postedAt",
       normalized_title=v."normalizedTitle", updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v(id uuid, title text, url text, location text, locations jsonb,
+        "locationResolution" text, "locationLabel" text, "locationRevision" text, "locationFetchedAt" timestamptz, "locationError" text,
         department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "normalizedTitle" text)
       where j.id=v.id`);
   }
@@ -845,7 +1145,34 @@ async function scanSource(
       .where(inArray(schema.jobs.id, result.reopened));
     await deps.db.insert(schema.jobEvents).values(result.reopened.map(jobId => ({ jobId, type: "reopened" as const, payload: {} })));
   }
-  if (result.missing.length > 0) {
+  // Queue work is part of the positive publication. A deferred listing claim must not leave
+  // visible roles without the description or score work that admits and ranks them.
+  const scoreSettings = new Map(followers.map(follower => [follower.userId, follower.settings] as const));
+  for (let offset = 0; offset < scoreQueue.length; offset += 250)
+    await admitScores(deps, scoreQueue.slice(offset, offset + 250), { db: deps.db, onlyUnscored: true, settings: scoreSettings });
+  await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
+  await enqueueTasks(deps.db, [...locationQueue].map(([jobId, locationRevision]) =>
+    taskRow("fetch_locations", { jobId, locationRevision })));
+  // A continuing publication has no coverage. Final coverage is computed from every page in the
+  // current generation, including pages whose positive observations were already committed.
+  if (publication.generation) {
+    await deps.db.update(schema.htmlScanGenerations).set({
+      publishedPageCount: publication.generation.publishedPageCount + publication.unpublishedCount,
+      publishedNewCount: publication.generation.publishedNewCount + newCount,
+      // The claim's fetch counters were persisted before this positive commit. Include the
+      // admission and publication work after that snapshot in the same atomic cursor update.
+      activeDurationMs: publicationOnly && publicationMetricStartedAtMs !== undefined
+        ? sql`${schema.htmlScanGenerations.activeDurationMs} + ${Math.max(0, Date.now() - publicationMetricStartedAtMs)}`
+        : publication.generation.activeDurationMs,
+      updatedAt: deps.now(),
+    }).where(eq(schema.htmlScanGenerations.id, publication.generation.id));
+  }
+  if (deps.signal?.aborted) throw deps.signal.reason ?? new Error("Scan run stopped during publication");
+  if (publicationOnly) return { status: "partial", newCount: 0, closedCount: 0,
+    postingsFound: postings.length, ...(hostBusy ? { retryAt: hostBusy.retryAt } : { continueAt: continuationAt }),
+    pagesStaged: stagedPageCount };
+  const absence = coverage!;
+  if (absence.missing.length > 0) {
     // The first miss records when it happened; the closing one is measured from it.
     await deps.db
       .update(schema.jobs)
@@ -853,42 +1180,55 @@ async function scanSource(
         missingScans: sql`${schema.jobs.missingScans} + 1`,
         firstMissedAt: sql`case when ${schema.jobs.missingScans} = 0 then ${deps.now()}::timestamptz else coalesce(${schema.jobs.firstMissedAt}, ${deps.now()}::timestamptz) end`,
       })
-      .where(inArray(schema.jobs.id, result.missing));
+      .where(inArray(schema.jobs.id, absence.missing));
   }
-  if (result.awaitingSeparation.length > 0) {
+  if (absence.awaitingSeparation.length > 0) {
     // Missed again too soon after the first miss to be a second observation: nothing is counted.
     // A row missed before with no time recorded gets one now, so it can close no sooner than
     // six hours from here.
     await deps.db
       .update(schema.jobs)
       .set({ firstMissedAt: deps.now() })
-      .where(and(inArray(schema.jobs.id, result.awaitingSeparation), isNull(schema.jobs.firstMissedAt)));
+      .where(and(inArray(schema.jobs.id, absence.awaitingSeparation), isNull(schema.jobs.firstMissedAt)));
   }
-  if (result.closed.length > 0) {
+  if (absence.closed.length > 0) {
     await deps.db
       .update(schema.jobs)
       .set({ status: "closed", closedAt: sql`coalesce(${schema.jobs.lastSeenAt}, now())`, missingScans: sql`${schema.jobs.missingScans} + 1` })
-      .where(inArray(schema.jobs.id, result.closed));
-    await deps.db.insert(schema.jobEvents).values(result.closed.map(jobId => ({ jobId, type: "closed" as const, payload: {} })));
+      .where(inArray(schema.jobs.id, absence.closed));
+    await deps.db.insert(schema.jobEvents).values(absence.closed.map(jobId => ({ jobId, type: "closed" as const, payload: {} })));
   }
 
+  const [htmlGeneration] = opts.taskId && source.type === "html"
+    ? await deps.db.select().from(schema.htmlScanGenerations)
+      .where(and(eq(schema.htmlScanGenerations.taskId, opts.taskId), eq(schema.htmlScanGenerations.sourceId, source.id))).for("update").limit(1)
+    : [];
+  const metricsComplete = !htmlGeneration || (htmlGeneration.metricsComplete && (opts.taskAttempt ?? 1) <= 1);
+  const activeDurationMs = (htmlGeneration?.activeDurationMs ?? 0) + Date.now() - started;
+  const observedStartedAt = htmlGeneration?.startedAt ?? startedAt;
+  const terminalStatus: ScanStatus = publication.staleCoverage ? "partial" : status;
+  const totalNewCount = (publication.generation?.publishedNewCount ?? 0) + newCount;
   await deps.db.insert(schema.scans).values({
     scanRunId,
     sourceId: source.id,
-    startedAt,
+    taskId: opts.taskId,
+    startedAt: observedStartedAt,
     finishedAt: deps.now(),
-    status,
+    status: terminalStatus,
     fetchMethod,
     postingsFound: postings.length,
-    newCount,
-    closedCount: result.closed.length,
-    error,
-    durationMs: Date.now() - started,
-    fetchedBytes,
-    requests,
-    revalidated,
+    newCount: totalNewCount,
+    closedCount: absence.closed.length,
+    error: publication.staleCoverage ? "A newer complete scan finished during this listing traversal; older pages cannot prove absence." : error,
+    durationMs: metricsComplete ? activeDurationMs : null,
+    elapsedMs: Math.max(0, deps.now().getTime() - observedStartedAt.getTime()),
+    metricsComplete,
+    fetchedBytes: metricsComplete ? (htmlGeneration?.fetchedBytes ?? 0) + fetchedBytes : null,
+    requests: metricsComplete ? (htmlGeneration?.requests ?? 0) + requests : null,
+    revalidated: metricsComplete ? (htmlGeneration?.revalidated ?? 0) + revalidated : null,
     rawSnapshot,
   });
+  if (opts.taskId && source.type === "html") await clearHtmlCheckpoint(deps.db, opts.taskId, source.id);
 
   // Keep bounded debugging evidence from the three most recent source scans.
   await deps.db.execute(sql`update scans set raw_snapshot = null where source_id = ${source.id} and raw_snapshot is not null
@@ -897,17 +1237,17 @@ async function scanSource(
 
   // A host that asked us to wait is not a source that failed: its count, its next scan and its
   // status stay exactly as they were.
-  const failures = hostBusy ? source.consecutiveFailures : status === "failed" ? source.consecutiveFailures + 1 : 0;
-  await deps.db
+  const failures = hostBusy ? source.consecutiveFailures : terminalStatus === "failed" ? source.consecutiveFailures + 1 : 0;
+  if (!publication.staleCoverage) await deps.db
     .update(schema.careerSources)
     .set({
       consecutiveFailures: failures,
       // Backed off by whole daily runs (1, 2, 4, then 7 days): measured from this scan, which ran
       // some time after its run began, the next run would find it not yet due and add a day.
       nextScanAt: hostBusy ? source.nextScanAt : failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000 - BACKOFF_MARGIN_MS) : null,
-      status: hostBusy ? source.status : blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
-      lastOkScanAt: status === "ok" ? deps.now() : source.lastOkScanAt,
-      lastPostingsCount: status === "ok" ? postings.length : source.lastPostingsCount,
+      status: hostBusy ? source.status : blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && terminalStatus === "ok" ? "active" : source.status,
+      lastOkScanAt: terminalStatus === "ok" ? deps.now() : source.lastOkScanAt,
+      lastPostingsCount: terminalStatus === "ok" ? postings.length : source.lastPostingsCount,
       contentHash,
     })
     .where(eq(schema.careerSources.id, source.id));
@@ -918,36 +1258,28 @@ async function scanSource(
   const persistentlyShrunk = settledShrink || (shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3);
-  if ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || status === "suspect_empty" || persistentlyShrunk) {
+  if (!publication.staleCoverage && ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || terminalStatus === "suspect_empty" || persistentlyShrunk)) {
     await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" });
   }
-
-  // Scoring is per account, so the budget is asked per account: one follower with nothing left to
-  // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
-  // anyway would only fail and retry each task at the hold. Only the accounts with something to
-  // score are asked, all in one read.
-  const scorable = deps.ai.enabled ? await followersWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
-  const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
-  await queueScoring(deps.db, scoring, deps.now());
-  await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
 
   log.info("source scanned", {
     company: company.name,
     type: source.type,
-    status,
+    status: terminalStatus,
     postings: postings.length,
-    new: newCount,
-    closed: result.closed.length,
+    new: totalNewCount,
+    closed: absence.closed.length,
     followers: followers.length,
     deferredDescriptions: deferred.size,
     reusedListing,
-    fetchedBytes,
-    requests,
-    revalidated,
+    claimFetchedBytes: fetchedBytes,
+    claimRequests: requests,
+    claimRevalidated: revalidated,
     heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1_048_576),
     ms: Date.now() - started,
   });
-  return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
+  if (deps.signal?.aborted) throw deps.signal.reason ?? new Error("Scan run stopped before final commit");
+  return { status: terminalStatus, newCount: totalNewCount, closedCount: absence.closed.length, postingsFound: postings.length };
   }
 
 }
@@ -956,13 +1288,9 @@ async function scanSource(
  * The same digest as `sha1` over the captures joined with "|", fed one capture at a time: joining
  * a render's pages into one string copied every one of them again just to hash it.
  */
-function capturesHash(captures: Array<{ html: string }>): string {
-  const hash = createHash("sha1");
-  captures.forEach((capture, index) => {
-    if (index) hash.update("|");
-    hash.update(capture.html);
-  });
-  return hash.digest("hex");
+function appendCaptureHash(hash: ReturnType<typeof createHash>, html: string, index: number): void {
+  if (index) hash.update("|");
+  hash.update(html);
 }
 
 /**
@@ -976,7 +1304,9 @@ function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; sta
     version: 2,
     listingHash,
     // `descriptionHash` is the text the listing itself carried for the role, when it carried any.
-    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt, updatedAt: p.updatedAt, descriptionHash: inlineHash?.get(p.url) })),
+    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations,
+      locationLabel: p.locationLabel, locationResolution: p.locationResolution, remote: p.remote,
+      department: p.department, postedAt: p.postedAt, updatedAt: p.updatedAt, descriptionHash: inlineHash?.get(p.url) })),
     responses: responses.map(r => ({ url: r.url, status: r.status, bytes: r.body.length, head: r.body.slice(0, 20_000) })),
     htmlPages,
   };
@@ -1039,7 +1369,7 @@ interface CachedHtmlPage {
   postings: RawPosting[];
   /** Hash of the page as plain HTTP served it, before any browser render. */
   httpHash?: string;
-  /** When a browser last rendered this page; a reused capture carries it forward. */
+  /** When a browser rendered this page, kept with the snapshot for provenance. */
   renderedAt?: string;
 }
 
@@ -1058,13 +1388,148 @@ interface HtmlScanOutcome {
   incomplete?: boolean;
   incompleteReason?: string;
   traversed?: boolean;
+  nextPageUrl?: string;
+  continueAt?: Date;
+  pagesStaged?: number;
+  longListing?: boolean;
+  /** Positive evidence from an incomplete page, never part of complete coverage. */
+  extraPostings?: RawPosting[];
+  extraObservedAt?: Date;
+}
+
+function checkpointPostings(checkpoint: HtmlCheckpoint): RawPosting[] {
+  return keyPostings(checkpoint.pages.flatMap(page => (page.postings as SnapshotPosting[]).map(revivePosting))).keyed;
+}
+
+/** A content nonce is not a changed board. Compare the parsed role set and the continuation. */
+function htmlPageRoleSetHash(postings: RawPosting[]): string {
+  const roles = postings.map(p => [normalisePostingUrl(p.url), p.externalId ?? "", p.title,
+    p.location ?? "", p.locations ?? [], p.department ?? "", p.employmentType ?? "",
+    p.postedAt?.toISOString() ?? ""])
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return sha1(JSON.stringify(roles));
+}
+
+function htmlPageSemanticHash(postings: RawPosting[], nextUrl: string | null): string {
+  return sha1(JSON.stringify([htmlPageRoleSetHash(postings), nextUrl]));
+}
+
+/** Only an explicit listing result count is useful as a lower bound, never a generic page number. */
+function htmlAdvertisedMinimum(html: string): number {
+  const text = stripHtml(html).replace(/\s+/g, " ");
+  const matches = [...text.matchAll(/\b\d{1,6}\s*(?:-|–|—|to)\s*\d{1,6}\s+of\s+(\d{1,7})\+?\s+(?:results?|jobs?|roles?|positions?|openings?)\b/gi)];
+  return Math.max(0, ...matches.map(match => Number(match[1])));
+}
+
+function htmlNextUrl(page: HtmlScanOutcome, url: string): string | null {
+  return page.nextPageUrl ?? (page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url));
+}
+
+/** Exactly one HTTP batch per task claim. Browser-expanded listings retain their existing path. */
+async function scanHtmlSourceContinued(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext,
+  lastOkSnapshot: () => Promise<StoredSnapshot | null>, taskId: string, claimStartedAtMs: number): Promise<HtmlScanOutcome> {
+  let checkpoint = await loadHtmlCheckpoint(deps, taskId, source);
+  const cached = (await lastOkSnapshot())?.htmlPages ?? [];
+  const partial = (reason: string, extra: RawPosting[] = [], extraObservedAt?: Date): HtmlScanOutcome => ({
+    postings: keyPostings([...checkpointPostings(checkpoint), ...extra]).keyed, method: "http", dropped: checkpoint.pages.reduce((n, p) => n + p.dropped, 0),
+    contentHash: sha1(checkpoint.pages.map(p => p.contentHash).join("|")), unchanged: false,
+    // The snapshot needs the full posting set once, not a second copy in per-page HTML evidence.
+    pages: [], incomplete: true, incompleteReason: reason, extraPostings: extra, extraObservedAt,
+  });
+  const terminal = (): HtmlScanOutcome => ({
+    postings: checkpointPostings(checkpoint), method: "http", dropped: checkpoint.pages.reduce((n, p) => n + p.dropped, 0),
+    contentHash: sha1(checkpoint.pages.map(p => p.contentHash).join("|")), unchanged: false,
+    // Small pages keep the existing no-AI extraction cache. Large generations omit this second
+    // posting copy from the pruned snapshot; their bounded checkpoint is removed on final commit.
+    pages: checkpoint.pages.length <= HTML_PAGES_PER_TASK_PASS
+      ? checkpoint.pages.map(page => ({ url: page.url, contentHash: page.contentHash,
+        postings: (page.postings as SnapshotPosting[]).map(revivePosting) })) : [],
+    recipe: checkpoint.pages.find(p => p.recipe)?.recipe as HtmlRecipe | undefined,
+    longListing: checkpoint.pages.length > HTML_PAGES_PER_TASK_PASS,
+  });
+  if (checkpoint.expired) return partial("HTML listing continuation expired before all pages could be verified; roles remain open.");
+
+  // A deferred task does not treat yesterday's first page and today's tail as one generation.
+  // Re-read both ends; raw HTML can change harmlessly, so compare semantic evidence and next URL.
+  if (checkpoint.pages.length) {
+    const boundaries = [checkpoint.pages[0]!, checkpoint.pages.at(-1)!].filter((p, i, list) => i === 0 || p.pageIndex !== list[0]!.pageIndex);
+    let changed = false;
+    for (const stored of boundaries) {
+      try {
+        const observed = await scanHtmlPage(deps, { ...spec, url: stored.url }, source, ctx, cached.find(p => p.url === stored.url));
+        const next = htmlNextUrl(observed, stored.url);
+        if (observed.method !== "http" || observed.incomplete || htmlPageSemanticHash(observed.postings, next) !== stored.semanticHash) changed = true;
+      } catch (error) {
+        if (error instanceof HostBusyError) throw error;
+        return partial(`HTML listing boundary could not be revalidated: ${(error as Error).message}`.slice(0, 1000));
+      }
+    }
+    if (changed) {
+      checkpoint = await restartHtmlCheckpoint(deps, checkpoint, source);
+      if (checkpoint.expired) return partial("HTML listing changed repeatedly during continuation; no complete generation was observed.");
+    }
+  }
+
+  let readThisPass = 0;
+  while (checkpoint.generation.nextUrl) {
+    if (Date.now() - claimStartedAtMs >= HTML_CLAIM_FETCH_BUDGET_MS) {
+      return { ...partial("HTML listing continues after this claim's time budget."), continueAt: new Date(deps.now().getTime() + 1000), pagesStaged: checkpoint.pages.length };
+    }
+    const url = checkpoint.generation.nextUrl;
+    if (checkpoint.pages.some(page => page.url === url)) return partial("HTML listing repeated a pagination URL; the remaining pages cannot be verified.");
+    if (checkpoint.pages.length >= HTML_GENERATION_MAX_PAGES) return partial("HTML listing exceeded the bounded page limit before its final page.");
+    if (checkpointPostings(checkpoint).length >= HTML_GENERATION_MAX_POSTINGS) return partial("HTML listing exceeded the bounded posting limit before its final page.");
+    let page: HtmlScanOutcome;
+    try {
+      page = await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
+    } catch (error) {
+      if (checkpoint.pages.length === 0) throw error;
+      if (error instanceof HostBusyError) throw error;
+      return partial(`Could not finish listing page ${url}: ${(error as Error).message}`.slice(0, 1000));
+    }
+    const pageObservedAt = deps.now();
+    if (page.method === "browser" || page.traversed) {
+      if (checkpoint.pages.length === 0) return scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot, undefined, page);
+      return partial("HTML listing switched to browser traversal after staged HTTP pages; the complete listing could not be verified.", page.postings, pageObservedAt);
+    }
+    const next = htmlNextUrl(page, url);
+    if (page.incomplete) return partial(page.incompleteReason ?? "HTML listing page was incomplete.", page.postings, pageObservedAt);
+    if (next && (next === url || checkpoint.pages.some(saved => saved.url === next))) {
+      return partial("HTML listing pagination repeated an earlier page; the complete listing cannot be verified.", page.postings, pageObservedAt);
+    }
+    const semanticHash = htmlPageSemanticHash(page.postings, next);
+    const roleSetHash = htmlPageRoleSetHash(page.postings);
+    if (checkpoint.pages.some(saved => saved.roleSetHash === roleSetHash && saved.url !== url)) {
+      return partial("HTML listing returned duplicate roles at different offsets; the complete listing cannot be verified.", page.postings, pageObservedAt);
+    }
+    try {
+      checkpoint = await appendHtmlCheckpointPage(deps, checkpoint, source, {
+        url, nextUrl: next, contentHash: page.contentHash, semanticHash, roleSetHash,
+        minAdvertised: htmlAdvertisedMinimum(page.html ?? ""),
+        postings: page.postings as unknown as Record<string, unknown>[], dropped: page.dropped,
+        recipe: page.recipe as Record<string, unknown> | undefined, observedAt: pageObservedAt,
+      });
+    } catch (error) {
+      if (!(error instanceof HtmlCheckpointChanged)) throw error;
+      return partial(error.message, page.postings, pageObservedAt);
+    }
+    readThisPass += 1;
+    if (next && readThisPass >= HTML_PAGES_PER_TASK_PASS) {
+      return { ...partial("HTML listing continues in another task claim."), continueAt: new Date(deps.now().getTime() + 1000), pagesStaged: checkpoint.pages.length };
+    }
+  }
+  if (checkpointPostings(checkpoint).length < checkpoint.generation.minAdvertised) {
+    return partial(`Listing advertised at least ${checkpoint.generation.minAdvertised} results but only ${checkpointPostings(checkpoint).length} distinct roles were verified.`);
+  }
+  return terminal();
 }
 
 /**
  * Tier-3 HTML: try the stored selector recipe first, then embedded structure, then the model.
  * A model extraction also produces a recipe, so later scans of an unchanged page cost nothing.
  */
-async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, lastOkSnapshot: () => Promise<StoredSnapshot | null>): Promise<HtmlScanOutcome> {
+async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, lastOkSnapshot: () => Promise<StoredSnapshot | null>, taskId?: string, firstPage?: HtmlScanOutcome, claimStartedAtMs = Date.now()): Promise<HtmlScanOutcome> {
+  if (taskId) return scanHtmlSourceContinued(deps, spec, source, ctx, lastOkSnapshot, taskId, claimStartedAtMs);
   // Missing or unreadable snapshots trigger fresh extraction.
   const cached: CachedHtmlPage[] = (await lastOkSnapshot())?.htmlPages ?? [];
   const pages: CachedHtmlPage[] = [];
@@ -1080,7 +1545,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
     if (visited.has(url)) { incomplete = true; break; }
     visited.add(url);
     try {
-      const page = await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
+      const page: HtmlScanOutcome = pages.length === 0 && firstPage ? firstPage : await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
       if (page.method === "browser") method = "browser";
       dropped += page.dropped;
       unchanged = unchanged && page.unchanged;
@@ -1088,7 +1553,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
       pages.push({ url, contentHash: page.contentHash, postings: page.postings, httpHash: page.httpHash, renderedAt: page.renderedAt });
       incomplete ||= page.incomplete ?? false;
       incompleteReason ??= page.incompleteReason;
-      url = page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
+      url = page.nextPageUrl ?? (page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url));
       if (pages.reduce((n, p) => n + p.postings.length, 0) >= 500 && url) { incomplete = true; break; }
     } catch (error) {
       if (pages.length === 0) throw error;
@@ -1116,19 +1581,10 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
 
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
   const httpHash = supplied ? undefined : sha1(html.replace(/\s+/g, " "));
-  const wantsRender = !supplied && ctx.render && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)));
-  // A server-rendered list with a "load more" control was rendered every scan
-  // to reach the rest of it. When the first page is byte-identical to the one
-  // behind the last render, the rest has not moved either: reuse that capture
-  // and skip the browser, but never for more than a week, and never for a
-  // JavaScript shell (zero postings over HTTP), whose static markup says
-  // nothing about what the board lists today.
-  const RENDER_TTL_MS = 7 * 86_400_000;
-  if (wantsRender && postings.length > 0 && cached?.httpHash && cached.httpHash === httpHash && cached.renderedAt && cached.postings.length >= postings.length
-      && deps.now().getTime() - new Date(cached.renderedAt).getTime() < RENDER_TTL_MS) {
-    log.debug("reusing last render: first page unchanged", { url: spec.url, renderedAt: cached.renderedAt });
-    return { postings: cached.postings, method: "http", dropped: 0, contentHash: cached.contentHash, unchanged: true, html, finalUrl, httpHash, renderedAt: cached.renderedAt };
-  }
+  const expansionPending = !supplied && !ats.nextListingPage(html, finalUrl) && ats.hasListingExpansionControl(html, finalUrl);
+  const wantsRender = !supplied && ctx.render && (postings.length === 0 || expansionPending);
+  // The first HTTP page cannot prove that later browser-expanded pages are unchanged. Render
+  // every scan that needs expansion; a cached full listing could miss a new role for days.
   if (wantsRender) {
     // Through the scan's context, not the browser directly, so a render counts as a request and
     // its bytes against this scan like any other fetch.
@@ -1137,22 +1593,109 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
       // Same rule as the fetcher's.
       throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, statusKind(rendered.status), rendered.status);
     }
-    const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
-    const outcomes: HtmlScanOutcome[] = [];
+    // A browser may capture the same 1,000 roles on every page. Keep one posting per source
+    // identity, with a separate byte ceiling for unusually large descriptions/metadata.
+    const maxCapturedMetadataBytes = 4_000_000;
+    const capturedByKey = new Map<string, { posting: RawPosting; bytes: number }>();
+    let capturedMetadataBytes = 0;
+    let verifiedCaptureCount = 0;
+    let dropped = 0;
+    let postingCapExceeded = false;
+    const addCaptured = (items: RawPosting[]) => {
+      for (const item of items) {
+        const key = deriveExternalKey(item);
+        const previous = capturedByKey.get(key);
+        if (previous) {
+          const locations = new Set([...(previous.posting.locations ?? []), ...(previous.posting.location ? [previous.posting.location] : []),
+            ...(item.locations ?? []), ...(item.location ? [item.location] : [])]);
+          const merged = { ...previous.posting, locations: [...locations], remote: previous.posting.remote || item.remote || [...locations].some(looksRemote) || undefined };
+          const bytes = Buffer.byteLength(JSON.stringify(merged), "utf8");
+          if (capturedMetadataBytes - previous.bytes + bytes > maxCapturedMetadataBytes) postingCapExceeded = true;
+          else {
+            capturedMetadataBytes += bytes - previous.bytes;
+            capturedByKey.set(key, { posting: merged, bytes });
+          }
+        } else {
+          const bytes = Buffer.byteLength(JSON.stringify(item), "utf8");
+          if (capturedByKey.size >= ats.MAX_POSTINGS || capturedMetadataBytes + bytes > maxCapturedMetadataBytes) postingCapExceeded = true;
+          else {
+            capturedByKey.set(key, { posting: { ...item }, bytes });
+            capturedMetadataBytes += bytes;
+          }
+        }
+        if (postingCapExceeded) break;
+      }
+    };
     let incomplete = rendered.incomplete ?? false;
     let incompleteReason = incomplete ? BROWSER_PAGINATION_INCOMPLETE : undefined;
-    for (const capture of captures) {
-      try {
-        const outcome = await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture);
-        outcomes.push(outcome);
-        incomplete ||= outcome.incomplete ?? false;
-        incompleteReason ??= outcome.incompleteReason;
+    // Browser controls may not expose a document-head rel=next link to the renderer. Keep
+    // explicit HTTP and rendered next links, then resume the ordinary page traversal from the
+    // first page the browser has not already captured. A later capture may itself point onward.
+    const capturedUrls = new Set([new URL(finalUrl).href]);
+    const continuations = [ats.nextListingPage(html, finalUrl)];
+    let advertisedTotal = ats.advertisedDistinctJobTotal(html) ?? 0;
+    let externalContinuation = ats.hasUnfollowableListingContinuation(html, finalUrl);
+    let lastExpansionPending = false;
+    const captureHash = createHash("sha1");
+    const captureCount = listingCaptureCount(rendered);
+    let captureIndex = 0;
+    try {
+      for (const capture of listingCaptures(rendered)) {
+        const index = captureIndex++;
+        advertisedTotal = Math.max(advertisedTotal, ats.advertisedDistinctJobTotal(capture.html) ?? 0);
+        appendCaptureHash(captureHash, capture.html, index);
+        capturedUrls.add(new URL(capture.url).href);
+        const nextCaptured = ats.nextListingPage(capture.html, capture.url);
+        continuations.push(nextCaptured);
+        externalContinuation ||= ats.hasUnfollowableListingContinuation(capture.html, capture.url);
+        lastExpansionPending = !nextCaptured && ats.hasListingExpansionControl(capture.html, capture.url);
+        try {
+          const outcome = await scanHtmlPage(deps, spec, source, ctx, captureCount === 1 ? cached : undefined, capture);
+          // Only parsed postings and counts survive this iteration; never retain all decoded DOMs.
+          if (outcome.postings.length === 0 && captureCount > 1 && (verifiedCaptureCount > 0 || index < captureCount - 1)) {
+            incomplete = true;
+            incompleteReason ??= "A browser listing capture was empty after or before a populated capture; this scan cannot close roles.";
+          }
+          addCaptured(outcome.postings);
+          verifiedCaptureCount++;
+          dropped += outcome.dropped;
+          incomplete ||= outcome.incomplete ?? false;
+          incompleteReason ??= outcome.incompleteReason;
+        } catch (error) {
+          // A shell before later confirmed roles is allowed; one after roles is incomplete.
+          if (!verifiedCaptureCount && index < captureCount - 1 && error instanceof SourceFetchError && error.kind === "parse") continue;
+          if (!verifiedCaptureCount) throw error;
+          incomplete = true;
+          incompleteReason ??= `Browser listing capture ${index + 1} could not be verified: ${(error as Error).message}`.slice(0, 1000);
+        }
+        if (postingCapExceeded) { incomplete = true; break; }
       }
-      catch (error) { if (!outcomes.length) throw error; incomplete = true; }
+    } catch (error) {
+      // A corrupt compressed capture is never a complete listing. Retain already parsed captures
+      // and the HTTP first page so a partial scan can still surface useful roles.
+      if (!(error instanceof SourceFetchError && error.kind === "parse")) throw error;
+      incomplete = true;
+      incompleteReason ??= `Browser listing capture could not be decoded: ${error.message}`.slice(0, 1000);
     }
-    return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
-      contentHash: capturesHash(captures), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
-      incompleteReason: incomplete ? incompleteReason ?? BROWSER_PAGINATION_INCOMPLETE : undefined, traversed: true };
+    if (externalContinuation) {
+      incomplete = true;
+      incompleteReason ??= "Listing has an explicit next page outside this source; the remaining roles could not be verified.";
+    }
+    if (lastExpansionPending) {
+      incomplete = true;
+      incompleteReason ??= "The final browser capture still has an expansion control; the remaining roles could not be verified.";
+    }
+    if (postingCapExceeded) incompleteReason ??= "The browser listing exceeded its posting or parsed-metadata limit; remaining roles could not be verified.";
+    const nextPageUrl = postingCapExceeded ? undefined : continuations.find(next => next !== null && !capturedUrls.has(new URL(next).href)) ?? undefined;
+    const capturedPostings = [...capturedByKey.values()].map(value => value.posting);
+    if (capturedPostings.length < advertisedTotal) {
+      incomplete = true;
+      incompleteReason ??= `Listing advertised ${advertisedTotal} distinct jobs but only ${capturedPostings.length} were verified.`;
+    }
+    return { postings: keyPostings(incomplete ? [...postings, ...capturedPostings] : capturedPostings).keyed,
+      method: "browser", dropped,
+      contentHash: captureIndex ? captureHash.digest("hex") : httpHash ?? sha1(html), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
+      incompleteReason: incomplete ? incompleteReason ?? BROWSER_PAGINATION_INCOMPLETE : undefined, traversed: true, nextPageUrl };
 
   }
 
@@ -1160,9 +1703,15 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   const unchanged = contentHash === cached?.contentHash;
 
   if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
-  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
+  const unfollowableContinuation = ats.hasUnfollowableListingContinuation(html, finalUrl);
+  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash,
+    incomplete: expansionPending || unfollowableContinuation,
+    incompleteReason: expansionPending ? "Listing has an expansion control but browser rendering is unavailable; this scan cannot close roles."
+      : unfollowableContinuation ? "Listing has an explicit next page outside this source; the remaining roles could not be verified." : undefined };
   if (ats.isExplicitEmptyListing(html, finalUrl)) {
-    return { postings: [], method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
+    return { postings: [], method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash,
+      incomplete: unfollowableContinuation,
+      incompleteReason: unfollowableContinuation ? "Listing has an explicit next page outside this source; the remaining roles could not be verified." : undefined };
   }
   if (unchanged || !deps.ai.enabled) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
@@ -1187,12 +1736,16 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     const url = normalisePostingUrl(posting.url);
     return visibleUrls.has(url) && !modelUrls.has(url);
   });
-  const incomplete = compact.truncated || omittedVisiblePrevious.length > 0;
+  const incomplete = compact.truncated || omittedVisiblePrevious.length > 0 || expansionPending || unfollowableContinuation;
   const incompleteReason = compact.truncated
     ? "Model extraction used a truncated listing representation; this scan cannot prove the complete set of postings."
     : omittedVisiblePrevious.length > 0
       ? `Model extraction omitted ${omittedVisiblePrevious.length} previously observed posting URL(s) still visible on the listing; this scan cannot close roles.`
-      : undefined;
+      : expansionPending
+        ? "Listing has an expansion control but browser rendering is unavailable; this scan cannot close roles."
+        : unfollowableContinuation
+          ? "Listing has an explicit next page outside this source; the remaining roles could not be verified."
+          : undefined;
 
   let recipe: HtmlRecipe | undefined;
   if (extraction.recipe && !incomplete) {

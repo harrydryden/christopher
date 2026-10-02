@@ -1,0 +1,11 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-10-01T21:59:50.454Z","level":"info","event":"slow_database_query","durationMs":339,"statement":"insert into jobs (company_id, source_id, external_key, title, normalized_title, url) select $1::uuid, $2::uuid, 'cap-' |"}
+{"t":"2026-10-01T21:59:50.811Z","level":"info","event":"slow_database_query","durationMs":356,"statement":"insert into user_jobs (user_id, job_id, keyword_matched, location_ok, in_table) select $1::uuid, j.id, true, true, true "}
+
+ Test Files  1 passed (1)
+      Tests  61 passed (61)
+   Start at  22:59:43
+   Duration  13.28s (tests 92%, transform 5%, import 3%)
+

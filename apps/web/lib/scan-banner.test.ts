@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { REVIEW_HREF, scanStripItems, scanStripSignature, type ScanStripFacts } from "./scan-banner";
+import { REVIEW_HREF, scanActivity, scanStripItems, scanStripSignature, type ScanStripFacts } from "./scan-banner";
 
 const now = new Date("2026-09-11T12:00:00Z");
 const facts: ScanStripFacts = {
-  scanning: false,
+  scanState: "idle",
   lastScanAt: "2026-09-11T10:00:00.000Z",
   following: 6,
   newRoleMatches: 3,
@@ -34,8 +34,17 @@ describe("scanStripItems", () => {
 describe("scanStripSignature", () => {
   it("changes when any fact does and not otherwise", () => {
     expect(scanStripSignature({ ...facts })).toBe(scanStripSignature(facts));
-    for (const change of [{ scanning: true }, { lastScanAt: null }, { following: 7 }, { newRoleMatches: 4 }, { newCompanyMatches: 0 }]) {
+    for (const change of [{ scanState: "scanning" as const }, { scanState: "waiting" as const }, { scanState: "restarting" as const }, { lastScanAt: null }, { following: 7 }, { newRoleMatches: 4 }, { newCompanyMatches: 0 }]) {
       expect(scanStripSignature({ ...facts, ...change })).not.toBe(scanStripSignature(facts));
     }
+  });
+});
+
+describe("scanActivity", () => {
+  it("labels an unfinished run according to worker health and links attention to Health", () => {
+    expect(scanActivity(facts)).toBeNull();
+    expect(scanActivity({ ...facts, scanState: "scanning" })).toEqual({ text: "Scanning now", href: null });
+    expect(scanActivity({ ...facts, scanState: "waiting" })).toEqual({ text: "Scan waiting for monitoring", href: "/health" });
+    expect(scanActivity({ ...facts, scanState: "restarting" })).toEqual({ text: "Scan may be interrupted", href: "/health" });
   });
 });

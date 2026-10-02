@@ -24,7 +24,7 @@ import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan,
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { completeCv, cvRoleKey, type AiCallRecord, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
+import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
 import {
   CvContentSchema,
@@ -223,6 +223,16 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
     if (payloadUserId && payloadUserId !== draft.userId) {
       log.warn("CV task names a different account from its draft; ignored", { draftId, taskId: task.id });
       return { skipped: true, reason: "account" };
+    }
+    if (!await accountCanScore(deps.db, draft.userId)) {
+      const message = "Confirm your email address, then retry this CV build.";
+      await deps.db.transaction(async tx => {
+        await locked.assertOwnership?.(tx as unknown as Db);
+        await tx.update(schema.cvDrafts).set({ status: "failed", error: message, buildStage: null, progressAt: deps.now() })
+          .where(eq(schema.cvDrafts.id, draftId));
+        await failOpenCvBuildSteps(tx as unknown as Db, draftId, message);
+      });
+      return { draftId, skipped: true, reason: "email confirmation required" };
     }
 
     const sink: CvBuildSink = ctx?.sink ?? {
@@ -1152,4 +1162,3 @@ function planFigures(plan: CvTailoringPlan) {
     questions: plan.gapQuestions.length,
   };
 }
-

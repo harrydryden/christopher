@@ -1,0 +1,13 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-10-01T22:52:09.865Z","level":"info","event":"slow_database_query","durationMs":290,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-10-01T22:52:15.252Z","level":"info","event":"slow_database_query","durationMs":355,"statement":"insert into jobs (company_id, source_id, external_key, title, normalized_title, url) select $1::uuid, $2::uuid, 'cap-' |"}
+{"t":"2026-10-01T22:52:15.676Z","level":"info","event":"slow_database_query","durationMs":424,"statement":"insert into user_jobs (user_id, job_id, keyword_matched, location_ok, in_table) select $1::uuid, j.id, true, true, true "}
+{"t":"2026-10-01T22:52:22.800Z","level":"info","event":"slow_database_query","durationMs":345,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+{"t":"2026-10-01T22:52:23.641Z","level":"info","event":"slow_database_query","durationMs":251,"statement":"truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users rest"}
+
+ Test Files  6 passed (6)
+      Tests  107 passed (107)
+   Start at  23:52:06
+   Duration  25.99s (tests 88%, import 7%, transform 3%, environment 2%)

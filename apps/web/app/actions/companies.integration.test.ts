@@ -348,6 +348,21 @@ it("gives each companies-list row its open, review and shortlisted counts and th
   expect((await listCompanies(first.id))[0]!.sourceType).toBe("greenhouse");
 });
 
+it("labels queued and running scan work separately from discovery on a company row", async () => {
+  const company = await followedCompany();
+  const [scan] = await database.insert(schema.tasks).values({ type: "scan_company", payload: { companyId: company.id }, status: "queued" }).returning();
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "scan_company", activityState: "queued" });
+  const [discovery] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, status: "queued" }).returning();
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "scan_company", activityState: "queued" });
+  await database.update(schema.tasks).set({ status: "running" }).where(eq(schema.tasks.id, discovery!.id));
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "discover", activityState: "running" });
+  await database.update(schema.tasks).set({ status: "running" }).where(eq(schema.tasks.id, scan!.id));
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "scan_company", activityState: "running" });
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, scan!.id));
+  expect((await listCompanies(first.id))[0]).toMatchObject({ activityType: "discover", activityState: "running" });
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, discovery!.id));
+});
+
 /** `count` companies the account already follows, straight into the tables. */
 async function alreadyFollowing(userId: string, count: number, prefix = "held") {
   const rows = await database.insert(schema.companies).values(Array.from({ length: count }, (_, n) => ({
@@ -519,6 +534,24 @@ it("brings an add from the Discover tab back to it, with the notice or the refus
   const many = urls(Array.from({ length: 26 }, (_, n) => `https://many${n}.example`).join("\n"));
   many.set("returnTo", "/suggestions");
   await expect(addCompanies(many)).rejects.toThrow("redirect:/suggestions?error=");
+});
+
+it("reports each homepage outcome for a bulk add on Discover", async () => {
+  const form = urls("https://fresh-bulk.example\nhttps://fresh-bulk.example\nnot a homepage\nhttps://acme.example");
+  form.set("returnTo", "/suggestions");
+  form.set("bulk", "1");
+  let redirectTo = "";
+  try { await addCompanies(form); } catch (error) { redirectTo = String(error); }
+  expect(redirectTo).toMatch(/^Error: redirect:\/suggestions\?added=2/);
+  const params = new URL(redirectTo.replace(/^Error: redirect:/, ""), "https://example.test").searchParams;
+  expect(JSON.parse(params.get("results")!)).toEqual([
+    ["https://fresh-bulk.example", "Added and followed"],
+    ["https://fresh-bulk.example", "Duplicate domain in this list"],
+    ["not a homepage", "Invalid homepage"],
+    ["https://acme.example", "Added and followed"],
+  ]);
+  const [created] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "fresh-bulk.example"));
+  expect(created).toBeDefined();
 });
 
 it("sorts the companies list in SQL by each whitelisted column, both ways", async () => {

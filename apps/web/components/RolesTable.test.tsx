@@ -13,10 +13,16 @@ import type { ActionResult } from "@/lib/validation";
 const actions = vi.hoisted(() => ({
   decide: vi.fn(),
   decideRoles: vi.fn(),
+  decideWithUndoToken: vi.fn(),
+  decideRolesWithUndoTokens: vi.fn(),
+  undoDecisionIfCurrent: vi.fn(),
+  undoDecisionsIfCurrent: vi.fn(),
   archiveRoles: vi.fn(),
   roleDetails: vi.fn(),
+  retryFailedScore: vi.fn(),
 }));
 vi.mock("@/app/actions/decisions", () => actions);
+vi.mock("@/app/actions/scores", () => ({ retryFailedScore: actions.retryFailedScore }));
 vi.mock("@/app/actions/cv", () => ({ requestCv: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: ReactNode; href: string }) => <a href={href}>{children}</a> }));
@@ -35,12 +41,26 @@ function role(id: string, title: string): RoleRowVM {
     department: null, employmentType: null, salaryText: null, status: "active", workflowStatus: "auto-matched",
     stage: "matched", applicationStatus: null, liveForText: "Live for 3 days", liveForBasis: "posted", seeded: false,
     fitScore: 72, scoreState: null, scoreStateText: null, fitVerdict: null, fitRationale: null, keywordTerms: [],
-    addedByYou: false, decision: null,
+    addedByYou: false, manual: false, decision: null,
   };
 }
 const COMPANIES: RoleCompaniesVM = { "company-1": { iconSrc: null, domain: "meridian.example", homepageUrl: "https://meridian.example" } };
 const FIRST = role("11111111-1111-4111-8111-111111111111", "Head of Operations");
 const SECOND = role("22222222-2222-4222-8222-222222222222", "Operations Manager");
+
+it("shows a saved PDF role without inventing a company page or vacancy link", async () => {
+  const pdf = { ...FIRST, manual: true, url: null, companyId: FIRST.id, workflowStatus: "user-shortlisted" as const, stage: "shortlisted" as const,
+    fitScore: null, scoreState: "requested" as const, scoreStateText: "Score pending; review manually" };
+  await act(async () => root.render(<RolesTable rows={[pdf]} companies={{}} initiallyExpandedId={pdf.id} emptyState={null} />));
+  expect(container.textContent).toContain("Added from PDF");
+  expect(container.querySelector(`a[href="/companies/${pdf.id}"]`)).toBeNull();
+  expect(container.textContent).not.toContain("View vacancy");
+  expect(container.textContent).toContain("You added this role from a PDF");
+  expect(container.textContent).toContain("Not scored");
+  expect(container.textContent).not.toContain("Why it matched");
+  expect(container.textContent).not.toContain("Score pending");
+  expect(container.textContent).not.toContain("Score requested");
+});
 
 /** A server answer the test hands over when it chooses, so the page can be read in between. */
 function deferred() {
@@ -53,13 +73,120 @@ let root: Root;
 let container: HTMLElement;
 const scrolled = vi.fn();
 beforeEach(() => {
+  sessionStorage.clear();
   for (const action of Object.values(actions)) action.mockReset();
+  actions.decideWithUndoToken.mockImplementation(async (jobId: string, decision: string, reason: string) => {
+    const result = await actions.decide(jobId, decision, reason);
+    return result.ok ? { ok: true, decisionId: jobId } : result;
+  });
+  actions.undoDecisionIfCurrent.mockImplementation((jobId: string) => actions.decide(jobId, null, ""));
+  actions.decideRolesWithUndoTokens.mockImplementation(async (ids: string[], decision: string, reason: string) => {
+    const result = await actions.decideRoles(ids, decision, reason);
+    return result.ok ? { ok: true, decisionIds: Object.fromEntries(ids.map(id => [id, id])) } : result;
+  });
+  actions.undoDecisionsIfCurrent.mockImplementation((expected: Array<{ jobId: string }>) => actions.decideRoles(expected.map(item => item.jobId), null, ""));
   actions.roleDetails.mockResolvedValue({ ok: false, error: "Could not load this role." });
   scrolled.mockReset();
   Element.prototype.scrollIntoView = scrolled;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("keeps several successful decisions available across filtered table remounts and retains a failed Undo", async () => {
+  const scoped = (key: string, rows: RoleRowVM[]) => act(() => root.render(
+    <RolesTable key={key} rows={rows} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing to review</p>} />
+  ));
+  actions.decideWithUndoToken.mockImplementation(async (jobId: string) => ({ ok: true, decisionId: jobId }));
+  scoped("first", [FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  scoped("filtered", [SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  scoped("empty", []);
+  expect(container.querySelectorAll('[aria-label^="Undo Shortlisted"]')).toHaveLength(2);
+  expect(text()).toContain("Shortlisted Head of Operations");
+  expect(text()).toContain("Shortlisted Operations Manager");
+
+  actions.undoDecisionIfCurrent.mockResolvedValueOnce({ ok: false, error: "The decision changed. Reload and retry." });
+  await act(async () => { container.querySelector<HTMLButtonElement>(`[aria-label="Undo Shortlisted Head of Operations at Meridian"]`)!.click(); });
+  expect(text()).toContain("Could not undo");
+  expect(text()).toContain("The decision changed. Reload and retry.");
+  expect(container.querySelectorAll('[aria-label^="Undo Shortlisted"]')).toHaveLength(2);
+  expect(actions.undoDecisionIfCurrent).toHaveBeenCalledWith(FIRST.id, FIRST.id);
+
+  actions.undoDecisionIfCurrent.mockResolvedValueOnce({ ok: true });
+  await act(async () => { container.querySelector<HTMLButtonElement>(`[aria-label="Undo Shortlisted Head of Operations at Meridian"]`)!.click(); });
+  expect(container.querySelectorAll('[aria-label^="Undo Shortlisted"]')).toHaveLength(1);
+  expect(text()).toContain("Shortlisted Operations Manager");
+});
+
+it("does not expose another account's recent decisions in the same browser tab", async () => {
+  actions.decideWithUndoToken.mockResolvedValue({ ok: true, decisionId: FIRST.id });
+  act(() => root.render(<RolesTable rows={[FIRST]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  act(() => root.render(<RolesTable key="other-account" rows={[]} companies={COMPANIES} keyboard historyScope="person-2" emptyState={<p>Nothing</p>} />));
+  expect(text()).not.toContain("Head of Operations");
+  expect(container.querySelector('[aria-label^="Undo Shortlisted"]')).toBeNull();
+});
+
+it("rejects older tokenless Undo history and offers a reload of the latest role state", () => {
+  sessionStorage.setItem("ava:role-undo:person-1", JSON.stringify([{ jobId: FIRST.id, text: "Shortlisted Head of Operations", revision: "old" }]));
+  act(() => root.render(<RolesTable rows={[]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  expect(text()).toContain("Older Undo entries cannot be checked against the latest decision");
+  expect(button("Reload roles")).toBeTruthy();
+  expect(container.querySelector('button[aria-label^="Undo Shortlisted"]')).toBeNull();
+  expect(actions.undoDecisionIfCurrent).not.toHaveBeenCalled();
+});
+
+it("keeps a visible shortlisted row and its history when a stale Undo is refused", async () => {
+  const decided: RoleRowVM = { ...FIRST, workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: FIRST.id, decision: "apply", reason: "", createdLabel: "just now", createdTitle: "now" } };
+  const entry = { jobId: FIRST.id, text: "Shortlisted Head of Operations at Meridian", revision: "rev-1", decisionId: FIRST.id };
+  sessionStorage.setItem(`ava:role-undo-revision:person-1:${FIRST.id}`, entry.revision);
+  sessionStorage.setItem("ava:role-undo:person-1", JSON.stringify([entry]));
+  actions.undoDecisionIfCurrent.mockResolvedValue({ ok: false, error: "This decision changed in another tab. Reload roles before trying again." });
+  act(() => root.render(<RolesTable rows={[decided]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+
+  await act(async () => { container.querySelector<HTMLButtonElement>(`[aria-label="Undo ${entry.text}"]`)!.click(); });
+  expect(titles()).toEqual([FIRST.title]);
+  expect(text()).toContain("This decision changed in another tab");
+  expect(container.querySelector(`[aria-label="Undo ${entry.text}"]`)).not.toBeNull();
+  expect(actions.undoDecisionIfCurrent).toHaveBeenCalledWith(FIRST.id, FIRST.id);
+});
+
+it("keeps a bulk selection intact when one token changed and sends every expected decision id", async () => {
+  const decided = (row: RoleRowVM): RoleRowVM => ({ ...row, workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: row.id, decision: "apply", reason: "", createdLabel: "just now", createdTitle: "now" } });
+  actions.undoDecisionsIfCurrent.mockResolvedValue({ ok: false, error: "A selected decision changed in another tab. Reload roles before trying again." });
+  act(() => root.render(<RolesTable rows={[decided(FIRST), decided(SECOND)]} companies={COMPANIES}
+    keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  act(() => container.querySelector<HTMLInputElement>(`input[aria-label="Select ${FIRST.title} at Meridian"]`)!.click());
+  act(() => container.querySelector<HTMLInputElement>(`input[aria-label="Select ${SECOND.title} at Meridian"]`)!.click());
+  await act(async () => { button("Undo").click(); });
+  expect(actions.undoDecisionsIfCurrent).toHaveBeenCalledWith([
+    { jobId: FIRST.id, decisionId: FIRST.id }, { jobId: SECOND.id, decisionId: SECOND.id },
+  ]);
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+  expect(text()).toContain("2 selected");
+  expect(text()).toContain("A selected decision changed in another tab");
+  expect(actions.decideRoles).not.toHaveBeenCalled();
+});
+
+it("uses the standing decision token when Reset is pressed in a review panel", async () => {
+  const decided: RoleRowVM = { ...FIRST, workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: FIRST.id, decision: "apply", reason: "", createdLabel: "just now", createdTitle: "now" } };
+  actions.undoDecisionIfCurrent.mockResolvedValue({ ok: true });
+  act(() => root.render(<RolesTable rows={[decided]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
+  act(() => button(FIRST.title).click());
+  await act(async () => { button("Reset").click(); });
+  expect(actions.undoDecisionIfCurrent).toHaveBeenCalledWith(FIRST.id, FIRST.id);
+  expect(actions.decide).not.toHaveBeenCalled();
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -69,6 +196,59 @@ afterEach(() => {
 function render(rows: RoleRowVM[]) {
   act(() => root.render(<RolesTable rows={rows} companies={COMPANIES} keyboard emptyState={<p>Nothing to review</p>} />));
 }
+
+it("keeps an earlier fit score visible beside an honest pending update in the row and review", () => {
+  const pending = { ...FIRST, scoreState: "requested" as const, scoreStateText: "Previous score; update pending" };
+  render([pending]);
+  const row = container.querySelector(`#role-row-${pending.id}`)!.closest("tr")!;
+  expect(row.textContent).toContain("72");
+  expect(row.textContent).toContain("Previous score; update pending");
+  act(() => button("Review").click());
+  const review = container.querySelector(`#role-review-${pending.id}`)!;
+  expect(review.textContent).toContain("72");
+  expect(review.textContent).toContain("Previous score; update pending");
+});
+
+it("offers one Retry score in a failed review and preserves the previous score and manual decision", async () => {
+  const failed: RoleRowVM = { ...FIRST, scoreState: "failed", scoreStateText: "Previous score; update failed; review manually",
+    workflowStatus: "user-shortlisted", stage: "shortlisted",
+    decision: { id: FIRST.id, decision: "apply", reason: "Relevant work", createdLabel: "just now", createdTitle: "now" } };
+  const request = deferred();
+  actions.retryFailedScore.mockReturnValue(request.promise);
+  render([failed]);
+  expect([...container.querySelectorAll("button")].some(el => el.textContent === "Retry score")).toBe(false);
+  act(() => button(FIRST.title).click());
+  const review = container.querySelector(`#role-review-${failed.id}`)!;
+  expect(review.textContent).toContain("72");
+  expect(review.textContent).toContain("Previous score; update failed");
+  expect(review.textContent).toContain("Relevant work");
+  expect(review.querySelectorAll("button").length).toBeGreaterThan(1);
+  expect(review.querySelector("button button")).toBeNull();
+  await act(async () => { button("Retry score").click(); });
+  expect(actions.retryFailedScore).toHaveBeenCalledOnce();
+  expect(actions.retryFailedScore).toHaveBeenCalledWith(failed.id);
+  expect(button("Requesting…").hasAttribute("disabled")).toBe(true);
+  await act(async () => { request.resolve({ ok: true }); });
+  expect(review.querySelector('[role="status"]')?.textContent).toContain("Score retry requested");
+  expect(review.textContent).toContain("72");
+  expect(button("Score requested").hasAttribute("disabled")).toBe(true);
+  render([{ ...failed, scoreState: "requested", scoreStateText: "Previous score; update pending; review manually" }]);
+  expect(container.querySelector(`#role-review-${failed.id} [role="status"]`)?.textContent).toContain("reviewing this role");
+  expect(button("Score requested").hasAttribute("disabled")).toBe(true);
+  render([failed]);
+  expect(button("Retry score").hasAttribute("disabled")).toBe(false);
+});
+
+it("announces a retry refusal and allows another attempt", async () => {
+  actions.retryFailedScore.mockResolvedValue({ ok: false, error: "This role is no longer eligible for scoring." });
+  render([{ ...FIRST, fitScore: null, scoreState: "failed", scoreStateText: "Could not score; review manually" }]);
+  act(() => button("Review").click());
+  await act(async () => { button("Retry score").click(); });
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("no longer eligible");
+  expect(button("Retry score").hasAttribute("disabled")).toBe(false);
+  expect(text()).toContain("Could not score; review manually");
+});
+
 const titles = () => [...container.querySelectorAll('tbody td[id^="role-row-"] button')].map(el => el.textContent);
 const text = () => container.textContent ?? "";
 const button = (label: string) => {
@@ -324,6 +504,29 @@ it("draws each row's company from the page's map and says in words what its live
   ]);
   act(() => button(other.title).click());
   expect(container.querySelector<HTMLAnchorElement>(`#role-review-${other.id} a[href="https://northwind.example"]`)?.textContent).toBe("Website ↗");
+});
+
+it("keeps a long location list reviewable and exposes every place on demand", () => {
+  const locations = ["USA, GA, Atlanta", ...Array.from({ length: 68 }, (_, i) => `Location ${i + 1}`), "USA, MA, Boston"];
+  const multiLocation: RoleRowVM = { ...FIRST, location: locations[0]!, locations };
+  act(() => root.render(<RolesTable rows={[multiLocation]} companies={COMPANIES} emptyState={<p>Nothing</p>} />));
+
+  const details = container.querySelector<HTMLDetailsElement>("tbody details");
+  const summary = details?.querySelector("summary");
+  expect(details?.open).toBe(false);
+  expect(summary?.textContent).toBe("USA, GA, Atlanta + 69 more locations");
+  expect(details?.querySelectorAll("li")).toHaveLength(70);
+  expect(details?.querySelector("li:last-child")?.textContent).toBe("USA, MA, Boston");
+  expect(details?.querySelector("ul")?.className).not.toContain("overflow-y-auto");
+  act(() => summary!.click());
+  expect(details?.open).toBe(true);
+});
+
+it("shows a short location list directly", () => {
+  const fewLocations: RoleRowVM = { ...FIRST, location: "London", locations: ["London", "Manchester"] };
+  act(() => root.render(<RolesTable rows={[fewLocations]} companies={COMPANIES} emptyState={<p>Nothing</p>} />));
+  expect(container.querySelector("tbody details")).toBeNull();
+  expect(container.querySelector("tbody")?.textContent).toContain("London, Manchester");
 });
 
 it("brings an undone row back with its company even when the new page's map no longer holds it", async () => {

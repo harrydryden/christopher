@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-29T14:31:07.317Z",
+  "mode": "discovery_and_extraction",
+  "concurrency": {
+    "cases": 1,
+    "source": "production_serial_default",
+    "productionShape": true,
+    "note": "Serial case execution avoids charging a case's 45-second discovery budget for time queued behind the shared browser or AI lane."
+  },
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "ai": {
+    "enabled": false,
+    "skipCode": "ai_not_requested",
+    "calls": []
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "Extraction starts from each labelled source, independently of discovery. Completion is not an end-to-end success or posting-recall claim.",
+    "HTML diagnostics traverse HTTP/browser listings and reject unverified empty results; they do not exercise the worker cache, learned recipes or AI extraction recovery.",
+    "Machine-enumerated posting references produce diagnostic comparisons only; they do not qualify human-reviewed full-site recall/precision.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback is disabled; no database or account data is read or written.",
+    "No paid model request is made without --ai and an explicit --ai-max-usd cap."
+  ],
+  "scope": {
+    "selectedCaseIds": [
+      "wise"
+    ],
+    "requiredCaseIds": [
+      "anduril",
+      "airbnb",
+      "stripe",
+      "openai",
+      "notion",
+      "anthropic",
+      "netflix",
+      "figma",
+      "datadog",
+      "cloudflare",
+      "canonical",
+      "automattic",
+      "gitlab",
+      "wise",
+      "salesforce",
+      "siemens",
+      "spotify",
+      "mozilla",
+      "basecamp",
+      "monzo",
+      "revolut",
+      "zapier",
+      "linear",
+      "vercel",
+      "render"
+    ],
+    "fullCorpusSelected": false
+  },
+  "postingReferences": null,
+  "acceptance": {
+    "verdict": "blocked",
+    "reasons": [
+      "24 required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus",
+      "1 case(s) lack an independent role-count label",
+      "1 case(s) lack a qualifying independent posting-identity snapshot",
+      "posting-identity recall and precision have not been measured",
+      "0 extraction failure(s) and 1 partial extraction(s)"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 1,
+    "sourceMismatches": 0,
+    "labelledAutomaticMatchesAt085": 1,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 1,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 1,
+    "extractionExactCountAgreement": null,
+    "postingIdentityLabelled": 0,
+    "postingIdentityFailures": 0,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "wise",
+        "company": "Wise",
+        "homepageUrl": "https://wise.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://wise.jobs/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Wise's explicit first-party all-jobs listing is a SmartRecruiters Attrax-powered custom HTML site, not Workday or the SmartRecruiters public postings API.",
+        "sourceEvidenceUrls": [
+          "https://wise.jobs",
+          "https://wise.jobs/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "wise",
+        "company": "Wise",
+        "startedAt": "2026-09-29T14:30:51.021Z",
+        "durationMs": 16261,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://wise.jobs/jobs",
+          "confidence": 0.85,
+          "fetches": 3,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "basis": "labelled_source_diagnostic",
+          "outcome": "partial",
+          "observedRoleCount": 12,
+          "rawObservedRoleCount": 12,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Senior Product Analytics Manager - Online Platforms",
+              "url": "https://wise.jobs/job/senior-product-analytics-manager-online-platforms-in-london-jid-4234"
+            },
+            {
+              "title": "Principal Product Manager / Product Lead, Wise for Banks",
+              "url": "https://wise.jobs/job/principal-product-manager-product-lead-wise-for-banks-in-london-jid-4233"
+            },
+            {
+              "title": "Senior Product Designer - Spend - Credit",
+              "url": "https://wise.jobs/job/senior-product-designer-spend-credit-in-london-jid-4054"
+            }
+          ],
+          "error": "HTML final browser capture still has an unvisited expansion control",
+          "errorCode": "source_incomplete",
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://wise.jobs/jobs"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -22,7 +22,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { saveGate } from "./settings";
+import { saveGate, saveMatchFields } from "./settings";
 import { dismissSetupChecklist } from "./setup";
 import { hasChosenGate, setupStatus } from "@/lib/queries/setup";
 
@@ -82,6 +82,32 @@ it("refuses a gate with no include keyword, so a saved gate never admits everyth
   expect(result).toEqual({ ok: false, error: expect.stringContaining("at least one keyword") });
   expect(await storedGate(user.id)).toBeUndefined();
   expect(await hasChosenGate(user.id)).toBe(false);
+});
+
+it("does not start monitoring from a location-only, keyword-only or match-fields first save", async () => {
+  expect((await saveGate({ ok: true }, form({ locationTerms: "United States", includeRemote: "1" }))).ok).toBe(false);
+  expect((await saveGate({ ok: true }, form({ includeKeywords: "Engineer" }))).ok).toBe(false);
+  expect((await saveMatchFields({ ok: true }, form({ matchFields: "description" }))).ok).toBe(false);
+  expect(await storedGate(user.id)).toBeUndefined();
+  expect(await hasChosenGate(user.id)).toBe(false);
+
+  expect(await saveGate({ ok: true }, form({ includeKeywords: "Engineer", locationTerms: "United States", includeRemote: "1" }))).toEqual({ ok: true });
+  expect(await storedGate(user.id)).toMatchObject({ includeKeywords: ["Engineer"], locationTerms: ["United States"], includeRemote: true });
+  expect((await saveGate({ ok: true }, form({ locationTerms: "London" }))).ok).toBe(true);
+  expect(await storedGate(user.id)).toMatchObject({ includeKeywords: ["Engineer"], locationTerms: ["London"], includeRemote: false });
+});
+
+it("merges simultaneous independent gate edits after the account lock", async () => {
+  expect((await saveGate({ ok: true }, form({ includeKeywords: "Operations", locationTerms: "London", includeRemote: "1" }))).ok).toBe(true);
+  const [keywords, locations, fields] = await Promise.all([
+    saveGate({ ok: true }, form({ includeKeywords: "Engineer", excludeKeywords: "intern" })),
+    saveGate({ ok: true }, form({ locationTerms: "United States", includeRemote: "1" })),
+    saveMatchFields({ ok: true }, form({ matchFields: "description" })),
+  ]);
+  expect([keywords, locations, fields]).toEqual([{ ok: true }, { ok: true }, { ok: true }]);
+  expect(await storedGate(user.id)).toMatchObject({
+    includeKeywords: ["Engineer"], excludeKeywords: ["intern"], locationTerms: ["United States"], includeRemote: true, matchFields: ["description"],
+  });
 });
 
 it("leaves the remote flag off when its box is unticked", async () => {

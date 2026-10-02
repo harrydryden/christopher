@@ -141,8 +141,9 @@ export async function handleExtractDocument(task: Task, deps: WorkerDeps): Promi
       const stop = await aiBudgetStop(deps, userId);
       // Unlike scheduled work this is a document the user asked for, so the reason is recorded on
       // their source where they can see it rather than skipped quietly.
-      if (stop) throw new Error(stop === "ai unavailable" ? "AI unavailable; check again later." :
-        "Your monthly AI budget is spent; raise it on Settings, or ask an administrator.");
+      if (stop) throw new Error(stop === "email confirmation required" ? "Confirm your email address before using AI." :
+        stop === "ai unavailable" ? "AI unavailable; check again later." :
+          "Your monthly AI budget is spent; raise it on Settings, or ask an administrator.");
       const context = await recommendationContext(deps, userId, document.content);
       const result = await deps.ai.extractSourceCompanies({ content: document.content, portfolio: context.examples,
         preferences: context.preferences }, { refType: "discovery_source", refId: sourceId, userId });

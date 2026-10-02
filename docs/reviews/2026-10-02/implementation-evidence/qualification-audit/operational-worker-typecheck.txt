@@ -1,0 +1,8 @@
+Command: pnpm --filter @ava/worker typecheck
+
+
+> @ava/worker@0.1.0 typecheck /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+> tsc --noEmit -p tsconfig.json
+
+
+Exit code: 0

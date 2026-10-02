@@ -1,0 +1,8 @@
+{
+  "url": "https://workday.wd5.myworkdayjobs.com/wday/cxs/workday/Workday/jobs",
+  "method": "POST",
+  "purpose": "Read-only unfiltered public listing query; first page only",
+  "checkedAt": "2026-10-01T20:21:39.459666+00:00",
+  "status": 200,
+  "sha256": "8d8f8e3ad2963bf5dc861edaa34b1c64729b0c701bdfad50882229c92004b326"
+}

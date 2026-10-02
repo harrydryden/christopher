@@ -1,8 +1,9 @@
-import { compileGate, type AppSettings, type CompiledGate, type GateResult, type GateSettings } from "@ava/core";
+import { compileGate, type AppSettings, type CompiledGate, type GateInput, type GateResult, type GateSettings } from "@ava/core";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
-import { queueScoring } from "./tasks";
+import { requestScores } from "./tasks";
+import { requestLocationEnrichment } from "./location-enrichment";
 
 export interface GateScope {
   /** One posting only (a description just arrived). */
@@ -13,6 +14,11 @@ export interface GateScope {
 
 interface GateRow extends Record<string, unknown> {
   id: string;
+  sourceId: string | null;
+  externalKey: string;
+  url: string | null;
+  manualOwnerId: string | null;
+  locationLabel: string | null;
   title: string;
   /** The account that added this posting by pasting its URL, when one did. */
   addedBy: string | null;
@@ -22,6 +28,9 @@ interface GateRow extends Record<string, unknown> {
   descriptionText: string | null;
   location: string | null;
   locations: string[];
+  locationResolution: "pending" | "resolved" | "unavailable" | null;
+  locationRevision: string | null;
+  locationFetchedAt: Date | null;
   remote: boolean | null;
   status: "open" | "closed";
   viewed: boolean;
@@ -72,13 +81,33 @@ export function gateCompiler(): (gate: GateSettings) => CompiledGate {
 }
 
 /**
+ * A refreshed counted listing has unknown current places. Its last verified names may preserve
+ * an existing qualified view while detail is pending, but cannot admit a new follower. Re-run the
+ * current gate on those names so a changed keyword or location filter still takes effect.
+ */
+export function gateWithRetainedLocations(
+  gate: CompiledGate,
+  input: GateInput,
+  evidence: { status: "open" | "closed"; locationFetchedAt: Date | string | null },
+  view?: { inTable: boolean | null; locationOk: boolean | null } | null,
+): { verdict: GateResult; held: boolean } {
+  const verdict = gate.evaluate(input);
+  if (evidence.status !== "open" || view?.inTable !== true || view.locationOk !== true
+      || !evidence.locationFetchedAt || !input.locations?.length
+      || (input.locationResolution !== "pending" && input.locationResolution !== "unavailable"))
+    return { verdict, held: false };
+  const retained = gate.evaluate({ ...input, locationResolution: "resolved" });
+  return retained.inTable ? { verdict: retained, held: true } : { verdict, held: false };
+}
+
+/**
  * Whether an account's view of a posting is in its table: the gate admits it, or the account
  * asked for it by name, by pasting its URL, whether the paste created the posting or found it
  * already stored (and whether or not a scan later adopted the row). The same exemption
  * `archiveNonMatches` makes for a role the person decided on or wrote a CV for.
  */
-export function inTableFor(verdict: GateResult, userId: string, job: { addedBy: string | null }, view?: { addedByUrl: boolean | null } | null): boolean {
-  return verdict.inTable || job.addedBy === userId || view?.addedByUrl === true;
+export function inTableFor(verdict: GateResult, userId: string, job: { addedBy: string | null; manualOwnerId?: string | null }, view?: { addedByUrl: boolean | null } | null): boolean {
+  return verdict.inTable || job.addedBy === userId || job.manualOwnerId === userId || view?.addedByUrl === true;
 }
 
 /** The verdict columns a gate decision writes onto a view. `hidden` is written only when given. */
@@ -147,6 +176,8 @@ export interface ReevaluateOptions {
    * without it every page runs on the `db` given.
    */
   eachPage?: <T>(work: (db: Db) => Promise<T>) => Promise<T>;
+  /** Worker callers supply their runtime admission. Web callers use durable neutral requests. */
+  scoreCandidates?: (db: Db, pairs: Array<{ userId: string; jobId: string }>, now: Date) => Promise<number>;
 }
 
 /**
@@ -178,17 +209,17 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   while (true) {
     const last = await run(async (db) => {
     const page = await db.execute<GateRow>(sql`
-      select j.id, j.title, j.added_by as "addedBy", j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.remote, j.status,
+      select j.id, j.source_id as "sourceId", j.external_key as "externalKey", j.url, j.title, j.added_by as "addedBy", j.manual_owner_id as "manualOwnerId", j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.location_label as "locationLabel", j.location_resolution as "locationResolution", j.location_revision as "locationRevision", j.location_fetched_at as "locationFetchedAt", j.remote, j.status,
         (uj.job_id is not null) as viewed, uj.keyword_matched as "keywordMatched", uj.keyword_terms as "keywordTerms",
         uj.excluded, uj.location_ok as "locationOk", uj.in_table as "inTable", uj.hidden, uj.fit_score as "fitScore",
         uj.added_by_url as "addedByUrl", uj.scored_at as "scoredAt", uj.archived_at as "archivedAt", uj.gate_archived_at as "gateArchivedAt"
       from jobs j
       left join user_jobs uj on uj.job_id = j.id and uj.user_id = ${userId}
-      where ${scope.jobId ? sql`j.id = ${scope.jobId}` : sql`exists (
+      where ${scope.jobId ? sql`j.id = ${scope.jobId}` : sql`(j.manual_owner_id = ${userId} or (exists (
           select 1 from company_subscriptions s where s.company_id = j.company_id and s.user_id = ${userId} and s.status <> 'archived')
-        and (j.status = 'open' or j.closed_at >= ${closedSince} or uj.job_id is not null)`}
+        and (j.status = 'open' or j.closed_at >= ${closedSince} or uj.job_id is not null)))`}
         and (${scope.companyId ?? null}::uuid is null or j.company_id = ${scope.companyId ?? null}::uuid)
-        and (j.shared or j.added_by = ${userId} or uj.added_by_url)
+        and (j.shared or j.added_by = ${userId} or j.manual_owner_id = ${userId} or uj.added_by_url)
         and (${cursor ?? null}::uuid is null or j.id > ${cursor ?? null}::uuid)
       order by j.id limit 250`);
     const rows = page.rows;
@@ -198,7 +229,12 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     const inserts: Array<typeof schema.userJobs.$inferInsert> = [];
     const scoring: Array<{ userId: string; jobId: string }> = [];
     for (const job of rows) {
-      const gate = gateOf.evaluate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote });
+      const input = { title: job.title, department: job.department, description: job.descriptionText,
+        location: job.location, locations: job.locations, locationResolution: job.locationResolution, remote: job.remote };
+      const { verdict: gate, held } = gateWithRetainedLocations(gateOf, input, job, job.viewed ? job : null);
+      if (job.status === "open" && job.sourceId && job.url && job.locationResolution === "pending" && job.locationLabel && settings.gate.locationTerms.length > 0
+          && gate.keywordMatched && !gate.excluded)
+        await requestLocationEnrichment(db, { ...job, sourceId: job.sourceId, url: job.url, locationLabel: job.locationLabel }, now);
       const inTable = inTableFor(gate, userId, job, job);
       const values = viewVerdict(gate, inTable, { hidden: false });
       if (job.viewed) {
@@ -214,13 +250,13 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
         created++;
       } else continue;
       // A view whose scoring completed without a score is not asked again for the same inputs.
-      if (inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") scoring.push({ userId, jobId: job.id });
+      if (!held && inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") scoring.push({ userId, jobId: job.id });
     }
     await writeViewUpdates(db, updates, now);
     for (let offset = 0; offset < inserts.length; offset += 250) {
       await db.insert(schema.userJobs).values(inserts.slice(offset, offset + 250)).onConflictDoNothing();
     }
-    queuedForScoring += await queueScoring(db, scoring, now);
+    queuedForScoring += await (opts.scoreCandidates ?? ((writer, pairs, at) => requestScores(writer, pairs, at, { onlyUnscored: true })))(db, scoring, now);
     return rows.at(-1)!.id;
     });
     if (last === null) break;
@@ -257,6 +293,7 @@ export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promi
     // A shortlist committed while we waited for the row lock must win over automation.
     await tx.execute(sql`select uj.user_id, uj.job_id from user_jobs uj join jobs j on j.id = uj.job_id
       where uj.in_table = false and uj.archived_at is null and not uj.added_by_url
+      and j.manual_owner_id is distinct from uj.user_id
       and (${userId}::uuid is null or uj.user_id = ${userId}::uuid)
       and (${sourceId}::uuid is null or j.source_id = ${sourceId}::uuid)
       and (${jobId}::uuid is null or uj.job_id = ${jobId}::uuid)
@@ -268,6 +305,7 @@ export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promi
       update user_jobs uj set archived_at = now(), gate_archived_at = now(), updated_at = now()
       from jobs j
       where j.id = uj.job_id and uj.in_table = false and uj.archived_at is null and not uj.added_by_url
+      and j.manual_owner_id is distinct from uj.user_id
       and (${userId}::uuid is null or uj.user_id = ${userId}::uuid)
       and (${sourceId}::uuid is null or j.source_id = ${sourceId}::uuid)
       and (${jobId}::uuid is null or uj.job_id = ${jobId}::uuid)

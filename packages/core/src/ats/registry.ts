@@ -36,6 +36,7 @@ async function fetchHtmlPage(spec: SourceSpec, ctx: FetchContext, forceBrowser =
 function htmlLikeAdapter(type: Extract<SourceType, "html" | "jsonld" | "rss">): Adapter {
   return {
     type,
+    ...(type === "jsonld" || type === "rss" ? { completeFromFirstResponse: true as const } : {}),
     specFromUrl: () => null,
     async fetchPostings(spec, ctx) {
       if (type === "rss") return fetchRssPostings(spec, ctx);

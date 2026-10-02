@@ -113,6 +113,28 @@ it("never turns a switched-off source back on by itself: a matching board goes t
   expect(scans).toHaveLength(0);
 });
 
+it("discards a source found on a homepage corrected while discovery was in flight", async () => {
+  routes[GH_JOBS] = { body: { jobs: [{ id: 1, title: "Operations Lead", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/1", location: { name: "London" } }] } };
+  routes["https://boards-api.greenhouse.io/v1/boards/acme"] = { body: { name: "Acme" } };
+  const acme = await company();
+  let entered!: () => void;
+  let release!: () => void;
+  const fetching = new Promise<void>(resolve => { entered = resolve; });
+  const changed = new Promise<void>(resolve => { release = resolve; });
+  const delayed = { ...fetcher, fetchText: async (url: string) => {
+    if (url === acme.homepageUrl) { entered(); await changed; }
+    return fetcher.fetchText(url);
+  } };
+  const running = handleDiscover(discoverTask(acme.id), deps({ fetcher: delayed as unknown as WorkerDeps["fetcher"] }));
+  await fetching;
+  await db.update(schema.companies).set({ homepageUrl: "https://www.corrected.test/", domain: "corrected.test" }).where(eq(schema.companies.id, acme.id));
+  release();
+  expect(await running).toEqual({ skipped: "homepage changed" });
+  expect((await runs(acme.id)).map(run => [run.status, run.error])).toEqual([["failed", "Company homepage changed during discovery; the new homepage will be checked separately"]]);
+  expect(await db.select().from(schema.careerSources)).toHaveLength(0);
+  expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"))).toHaveLength(0);
+});
+
 it("never leaves a run running when its result cannot be recorded", async () => {
   routes[GH_JOBS] = { body: { jobs: [{ id: 1, title: "Operations Lead", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/1", location: { name: "London" } }] } };
   routes["https://boards-api.greenhouse.io/v1/boards/acme"] = { body: { name: "Acme" } };

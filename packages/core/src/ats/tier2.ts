@@ -19,7 +19,7 @@ import * as cheerio from "cheerio";
 import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { IncompleteListingError, SourceFetchError } from "../types";
 import { absoluteUrl, parseDate } from "../normalize";
-import { completeListing, feedAdapter, fetchJson, readOffsetPages, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, throwForStatus, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type PagedRead } from "./common";
+import { completeListing, feedAdapter, fetchJson, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, throwForStatus, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type PagedRead } from "./common";
 
 /** Most listing pages one HTML source is walked through; 50 rows a page covers the cap. */
 const MAX_PAGES = 200;
@@ -138,17 +138,46 @@ function mapEightfold(p: EfPosition, host: string): RawPosting | null {
 async function eightfoldRead(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<PagedRead> {
   const host = spec.atsSite, domain = spec.atsSlug;
   if (!host || !domain) throw new Error("eightfold spec missing host/domain");
-  return readOffsetPages({
-    pageSize: EIGHTFOLD_PAGE,
-    maxPages,
-    totalPolicy: "latest",
-    fetchPage: async (start) => {
-      // Descriptions come inline, so a page of a hundred can pass the default body cap.
-      const { data } = await fetchJson<{ count?: number; positions?: EfPosition[] }>(ctx, `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${start}&num=${EIGHTFOLD_PAGE}`, INLINE_DESCRIPTIONS_FETCH);
-      return { items: Array.isArray(data.positions) ? data.positions : [], total: data.count };
-    },
-    map: (p) => mapEightfold(p, host),
-  });
+  const seen = new Map<string, RawPosting>();
+  let total: number | undefined;
+  let offset = 0;
+  let more = true;
+  let duplicatedOrInvalid = false;
+  for (let page = 0; page < maxPages && seen.size < MAX_POSTINGS && more; page++) {
+    // Eightfold tenants can cap a request below `num`: Netflix returns ten rows for num=100.
+    // Offset therefore advances by rows actually served, not by the requested page size.
+    const url = `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${offset}&num=${EIGHTFOLD_PAGE}`;
+    const { data } = await fetchJson<unknown>(ctx, url, INLINE_DESCRIPTIONS_FETCH);
+    const body = rec(data);
+    if (!body || !Array.isArray(body.positions)) throw new SourceFetchError(`Eightfold positions missing at ${url}`, "parse");
+    const positions = body.positions;
+    const rawCount = body.count;
+    const pageTotal = typeof rawCount === "number" && Number.isSafeInteger(rawCount) && rawCount >= 0 ? rawCount
+      : typeof rawCount === "string" && /^\d+$/.test(rawCount.trim()) ? Number(rawCount.trim()) : undefined;
+    const invalidCount = Object.hasOwn(body, "count") && (pageTotal === undefined || !Number.isSafeInteger(pageTotal));
+    const changedCount = pageTotal !== undefined && total !== undefined && pageTotal !== total;
+    total ??= pageTotal;
+    for (const item of positions) {
+      const value = rec(item);
+      const posting = value && mapEightfold(value as EfPosition, host);
+      if (!posting) { duplicatedOrInvalid = true; continue; }
+      const key = posting.externalId ?? posting.url;
+      if (seen.has(key)) duplicatedOrInvalid = true;
+      else seen.set(key, posting);
+    }
+    offset += positions.length;
+    if (invalidCount || changedCount) break; // A malformed or shifting total cannot verify closure.
+    if (positions.length === 0) {
+      if (total === undefined && page === 0) throw new SourceFetchError(`Eightfold returned no positions or count at ${url}`, "parse");
+      more = total !== undefined && seen.size < total;
+      break;
+    }
+    more = total === undefined || offset < total;
+    if (total !== undefined && offset >= total && seen.size !== total) more = true;
+    if (offset >= (total ?? Infinity) || duplicatedOrInvalid) break;
+  }
+  if (duplicatedOrInvalid) more = true;
+  return { postings: [...seen.values()].slice(0, MAX_POSTINGS), total, more, nextOffset: offset };
 }
 async function eightfoldPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   return completeListing("Eightfold", await eightfoldRead(spec, ctx, MAX_POSTINGS / EIGHTFOLD_PAGE));
@@ -201,7 +230,12 @@ export const rippling = feedAdapter({ type: "rippling", fromUrl: ripplingFromUrl
 export function teamtailorSpec(origin: string, slug?: string): SourceSpec {
   return { type: "teamtailor", url: `${origin}/jobs`, atsSlug: slug };
 }
-const teamtailorFromUrl = (url: string) => specOrNull(subdomainSlug(url, "teamtailor.com", ["career", "app"]), (slug) => teamtailorSpec(`https://${slug}.teamtailor.com`, slug));
+const teamtailorFromUrl = (url: string) => {
+  const slug = safeUrl(url)?.hostname.toLowerCase() === "career.teamtailor.com"
+    ? "career"
+    : subdomainSlug(url, "teamtailor.com", ["app", "www"]);
+  return specOrNull(slug, (boardSlug) => teamtailorSpec(`https://${boardSlug}.teamtailor.com`, boardSlug));
+};
 const TT_JOB_RE = /\/jobs\/(\d+)-[^/?#]*/;
 export function parseTeamtailor(html: string, pageUrl: string): { postings: RawPosting[]; markers: boolean } {
   const $ = cheerio.load(html);
@@ -403,4 +437,3 @@ async function jazzhrPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawP
   return postings.slice(0, MAX_POSTINGS);
 }
 export const jazzhr = feedAdapter({ type: "jazzhr", fromUrl: jazzhrFromUrl, read: jazzhrPostings });
-

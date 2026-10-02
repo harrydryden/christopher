@@ -10,12 +10,18 @@ export interface RawPosting {
   /** Stable identifier from the ATS when it provides one. */
   externalId?: string;
   title: string;
+  /** Employer explicitly named by JobPosting structured data, when present. */
+  companyName?: string;
   /** Public URL of the posting. */
   url: string;
   /** Primary location string as displayed by the source. */
   location?: string;
   /** All location strings when a posting lists several. */
   locations?: string[];
+  /** Workday listing's counted place label, such as `70 Locations`; not a gateable place. */
+  locationLabel?: string;
+  /** Counted places require a detail read before any location-filtered admission. */
+  locationResolution?: "pending";
   department?: string;
   employmentType?: string;
   remote?: boolean;
@@ -49,6 +55,8 @@ export interface SourceSpec {
 }
 
 export interface FetchInit {
+  /** Additional deny-only, run-local host guard, checked before cached reads and every redirect. */
+  allowHost?: (hostname: string) => void | Promise<void>;
   method?: "GET" | "POST" | "HEAD";
   headers?: Record<string, string>;
   body?: string;
@@ -97,7 +105,12 @@ export interface FetchResponse {
 }
 
 export interface RenderedPage {
+  /** Legacy uncompressed captures, retained for callers and test fixtures that construct them. */
   listingPages?: Array<{ html: string; url: string }>;
+  /** Browser captures retained as bounded gzip buffers; decode only one at a time. */
+  compressedListingPages?: Array<{ gzip: Uint8Array; decodedBytes: number; url: string }>;
+  /** Final decoded HTML changed after the last stored capture but did not fit the compressed cap. */
+  finalCaptureUnstored?: boolean;
   incomplete?: boolean;
   html: string;
   finalUrl: string;
@@ -134,7 +147,7 @@ export interface FetchContext {
    * Headless-browser render. Optional: when absent, discovery and scanning fall back to plain HTTP.
    * `signal` gives up the render: a queued one leaves the queue, a running one closes its page.
    */
-  render?: (url: string, opts?: { scrollAndExpand?: boolean; signal?: AbortSignal }) => Promise<RenderedPage>;
+  render?: (url: string, opts?: { scrollAndExpand?: boolean; signal?: AbortSignal; allowHost?: (hostname: string) => void | Promise<void> }) => Promise<RenderedPage>;
   log?: (msg: string, data?: unknown) => void;
   now?: () => Date;
 }
@@ -149,6 +162,10 @@ export interface VerifyResult {
 
 export interface Adapter {
   type: SourceType;
+  /** The first fetchText response alone is the complete posting listing and all mapped fields.
+   * Only such an adapter may reuse a previous successful listing when that response is unchanged.
+   * Default false: pagination and secondary indexes must be read again each scan. */
+  completeFromFirstResponse?: true;
   /**
    * True when the listing deliberately carries no description and one request per role does
    * (Greenhouse). A scan of such a source never reads descriptions inline: it defers every
@@ -189,6 +206,8 @@ export class SourceFetchError extends Error {
     message: string,
     public readonly kind: "http" | "blocked" | "rate_limited" | "parse" | "timeout" | "network",
     public readonly status?: number,
+    /** Final response host only when an explicit bot challenge was observed. */
+    public readonly challengeHost?: string,
   ) {
     super(message);
     this.name = "SourceFetchError";

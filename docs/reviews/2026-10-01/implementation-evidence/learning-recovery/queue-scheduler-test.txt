@@ -1,0 +1,25 @@
+Command: TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/synth_force_1001 pnpm --filter @ava/worker exec vitest run src/scheduler.test.ts
+Started: 2026-10-01T22:34:15.227Z
+Exit code: 0
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T22:34:16.729Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-06","scanTime":"06:00","tz":"UTC"}}
+{"t":"2026-10-01T22:34:16.735Z","level":"info","msg":"scheduled weekly jobs","data":{"ymd":"2026-09-06","accounts":4,"queued":11,"suggestionsSkipped":0}}
+{"t":"2026-10-01T22:34:16.837Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-06","scanTime":"06:00","tz":"UTC"}}
+{"t":"2026-10-01T22:34:16.841Z","level":"info","msg":"scheduled weekly jobs","data":{"ymd":"2026-09-06","accounts":4,"queued":11,"suggestionsSkipped":0}}
+{"t":"2026-10-01T22:34:16.997Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-06","scanTime":"06:00","tz":"UTC"}}
+{"t":"2026-10-01T22:34:17.000Z","level":"info","msg":"scheduled weekly jobs","data":{"ymd":"2026-09-06","accounts":5,"queued":13,"suggestionsSkipped":2}}
+{"t":"2026-10-01T22:34:17.019Z","level":"info","msg":"maintenance changed rows","data":{"sessions":1}}
+{"t":"2026-10-01T22:34:17.066Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-06","scanTime":"06:00","tz":"UTC"}}
+{"t":"2026-10-01T22:34:17.070Z","level":"info","msg":"scheduled weekly jobs","data":{"ymd":"2026-09-06","accounts":5,"queued":13,"suggestionsSkipped":1}}
+{"t":"2026-10-01T22:34:17.364Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-05","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-10-01T22:34:17.474Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-05","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-10-01T22:34:17.598Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-05","scanTime":"06:00","tz":"Europe/London"}}
+{"t":"2026-10-01T22:34:17.703Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-09-05","scanTime":"06:00","tz":"Europe/London"}}
+
+ Test Files  1 passed (1)
+      Tests  13 passed (13)
+   Start at  23:34:15
+   Duration  2.25s (tests 53%, transform 25%, import 22%)

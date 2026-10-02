@@ -1,0 +1,80 @@
+{
+  "at": "2026-09-29",
+  "method": "Independent Playwright DOM anchor enumeration of official first-party page after normal consent decline and visible Load more controls; separate direct public JSON HTTP GET and Python stdlib jobs-array set comparison. No AVA discovery/parser was used.",
+  "cases": [
+    {
+      "caseId": "cloudflare",
+      "officialUrl": "https://www.cloudflare.com/careers/jobs/",
+      "officialFinalUrl": "https://www.cloudflare.com/careers/jobs/",
+      "capturedAt": "2026-09-29T15:54:31.693Z",
+      "officialApiRequest": [
+        {
+          "url": "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs",
+          "status": 200,
+          "rawSha256": "0f25fd10cda2a44e9d42d7fef2e432a31c809193408854ca95e0155f0ae45f73"
+        }
+      ],
+      "officialRenderedHtmlPath": "cloudflare-official-rendered-equivalence.html",
+      "officialRenderedHtmlSha256": "e1b8e68d75f99c142b4a099f19811f81925a2bddc203cd88dfd8e154d193bb53",
+      "officialRenderedHtmlBytes": 1030922,
+      "advertisedCount": 402,
+      "loadMoreClicks": 16,
+      "loadMoreRemaining": 0,
+      "officialAnchorCount": 402,
+      "officialUniqueUrlCount": 402,
+      "officialUniqueIdCount": 402,
+      "feedUrl": "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs",
+      "feedRawPath": "cloudflare-greenhouse-equivalence.raw.json",
+      "feedRawSha256": "0f25fd10cda2a44e9d42d7fef2e432a31c809193408854ca95e0155f0ae45f73",
+      "feedRawBytes": 367514,
+      "feedJobCount": 402,
+      "feedUniqueUrlCount": 402,
+      "feedUniqueIdCount": 402,
+      "feedOnlyUrls": [],
+      "officialOnlyUrls": [],
+      "feedOnlyIds": [],
+      "officialOnlyIds": [],
+      "exactUrlSetMatch": true,
+      "exactIdSetMatch": true,
+      "reviewStatus": "machine_enumerated",
+      "completeScopeAttested": false
+    },
+    {
+      "caseId": "zapier",
+      "officialUrl": "https://zapier.com/jobs",
+      "officialFinalUrl": "https://zapier.com/jobs",
+      "capturedAt": "2026-09-29T15:54:32.422Z",
+      "officialApiRequest": [
+        {
+          "url": "https://api.ashbyhq.com/posting-api/job-board/zapier",
+          "status": 200,
+          "rawSha256": "9219a038de991448cf8a1a0e75489752e21a5e38067495cdc00fb9662098a5c9"
+        }
+      ],
+      "officialRenderedHtmlPath": "zapier-official-rendered-equivalence.html",
+      "officialRenderedHtmlSha256": "f816d3b2ce6373223a0bc96f77fe1aa7919be90322b868219ac95c380a3160ad",
+      "officialRenderedHtmlBytes": 405837,
+      "advertisedCount": null,
+      "loadMoreClicks": 0,
+      "loadMoreRemaining": null,
+      "officialAnchorCount": 10,
+      "officialUniqueUrlCount": 10,
+      "officialUniqueIdCount": 10,
+      "feedUrl": "https://api.ashbyhq.com/posting-api/job-board/zapier",
+      "feedRawPath": "zapier-ashby-equivalence.raw.json",
+      "feedRawSha256": "9219a038de991448cf8a1a0e75489752e21a5e38067495cdc00fb9662098a5c9",
+      "feedRawBytes": 232729,
+      "feedJobCount": 10,
+      "feedUniqueUrlCount": 10,
+      "feedUniqueIdCount": 10,
+      "feedOnlyUrls": [],
+      "officialOnlyUrls": [],
+      "feedOnlyIds": [],
+      "officialOnlyIds": [],
+      "exactUrlSetMatch": true,
+      "exactIdSetMatch": true,
+      "reviewStatus": "machine_enumerated",
+      "completeScopeAttested": false
+    }
+  ]
+}

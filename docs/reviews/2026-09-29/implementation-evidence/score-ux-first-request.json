@@ -1,0 +1,24 @@
+{
+  "url": "http://localhost:3145/?view=user-shortlisted",
+  "initial": "Render Software Engineer, Agent Auth Experience 2mo Location: Remote: United States REMOTE Fit: AI scoring unavailable; review manually Review",
+  "requestRow": "Render Software Engineer, Agent Auth Experience 2mo Location: Remote: United States REMOTE Fit: Score pending; review manually Build CV",
+  "task": [
+    {
+      "id": "7db2ea43-54d2-4158-90e1-0af66f144dd7",
+      "status": "queued",
+      "payload": {
+        "jobIds": [
+          "0ce91711-e037-4d25-b319-a9111f0a2912"
+        ],
+        "userId": "e5bd37f3-ca5c-4300-9e62-beed62d018ae",
+        "requestKey": "bbb6844b2d4ab4b1951b7f0188ab50dc3a0a3c80"
+      },
+      "created_at": "2026-09-29T17:06:39.042Z"
+    }
+  ],
+  "view": {
+    "score_state": "requested",
+    "fit_score": null,
+    "score_state_at": "2026-09-29T17:06:39.046Z"
+  }
+}

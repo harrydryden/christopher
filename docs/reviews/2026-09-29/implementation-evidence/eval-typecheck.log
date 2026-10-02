@@ -1,0 +1,3 @@
+
+> ava@0.1.0 typecheck:eval /Users/h_dryden/Documents/New project/christopher-jtbd-review
+> tsc --noEmit -p tsconfig.scripts.json

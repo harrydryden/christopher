@@ -29,7 +29,7 @@ export function TR({ children, className = "", highlighted = false }: { children
 
 export function TH({ children, className = "", ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th scope="col" className={`ds-pixel border-b-2 border-line px-3 py-2 text-9 tracking-th text-muted ${className}`} {...rest}>
+    <th scope="col" className={`border-b-2 border-line px-3 py-2 text-13 font-semibold text-muted ${className}`} {...rest}>
       {children}
     </th>
   );
@@ -48,23 +48,26 @@ export function TD({ children, className = "", ...rest }: TdHTMLAttributes<HTMLT
  * on a coarse scale and the shape should say so. `title` carries the stored
  * rationale, so hovering the score explains it without expanding the row (R-6.7).
  *
- * `state` is what a missing score means — "scoring…", "not scored: budget spent" — written where
- * the bar would be. A dash is kept for a row that has nothing to say about why.
+ * `state` explains a missing score, or labels an earlier score while its update is pending or
+ * could not complete. A dash is kept for a row with no score and no recorded reason.
  *
  * Only phrasing content (spans), so it can be drawn inside a button, as the Library row score is.
  */
 export function FitBar({ score, title, state }: { score: number | null; title?: string; state?: string | null }) {
-  if (score === null) return <span className={state ? "text-12 text-muted" : "text-muted"} title={title}>{state || "—"}</span>;
+  if (score === null) return <span className={state ? "text-12 text-muted whitespace-normal [overflow-wrap:anywhere]" : "text-muted"} title={title}>{state || "—"}</span>;
   const filled = Math.round(Math.max(0, Math.min(100, score)) / 10);
   const tone = score >= 70 ? "bg-ok" : score >= 30 ? "bg-warn" : "bg-danger";
   return (
-    <span className="flex items-center gap-2" title={title}>
-      <span className="ds-pixel w-6 text-right text-10 text-fg">{score}</span>
-      <span className="flex gap-0.5" aria-hidden="true">
-        {Array.from({ length: 10 }, (_, i) => (
-          <span key={i} className={`h-2 w-1.5 ${i < filled ? tone : "bg-track"}`} />
-        ))}
+    <span className="inline-flex max-w-full min-w-0 flex-wrap items-center gap-2 whitespace-normal">
+      <span className="flex items-center gap-2" title={title}>
+        <span className="ds-pixel w-6 text-right text-10 text-fg">{score}</span>
+        <span className="flex gap-0.5" aria-hidden="true" data-fit-steps>
+          {Array.from({ length: 10 }, (_, i) => (
+            <span key={i} className={`h-2 w-1.5 ${i < filled ? tone : "bg-track"}`} />
+          ))}
+        </span>
       </span>
+      {state && <span className="min-w-0 text-12 text-muted [overflow-wrap:anywhere]">{state}</span>}
     </span>
   );
 }

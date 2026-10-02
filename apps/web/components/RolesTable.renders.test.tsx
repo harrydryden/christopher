@@ -29,7 +29,7 @@ vi.mock("@/lib/notes-markdown", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/notes-markdown")>();
   return { ...actual, parseRuns: (...args: Parameters<typeof actual.parseRuns>) => { parsed.runs++; return actual.parseRuns(...args); } };
 });
-const actions = vi.hoisted(() => ({ decide: vi.fn(), decideRoles: vi.fn(), archiveRoles: vi.fn(), roleDetails: vi.fn() }));
+const actions = vi.hoisted(() => ({ decide: vi.fn(), decideRoles: vi.fn(), decideWithUndoToken: vi.fn(), decideRolesWithUndoTokens: vi.fn(), undoDecisionIfCurrent: vi.fn(), undoDecisionsIfCurrent: vi.fn(), archiveRoles: vi.fn(), roleDetails: vi.fn() }));
 vi.mock("@/app/actions/decisions", () => actions);
 vi.mock("@/app/actions/cv", () => ({ requestCv: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
@@ -47,7 +47,7 @@ function role(n: number): RoleRowVM {
     department: null, employmentType: null, salaryText: null, status: "active", workflowStatus: "auto-matched",
     stage: "matched", applicationStatus: null, liveForText: "3 days", liveForBasis: "posted", seeded: false,
     fitScore: 50 + (n % 40), scoreState: "scored", scoreStateText: null, fitVerdict: "possible", fitRationale: "Operations in Manchester.",
-    keywordTerms: ["operations"], addedByYou: false, decision: null,
+    keywordTerms: ["operations"], addedByYou: false, manual: false, decision: null,
   };
 }
 const ROWS = Array.from({ length: 50 }, (_, n) => role(n));
@@ -57,6 +57,7 @@ let root: Root;
 let container: HTMLElement;
 beforeEach(() => {
   for (const action of Object.values(actions)) action.mockReset();
+  actions.decideWithUndoToken.mockImplementation((jobId: string, decision: string, reason: string) => actions.decide(jobId, decision, reason));
   actions.roleDetails.mockReturnValue(new Promise(() => undefined));
   Element.prototype.scrollIntoView = vi.fn();
   container = document.createElement("div");

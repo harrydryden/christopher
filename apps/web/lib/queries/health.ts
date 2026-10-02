@@ -23,6 +23,7 @@ import {
   tasks,
   workerEvents,
   type CareerSource,
+  SOURCE_TYPES,
   type Task,
   type WorkerEventKind,
 } from "@ava/db/schema";
@@ -35,6 +36,7 @@ import { accountAiBudget, budgetFromRow, budgetSelect, defaultAccountAiBudget, t
 import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
+import { interruptedHtmlRead, listHtmlScanProgress } from "@/lib/queries/html-scan-progress";
 import { ifMigrated } from "@/lib/schema-skew";
 import { deriveWorkerStatus, type ModelAccessEvent, type WorkerBreaker, type WorkerBreakerTrip, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
 import { histogramP75, VITAL_METRICS, type VitalMetric } from "@/lib/web-vitals";
@@ -755,6 +757,8 @@ const SUBJECT_FIELDS: Partial<Record<Task["type"], { kind: SubjectKind; field: s
   extract_document: { kind: "source", field: "sourceId" },
   verify_company: { kind: "source", field: "sourceId" },
   fetch_description: { kind: "job", field: "jobId" },
+  fetch_locations: { kind: "job", field: "jobId" },
+  admit_scores: { kind: "user", field: "userId" },
   score_job: { kind: "job", field: "jobId" },
   synthesize_profile: { kind: "user", field: "userId" },
   suggest_filters: { kind: "user", field: "userId" },
@@ -801,7 +805,8 @@ export async function resolveSubjects(refs: Array<SubjectRef | null>): Promise<S
     cvIds && sql`select 'cv:' || d.id::text as key, 'CV: ' || d.company_name || ' · ' || d.job_title as label from cv_drafts d where d.id in (${cvIds})`,
     userIds && sql`select 'user:' || u.id::text as key, u.email as label from users u where u.id in (${userIds})`,
     sourceIds && sql`select 'source:' || s.id::text as key, c.name || ' (' || s.type || ')' as label from career_sources s join companies c on c.id = s.company_id where s.id in (${sourceIds})`,
-    jobIds && sql`select 'job:' || j.id::text as key, c.name || ' · ' || j.title as label from jobs j join companies c on c.id = j.company_id where j.id in (${jobIds})`,
+    jobIds && sql`select 'job:' || j.id::text as key, coalesce(c.name, j.company_label, 'Unknown employer') || ' · ' || j.title as label
+      from jobs j left join companies c on c.id = j.company_id where j.id in (${jobIds})`,
   ].filter((branch): branch is NonNullable<typeof branch> => !!branch);
   if (!branches.length) return names;
   const result = await db().execute(sql.join(branches, sql` union all `));
@@ -1166,7 +1171,7 @@ export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanI
 import { SOURCE_FAILING_AFTER } from "@ava/core";
 export { SOURCE_FAILING_AFTER };
 
-export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "rediscovery";
+export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "suspect_empty" | "partial" | "incomplete_read" | "rediscovery";
 
 /** Where each kind sits in the list: what stops everything first, proposals last. */
 const KIND_ORDER: Record<HealthItemKind, number> = {
@@ -1174,8 +1179,11 @@ const KIND_ORDER: Record<HealthItemKind, number> = {
   needs_confirmation: 1,
   blocked: 2,
   failing: 3,
-  no_source: 4,
-  rediscovery: 5,
+  suspect_empty: 4,
+  partial: 5,
+  incomplete_read: 6,
+  no_source: 7,
+  rediscovery: 8,
 };
 
 export interface HealthCandidate {
@@ -1185,6 +1193,8 @@ export interface HealthCandidate {
   url: string | null;
   confidence: number | null;
   method: string | null;
+  /** Why a member cannot use this candidate; administrators can still choose it. */
+  memberBlock: "replace" | "reactivate" | "invalid" | null;
 }
 
 export interface HealthItem {
@@ -1193,6 +1203,8 @@ export interface HealthItem {
   kind: HealthItemKind;
   company: { id: string; name: string } | null;
   source: { id: string; type: CareerSource["type"]; url: string; status: CareerSource["status"]; consecutiveFailures: number } | null;
+  /** A member can confirm a waiting source only while no other source is working. */
+  memberCanConfirmSource: boolean;
   /** The discovery run whose candidates the item offers, when it offers any. */
   runId: string | null;
   candidates: HealthCandidate[];
@@ -1217,6 +1229,12 @@ export function healthItemHeadline(item: HealthItem): string {
       return "The board is refusing our requests";
     case "failing":
       return `Failed ${item.source?.consecutiveFailures ?? 0} ${item.source?.consecutiveFailures === 1 ? "scan" : "scans"} in a row`;
+    case "suspect_empty":
+      return "The careers listing unexpectedly returned no roles";
+    case "partial":
+      return "The careers listing was not read completely";
+    case "incomplete_read":
+      return "The careers listing read stopped before it finished";
     case "rediscovery":
       return "Discovery found another careers page";
   }
@@ -1228,19 +1246,46 @@ export function healthItemDetail(item: HealthItem): string {
     case "budget":
       return "Scoring, suggestions and CV builds stop for this account until the budget resets on the 1st.";
     case "needs_confirmation":
-      return "Nothing is scanned for this company until one of them is confirmed.";
+      return item.source && !item.memberCanConfirmSource
+        ? "A source already scans this company. Confirming another would change scanning for every follower."
+        : "Nothing is scanned for this company until one of them is confirmed.";
     case "no_source":
       return "Nothing is scanned for this company until a careers page is found.";
     case "blocked":
       return item.reason ?? "The site refused our requests, which no retry undoes.";
     case "failing":
       return item.reason ?? `A source is marked failing after ${SOURCE_FAILING_AFTER} failed scans in a row.`;
+    case "suspect_empty":
+      return item.reason ?? "The last complete listing had roles; this empty result cannot close them. Check this careers page.";
+    case "partial":
+      return item.reason ?? "Some roles may be missing from this scan. No unseen roles were closed.";
+    case "incomplete_read":
+      return "This listing check did not finish. Any matching roles already found remain available. Open the company and choose Rescan once monitoring is running.";
     case "rediscovery":
-      return "A source is already scanning, so this one waits for a follower to judge it. Any of them can.";
+      return "A source is already scanning. Any follower can keep it; an administrator can choose a replacement.";
   }
 }
 
-function readHealthCandidates(value: unknown): HealthCandidate[] {
+type CandidateSource = Pick<CareerSource, "id" | "type" | "url" | "atsSlug" | "atsSite" | "status">;
+
+/** Mirror the source identity and working-source tests in `useDiscoveryCandidate` for display. */
+export function memberCandidateBlock(spec: unknown, sources: CandidateSource[]): HealthCandidate["memberBlock"] {
+  if (!spec || typeof spec !== "object") return "invalid";
+  const candidate = spec as Record<string, unknown>;
+  if (typeof candidate.type !== "string" || !(SOURCE_TYPES as readonly string[]).includes(candidate.type)
+    || typeof candidate.url !== "string"
+    || (candidate.atsSlug != null && typeof candidate.atsSlug !== "string")
+    || (candidate.atsSite != null && typeof candidate.atsSite !== "string")
+    || (candidate.apiUrl != null && typeof candidate.apiUrl !== "string")) return "invalid";
+  const match = sources.find(source => source.type === candidate.type && (candidate.atsSlug
+    ? source.atsSlug === candidate.atsSlug && source.atsSite === (candidate.atsSite ?? null)
+    : source.url === candidate.url));
+  if (match && (match.status === "disabled" || match.status === "blocked")) return "reactivate";
+  if (sources.some(source => (source.status === "active" || source.status === "failing") && source.id !== match?.id)) return "replace";
+  return null;
+}
+
+function readHealthCandidates(value: unknown, sources: CandidateSource[]): HealthCandidate[] {
   const list = Array.isArray(value) ? value : [];
   return list.map((entry, index) => {
     const candidate = (entry && typeof entry === "object" ? entry : {}) as { spec?: { type?: unknown; url?: unknown }; confidence?: unknown; method?: unknown };
@@ -1250,6 +1295,7 @@ function readHealthCandidates(value: unknown): HealthCandidate[] {
       url: typeof candidate.spec?.url === "string" ? candidate.spec.url : null,
       confidence: typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence) ? candidate.confidence : null,
       method: typeof candidate.method === "string" ? candidate.method : null,
+      memberBlock: memberCandidateBlock(candidate.spec, sources),
     };
   });
 }
@@ -1289,6 +1335,7 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
       kind: "budget",
       company: null,
       source: null,
+      memberCanConfirmSource: false,
       runId: null,
       candidates: [],
       reason: null,
@@ -1298,13 +1345,15 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
 
   const ids = followed.map((company) => company.id);
   if (ids.length) {
-    const [sourceRows, runRows] = await Promise.all([
+    const [sourceRows, runRows, scanRows] = await Promise.all([
       db()
         .select({
           id: careerSources.id,
           companyId: careerSources.companyId,
           type: careerSources.type,
           url: careerSources.url,
+          atsSlug: careerSources.atsSlug,
+          atsSite: careerSources.atsSite,
           status: careerSources.status,
           consecutiveFailures: careerSources.consecutiveFailures,
         })
@@ -1321,30 +1370,43 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
         .from(discoveryRuns)
         .where(inArray(discoveryRuns.companyId, ids))
         .orderBy(discoveryRuns.companyId, desc(discoveryRuns.startedAt)),
+      // A later failed request does not prove the earlier incomplete listing has recovered. Only
+      // another complete `ok` observation clears this attention, or disabling the source does.
+      db()
+        .selectDistinctOn([scans.sourceId], { sourceId: scans.sourceId, status: scans.status, error: scans.error })
+        .from(scans)
+        .innerJoin(careerSources, eq(careerSources.id, scans.sourceId))
+        .where(and(inArray(careerSources.companyId, ids), inArray(scans.status, ["ok", "partial", "suspect_empty"])))
+        .orderBy(scans.sourceId, desc(scans.startedAt), desc(scans.id)),
     ]);
 
     const runByCompany = new Map(runRows.map((row) => [row.companyId, row]));
+    const scanBySource = new Map(scanRows.map((row) => [row.sourceId, row]));
     const found: Array<HealthItem & { sortName: string }> = [];
     for (const company of followed) {
       const sources = sourceRows.filter((source) => source.companyId === company.id);
       const unconfirmed = sources.find((source) => source.status === "needs_confirmation");
       const blocked = sources.find((source) => source.status === "blocked");
       const failing = sources.find((source) => source.status === "failing");
+      const suspectEmpty = sources.find((source) => (source.status === "active" || source.status === "failing") && scanBySource.get(source.id)?.status === "suspect_empty");
+      const partial = sources.find((source) => (source.status === "active" || source.status === "failing") && scanBySource.get(source.id)?.status === "partial");
       const working = sources.some((source) => source.status === "active" || source.status === "failing");
       const run = runByCompany.get(company.id);
-      const candidates = run?.status === "needs_confirmation" ? readHealthCandidates(run.candidates) : [];
+      const candidates = run?.status === "needs_confirmation" ? readHealthCandidates(run.candidates, sources) : [];
       const proposal = candidates.length ? run : undefined;
 
-      const base = { company: { id: company.id, name: company.name }, runId: null, candidates: [], reason: null, budget: null };
+      const base = { company: { id: company.id, name: company.name }, runId: null, candidates: [], reason: null, budget: null, memberCanConfirmSource: false };
       const add = (kind: HealthItemKind, rest: Partial<HealthItem>) =>
         found.push({ key: `${kind}:${company.id}`, kind, source: null, ...base, ...rest, sortName: company.name });
 
-      if (unconfirmed) add("needs_confirmation", { source: unconfirmed, runId: proposal?.id ?? null, candidates });
+      if (unconfirmed) add("needs_confirmation", { source: unconfirmed, runId: proposal?.id ?? null, candidates, memberCanConfirmSource: !working });
       else if (proposal && !working) add("needs_confirmation", { runId: proposal.id, candidates });
       else if (blocked) add("blocked", { source: blocked });
       else if (failing) add("failing", { source: failing });
-      else if (!working) add("no_source", {});
       else if (proposal) add("rediscovery", { runId: proposal.id, candidates });
+      else if (suspectEmpty) add("suspect_empty", { source: suspectEmpty, reason: scanBySource.get(suspectEmpty.id)?.error ?? null });
+      else if (partial) add("partial", { source: partial, reason: scanBySource.get(partial.id)?.error ?? null });
+      else if (!working) add("no_source", {});
     }
 
     // What the worker last recorded about a board that is refusing us or failing, so the item
@@ -1358,6 +1420,21 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
         .orderBy(scans.sourceId, desc(scans.startedAt));
       const bySource = new Map(reasons.map((row) => [row.sourceId, row.error]));
       for (const item of found) if (item.source) item.reason = bySource.get(item.source.id) ?? null;
+    }
+
+    // A failed or expired page read has no scan row to put it in the ordinary partial list.
+    // Give it one actionable company item, unless another source issue already owns that row.
+    const shownCompanies = new Set(found.map(item => item.company?.id));
+    for (const read of await listHtmlScanProgress(userId)) {
+      if (!interruptedHtmlRead(read, now) || shownCompanies.has(read.companyId)) continue;
+      const source = sourceRows.find(row => row.id === read.sourceId);
+      if (!source) continue;
+      found.push({
+        key: `incomplete_read:${read.companyId}`, kind: "incomplete_read", sortName: read.companyName,
+        company: { id: read.companyId, name: read.companyName }, source,
+        runId: null, candidates: [], reason: read.taskError, budget: null, memberCanConfirmSource: false,
+      });
+      shownCompanies.add(read.companyId);
     }
 
     found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.sortName.localeCompare(b.sortName));
@@ -1385,7 +1462,22 @@ const countHealthItemsForMonth = cache(async (userId: string, monthStart: number
   // One statement, one pool checkout: the attention count as a scalar beside the budget row, which
   // is the same statement `accountAiBudget` runs. Two statements side by side cost the same round
   // trip but two checkouts from a pool of six, on every full render of every page.
-  const rows = await db().execute(sql`
+  const incompleteRead = sql`or exists (
+    select 1 from career_sources s
+    join html_scan_generations g on g.source_id = s.id
+    join tasks t on t.id = g.task_id
+    where s.company_id = c.id and c.status = 'active' and s.status in ('active', 'failing')
+      and g.id = (select newest.id from html_scan_generations newest
+        where newest.source_id = s.id order by newest.started_at desc, newest.id desc limit 1)
+      and (t.status in ('failed', 'done') or g.expires_at <= now())
+      and not exists (select 1 from scans completed where completed.source_id = s.id
+        and completed.status = 'ok' and completed.finished_at > g.started_at)
+      and not exists (select 1 from tasks newer
+        where newer.type = 'scan_company' and newer.status in ('queued', 'running')
+          and newer.created_at > t.created_at and newer.payload->>'companyId' = c.id::text
+          and (newer.payload->'sourceIds' is null or newer.payload->'sourceIds' ? s.id::text))
+  )`;
+  const readCount = (withContinuation: boolean) => db().execute(sql`
     select budget.*, (
       select count(*)::int
       from company_subscriptions cs
@@ -1396,6 +1488,9 @@ const countHealthItemsForMonth = cache(async (userId: string, monthStart: number
         and (
           exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('needs_confirmation', 'blocked', 'failing'))
           or not exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('active', 'failing'))
+          or exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('active', 'failing')
+            and (select sc.status from scans sc where sc.source_id = s.id and sc.status in ('ok', 'partial', 'suspect_empty')
+              order by sc.started_at desc, sc.id desc limit 1) in ('partial', 'suspect_empty'))
           or exists (
             select 1 from discovery_runs r
             where r.company_id = c.id
@@ -1403,9 +1498,13 @@ const countHealthItemsForMonth = cache(async (userId: string, monthStart: number
               and jsonb_array_length(r.candidates) > 0
               and r.started_at = (select max(r2.started_at) from discovery_runs r2 where r2.company_id = c.id)
           )
+          ${withContinuation ? incompleteRead : sql``}
         )
     ) as attention
     from (${budgetSelect([userId], month)}) budget`);
+  // Interface and worker can deploy separately; until 0047 exists, the older attention count
+  // remains available. Other database errors still surface.
+  const rows = await ifMigrated(() => readCount(true), () => readCount(false));
   const row = rows.rows[0] as unknown as (BudgetRow & { attention: number }) | undefined;
   const budget = row ? await budgetFromRow(row, month) : defaultAccountAiBudget(month);
   return Number(row?.attention ?? 0) + (budget.spentUsd >= budget.limitUsd ? 1 : 0);

@@ -1,0 +1,277 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-10-01T23:21:17.322Z","level":"info","event":"database_round_trip","ms":0.5,"samplesMs":[1.9,0.6,0.5],"endpoint":"other","region":null}
+{"t":"2026-10-01T23:21:17.640Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-10-01","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-10-01T23:21:17.681Z","level":"info","msg":"task start","taskId":"3891bf2b-1f11-4583-ba22-c35588ad6f45","taskType":"run_daily","data":{"id":"3891bf2b-1f11-4583-ba22-c35588ad6f45","type":"run_daily","attempt":1,"workerId":"vercel-cron-d97669e6","commit":null,"readyWaitMs":45,"heapUsedMb":76,"heapLimitMb":4144,"rssMb":191}}
+{"t":"2026-10-01T23:21:17.688Z","level":"info","msg":"daily run started","taskId":"3891bf2b-1f11-4583-ba22-c35588ad6f45","taskType":"run_daily","data":{"runId":"092e9b6a-b199-47ad-96f3-010ea392d2a3","runDate":"2026-10-01","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-10-01T23:21:17.696Z","level":"info","msg":"scan run finalised","taskId":"3891bf2b-1f11-4583-ba22-c35588ad6f45","taskType":"run_daily","data":{"runId":"092e9b6a-b199-47ad-96f3-010ea392d2a3","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-10-01T23:21:17.697Z","level":"info","msg":"task done","taskId":"3891bf2b-1f11-4583-ba22-c35588ad6f45","taskType":"run_daily","data":{"id":"3891bf2b-1f11-4583-ba22-c35588ad6f45","type":"run_daily","ms":16,"heapUsedMb":77,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":191,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:21:18.619Z","level":"info","msg":"task start","taskId":"d2293267-1751-4853-98d9-af6f4dfb1fcc","taskType":"tag_reason","data":{"id":"d2293267-1751-4853-98d9-af6f4dfb1fcc","type":"tag_reason","attempt":1,"workerId":"vercel-cron-974b4e65","commit":null,"readyWaitMs":55,"heapUsedMb":73,"heapLimitMb":4144,"rssMb":120}}
+{"t":"2026-10-01T23:21:21.568Z","level":"warn","msg":"abandoned task failed after its deadline","taskId":"d2293267-1751-4853-98d9-af6f4dfb1fcc","taskType":"tag_reason","data":{"id":"d2293267-1751-4853-98d9-af6f4dfb1fcc","type":"tag_reason","error":"tag_reason exceeded its 3s deadline after 3s and was abandoned"}}
+{"t":"2026-10-01T23:21:21.571Z","level":"warn","msg":"task retry","taskId":"d2293267-1751-4853-98d9-af6f4dfb1fcc","taskType":"tag_reason","data":{"id":"d2293267-1751-4853-98d9-af6f4dfb1fcc","type":"tag_reason","error":"tag_reason exceeded its 3s deadline after 3s and was abandoned","ms":2952,"heapUsedMb":74,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":120,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:21:21.756Z","level":"info","msg":"task start","taskId":"45b85195-da34-46dd-b163-fe648cab324b","taskType":"tag_reason","data":{"id":"45b85195-da34-46dd-b163-fe648cab324b","type":"tag_reason","attempt":3,"workerId":"vercel-cron-c1ec2bb9","commit":null,"readyWaitMs":49,"heapUsedMb":76,"heapLimitMb":4144,"rssMb":124}}
+{"t":"2026-10-01T23:21:21.757Z","level":"warn","msg":"task failed","taskId":"45b85195-da34-46dd-b163-fe648cab324b","taskType":"tag_reason","data":{"id":"45b85195-da34-46dd-b163-fe648cab324b","type":"tag_reason","error":"tagging failed","ms":1,"heapUsedMb":76,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":124,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:21:22.058Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-10-01","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-10-01T23:21:22.284Z","level":"info","msg":"task start","taskId":"b5b83b71-ff2f-4d34-b4b8-7c95048a851c","taskType":"discover","data":{"id":"b5b83b71-ff2f-4d34-b4b8-7c95048a851c","type":"discover","attempt":1,"workerId":"vercel-cron-1ebba56e","commit":null,"readyWaitMs":50,"heapUsedMb":83,"heapLimitMb":4144,"rssMb":130}}
+{"t":"2026-10-01T23:21:22.461Z","level":"info","msg":"discovery finished","taskId":"b5b83b71-ff2f-4d34-b4b8-7c95048a851c","taskType":"discover","data":{"company":"acme.example","outcome":"resolved","fetches":2,"best":"ats_link"}}
+{"t":"2026-10-01T23:21:22.463Z","level":"info","msg":"task done","taskId":"b5b83b71-ff2f-4d34-b4b8-7c95048a851c","taskType":"discover","data":{"id":"b5b83b71-ff2f-4d34-b4b8-7c95048a851c","type":"discover","ms":179,"heapUsedMb":78,"heapDeltaMb":-5,"heapLimitMb":4144,"rssMb":158,"rssDeltaMb":28}}
+{"t":"2026-10-01T23:21:22.466Z","level":"info","msg":"task start","taskId":"9df26cef-2ba5-49b6-8f15-0e9741a67c9a","taskType":"scan_company","data":{"id":"9df26cef-2ba5-49b6-8f15-0e9741a67c9a","type":"scan_company","attempt":1,"workerId":"vercel-cron-1ebba56e","commit":null,"readyWaitMs":13,"heapUsedMb":78,"heapLimitMb":4144,"rssMb":158}}
+{"t":"2026-10-01T23:21:22.636Z","level":"info","msg":"source scanned","taskId":"9df26cef-2ba5-49b6-8f15-0e9741a67c9a","taskType":"scan_company","data":{"company":"Acme Robotics","type":"greenhouse","status":"ok","postings":2,"new":2,"closed":0,"followers":1,"deferredDescriptions":0,"reusedListing":false,"claimFetchedBytes":566,"claimRequests":3,"claimRevalidated":0,"heapUsedMb":81,"ms":165}}
+{"t":"2026-10-01T23:21:22.644Z","level":"info","msg":"task done","taskId":"9df26cef-2ba5-49b6-8f15-0e9741a67c9a","taskType":"scan_company","data":{"id":"9df26cef-2ba5-49b6-8f15-0e9741a67c9a","type":"scan_company","ms":179,"heapUsedMb":82,"heapDeltaMb":4,"heapLimitMb":4144,"rssMb":159,"rssDeltaMb":1}}
+{"t":"2026-10-01T23:21:22.646Z","level":"info","msg":"task start","taskId":"286dc41a-5123-4152-a20e-51d55a629400","taskType":"fetch_description","data":{"id":"286dc41a-5123-4152-a20e-51d55a629400","type":"fetch_description","attempt":1,"workerId":"vercel-cron-1ebba56e","commit":null,"readyWaitMs":33,"heapUsedMb":82,"heapLimitMb":4144,"rssMb":159}}
+{"t":"2026-10-01T23:21:22.665Z","level":"info","msg":"task done","taskId":"286dc41a-5123-4152-a20e-51d55a629400","taskType":"fetch_description","data":{"id":"286dc41a-5123-4152-a20e-51d55a629400","type":"fetch_description","ms":20,"heapUsedMb":84,"heapDeltaMb":2,"heapLimitMb":4144,"rssMb":160,"rssDeltaMb":1}}
+{"t":"2026-10-01T23:21:22.667Z","level":"info","msg":"task start","taskId":"d96d0800-73eb-478c-921d-9cd3b24b5139","taskType":"discover","data":{"id":"d96d0800-73eb-478c-921d-9cd3b24b5139","type":"discover","attempt":1,"workerId":"vercel-cron-1ebba56e","commit":null,"readyWaitMs":381,"heapUsedMb":84,"heapLimitMb":4144,"rssMb":160}}
+{"t":"2026-10-01T23:21:22.727Z","level":"info","msg":"logo capture failed","taskId":"d96d0800-73eb-478c-921d-9cd3b24b5139","taskType":"discover","data":{"company":"Acme Robotics","error":"No usable icon found for acme.example","tried":3,"attempts":1,"nextAttemptAt":"2026-10-02T00:21:22.724Z"}}
+{"t":"2026-10-01T23:21:22.729Z","level":"info","msg":"task done","taskId":"d96d0800-73eb-478c-921d-9cd3b24b5139","taskType":"discover","data":{"id":"d96d0800-73eb-478c-921d-9cd3b24b5139","type":"discover","ms":62,"heapUsedMb":85,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":160,"rssDeltaMb":0}}
+{"t":"2026-10-01T23:21:22.870Z","level":"info","msg":"scheduled daily run","data":{"ymd":"2026-10-01","scanTime":"00:00","tz":"UTC"}}
+{"t":"2026-10-01T23:21:22.906Z","level":"info","msg":"task start","taskId":"39cbe59e-94ec-40e2-a0d9-9dc9eea23e16","taskType":"run_daily","data":{"id":"39cbe59e-94ec-40e2-a0d9-9dc9eea23e16","type":"run_daily","attempt":1,"workerId":"vercel-cron-cf617f39","commit":null,"readyWaitMs":38,"heapUsedMb":88,"heapLimitMb":4144,"rssMb":160}}
+{"t":"2026-10-01T23:21:22.914Z","level":"info","msg":"daily run started","taskId":"39cbe59e-94ec-40e2-a0d9-9dc9eea23e16","taskType":"run_daily","data":{"runId":"1c5b66e9-6011-4726-adba-dd6a9dd5c186","runDate":"2026-10-01","companies":0,"logosQueued":0,"retired":0}}
+{"t":"2026-10-01T23:21:22.919Z","level":"info","msg":"scan run finalised","taskId":"39cbe59e-94ec-40e2-a0d9-9dc9eea23e16","taskType":"run_daily","data":{"runId":"1c5b66e9-6011-4726-adba-dd6a9dd5c186","ok":0,"failed":0,"newRoles":0}}
+{"t":"2026-10-01T23:21:22.920Z","level":"info","msg":"task done","taskId":"39cbe59e-94ec-40e2-a0d9-9dc9eea23e16","taskType":"run_daily","data":{"id":"39cbe59e-94ec-40e2-a0d9-9dc9eea23e16","type":"run_daily","ms":13,"heapUsedMb":89,"heapDeltaMb":1,"heapLimitMb":4144,"rssMb":161,"rssDeltaMb":1}}
+ ❯ lib/client-bundle.test.ts (58 tests | 9 failed) 46ms
+   × components/ApplicationsTable.tsx does not bundle zod 3ms
+   × components/CvDraftEditor.tsx does not bundle zod 1ms
+   × components/LearningProfileEditor.tsx does not bundle zod 0ms
+   × components/OpenQuestionEditors.tsx does not bundle zod 0ms
+   × components/ReasonTagEditor.tsx does not bundle zod 0ms
+   × components/ReasonTagList.tsx does not bundle zod 0ms
+   × components/RolesTable.tsx does not bundle zod 1ms
+   × components/SeedProfileEditor.tsx does not bundle zod 0ms
+   × components/SettingsForm.tsx does not bundle zod 0ms
+{"t":"2026-10-01T23:22:45.541Z","level":"info","event":"slow_database_query","durationMs":339,"statement":"insert into jobs (company_id, source_id, external_key, title, normalized_title, url) select $1::uuid, $2::uuid, 'cap-' |"}
+{"t":"2026-10-01T23:22:45.894Z","level":"info","event":"slow_database_query","durationMs":353,"statement":"insert into user_jobs (user_id, job_id, keyword_matched, location_ok, in_table) select $1::uuid, j.id, true, true, true "}
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  lib/client-bundle.test.ts > components/ApplicationsTable.tsx does not bundle zod
+AssertionError: expected [ …(4) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/ApplicationsTable.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/CvDraftEditor.tsx does not bundle zod
+AssertionError: expected [ Array(4) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/CvDraftEditor.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/LearningProfileEditor.tsx does not bundle zod
+AssertionError: expected [ …(4) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/LearningProfileEditor.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/OpenQuestionEditors.tsx does not bundle zod
+AssertionError: expected [ …(4) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/OpenQuestionEditors.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/ReasonTagEditor.tsx does not bundle zod
+AssertionError: expected [ …(4) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/ReasonTagEditor.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/ReasonTagList.tsx does not bundle zod
+AssertionError: expected [ Array(5) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/ReasonTagList.tsx",
+  "components/ReasonTagEditor.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/RolesTable.tsx does not bundle zod
+AssertionError: expected [ 'components/RolesTable.tsx', …(3) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/RolesTable.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/SeedProfileEditor.tsx does not bundle zod
+AssertionError: expected [ …(4) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/SeedProfileEditor.tsx",
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/9]⎯
+
+ FAIL  lib/client-bundle.test.ts > components/SettingsForm.tsx does not bundle zod
+AssertionError: expected [ 'components/SettingsForm.tsx', …(2) ] to be undefined
+
+- Expected:
+undefined
+
++ Received:
+[
+  "components/SettingsForm.tsx",
+  "lib/validation.ts",
+  "zod",
+]
+
+ ❯ lib/client-bundle.test.ts:100:26
+     98| // `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+     99| it.each(clientEntries())("%s does not bundle zod", (entry) => {
+    100|   expect(zodPath(entry)).toBeUndefined();
+       |                          ^
+    101| });
+    102|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/9]⎯
+
+
+ Test Files  1 failed | 146 passed (147)
+      Tests  9 failed | 1327 passed (1336)
+   Start at  00:21:15
+   Duration  131.25s (tests 73%, import 22%, environment 3%, transform 2%)
+
+    Isolate  147 workers spawned · ~72ms startup each (spawn + environment, per file)
+             at least ~10.56s faster with isolate: false — reuses workers across files instead of one per file
+
+undefined
+/Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: vitest run --no-file-parallelism
+
+Audit command: TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:55439/learning_recovery_1001' pnpm --filter @ava/web exec vitest run --no-file-parallelism
+Audit exit code: 1

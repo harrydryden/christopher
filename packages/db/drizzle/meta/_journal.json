@@ -309,6 +309,69 @@
       "when": 1791712800000,
       "tag": "0045_pg_stat_statements_web_vitals",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1791799200000,
+      "tag": "0046_application_date_optional",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1791885600000,
+      "tag": "0047_html_scan_continuation",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1791972000000,
+      "tag": "0048_html_scan_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792058400000,
+      "tag": "0049_waiting_score_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792144800000,
+      "tag": "0050_html_partial_publication",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792231200000,
+      "tag": "0051_workday_location_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792317600000,
+      "tag": "0052_workday_location_read_budget",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792404000000,
+      "tag": "0053_score_publication_fence",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792490400000,
+      "tag": "0054_manual_role_imports",
+      "breakpoints": true
     }
   ]
 }

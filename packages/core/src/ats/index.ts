@@ -15,4 +15,5 @@ export {
 } from "./registry";
 export { extractJsonLdPostings } from "./jsonld";
 export { MAX_POSTINGS } from "./common";
-export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel, nextListingPage, isExplicitEmptyListing } from "./html";
+export { fetchWorkdayLocations } from "./workday";
+export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel, nextListingPage, isExplicitEmptyListing, visibleListingScopeRestriction, hasListingExpansionControl, hasUnfollowableListingContinuation, advertisedDistinctJobTotal } from "./html";

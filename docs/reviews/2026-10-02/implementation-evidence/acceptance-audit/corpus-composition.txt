@@ -1,0 +1,34 @@
+Command: node scripts/live-acceptance.mjs --check-corpus
+Environment overrides: {}
+{
+  "mode": "offline_corpus_composition",
+  "goldenSetCompositionQualified": true,
+  "corpusCoverage": {
+    "qualifies": true,
+    "criterionScope": "SPEC §9 golden-set composition only; automatic source choice, manual resolution, posting accuracy, recipe reproduction, cost and operations require separate evidence",
+    "counts": {
+      "selectedCases": 31,
+      "distinctCompanies": 31,
+      "primaryHtml": 14,
+      "customHtml": 5,
+      "jsHeavy": 2,
+      "multiRegionWorkday": 2,
+      "landingToExternalBoard": 1,
+      "botProtected": 1
+    },
+    "atsTypes": [
+      "ashby",
+      "bamboohr",
+      "eightfold",
+      "greenhouse",
+      "lever",
+      "teamtailor",
+      "workable",
+      "workday"
+    ],
+    "invalidEvidence": [],
+    "missingReasons": []
+  }
+}
+
+Exit code: 0

@@ -1,0 +1,17 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+{"t":"2026-09-29T16:23:56.491Z","level":"info","event":"slow_database_query","durationMs":263,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:23:56.852Z","level":"info","event":"slow_database_query","durationMs":298,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:23:59.643Z","level":"info","event":"slow_database_query","durationMs":628,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:24:01.116Z","level":"info","event":"slow_database_query","durationMs":1214,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:24:01.701Z","level":"info","event":"slow_database_query","durationMs":437,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:24:02.590Z","level":"info","event":"slow_database_query","durationMs":564,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:24:03.296Z","level":"info","event":"slow_database_query","durationMs":423,"statement":"truncate companies, tasks, users restart identity cascade"}
+{"t":"2026-09-29T16:24:04.218Z","level":"info","event":"slow_database_query","durationMs":706,"statement":"truncate companies, tasks, users restart identity cascade"}
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  17:23:53
+   Duration  11.22s (tests 74%, transform 15%, import 11%)
+

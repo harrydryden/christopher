@@ -76,7 +76,9 @@ export async function getOwnLibraryImport(userId: string, id: string) {
 export async function reopenLibraryImport(userId: string, id: string): Promise<boolean> {
   const moved = await db()
     .update(libraryImports)
-    .set({ error: null, proposal: null, processedAt: null, resolvedAt: null })
+    // This row is reused for a new attempt. Its timestamp is the start of the reading shown on
+    // the page, so an old failed upload gets a fresh fifteen-minute deadline when retried.
+    .set({ error: null, proposal: null, processedAt: null, resolvedAt: null, createdAt: new Date() })
     .where(and(eq(libraryImports.id, id), eq(libraryImports.userId, userId)))
     .returning({ id: libraryImports.id });
   return moved.length > 0;

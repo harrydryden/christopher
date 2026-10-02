@@ -90,3 +90,18 @@ test("the example environment points at the local database the README creates", 
   assert.equal(url.pathname, "/ava_dev");
   assert.match(read("README.md"), /createdb ava_dev/);
 });
+
+test("release identity checks wait for verified evaluation while pull-request CI keeps fixture checks", () => {
+  const release = read(".github/workflows/release.yml");
+  const qualification = release.split("  evaluation-qualification:\n")[1]?.split("  worker-release:\n")[0] ?? "";
+  assert.match(qualification, /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
+  assert.match(qualification, /run: pnpm exec tsx scripts\/check-evaluation-reports\.ts/);
+  assert.match(qualification, /AVA_EVAL_GATE_REQUIRE_VERIFIED: "1"/);
+  for (const name of ["worker-release", "web-release"]) {
+    const job = release.split(`  ${name}:\n`)[1]?.split(/^  [a-z-]+:\n/m)[0] ?? "";
+    assert.match(job, /needs: evaluation-qualification/, `${name} must wait for qualification`);
+  }
+  const ci = read(".github/workflows/ci.yml");
+  assert.match(ci, /run: pnpm exec tsx scripts\/check-evaluation-reports\.ts/);
+  assert.doesNotMatch(ci, /AVA_EVAL_GATE_REQUIRE_VERIFIED/);
+});

@@ -1,0 +1,11 @@
+Sitemap: https://workday.wd5.myworkdayjobs.com/Workday/siteMap.xml
+Sitemap: https://workday.wd5.myworkdayjobs.com/Workday_Early_Career/siteMap.xml
+Sitemap: https://workday.wd5.myworkdayjobs.com/Workday_Executive_Site/siteMap.xml
+Sitemap: https://workday.wd5.myworkdayjobs.com/Workday_Jobs/siteMap.xml
+
+User-agent: *
+Allow: /Workday/
+Allow: /Workday_Early_Career/
+Allow: /Workday_Executive_Site/
+Allow: /Workday_Jobs/
+Disallow: /refreshFacet/

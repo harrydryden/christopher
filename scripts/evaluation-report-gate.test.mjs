@@ -79,10 +79,17 @@ test("warns when every report at the shipped prompt set is unverified, and fails
   assert.match(warned.warnings[0], /Every committed report at the shipped prompt set new is marked unverified/);
   const required = checkEvaluationReports(unverified, "new", { requireVerified: true });
   assert.equal(required.ok, false);
-  assert.match(required.problems[0], /marked unverified/);
-  const verified = checkEvaluationReports([...unverified, at("b/report.json", { promptSetVersion: "new" })], "new", { requireVerified: true });
+  assert.match(required.problems[0], /No verified, published, passing CV replay/);
+  const verified = checkEvaluationReports([...unverified, at("b/report.json", { kind: "cv-replay", at: "2026-09-26", promptSetVersion: "new", outcome: "published", grade: { passed: true }, routes: { "cv.review": { model: "m" } } })], "new", { requireVerified: true });
   assert.equal(verified.ok, true);
   assert.deepEqual(verified.warnings, []);
+  const onlyMetadata = checkEvaluationReports([at("b/report.json", { promptSetVersion: "new" })], "new", { requireVerified: true });
+  assert.match(onlyMetadata.problems[0], /No verified, published, passing CV replay/);
+  const newerFixture = checkEvaluationReports([
+    at("b/report.json", { kind: "cv-replay", at: "2026-09-26", promptSetVersion: "new", outcome: "published", grade: { passed: true }, routes: { "cv.review": { model: "m" } } }),
+    at("c/report.json", { kind: "cv-replay", at: "2026-09-27", promptSetVersion: "new", outcome: "published", grade: { passed: true }, routes: { "cv.review": { model: "m" } }, unverified: true }),
+  ], "new", { requireVerified: true });
+  assert.match(newerFixture.problems.at(-1), /newest CV replay.*unverified/);
   assert.equal(requireVerifiedFromEnv({}), false);
   assert.equal(requireVerifiedFromEnv({ AVA_EVAL_GATE_REQUIRE_VERIFIED: "0" }), false);
   assert.equal(requireVerifiedFromEnv({ AVA_EVAL_GATE_REQUIRE_VERIFIED: "1" }), true);

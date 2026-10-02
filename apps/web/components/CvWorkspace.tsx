@@ -95,7 +95,10 @@ export function CvWorkspace({
       } catch {
         return;
       }
-      if (id === "cv-panel-content" || id.startsWith("cv-content-"))
+      if (id === "cv-panel-evaluation" || id === "cv-panel-appearance") {
+        setSelected(id === "cv-panel-evaluation" ? "evaluation" : "appearance");
+        setFocusRequest({ id });
+      } else if (id === "cv-panel-content" || id.startsWith("cv-content-"))
         openContent(id);
     }
     followFragment();
@@ -107,7 +110,7 @@ export function CvWorkspace({
     };
   }, []);
   useEffect(() => {
-    if (!focusRequest || selected !== "content") return;
+    if (!focusRequest) return;
     const target = document.getElementById(focusRequest.id);
     target?.focus({ preventScroll: true });
     target?.scrollIntoView({ block: "center", behavior: "instant" });

@@ -11,10 +11,10 @@
  *    for the prompts, whatever prompt set it names;
  *  - at least one report must be at the shipped prompt set, verified or marked unverified, so a
  *    prompt change cannot merge without someone writing down that it was (or was not) evaluated;
- *  - and at least one of those must not be marked unverified: a live run graded the shipped
- *    prompts. No live run can happen in CI, so this is a warning unless `requireVerified` is set
- *    (`AVA_EVAL_GATE_REQUIRE_VERIFIED` in the environment of scripts/check-evaluation-reports.ts),
- *    when it is a problem.
+ *  - release qualification additionally needs a published, passing CV replay at the shipped
+ *    prompt set that is not marked unverified, and the newest replay with graded routes must be
+ *    that verified evidence. Ordinary CI warns while all reports are unverified so fixture runs
+ *    remain useful. `AVA_EVAL_GATE_REQUIRE_VERIFIED=1` enables the release rule.
  */
 
 /** The prompt set a report says it was graded at, wherever the script that wrote it put it. */
@@ -63,9 +63,18 @@ export function checkEvaluationReports(reports, current, options = {}) {
   const shipped = reports.filter(({ report }) => reportPromptSet(report) === current);
   if (!shipped.length)
     problems.push(`No committed report is at the shipped prompt set ${current}. Write one (docs/DEPLOY.md, "Evaluation reports and the prompt set").`);
-  else if (!shipped.some(({ report }) => report?.unverified !== true)) {
-    const message = `Every committed report at the shipped prompt set ${current} is marked unverified: no live run has graded these prompts. Record and replay a live build before relying on them (docs/DEPLOY.md, "Evaluation reports and the prompt set").`;
-    (options.requireVerified ? problems : warnings).push(message);
+  else {
+    const verified = shipped.filter(({ report }) => report?.kind === "cv-replay" && report?.unverified !== true
+      && report?.outcome === "published" && report?.grade?.passed === true);
+    if (options.requireVerified && !verified.length)
+      problems.push(`No verified, published, passing CV replay report is at the shipped prompt set ${current}. Record and replay a live build before qualifying a release (docs/DEPLOY.md, "Evaluation reports and the prompt set").`);
+    else if (!shipped.some(({ report }) => report?.unverified !== true))
+      warnings.push(`Every committed report at the shipped prompt set ${current} is marked unverified: no live run has graded these prompts. Record and replay a live build before relying on them (docs/DEPLOY.md, "Evaluation reports and the prompt set").`);
+    if (options.requireVerified && verified.length) {
+      const selected = evaluatedReport(reports, current);
+      if (!selected || reportPromptSet(selected.report) !== current || selected.report.unverified === true)
+        problems.push(`The newest CV replay with graded routes at the shipped prompt set ${current} is missing or unverified. Publish a current verified replay and regenerate evaluated routes before qualifying a release.`);
+    }
   }
   return { ok: problems.length === 0, problems, warnings, notes };
 }

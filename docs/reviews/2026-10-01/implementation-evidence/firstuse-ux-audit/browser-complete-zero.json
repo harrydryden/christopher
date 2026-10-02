@@ -1,0 +1,83 @@
+{
+  "fixture": "isolated synthetic database derived from mocked 25-page listing; no production worker or live site",
+  "mode": "complete-zero",
+  "at": "2026-10-01T17:29:20.762Z",
+  "observations": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "setupText": "Your companies have been checked A complete scan has finished. If your list is empty, no roles are waiting in this view; check your preferences or follow another company. A CV Library is not needed to receive roles. Review preferences",
+      "setupAnnouncements": [
+        "Your companies have been checked\n\nA complete scan has finished. If your list is empty, no roles are waiting in this view; check your preferences or follow another company. A CV Library is not needed to receive roles.\n\nReview preferences"
+      ],
+      "firstScanHref": null,
+      "rolesExcerpt": "Skip to main content Last scan just now · Following 1 company · 0 new role matches · 0 new company matches Roles Companies Applications Library Learning Health Settings Fixture reviewer Sign out ROLES Your companies have been checked A complete scan has finished. If your list is empty, no roles are waiting in this view; check your preferences or follow another company. A CV Library is not needed to receive roles. Review preferences Matched 0 Shortlisted 0 Dismissed 0 All roles in this view Company All companies Pager fixture Title Update results Clear filters Availability Availability Newly opened Open Closed More filters NO ROLES AWAITING REVIEW A complete scan has finished. Nothing is waiting in Matched; your keywords and locations may have excluded roles found. Review your preferences or follow another company. Review preferences",
+      "rolesWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "rolesEnlarged": null,
+      "setupLink": {
+        "focussed": true,
+        "destination": "/settings"
+      },
+      "healthExcerpt": "Skip to main content Last scan just now · Following 1 company · 0 new role matches · 0 new company matches Roles Companies Applications Library Learning Health Settings Fixture reviewer Sign out Preferences Learning Health Account HEALTH NEEDS YOU (0) NOTHING NEEDS YOU No company-specific issues are recorded. Check the background worker below for monitoring status. BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history. NO DAILY SCAN RUNS YET Daily runs appear here once the schedule starts.",
+      "healthStatuses": [
+        ""
+      ],
+      "healthWidth": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "enlarged": null,
+      "recoveryLink": null,
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "setupText": "Your companies have been checked A complete scan has finished. If your list is empty, no roles are waiting in this view; check your preferences or follow another company. A CV Library is not needed to receive roles. Review preferences",
+      "setupAnnouncements": [
+        "Your companies have been checked\n\nA complete scan has finished. If your list is empty, no roles are waiting in this view; check your preferences or follow another company. A CV Library is not needed to receive roles.\n\nReview preferences"
+      ],
+      "firstScanHref": null,
+      "rolesExcerpt": "Skip to main content Last scan just now · Following 1 company · 0 new role matches · 0 new company matches Menu ROLES Your companies have been checked A complete scan has finished. If your list is empty, no roles are waiting in this view; check your preferences or follow another company. A CV Library is not needed to receive roles. Review preferences Matched 0 Shortlisted 0 Dismissed 0 All roles in this view Filters NO ROLES AWAITING REVIEW A complete scan has finished. Nothing is waiting in Matched; your keywords and locations may have excluded roles found. Review your preferences or follow another company. Review preferences",
+      "rolesWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "rolesEnlarged": {
+        "body": 375,
+        "viewport": 375,
+        "baselinePx": 14,
+        "enlargedPx": 28
+      },
+      "setupLink": {
+        "focussed": true,
+        "destination": "/settings"
+      },
+      "healthExcerpt": "Skip to main content Last scan just now · Following 1 company · 0 new role matches · 0 new company matches Menu Preferences Learning Health Account HEALTH NEEDS YOU (0) NOTHING NEEDS YOU No company-specific issues are recorded. Check the background worker below for monitoring status. BACKGROUND WORKER The background worker has not reported; scans and CV builds are not running. An administrator can see why in Operations. RECENT PROBLEM SCANS (LAST 7 DAYS, 0) NO PROBLEM SCANS No problem scans are recorded in the last 7 days. RECENT DAILY SCAN RUNS Scheduled and manually started daily runs appear here. Scans from adding or refreshing a company are recorded separately in its scan history. NO DAILY SCAN RUNS YET Daily runs appear here once the schedule starts.",
+      "healthStatuses": [
+        ""
+      ],
+      "healthWidth": {
+        "body": 375,
+        "viewport": 375
+      },
+      "enlarged": {
+        "body": 375,
+        "viewport": 375,
+        "baselinePx": 13,
+        "enlargedPx": 26
+      },
+      "recoveryLink": null,
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    }
+  ]
+}

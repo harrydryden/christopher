@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "caseId": "zapier",
+  "sourceUrl": "https://api.ashbyhq.com/posting-api/job-board/zapier",
+  "evidenceUrl": "https://zapier.com/jobs",
+  "capturedAt": "2026-09-29T13:29:20Z",
+  "rawSha256": "9219a038de991448cf8a1a0e75489752e21a5e38067495cdc00fb9662098a5c9",
+  "rawPath": "zapier-ashby.raw.json",
+  "enumerationMethod": "Direct unauthenticated HTTP GET of public board JSON; parsed jobs array by an independent Python stdlib script, not AVA discovery/extraction; Zapier isListed=true only; no human posting review.",
+  "reviewStatus": "machine_enumerated",
+  "completeScope": false,
+  "postingUrls": [
+    "https://jobs.ashbyhq.com/zapier/04838dc8-0efa-4fe5-b705-c99f6b3f17c6",
+    "https://jobs.ashbyhq.com/zapier/1767482d-de23-460c-80eb-6d0a3caa72ab",
+    "https://jobs.ashbyhq.com/zapier/381a771d-b04c-4a8d-8515-ea677d6bd80b",
+    "https://jobs.ashbyhq.com/zapier/45b2c110-f8e0-497a-914c-72fddf447ed0",
+    "https://jobs.ashbyhq.com/zapier/6adee270-03bf-4b1b-915b-eba5fb56d1b6",
+    "https://jobs.ashbyhq.com/zapier/7dd68291-3696-4fd0-a5d0-24ab73d22fff",
+    "https://jobs.ashbyhq.com/zapier/b14ac81b-d94c-4a46-89a3-017f3d113517",
+    "https://jobs.ashbyhq.com/zapier/cb1aec2c-05cd-4598-8117-bd1f7ed9a49f",
+    "https://jobs.ashbyhq.com/zapier/d4576c10-a27e-47fa-a056-30c898b9e672",
+    "https://jobs.ashbyhq.com/zapier/eaf4ef36-116b-4aa1-b874-7474b16851e6"
+  ],
+  "jobs": [
+    {
+      "id": "04838dc8-0efa-4fe5-b705-c99f6b3f17c6",
+      "title": "Legal Counsel",
+      "url": "https://jobs.ashbyhq.com/zapier/04838dc8-0efa-4fe5-b705-c99f6b3f17c6"
+    },
+    {
+      "id": "1767482d-de23-460c-80eb-6d0a3caa72ab",
+      "title": "Staff Backend Engineer, Commerce",
+      "url": "https://jobs.ashbyhq.com/zapier/1767482d-de23-460c-80eb-6d0a3caa72ab"
+    },
+    {
+      "id": "381a771d-b04c-4a8d-8515-ea677d6bd80b",
+      "title": "Director, India",
+      "url": "https://jobs.ashbyhq.com/zapier/381a771d-b04c-4a8d-8515-ea677d6bd80b"
+    },
+    {
+      "id": "45b2c110-f8e0-497a-914c-72fddf447ed0",
+      "title": "Automation Strategist, Customer Success",
+      "url": "https://jobs.ashbyhq.com/zapier/45b2c110-f8e0-497a-914c-72fddf447ed0"
+    },
+    {
+      "id": "6adee270-03bf-4b1b-915b-eba5fb56d1b6",
+      "title": "Sales Assist Representative",
+      "url": "https://jobs.ashbyhq.com/zapier/6adee270-03bf-4b1b-915b-eba5fb56d1b6"
+    },
+    {
+      "id": "7dd68291-3696-4fd0-a5d0-24ab73d22fff",
+      "title": "Manager, GTM Analytics",
+      "url": "https://jobs.ashbyhq.com/zapier/7dd68291-3696-4fd0-a5d0-24ab73d22fff"
+    },
+    {
+      "id": "b14ac81b-d94c-4a46-89a3-017f3d113517",
+      "title": "Growth Design Lead",
+      "url": "https://jobs.ashbyhq.com/zapier/b14ac81b-d94c-4a46-89a3-017f3d113517"
+    },
+    {
+      "id": "cb1aec2c-05cd-4598-8117-bd1f7ed9a49f",
+      "title": "Finance Manager, Marketing",
+      "url": "https://jobs.ashbyhq.com/zapier/cb1aec2c-05cd-4598-8117-bd1f7ed9a49f"
+    },
+    {
+      "id": "d4576c10-a27e-47fa-a056-30c898b9e672",
+      "title": "Account Executive, Mid Market",
+      "url": "https://jobs.ashbyhq.com/zapier/d4576c10-a27e-47fa-a056-30c898b9e672"
+    },
+    {
+      "id": "eaf4ef36-116b-4aa1-b874-7474b16851e6",
+      "title": "Sr. Technical Account Manager",
+      "url": "https://jobs.ashbyhq.com/zapier/eaf4ef36-116b-4aa1-b874-7474b16851e6"
+    }
+  ]
+}

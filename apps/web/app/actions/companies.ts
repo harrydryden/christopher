@@ -1,5 +1,5 @@
 "use server";
-import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus, retireSourceRoles } from "@ava/db";
+import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus, retireSourceRoles, lockAccountScoreInput } from "@ava/db";
 
 import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 
@@ -90,17 +90,18 @@ export async function addCompanies(formData: FormData): Promise<void> {
   // so too, but the form is a courtesy and this is the rule.
   await requireChosenGate(user.id);
   const raw = String(formData.get("urls") ?? "");
-  const lines = [...new Set(raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];
+  const lines = raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
   // Every new company is discovered and then scanned daily for everyone who follows it, so one
   // paste adds a bounded amount of shared work (design: a paste is not a bulk import).
   if (lines.length > MAX_COMPANIES_PER_SUBMISSION) {
     refuseOn(returnTo, `Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`);
   }
 
-  const candidates: Array<{ name: string; homepageUrl: string; domain: string }> = [];
+  const candidates: Array<{ name: string; homepageUrl: string; domain: string; input: string; index: number }> = [];
   const skipped: string[] = [];
+  const outcomes: Array<{ input: string; result: string; index: number }> = [];
   const seen = new Set<string>();
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     let url: string;
     let domain: string;
     try {
@@ -108,6 +109,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
       domain = extractDomain(url);
     } catch {
       skipped.push(line);
+      outcomes.push({ input: line, result: "Invalid homepage", index });
       continue;
     }
     // An address the worker will never fetch is skipped with the reason, not added to the catalogue.
@@ -115,11 +117,16 @@ export async function addCompanies(formData: FormData): Promise<void> {
     if (unsafe) {
       // The skipped list is one line of items, so the reason goes in without its full stop.
       skipped.push(unsafe.replace(/\.$/, ""));
+      outcomes.push({ input: line, result: "Address cannot be fetched", index });
       continue;
     }
-    if (seen.has(domain)) continue;
+    if (seen.has(domain)) {
+      skipped.push(domain);
+      outcomes.push({ input: line, result: "Duplicate domain in this list", index });
+      continue;
+    }
     seen.add(domain);
-    candidates.push({ name: discovery.nameFromDomain(domain), homepageUrl: url, domain });
+    candidates.push({ name: discovery.nameFromDomain(domain), homepageUrl: url, domain, input: line, index });
   }
 
   let added = 0;
@@ -130,22 +137,24 @@ export async function addCompanies(formData: FormData): Promise<void> {
     await assertFollowCapacity(tx, user, { domains: candidates.map(candidate => candidate.domain) });
     for (let offset = 0; offset < candidates.length; offset += 100) {
       const batch = candidates.slice(offset, offset + 100);
-      const inserted = await tx.insert(companies).values(batch.map(candidate => ({ ...candidate, addedBy: user.id }))).onConflictDoNothing().returning({ id: companies.id, domain: companies.domain });
+      const inserted = await tx.insert(companies).values(batch.map(candidate => ({ name: candidate.name, homepageUrl: candidate.homepageUrl, domain: candidate.domain, addedBy: user.id }))).onConflictDoNothing().returning({ id: companies.id, domain: companies.domain });
       const createdIds = new Map(inserted.map(c => [c.domain, c.id]));
       const existing = await tx.select({ id: companies.id, domain: companies.domain }).from(companies).where(inArray(companies.domain, batch.map(c => c.domain)));
       const idByDomain = new Map(existing.map(c => [c.domain, c.id]));
       for (const candidate of batch) {
         const companyId = idByDomain.get(candidate.domain);
-        if (!companyId) { skipped.push(candidate.domain); continue; }
+        if (!companyId) { skipped.push(candidate.domain); outcomes.push({ input: candidate.input, result: "Could not add", index: candidate.index }); continue; }
         const outcome = await subscribeToCompany(tx, user.id, companyId);
         if (createdIds.has(candidate.domain)) {
           added++;
+          outcomes.push({ input: candidate.input, result: "Added and followed", index: candidate.index });
           await enqueue("discover", { companyId, reason: "added" }, tx);
         } else if (outcome.created || outcome.reactivated) {
           followed++;
+          outcomes.push({ input: candidate.input, result: "Followed existing company", index: candidate.index });
           admit.push(companyId);
           await discoverIfSourceless(tx, companyId);
-        } else skipped.push(candidate.domain);
+        } else { skipped.push(candidate.domain); outcomes.push({ input: candidate.input, result: "Already followed", index: candidate.index }); }
       }
     }
     for (const [index, companyId] of admit.entries()) {
@@ -161,6 +170,10 @@ export async function addCompanies(formData: FormData): Promise<void> {
   const params = new URLSearchParams({ added: String(added) });
   if (followed) params.set("followed", String(followed));
   if (skipped.length) params.set("skipped", skipped.slice(0, 8).map(s => s.slice(0, 100)).join(", ") + (skipped.length > 8 ? `; and ${skipped.length - 8} more` : ""));
+  if (returnTo === "/suggestions" && formData.get("bulk") === "1") {
+    params.set("results", JSON.stringify(outcomes.sort((a, b) => a.index - b.index)
+      .map(({ input, result }) => [input.slice(0, 100), result])));
+  }
   redirect(`${returnTo}?${params.toString()}`);
 }
 
@@ -419,6 +432,8 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
     const [run] = await tx.select().from(discoveryRuns).where(eq(discoveryRuns.id, id)).for("update");
     if (!run) throw new UserFacingError("Discovery run not found.");
     await requireFollowed(user.id, run.companyId, { live: true, writer: tx });
+    // A second click has already been answered; it must not start another scan after the first
+    // task has finished.
     if (run.status === "resolved" && run.chosenSourceId) return run.companyId;
     const candidates = run.candidates as Array<{ spec?: unknown }>;
     const raw = candidates[candidateIndex];
@@ -456,10 +471,12 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
       .set({ status: "resolved", chosenSourceId: source.id, finishedAt: new Date() })
       .where(eq(discoveryRuns.id, id));
 
+    // Commit the first scan request with the chosen source. A queue failure must not leave a
+    // resolved run that nobody will scan.
+    await enqueue("scan_company", { companyId: run.companyId, trigger: "manual" }, tx);
     return run.companyId;
   });
 
-  await enqueue("scan_company", { companyId, trigger: "manual" });
   revalidatePath(`/companies/${companyId}`);
 }
 
@@ -489,6 +506,7 @@ export async function unfollowCompany(companyId: string): Promise<void> {
   const user = await requireUser();
   const id = zUuid().parse(companyId);
   await db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
     await tx.delete(companySubscriptions).where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id)));
     await tx.execute(sql`delete from user_jobs uj using jobs j where j.id = uj.job_id and uj.user_id = ${user.id} and j.company_id = ${id}`);
     await syncCompanyStatus(tx, id);

@@ -1,0 +1,36 @@
+{
+  "fixture": "synthetic unfinished shared run; no worker process or heartbeat",
+  "at": "2026-10-01T16:19:25.658Z",
+  "observations": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "banner": "Scan waiting for monitoring",
+      "destination": "/health",
+      "keyboardEnterNavigated": true,
+      "width": {
+        "body": 1280,
+        "viewport": 1280
+      },
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "banner": "Scan waiting for monitoring",
+      "destination": "/health",
+      "keyboardEnterNavigated": true,
+      "width": {
+        "body": 375,
+        "viewport": 375
+      },
+      "blockedExternalRequests": [],
+      "pageErrors": []
+    }
+  ]
+}

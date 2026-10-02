@@ -1,0 +1,82 @@
+{
+  "fixture": "synthetic local roles in ava_locations_web; external browser requests blocked",
+  "checkedAt": "2026-10-01T21:05:56.206Z",
+  "observations": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "collapsedText": "USA, GA, Atlanta + 69 more locations",
+      "collapsed": true,
+      "keyboardFocus": true,
+      "expanded": true,
+      "lastLocationReached": true,
+      "pageScroll": {
+        "scrollTop": 1782,
+        "lastTop": 716.9375,
+        "lastBottom": 734.9375,
+        "viewportHeight": 800
+      },
+      "collapsedAgain": true,
+      "count": 70,
+      "first": "USA, GA, Atlanta",
+      "last": "USA, AZ, Scottsdale",
+      "shortText": "\t\nWorkday fixture\n\t\nOperations consultant — two locations\n\ntoday*\n\n\t\nLondon, Manchester\n\tnot scored yet\tReview",
+      "initial": {
+        "viewport": 1280,
+        "document": 1280
+      },
+      "expandedWidth": {
+        "viewport": 1280,
+        "document": 1280
+      },
+      "longWidth": {
+        "viewport": 1280,
+        "document": 1280
+      },
+      "listHeight": 1644,
+      "frameworkError": 0,
+      "pageErrors": [],
+      "blockedExternalRequests": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "collapsedText": "USA, GA, Atlanta + 69 more locations",
+      "collapsed": true,
+      "keyboardFocus": true,
+      "expanded": true,
+      "lastLocationReached": true,
+      "pageScroll": {
+        "scrollTop": 2580,
+        "lastTop": 649.453125,
+        "lastBottom": 667.453125,
+        "viewportHeight": 812
+      },
+      "collapsedAgain": true,
+      "count": 70,
+      "first": "USA, GA, Atlanta",
+      "last": "USA, AZ, Scottsdale",
+      "shortText": "Workday fixture\nOperations consultant — two locations\n\ntoday*\n\nLocation:\nLondon, Manchester\nFit:\nnot scored yet\nReview",
+      "initial": {
+        "viewport": 375,
+        "document": 375
+      },
+      "expandedWidth": {
+        "viewport": 375,
+        "document": 375
+      },
+      "longWidth": {
+        "viewport": 375,
+        "document": 375
+      },
+      "listHeight": 1536,
+      "frameworkError": 0,
+      "pageErrors": [],
+      "blockedExternalRequests": []
+    }
+  ]
+}

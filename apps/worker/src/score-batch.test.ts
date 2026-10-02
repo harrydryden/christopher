@@ -20,6 +20,7 @@ import { readEnv } from "./env";
 import { claimTask, sleep, TaskDeferred, TaskQueue } from "./queue";
 import { TaskWakeup } from "./task-wakeup";
 import { requeueScoresLive } from "./handlers/score-batch-recovery";
+import { reconcileOrphanScores } from "./score-orphans";
 import { handleCollectScoreBatch, handlePollScoreBatch } from "./handlers/score-batch";
 import { handleScoreJob } from "./handlers/learning";
 import { onAbandon } from "./handlers/abandon";
@@ -147,6 +148,16 @@ async function pollTask(): Promise<Task> {
 const succeeded = (customId: string, score = 72): AiBatchResultLike => ({ custom_id: customId, result: { type: "succeeded", message: answer(score) } });
 
 describe("the collector", () => {
+  it("finishes a queued batch role as AI unavailable when no model is configured", async () => {
+    const job = await seedRole(alice);
+    await queueScore(alice, job.id);
+    const task = await collectorTask();
+    const noAi = { ...deps, ai: { ...deps.ai, enabled: false } } as unknown as WorkerDeps;
+    expect(await handleCollectScoreBatch(task, noAi)).toMatchObject({ done: 1, collected: 1 });
+    expect(await viewOf(alice, job.id)).toMatchObject({ scoreState: "unavailable", fitScore: null });
+    expect(provider.sent).toHaveLength(0);
+  });
+
   it("gathers every queued role into one batch, names each by task, account and role, and holds each account's share", async () => {
     const [a1, a2, b1] = [await seedRole(alice), await seedRole(alice, { title: "Head of Operations" }), await seedRole(bob)];
     const tasks = [await queueScore(alice, a1.id), await queueScore(alice, a2.id), await queueScore(bob, b1.id)];
@@ -353,6 +364,22 @@ describe("a hand-back to live scoring", () => {
       await watch.wakeup.stop();
     }
   });
+
+  it("does not revive a waiting label for closed, archived, skipped or unmatched roles", async () => {
+    const [closed, archived, skipped, unmatched] = await Promise.all([
+      seedRole(alice), seedRole(alice), seedRole(alice), seedRole(alice, { inTable: false }),
+    ]);
+    const jobs = [closed, archived, skipped, unmatched];
+    await db.update(schema.userJobs).set({ scoreState: "failed", scoreStateAt: now })
+      .where(sql`${schema.userJobs.jobId} in (${sql.join(jobs.map(job => sql`${job.id}::uuid`), sql`, `)})`);
+    await db.update(schema.jobs).set({ status: "closed" }).where(eq(schema.jobs.id, closed.id));
+    await db.update(schema.userJobs).set({ archivedAt: now }).where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, archived.id)));
+    await db.insert(schema.decisions).values({ userId: alice, jobId: skipped.id, decision: "skip", reason: "Not suitable",
+      jobTitle: skipped.title, companyName: "Acme", createdAt: now });
+
+    expect(await requeueScoresLive(db, jobs.map(job => ({ userId: alice, jobId: job.id })))).toBe(4);
+    for (const job of jobs) expect((await viewOf(alice, job.id)).scoreState).toBe("failed");
+  });
 });
 
 describe("the poll applier", () => {
@@ -465,31 +492,60 @@ describe("the poll applier", () => {
     expect(await holds()).toHaveLength(0);
   });
 
-  it("never changes table membership: a late score orders a row, and adds or removes none", async () => {
+  it("never changes table membership or scores a role that has left it", async () => {
     const { jobs, record } = await submitted([{ userId: alice }, { userId: alice, inTable: false }, { userId: bob }]);
     // Bob's gate is narrowed while the batch runs: his role leaves the table before its score lands.
     await db.update(schema.userJobs).set({ inTable: false }).where(and(eq(schema.userJobs.userId, bob), eq(schema.userJobs.jobId, jobs[2]!.id)));
     const before = await db.select({ userId: schema.userJobs.userId, jobId: schema.userJobs.jobId, inTable: schema.userJobs.inTable }).from(schema.userJobs);
     const scoreFor = new Map([[jobs[0]!.id, 95], [jobs[1]!.id, 10], [jobs[2]!.id, 80]]);
     provider.end(record.batchId, record.items.map(item => succeeded(item.customId, scoreFor.get(item.jobId))));
-    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ scored: 3 });
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ scored: 2, stale: 1 });
     const after = await db.select({ userId: schema.userJobs.userId, jobId: schema.userJobs.jobId, inTable: schema.userJobs.inTable }).from(schema.userJobs);
     expect(after.sort((a, b) => a.jobId.localeCompare(b.jobId))).toEqual(before.sort((a, b) => a.jobId.localeCompare(b.jobId)));
     expect(after.find(row => row.jobId === jobs[0]!.id)!.inTable).toBe(true);
     expect(after.find(row => row.jobId === jobs[1]!.id)!.inTable).toBe(false);
     expect(after.find(row => row.jobId === jobs[2]!.id)!.inTable).toBe(false);
-    expect((await viewOf(bob, jobs[2]!.id)).fitScore).toBe(80);
+    expect((await viewOf(bob, jobs[2]!.id)).fitScore).toBeNull();
   });
 
   it("never lets a score from older inputs replace one computed since", async () => {
     const { jobs, record } = await submitted([{ userId: alice }]);
-    // A live rescore landed after this batch read its inputs.
-    await db.update(schema.userJobs).set({ fitScore: 55, fitScoredAt: new Date(now.getTime() + 60_000) }).where(eq(schema.userJobs.jobId, jobs[0]!.id));
+    // A live rescore from a newer request landed in the same millisecond. Its request number,
+    // rather than a wall-clock comparison, keeps the older batch from replacing it.
+    await db.update(schema.userJobs).set({ fitScore: 55, fitScoredAt: now,
+      scoreAttemptVersion: record.items[0]!.attemptVersion! + 1 }).where(eq(schema.userJobs.jobId, jobs[0]!.id));
     provider.end(record.batchId, [succeeded(record.items[0]!.customId, 99)]);
     expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
     expect((await viewOf(alice, jobs[0]!.id)).fitScore).toBe(55);
     // It was still billed, so it is still in the ledger.
     expect(await db.select().from(schema.aiCalls)).toHaveLength(1);
+  });
+
+  it("does not publish a batch answer for a changed role and queues current work", async () => {
+    const { jobs, record } = await submitted([{ userId: alice }]);
+    await db.update(schema.jobs).set({ title: "Director of Operations" }).where(eq(schema.jobs.id, jobs[0]!.id));
+    provider.end(record.batchId, [succeeded(record.items[0]!.customId, 99)]);
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
+    expect(await viewOf(alice, jobs[0]!.id)).toMatchObject({ fitScore: null, scoreState: "queued" });
+    const live = (await tasksOf("score_job")).filter(task => task.status === "queued");
+    expect(live.map(task => task.payload)).toEqual([{ userId: alice, jobId: jobs[0]!.id, live: true }]);
+  });
+
+  it("does not let an empty batch answer finish a score after the role closes", async () => {
+    const { jobs, record } = await submitted([{ userId: alice }]);
+    await db.update(schema.jobs).set({ status: "closed" }).where(eq(schema.jobs.id, jobs[0]!.id));
+    provider.end(record.batchId, [{ custom_id: record.items[0]!.customId,
+      result: { type: "succeeded", message: { ...answer(), parsed_output: null } } }]);
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
+    expect(await viewOf(alice, jobs[0]!.id)).toMatchObject({ fitScore: null, scoredAt: null, scoreState: "closed" });
+  });
+
+  it("does not publish a batch answer after a role becomes private to another account", async () => {
+    const { jobs, record } = await submitted([{ userId: alice }]);
+    await db.update(schema.jobs).set({ shared: false, addedBy: bob }).where(eq(schema.jobs.id, jobs[0]!.id));
+    provider.end(record.batchId, [succeeded(record.items[0]!.customId, 91)]);
+    expect(await handlePollScoreBatch(await pollTask(), deps)).toMatchObject({ stale: 1 });
+    expect(await viewOf(alice, jobs[0]!.id)).toMatchObject({ fitScore: null, scoreState: "ineligible" });
   });
 
   it("puts batch spend in the figures Health reports", async () => {
@@ -510,6 +566,49 @@ describe("the poll applier", () => {
     await onAbandon.poll_score_batch!(poll!, deps, "provider unreachable");
     expect(await holds()).toHaveLength(0);
     expect((await tasksOf("score_job")).filter(task => task.status === "queued").map(task => task.payload)).toEqual([{ userId: alice, jobId: jobs[0]!.id, live: true }]);
+  });
+
+  it("restores a failed waiting label when poll abandonment hands a role back after orphan repair", async () => {
+    const { jobs } = await submitted([{ userId: alice }]);
+    const jobId = jobs[0]!.id;
+    const [poll] = await tasksOf("poll_score_batch");
+    await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: now, fitScore: 72, scoredAt: now })
+      .where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, jobId)));
+    // Queue abandonment commits the failed poll row before calling its hand-back hook.
+    await db.update(schema.tasks).set({ status: "failed", finishedAt: now }).where(eq(schema.tasks.id, poll!.id));
+    expect((await reconcileOrphanScores(db)).rows).toBe(1);
+    expect((await viewOf(alice, jobId)).scoreState).toBe("failed");
+
+    await onAbandon.poll_score_batch!(poll!, deps, "provider unreachable");
+    const view = await viewOf(alice, jobId);
+    expect(view.scoreState).toBe("queued");
+    expect(view.fitScore).toBe(72);
+    expect(view.scoredAt).toEqual(now);
+    expect((await tasksOf("score_job")).some(task => task.status === "queued" && task.payload.userId === alice
+      && task.payload.jobId === jobId && task.payload.live === true)).toBe(true);
+    expect((await reconcileOrphanScores(db)).rows).toBe(0);
+  });
+
+  it("keeps active live hand-back work and does not replace a newer request or score", async () => {
+    const { jobs } = await submitted([{ userId: alice }, { userId: bob }]);
+    const [aliceJob, bobJob] = jobs.map(job => job.id);
+    const [poll] = await tasksOf("poll_score_batch");
+    await db.update(schema.tasks).set({ status: "failed", finishedAt: now }).where(eq(schema.tasks.id, poll!.id));
+    await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: now })
+      .where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, aliceJob!)));
+    await db.update(schema.userJobs).set({ scoreState: "scored", scoreStateAt: now, fitScore: 83, scoredAt: now })
+      .where(and(eq(schema.userJobs.userId, bob), eq(schema.userJobs.jobId, bobJob!)));
+
+    await onAbandon.poll_score_batch!(poll!, deps, "provider unreachable");
+    expect((await reconcileOrphanScores(db)).rows).toBe(0);
+    expect((await viewOf(alice, aliceJob!)).scoreState).toBe("queued");
+    expect((await viewOf(bob, bobJob!)).scoreState).toBe("scored");
+    expect((await viewOf(bob, bobJob!)).fitScore).toBe(83);
+
+    await db.update(schema.userJobs).set({ scoreState: "requested", scoreStateAt: now })
+      .where(and(eq(schema.userJobs.userId, alice), eq(schema.userJobs.jobId, aliceJob!)));
+    await requeueScoresLive(db, [{ userId: alice, jobId: aliceJob! }]);
+    expect((await viewOf(alice, aliceJob!)).scoreState).toBe("requested");
   });
 });
 

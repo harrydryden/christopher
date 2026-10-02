@@ -1,0 +1,4 @@
+gate|{"matchFields": ["title"], "includeRemote": false, "locationTerms": ["Edinburgh"], "excludeKeywords": ["interns"], "includeKeywords": ["operations"]}
+seedProfile|"I want operations roles in Edinburgh with clear progression."
+tasks|0
+ai_calls|0

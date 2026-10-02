@@ -1,0 +1,4 @@
+ version |          markdown           |                      pinned_statements                      |                             open_questions
+---------+-----------------------------+-------------------------------------------------------------+------------------------------------------------------------------------
+       9 | New confirmed version nine. | ["No relocation.", "Protect this additional pinned draft."] | [{"id": "q1", "question": "What does a supportive team mean to you?"}]
+(1 row)

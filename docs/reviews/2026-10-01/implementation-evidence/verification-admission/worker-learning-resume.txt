@@ -1,0 +1,16 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T21:50:22.297Z","level":"info","msg":"profile synthesised","data":{"userId":"5c122d4c-47e1-49fd-96d5-9c6d583459c5","version":1,"decisions":1,"questions":0,"changed":true}}
+{"t":"2026-10-01T21:50:22.594Z","level":"info","msg":"scan suggestions filed","data":{"userId":"5c122d4c-47e1-49fd-96d5-9c6d583459c5","titles":4,"unmatched":4,"inserted":1}}
+{"t":"2026-10-01T21:50:22.603Z","level":"info","msg":"scan suggestions filed","data":{"userId":"5c122d4c-47e1-49fd-96d5-9c6d583459c5","titles":4,"unmatched":4,"inserted":0}}
+{"t":"2026-10-01T21:50:22.610Z","level":"info","msg":"scan suggestions filed","data":{"userId":"5c122d4c-47e1-49fd-96d5-9c6d583459c5","titles":4,"unmatched":4,"inserted":1}}
+{"t":"2026-10-01T21:50:22.848Z","level":"info","msg":"profile synthesised","data":{"userId":"5c122d4c-47e1-49fd-96d5-9c6d583459c5","version":2,"decisions":525,"questions":0,"changed":true}}
+{"t":"2026-10-01T21:50:22.952Z","level":"info","msg":"profile synthesised","data":{"userId":"5c122d4c-47e1-49fd-96d5-9c6d583459c5","version":2,"decisions":0,"questions":0,"changed":false}}
+{"t":"2026-10-01T21:50:23.818Z","level":"info","msg":"profile synthesised","data":{"userId":"9726c172-6558-4e28-ab28-105f405b15bb","version":1,"decisions":1,"questions":0,"changed":true}}
+
+ Test Files  1 passed (1)
+      Tests  29 passed (29)
+   Start at  22:50:18
+   Duration  6.01s (tests 79%, transform 11%, import 10%)
+

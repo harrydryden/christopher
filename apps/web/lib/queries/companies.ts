@@ -43,7 +43,8 @@ export interface CompanyListRow {
   /** How many accounts follow the company: a shared catalogue entry is scanned once for all of them. */
   followers: number;
   discovering: boolean;
-  discoveryState: "queued" | "running" | null;
+  activityState: "queued" | "running" | null;
+  activityType: "discover" | "scan_company" | null;
   /** No active or failing careers source, so scans skip this company until one is added. */
   needsSource: boolean;
   lastDiscovery: "resolved" | "needs_confirmation" | "not_found" | "failed" | "running" | null;
@@ -106,10 +107,10 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
     .limit(50).offset((page - 1) * 50);
   if (!followed.length) return [];
   const ids = followed.map(c => c.company.id);
-  const [lastScans, discoveringRows, sourceRows, discoveryRows, followerRows] = await Promise.all([
+  const [lastScans, activityRows, sourceRows, discoveryRows, followerRows] = await Promise.all([
     latestScanByCompany(ids),
     db()
-      .select({ payload: tasks.payload, status: tasks.status })
+      .select({ payload: tasks.payload, status: tasks.status, type: tasks.type })
       .from(tasks)
       .where(and(inArray(tasks.type, ["discover", "scan_company"]), sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`, inArray(tasks.status, ["queued", "running"]), inArray(sql`${tasks.payload}->>'companyId'`, ids))),
     db()
@@ -141,9 +142,17 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
   const lastDiscoveryByCompany = new Map(discoveryRows.map((r) => [r.companyId, r.status]));
   const lastScanByCompany = new Map(lastScans.map((s) => [s.companyId, { status: s.status, startedAt: s.startedAt }]));
   const followersByCompany = new Map(followerRows.map((f) => [f.companyId, f.n]));
-  const discoveringSet = new Set(
-    discoveringRows.map((r) => (r.payload as { companyId?: string }).companyId).filter((id): id is string => !!id),
-  );
+  // A running task is more useful to name than queued work. For equal states, scan work is
+  // preferred because it can already be reading a careers listing.
+  const activityByCompany = new Map<string, { type: "discover" | "scan_company"; status: "queued" | "running" }>();
+  const rank = (type: "discover" | "scan_company", status: "queued" | "running") =>
+    (status === "running" ? 2 : 0) + (type === "scan_company" ? 1 : 0);
+  for (const row of activityRows) {
+    const companyId = (row.payload as { companyId?: string }).companyId;
+    if (!companyId || (row.type !== "discover" && row.type !== "scan_company") || (row.status !== "queued" && row.status !== "running")) continue;
+    const current = activityByCompany.get(companyId);
+    if (!current || rank(row.type, row.status) > rank(current.type, current.status)) activityByCompany.set(companyId, { type: row.type, status: row.status });
+  }
 
   return followed.map(({ company, subscription, openRoles, reviewRoles, shortlistedRoles }) => ({
     company,
@@ -154,9 +163,9 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
     shortlistedRoles: Number(shortlistedRoles ?? 0),
     sourceType: sourceTypeByCompany.get(company.id)?.type ?? null,
     followers: followersByCompany.get(company.id) ?? 0,
-    discovering: discoveringSet.has(company.id),
-    discoveryState: discoveringRows.some(r => (r.payload as { companyId?: string }).companyId === company.id && r.status === "running") ? "running"
-      : discoveringSet.has(company.id) ? "queued" : null,
+    discovering: activityByCompany.has(company.id),
+    activityState: activityByCompany.get(company.id)?.status ?? null,
+    activityType: activityByCompany.get(company.id)?.type ?? null,
     needsSource: !withSource.has(company.id),
     lastDiscovery: (lastDiscoveryByCompany.get(company.id) as CompanyListRow["lastDiscovery"]) ?? null,
   }));
@@ -565,12 +574,13 @@ export interface UserAddedRole {
  */
 export async function ungatedUserPostings(userId: string, companyId: string): Promise<UserAddedRole[]> {
   return db()
-    .select({ jobId: jobs.id, title: jobs.title, url: jobs.url, keywordMatched: userJobs.keywordMatched, locationOk: userJobs.locationOk, excluded: userJobs.excluded })
+    .select({ jobId: jobs.id, title: jobs.title, url: sql<string>`${jobs.url}`, keywordMatched: userJobs.keywordMatched, locationOk: userJobs.locationOk, excluded: userJobs.excluded })
     .from(jobs)
     .innerJoin(userJobs, and(eq(userJobs.jobId, jobs.id), eq(userJobs.userId, userId)))
     .where(and(
       eq(jobs.companyId, companyId),
       eq(jobs.origin, "user"),
+      sql`${jobs.url} is not null`,
       eq(jobs.addedBy, userId),
       eq(jobs.status, "open"),
       or(eq(userJobs.keywordMatched, false), eq(userJobs.locationOk, false), eq(userJobs.excluded, true)),

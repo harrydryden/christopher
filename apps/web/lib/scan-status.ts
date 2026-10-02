@@ -2,6 +2,7 @@ import { localDateParts, type SystemSettings } from "@ava/core";
 import type { ScanRun } from "@ava/db/schema";
 import { scanStripFacts } from "./queries/scan-strip";
 import { getSystemSettings } from "./settings";
+import { getWorkerStatus } from "./queries/health";
 import type { ScanStripFacts } from "./scan-banner";
 import type { ScanPollHint } from "./polling";
 
@@ -44,14 +45,18 @@ export type ScanStatus = ScanStripFacts & ScanPollHint;
 /**
  * The strip's four facts for one account — last completed scan of a company it follows, how many it
  * follows, roles still to review (the Matched tab's count) and pending company suggestions — plus
- * whether the shared run is in progress, and the poll hint for the tab that shows them. The facts
- * and the run are one statement; the schedule is the request's shared settings read.
+ * whether the shared run can make progress, and the poll hint for the tab that shows them. The
+ * facts and the run are one statement; worker health is read only for an unfinished run.
  */
 export async function getScanStatus(userId: string, now = new Date()): Promise<ScanStatus> {
   const [facts, settings] = await Promise.all([scanStripFacts(userId), getSystemSettings()]);
   const run = facts.latestRun;
+  const unfinished = !!run && !run.finishedAt;
+  const worker = unfinished ? await getWorkerStatus(now) : null;
+  const scanState = !unfinished ? "idle" : worker!.state === "healthy" ? "scanning"
+    : worker!.state === "restarting" ? "restarting" : "waiting";
   return {
-    scanning: !!run && !run.finishedAt,
+    scanState,
     lastScanAt: facts.lastScanAt ? facts.lastScanAt.toISOString() : null,
     following: facts.following,
     newRoleMatches: facts.newRoleMatches,

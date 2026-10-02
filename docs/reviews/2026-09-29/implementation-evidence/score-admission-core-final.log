@@ -1,0 +1,17 @@
+
+> @ava/core@0.1.0 test /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core
+> vitest run
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core
+
+
+ Test Files  42 passed (42)
+      Tests  708 passed (708)
+   Start at  17:56:34
+   Duration  2.38s (tests 42%, import 30%, transform 26%, worker 1%)
+
+  Transform  transforming modules took 3.58s · 26% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

@@ -4,7 +4,12 @@
  * save "could not be made" when the truth was that they had to sign in again.
  */
 import { describe, expect, it, vi } from "vitest";
-import { actionError, UserFacingError } from "./validation";
+import { actionError, UserFacingError, zUuid } from "./validation";
+
+it("accepts a complete PostgreSQL UUID and rejects a missing group", () => {
+  expect(zUuid().safeParse("ba118cc8-05dc-48ae-bb37-2f6b696b88ee").success).toBe(true);
+  expect(zUuid().safeParse("ba118cc8-05dc-48ae-2f6b696b88ee").success).toBe(false);
+});
 
 /** What `redirect()` throws: an error the router recognises by its digest. */
 function redirectSignal(to: string) {

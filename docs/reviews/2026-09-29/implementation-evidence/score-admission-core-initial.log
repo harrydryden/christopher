@@ -1,0 +1,44 @@
+
+> @ava/core@0.1.0 test /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core
+> vitest run
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core
+
+ ❯ src/tasks.test.ts (6 tests | 1 failed) 7ms
+   ❯ task deadlines (2)
+     × names every task type once 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/tasks.test.ts > task deadlines > names every task type once
+AssertionError: expected [ 'extract_document', …(23) ] to have a length of 23 but got 24
+
+- Expected
++ Received
+
+- 23
++ 24
+
+ ❯ src/tasks.test.ts:75:29
+     73|   it("names every task type once", () => {
+     74|     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
+     75|     expect(TASK_TYPE_NAMES).toHaveLength(23);
+       |                             ^
+     76|   });
+     77| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 41 passed (42)
+      Tests  1 failed | 707 passed (708)
+   Start at  17:51:23
+   Duration  3.04s (tests 46%, import 30%, transform 23%, worker 1%)
+
+    Isolate  42 workers spawned · ~114ms startup each (spawn + environment, per file)
+             at least ~417ms faster with isolate: false — reuses workers across files instead of one per file
+
+/Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/core:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @ava/core@0.1.0 test: `vitest run`
+Exit status 1

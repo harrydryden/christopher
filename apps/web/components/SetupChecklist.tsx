@@ -1,85 +1,34 @@
 import { dismissSetupChecklist } from "@/app/actions/setup";
-import { EMPTY_TABLE_SENTENCE, setupMilestones, type MilestoneState, type SetupChecklist as Checklist } from "@/lib/setup";
+import { setupMilestones, type SetupChecklist as Checklist } from "@/lib/setup";
 
-/** The square at each milestone: filled when done, outlined with a centre cell when current. */
-function Marker({ state }: { state: MilestoneState }) {
-  if (state === "done") return <span className="size-4 shrink-0 bg-fg" />;
-  if (state === "current") {
-    return (
-      <span className="flex size-4 shrink-0 items-center justify-center border-2 border-line">
-        <span className="size-1 bg-fg" />
-      </span>
-    );
-  }
-  return <span className="size-4 shrink-0 border-2 border-line-muted" />;
-}
-
-const LABEL_TONE: Record<MilestoneState, string> = {
-  done: "text-fg",
-  current: "text-fg underline decoration-2 underline-offset-4",
-  todo: "text-muted",
-};
-
-/**
- * The five steps of setting AVA up as one row of milestones, derived from rows rather than
- * remembered (Journey 1.1). Each milestone links to the field that finishes it; the line beneath
- * says why the current one matters.
- *
- * Two placements, one component. Above an empty table it is the page's explanation and cannot be
- * hidden, because a blank table is exactly what needs explaining; once roles are arriving it can be
- * hidden, which stores nothing but the moment it was hidden. Finished setup is never rendered: the
- * caller returns nothing once `complete` is true.
- */
+/** A compact next action first; the full checklist is available without occupying a phone screen. */
 export function SetupChecklist({ checklist, variant }: { checklist: Checklist; variant: "explanation" | "card" }) {
   const explanation = variant === "explanation";
-  const milestones = setupMilestones(checklist);
   const next = checklist.nextStep;
-  return (
-    <section aria-label="Setup" className="mb-4 border-b-2 border-line-muted pb-3">
-      {explanation && <p className="mb-3 text-14">{EMPTY_TABLE_SENTENCE}</p>}
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <h2 className="ds-pixel text-10 text-muted">
-          {explanation ? "Start here" : "Setup"} · {checklist.summary}
-        </h2>
-        {!explanation && (
-          <form action={dismissSetupChecklist}>
-            <button type="submit" className="text-12 text-muted underline hover:text-fg">
-              Hide
-            </button>
-          </form>
-        )}
+  return <section aria-label="Setup" className="mb-4 space-y-3 border-b-2 border-line-muted pb-4">
+    {explanation && <div role="status" className="space-y-1">
+      <h2 className="text-16 font-semibold">{checklist.notice.title}</h2>
+      <p className="max-w-3xl text-14 text-muted">{checklist.notice.description}</p>
+      <a href={checklist.notice.href} className="inline-flex min-h-11 items-center text-14 font-semibold underline">{checklist.notice.action}</a>
+    </div>}
+    {!checklist.complete && <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-14"><span className="font-semibold">{explanation ? "Start here" : "Monitoring setup"}</span> · {checklist.summary}</p>
+        {!explanation && <form action={dismissSetupChecklist}><button type="submit" className="min-h-11 px-2 text-13 text-muted underline">Hide setup</button></form>}
       </div>
-      <ol className="grid grid-cols-3 gap-y-3 md:grid-cols-5">
-        {milestones.map((step, index) => (
-          <li key={step.id} className="min-w-0">
-            <a
-              href={step.href}
-              title={step.label}
-              aria-current={step.state === "current" ? "step" : undefined}
-              className="group flex min-h-11 flex-col gap-1.5 no-underline"
-            >
-              <span className="flex items-center" aria-hidden="true">
-                <Marker state={step.state} />
-                <span className={`h-0.5 flex-1 ${index === milestones.length - 1 ? "invisible" : step.done ? "bg-fg" : "bg-track"}`} />
-              </span>
-              <span className={`ds-pixel pr-2 text-10 group-hover:underline ${LABEL_TONE[step.state]}`}>
-                {step.shortLabel}
-                <span className="sr-only">: {step.label}, {step.state === "todo" ? "to do" : step.state}</span>
-              </span>
-              {step.progress && <span className="text-10 text-muted tabular-nums">{step.progress}</span>}
+      {next && <p className="text-14"><a href={next.href} className="font-semibold underline">{next.label}</a> · <span className="text-muted">{next.description}</span></p>}
+      <details className="text-13 text-muted">
+        <summary className="min-h-11 cursor-pointer py-3">All setup steps</summary>
+        <ol className="grid gap-2 sm:grid-cols-2">
+          {setupMilestones(checklist).map(step => <li key={step.id}>
+            <a href={step.href} aria-current={step.state === "current" ? "step" : undefined} className="flex min-h-11 items-center gap-2 underline">
+              <span aria-hidden="true">{step.done ? "✓" : "○"}</span>
+              <span>{step.label}<span className="sr-only">, {step.done ? "done" : "to do"}</span></span>
             </a>
-          </li>
-        ))}
-      </ol>
-      {next && (
-        <p className="mt-2 text-12 text-muted">
-          <a href={next.href} className="text-fg">
-            {next.label}
-          </a>
-          {" · "}
-          {next.description}
-        </p>
-      )}
-    </section>
-  );
+          </li>)}
+        </ol>
+        <p className="mt-2">Optional: <a href="/settings#seed-profile">describe your ideal work</a> to improve ranking; <a href="/library">prepare your evidence Library</a> when you want to build a CV.</p>
+      </details>
+    </>}
+  </section>;
 }

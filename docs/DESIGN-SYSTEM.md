@@ -1,9 +1,9 @@
 # AVA design system
 
 Brand-green chrome, crisp white screens, black ink, deep-grey support text, four
-status hues. Silkscreen for headings and labels,
+status hues. Silkscreen for brand headings,
 IBM Plex Mono for everything else. Radius 0, hard offset shadows, stepped
-motion. The UI is a dense keyboard-first table app, so the system is
+motion. The UI supports keyboard review and narrow-screen work, so the system is
 deliberately small — if you reach for a colour or a size that is not here, that
 is a signal to reuse something, not to add a token.
 
@@ -13,6 +13,12 @@ Tailwind. That block **clears Tailwind's default colour, radius, shadow, type
 and font scales** before defining ours, so `text-slate-500`, `rounded-lg` and
 `shadow-sm` do not exist. A missing utility means a missing token, not a reason
 to write an arbitrary value.
+
+## Functional reading and interaction
+
+Functional labels, navigation, table headers and buttons use IBM Plex Mono at 13–14px or above. Keep the pixel face for brand headings rather than small action text. Shared buttons have a minimum 44px target. On phones, fields use 16px text to remain readable and avoid focus zoom; buttons and disclosure summaries have a 44px minimum height. Preserve visible keyboard focus on links, fields, summaries and editable text.
+
+The desktop sidebar becomes a labelled Menu disclosure on phones, with one navigation tree. Escape closes it and returns focus to its trigger. Health and Learning are direct destinations. Core work lists must keep the item and its actions together at 320px and 390px; evidence editing has one input per field rather than hidden duplicate required controls. Dense secondary metadata may remain smaller, but must not carry the primary action or only explanation.
 
 ---
 
@@ -87,8 +93,8 @@ Each is at least 5:1 on white.
 
 ## Typography
 
-Silkscreen (pixel, uppercase by typeface) for page and section titles, button
-labels, badges, table heads and numerals near the mark. Never for a paragraph.
+Silkscreen (pixel, uppercase by typeface) for page and brand section titles,
+compact badges and numerals near the mark. Never for a paragraph or primary action label.
 IBM Plex Mono for all body text and controls. Both are self-hosted through
 `next/font` in `app/layout.tsx`: Silkscreen at 400 only (there is no pixel bold;
 a pixel element in a bold context such as a `<th>` carries `ds-pixel` itself),
@@ -100,19 +106,18 @@ Sizes are named for their pixel value, because the scale is small and literal.
 
 | Utility | Use |
 | --- | --- |
-| `text-9` | Badges, table heads |
-| `text-10` | `<kbd>`, fit scores, field labels, small buttons |
-| `text-11` | Sidebar and tab navigation |
-| `text-12` | Card titles, secondary text, buttons |
-| `text-13` | Links, the status strip, pagination |
-| `text-14` | Body and every control — the default |
+| `text-9` | Legacy compact badges; never essential instructions |
+| `text-10` | `<kbd>` and supplementary indicators |
+| `text-11` | Supplementary metadata |
+| `text-12` | Brand card titles, secondary metadata |
+| `text-13` | Functional labels, table headers, small buttons, links and status |
+| `text-14` | Body, navigation and controls — the default |
 | `text-16` | Section headings |
 | `text-20` | Page titles |
 | `text-24` | Display figures |
 
-Two utilities carry the pixel idiom: `ds-pixel` (Silkscreen, uppercase,
-`tracking-pixel`) and `ds-label` (10px, `tracking-label`, muted) for field
-labels. Tracking tokens are `tracking-pixel` 0.02em, `tracking-badge` 0.04em,
+`ds-pixel` carries the brand idiom (Silkscreen, uppercase, `tracking-pixel`).
+`ds-label` uses readable 13px medium mono text with normal tracking and muted ink for field labels. Tracking tokens are `tracking-pixel` 0.02em, `tracking-badge` 0.04em,
 `tracking-th` 0.08em, `tracking-label` 0.16em.
 
 ---

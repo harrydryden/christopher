@@ -34,7 +34,7 @@ vi.mock("@/lib/cv-pdf", async (actual) => {
   };
 });
 
-import { assessCvDraft, finaliseCvDraft, requestCv, saveCvDraft } from "./cv";
+import { assessCvDraft, finaliseCvDraft, quoteCvBuild, requestCv, saveCvDraft } from "./cv";
 import { createCvAssessment } from "@ava/core/cv-review";
 import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
 import { reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
@@ -108,6 +108,20 @@ async function failedDraft(extra: Partial<typeof schema.cvDrafts.$inferInsert> =
 const draftRow = async (id: string) =>
   (await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id)))[0]!;
 const buildTasks = () => database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
+
+it("quotes the exact pasted advert for an owned role without creating a build", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const [role] = await visibleRoles(1);
+  const short = await quoteCvBuild(role!.job.id, "Lead a team.");
+  const long = await quoteCvBuild(role!.job.id, "Lead a team. ".repeat(3_000));
+  expect(short.ok).toBe(true);
+  expect(long.ok).toBe(true);
+  if (short.ok && long.ok) expect(long.line).not.toBe(short.line);
+  expect(await quoteCvBuild(role!.job.id, "x".repeat(60_001))).toEqual({ ok: false, error: "Keep the job description under 60,000 characters." });
+  expect(await quoteCvBuild(crypto.randomUUID(), "Lead a team.")).toEqual({ ok: false, error: "Role not found." });
+  expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
+  expect(await database.select().from(schema.applications)).toHaveLength(0);
+});
 
 it("retries a failed build with the CV model chosen since, and keeps what it already paid for", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
@@ -289,6 +303,7 @@ it("refuses an account's fourth build in flight in a sentence, and writes nothin
   expect(await buildTasks()).toHaveLength(MAX_CV_BUILDS_IN_FLIGHT);
   const applied = await database.select().from(schema.applications);
   expect(applied.map(row => row.jobId).sort()).toEqual(roles.slice(0, MAX_CV_BUILDS_IN_FLIGHT).map(role => role.job.id).sort());
+  expect(applied.every(row => row.status === "applying" && row.appliedOn === null)).toBe(true);
 
   // A second click on a role already building still goes to that build.
   expect(await outcome(requestCv({ ok: true }, generate(roles[0]!.job.id)))).toBe(`redirect:/cv/${before.find(draft => draft.jobId === roles[0]!.job.id)!.id}`);

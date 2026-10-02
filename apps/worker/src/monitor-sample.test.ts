@@ -67,7 +67,7 @@ describe("runMonitorSample", () => {
     sample = await runMonitorSample(deps());
     expect(sample!.levels.oldestReady).toBe("fail");
     // In live mode every queued score is the queue's to claim.
-    await db.execute(sql`truncate tasks`);
+    await db.execute(sql`delete from tasks`);
     await db.insert(schema.tasks).values({ type: "score_job", payload: { userId: "u", jobId: "j" }, runAfter: minutesAgo(20) });
     await db.execute(sql`update settings set value = '"live"'::jsonb where key = 'scoringMode'`);
     sample = await runMonitorSample(deps());

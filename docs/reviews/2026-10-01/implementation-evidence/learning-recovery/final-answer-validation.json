@@ -1,0 +1,6 @@
+{
+  "alert": "Keep an answer under 2,000 characters.",
+  "answerLength": 2001,
+  "viewport": 375,
+  "width": 375
+}

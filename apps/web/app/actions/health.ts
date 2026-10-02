@@ -1,11 +1,13 @@
 "use server";
 
-import { requireAdmin, requireUser } from "@/lib/auth";
+import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, asc, eq, sql } from "drizzle-orm";
-import { careerSources, companySubscriptions, discoveryRuns, tasks } from "@ava/db/schema";
+import { requestLocationEnrichment, type Db } from "@ava/db";
+import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks } from "@ava/db/schema";
+import { markSourceConfirmed, useDiscoveryCandidate } from "./companies";
 import { db } from "@/lib/db";
-import { UserFacingError, zUuid } from "@/lib/validation";
+import { fail, isUserFacingError, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { refuseOn, revalidate } from "@/lib/action-helpers";
 
 /** A unique violation, however the driver wraps it: another row already holds this dedupe key. */
@@ -48,6 +50,49 @@ export async function retryTask(taskId: string): Promise<void> {
   }
   revalidate("/health", "/admin/health");
   if (duplicate) refuseOn("/admin/health", "This task is already queued or running again, so there is nothing to retry.");
+}
+
+/** A follower can retry a location read only for an open role on a current Workday source. */
+export async function retryLocationCheck(jobId: string): Promise<void> {
+  const user = await requireVerifiedUser();
+  const id = zUuid().parse(jobId);
+  const outcome = await db().transaction(async tx => {
+    const [job] = await tx.select({
+      id: jobs.id, companyId: jobs.companyId, sourceId: jobs.sourceId, status: jobs.status,
+      shared: jobs.shared, addedBy: jobs.addedBy,
+      resolution: jobs.locationResolution, revision: jobs.locationRevision,
+      label: jobs.locationLabel, externalKey: jobs.externalKey, url: jobs.url, title: jobs.title,
+    }).from(jobs).where(eq(jobs.id, id)).for("update");
+    if (!job || !job.sourceId || !job.companyId || !job.url) throw new UserFacingError("This role is no longer available for a location check.");
+    const [scope] = await tx.select({ companyStatus: companies.status, followStatus: companySubscriptions.status, sourceCompanyId: careerSources.companyId, sourceStatus: careerSources.status, sourceType: careerSources.type })
+      .from(companies)
+      .innerJoin(companySubscriptions, and(eq(companySubscriptions.companyId, companies.id), eq(companySubscriptions.userId, user.id)))
+      .innerJoin(careerSources, eq(careerSources.id, job.sourceId))
+      .where(eq(companies.id, job.companyId)).limit(1);
+    if (!scope || scope.followStatus !== "active" || scope.companyStatus !== "active" || scope.sourceCompanyId !== job.companyId || scope.sourceType !== "workday" ||
+        (scope.sourceStatus !== "active" && scope.sourceStatus !== "failing") || job.status !== "open" ||
+        (!job.shared && job.addedBy !== user.id) ||
+        (job.resolution !== "pending" && job.resolution !== "unavailable"))
+      throw new UserFacingError("This location check is no longer available. Refresh Health for its current status.");
+    if (!job.label) throw new UserFacingError("This location check needs a fresh company scan. Open the company and choose Rescan.");
+    const [active] = await tx.select({ id: tasks.id }).from(tasks).where(and(
+      eq(tasks.type, "fetch_locations"), sql`${tasks.payload}->>'jobId' = ${id}`,
+      ...(job.revision ? [sql`${tasks.payload}->>'locationRevision' = ${job.revision}`] : []),
+      sql`${tasks.status} in ('queued', 'running')`,
+    )).limit(1);
+    if (!active) {
+      if (job.resolution === "unavailable") await tx.update(jobs).set({ locationResolution: "pending", locationError: null }).where(eq(jobs.id, id));
+      await requestLocationEnrichment(tx as unknown as Db, {
+        id, sourceId: job.sourceId, externalKey: job.externalKey, url: job.url,
+        title: job.title, locationLabel: job.label, locationResolution: "pending", locationRevision: job.revision,
+      }, new Date());
+    }
+    return job.companyId;
+  }).catch(error => {
+    if (isUserFacingError(error)) refuseOn("/health", error.message);
+    throw error;
+  });
+  revalidate("/health", "/companies", `/companies/${outcome}`);
 }
 
 /**
@@ -95,4 +140,38 @@ export async function keepCurrentSource(runId: string): Promise<void> {
     return run.companyId;
   });
   revalidate("/health", "/companies", `/companies/${companyId}`);
+}
+
+/** Health's inline forms keep an expected stale-source or permissions refusal beside the choice. */
+export async function confirmHealthSource(sourceId: string, _previous: ActionResult, _data: FormData): Promise<ActionResult> {
+  try {
+    await markSourceConfirmed(sourceId);
+    revalidate("/health");
+    return { ok: true };
+  } catch (error) {
+    if (isUserFacingError(error)) return fail(error.message);
+    throw error;
+  }
+}
+
+export async function useHealthCandidate(runId: string, index: number, _previous: ActionResult, _data: FormData): Promise<ActionResult> {
+  try {
+    await useDiscoveryCandidate(runId, index);
+    revalidate("/health");
+    return { ok: true };
+  } catch (error) {
+    if (isUserFacingError(error)) return fail(error.message);
+    throw error;
+  }
+}
+
+export async function keepHealthCurrentSource(runId: string, _previous: ActionResult, _data: FormData): Promise<ActionResult> {
+  try {
+    await keepCurrentSource(runId);
+    revalidate("/health");
+    return { ok: true };
+  } catch (error) {
+    if (isUserFacingError(error)) return fail(error.message);
+    throw error;
+  }
 }

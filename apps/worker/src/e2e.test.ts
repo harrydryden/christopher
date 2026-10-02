@@ -10,10 +10,11 @@
  * slowest, a Workday board read past 150 pages, takes about 35 seconds on a loaded four-core machine.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { gzipSync } from "node:zlib";
 import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
-import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
+import { ats, dedupeKeyFor, discovery, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -22,12 +23,13 @@ import { _scanSourceForTests, handleScanCompany } from "./handlers/scan";
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { handleScoreJob, handleTagReason } from "./handlers/learning";
 import { handleFetchDescription, sliceBetweenAnchors } from "./handlers/description";
+import { handleDiscover } from "./handlers/discover";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
-import { TaskQueue } from "./queue";
+import { TaskDeferred, TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
-const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example", "acme.wd1.myworkdayjobs.com"];
+const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "api.ashbyhq.com", "pager.example", "acme.wd1.myworkdayjobs.com"];
 
 /** A real PNG, because the logo capture sniffs the bytes and refuses anything that is not one. */
 function pngBytes(length = 400): Buffer {
@@ -274,6 +276,33 @@ describe("end to end", () => {
     const [kept] = await db.select().from(schema.companies).where(eq(schema.companies.id, named!.id));
     expect(kept!.name).toBe("Acme Robotics Ltd");
     expect(await db.select().from(schema.careerSources)).toHaveLength(2);
+  });
+  it("preserves an administrator's name change while discovery is in flight", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example",
+      homepageUrl: "https://www.acme.example/" }).returning();
+    let begin!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const probe = vi.spyOn(discovery, "discoverCareersSources").mockImplementation(async () => {
+      begin();
+      await held;
+      return { homepageUrl: company!.homepageUrl, companyName: "Acme Robotics", outcome: "not_found",
+        candidates: [], log: [], fetches: 1, durationMs: 1 };
+    });
+    try {
+      const pending = handleDiscover({ id: crypto.randomUUID(), type: "discover", payload: { companyId: company!.id, reason: "added" },
+        attempts: 1, maxAttempts: 3 } as never, deps);
+      await started;
+      await db.update(schema.companies).set({ name: "Manually corrected Acme" }).where(eq(schema.companies.id, company!.id));
+      release();
+      await pending;
+      const [saved] = await db.select({ name: schema.companies.name }).from(schema.companies).where(eq(schema.companies.id, company!.id));
+      expect(saved!.name).toBe("Manually corrected Acme");
+    } finally {
+      release();
+      probe.mockRestore();
+    }
   });
   it("discovers the careers source from a homepage URL and scans it", async () => {
     await setGate({});
@@ -981,6 +1010,39 @@ describe("functional review regressions", () => {
     expect(stillQueued).toHaveLength(0);
   }, 120_000);
 
+  it("reads a changed second SmartRecruiters page even when the first response is unchanged", async () => {
+    const posting = (id: string) => ({ id, name: `Operations ${id}`, location: { fullLocation: "London, UK" } });
+    const firstPage = Array.from({ length: 100 }, (_, i) => posting(`first-${i}`));
+    let later = posting("later-old");
+    server.setRoutes({ "api.smartrecruiters.com": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/v1/companies/orbital/postings": req => {
+        const offset = Number(new URL(req.url ?? "/", "https://api.smartrecruiters.com").searchParams.get("offset") ?? "0");
+        return { body: { offset, limit: 100, totalFound: 101, content: offset === 0 ? firstPage : [later] } };
+      },
+    } });
+    const [company] = await db.insert(schema.companies).values({ name: "Orbital", domain: "orbital.example", homepageUrl: "https://www.orbital.example/" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "smartrecruiters",
+      url: "https://jobs.smartrecruiters.com/orbital", apiUrl: "https://api.smartrecruiters.com/v1/companies/orbital/postings", atsSlug: "orbital", status: "active" }).returning();
+    let scanNumber = 0;
+    const fetcher = Object.create(deps.fetcher) as WorkerDeps["fetcher"];
+    fetcher.fetchText = async (url, init) => {
+      const response = await deps.fetcher.fetchText(url, init);
+      return url.includes("offset=0") ? { ...response, contentHash: sha1(response.body), unchanged: scanNumber > 1 } : response;
+    };
+    const withFetcher = { ...deps, fetcher };
+    const scan = async () => { scanNumber++; return _scanSourceForTests(withFetcher, company!, source!, await deps.settings(), null); };
+    expect((await scan()).postingsFound).toBe(101);
+    later = posting("later-new");
+    now = new Date(now.getTime() + 86_400_000);
+    const changed = await scan();
+    expect(changed).toMatchObject({ status: "ok", postingsFound: 101 });
+    const [newRole] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:later-new"));
+    expect(newRole?.title).toBe("Operations later-new");
+    const [oldRole] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:later-old"));
+    expect(oldRole).toMatchObject({ status: "open", missingScans: 1 });
+  }, 60_000);
+
   it("queues description snapshots without AI", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
@@ -989,6 +1051,46 @@ describe("functional review regressions", () => {
     await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
     const tasks = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
     expect(tasks.some((task) => task.status === "queued")).toBe(true);
+  }, 60_000);
+
+  it("labels only eligible unscored views unavailable when a scan has no AI", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true));
+    expect(views.length).toBeGreaterThanOrEqual(3);
+    expect(views.every((view) => view.scoreState === "unavailable" && view.scoreStateAt !== null)).toBe(true);
+    const beforeScoreTasks = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+    expect(beforeScoreTasks.every((task) => task.status === "done")).toBe(true);
+
+    // A score or decision arriving between scan reads and its final fan-out must not be replaced
+    // by the scan's inability to run the model. Changed listing fields make these views candidates.
+    const scored = views[0]!;
+    const decided = views[1]!;
+    const applied = views[2]!;
+    await db.update(schema.userJobs).set({ fitScore: 87, scoredAt: now, scoreState: "scored" })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, scored.jobId)));
+    await db.update(schema.userJobs).set({ scoreState: null })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, decided.jobId)));
+    await db.update(schema.userJobs).set({ scoreState: null })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, applied.jobId)));
+    const [decidedJob] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, decided.jobId));
+    const [appliedJob] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, applied.jobId));
+    await db.insert(schema.decisions).values({ userId: user.id, jobId: decided.jobId, decision: "skip",
+      reason: "Already reviewed", jobTitle: decidedJob!.title, companyName: company.name });
+    await db.insert(schema.decisions).values({ userId: user.id, jobId: applied.jobId, decision: "apply",
+      reason: "Interested", jobTitle: appliedJob!.title, companyName: company.name });
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]
+      .map((job) => ({ ...job, location: { name: `${job.location.name} refreshed` } })));
+    await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job")))
+      .toHaveLength(beforeScoreTasks.length);
+    const all = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
+    expect(all.find((view) => view.jobId === scored.jobId)).toMatchObject({ fitScore: 87, scoreState: "scored" });
+    expect(all.find((view) => view.jobId === decided.jobId)?.scoreState).toBe("decided");
+    expect(all.find((view) => view.jobId === applied.jobId)?.scoreState).toBe("unavailable");
+    expect(all.filter((view) => view.inTable && view.jobId !== scored.jobId && view.jobId !== decided.jobId)
+      .every((view) => view.scoreState === "unavailable")).toBe(true);
   }, 60_000);
 
   it("proposes an ATS migration instead of activating it silently", async () => {
@@ -1089,7 +1191,9 @@ describe("functional review regressions", () => {
     // The scan still observes and stores everything; only this account's scoring is held back,
     // and no task was queued that could only fail at the hold.
     expect(await scoreTasks()).toHaveLength(before);
-    expect((await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true))).length).toBeGreaterThan(0);
+    const heldViews = await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true));
+    expect(heldViews.length).toBeGreaterThan(0);
+    expect(heldViews.every((view) => view.scoreState === "budget" && view.scoreStateAt !== null)).toBe(true);
     expect((await db.select().from(schema.tasks)).filter((row) => row.status === "failed")).toHaveLength(0);
 
     await budget(25);
@@ -1176,6 +1280,210 @@ describe("HTML extraction completion", () => {
     expect(existing).toMatchObject({ status: "open", missingScans: 0 });
     const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
     expect(current!.recipe).toBeNull();
+  });
+  it("accepts a browser shell only before a verified capture and treats later empty captures as partial", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    const shell = { html: '<main><div id="jobs-app">Loading…</div></main>', url: listingUrl };
+    const twoRoles = { html: '<main><a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a></main>', url: listingUrl };
+    const oneRole = { html: '<main><a href="/jobs/one">Operations Manager</a></main>', url: listingUrl };
+    const explicitEmpty = { html: '<main><div class="jobs-empty">There are currently no open positions.</div></main>', url: "https://www.acme.example/jobs" };
+    const capture = (listingPages: Array<{ html: string; url: string }>) => ({ html: listingPages.at(-1)!.html,
+      finalUrl: listingPages.at(-1)!.url, listingPages, requests: [], status: 200, incomplete: false });
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: shell.html } } });
+    const render = vi.fn()
+      .mockResolvedValueOnce(capture([shell, twoRoles]))
+      .mockResolvedValueOnce(capture([shell]))
+      .mockResolvedValueOnce(capture([oneRole, shell]))
+      .mockResolvedValueOnce(capture([oneRole, explicitEmpty]));
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    const scan = async () => _scanSourceForTests(withBrowser, company, source, await deps.settings(), null);
+
+    expect(await scan()).toMatchObject({ status: "ok", postingsFound: 2 });
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toMatch(/failed|partial/); // no verified capture cannot be complete
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("partial");
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("partial");
+    expect(render).toHaveBeenCalledTimes(4);
+    const [omitted] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/two"));
+    expect(omitted).toMatchObject({ status: "open", missingScans: 0 });
+  }, 60_000);
+  it("follows HTTP and rendered head next links after browser captures before completing the listing", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    const secondUrl = `${listingUrl}?page=2`;
+    const firstShell = '<head><link rel="next" href="?page=2"></head><main id="jobs-app">Loading…</main>';
+    const secondShell = '<main id="jobs-app">Loading…</main>';
+    const firstCapture = '<main><a href="/jobs/one">Operations Manager</a></main>';
+    const secondCapture = '<head><link rel="next" href="?page=3"></head><main><a href="/jobs/two">Operations Lead</a></main>';
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: firstShell },
+      "/listing?page=2": { body: secondShell },
+      "/listing?page=3": { body: '<main><a href="/jobs/three">Operations Director</a></main>' },
+    } });
+    const render = vi.fn(async (url: string) => {
+      const html = url === secondUrl ? secondCapture : firstCapture;
+      return { html, finalUrl: url, listingPages: [{ html, url }], requests: [], status: 200, incomplete: false };
+    });
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    const result = await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null);
+    expect(result).toMatchObject({ status: "ok", postingsFound: 3 });
+    expect(render.mock.calls.map(([url]) => url)).toEqual([listingUrl, secondUrl]);
+    expect((await db.select().from(schema.jobs)).map(job => job.url).sort()).toEqual([
+      "https://www.acme.example/jobs/one",
+      "https://www.acme.example/jobs/three",
+      "https://www.acme.example/jobs/two",
+    ]);
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: firstShell },
+      "/listing?page=2": { body: secondShell },
+      "/listing?page=3": { status: 404, body: "Not found" },
+    } });
+    expect((await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null)).status).toBe("partial");
+    const [unverified] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/three"));
+    expect(unverified).toMatchObject({ status: "open", missingScans: 0 });
+  }, 60_000);
+  it("continues from a second browser-captured page without fetching that page twice", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    const secondUrl = `${listingUrl}?page=2`;
+    const firstCapture = '<head><link rel="next" href="?page=2"></head><main><a href="/jobs/one">Operations Manager</a></main>';
+    const secondCapture = '<head><link rel="next" href="?page=3"></head><main><a href="/jobs/two">Operations Lead</a></main>';
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<head><link rel="next" href="?page=2"></head><main id="jobs-app">Loading…</main>' },
+      "/listing?page=2": { status: 404, body: "Already captured by the browser" },
+      "/listing?page=3": { body: '<main><a href="/jobs/three">Operations Director</a></main>' },
+    } });
+    const render = vi.fn(async () => ({ html: secondCapture, finalUrl: secondUrl,
+      listingPages: [{ html: firstCapture, url: listingUrl }, { html: secondCapture, url: secondUrl }],
+      requests: [], status: 200, incomplete: false }));
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "ok", postingsFound: 3 });
+    expect(render).toHaveBeenCalledTimes(1);
+  }, 60_000);
+  it("scans compressed browser captures and retains earlier roles if a later capture is corrupt", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<main id="jobs-app">Loading…</main>' },
+    } });
+    const first = '<main><a href="/jobs/one">Operations Manager</a></main>';
+    const second = '<main><a href="/jobs/two">Operations Lead</a></main>';
+    const packed = (html: string) => ({ gzip: gzipSync(html), decodedBytes: Buffer.byteLength(html), url: listingUrl });
+    const render = vi.fn()
+      .mockResolvedValueOnce({ html: second, finalUrl: listingUrl, compressedListingPages: [packed(first), packed(second)], requests: [], status: 200, incomplete: false })
+      .mockResolvedValueOnce({ html: second, finalUrl: listingUrl, compressedListingPages: [packed(first), { ...packed(second), gzip: Buffer.from("broken") }], requests: [], status: 200, incomplete: false });
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "ok", postingsFound: 2 });
+    now = new Date(now.getTime() + 86_400_000);
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 1 });
+    const [existing] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/two"));
+    expect(existing).toMatchObject({ status: "open", missingScans: 0 });
+  }, 60_000);
+  it("does not complete a browser scan below a scoped distinct-job total", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<main id="jobs-app">Loading…</main>' },
+    } });
+    const html = '<main><span class="ais-Stats-text">3 jobs available</span><a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a></main>';
+    const render = vi.fn(async () => ({ html, finalUrl: listingUrl, listingPages: [{ html, url: listingUrl }],
+      requests: [], status: 200, incomplete: false }));
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 2 });
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan!.error).toContain("advertised 3 distinct jobs");
+  }, 60_000);
+  it("retains a remote option added for the same posting in a later browser capture", async () => {
+    const { company, source } = await htmlFixture();
+    const listingUrl = "https://www.acme.example/listing";
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<main id="jobs-app">Loading…</main>' },
+    } });
+    const card = (location: string) => `<article><a href="/jobs/one">Operations Manager</a><span class="location">${location}</span></article>`;
+    const first = card("London, UK");
+    const second = card("Work from home in Canada");
+    const render = vi.fn(async () => ({ html: second, finalUrl: listingUrl, listingPages: [
+      { html: first, url: listingUrl }, { html: second, url: listingUrl },
+    ], requests: [], status: 200, incomplete: false }));
+    const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "ok", postingsFound: 1 });
+    const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.sourceId, source.id));
+    expect(job).toMatchObject({ location: "London, UK", locations: ["London, UK", "Work from home in Canada"], remote: true });
+  }, 60_000);
+  it("marks an explicit cross-origin next page partial even when the current page has a role", async () => {
+    const { company, source } = await htmlFixture();
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<head><link rel="next" href="https://outside.example/jobs?page=2"></head><main><a href="/jobs/one">Operations Manager</a></main>' },
+    } });
+    const result = await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+    expect(result).toMatchObject({ status: "partial", postingsFound: 1 });
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("explicit next page outside this source");
+  });
+  it("keeps a model-extracted listing partial when an external next page is not traversable", async () => {
+    const { company, source } = await htmlFixture();
+    await db.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, title: "Previous role", normalizedTitle: "previous role",
+      url: "https://www.acme.example/previous-role", externalKey: "url:https://www.acme.example/previous-role" });
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<head><link rel="next" href="https://outside.example/listing?page=2"></head><main><article><a href="/opening-2026-1">Operations Manager</a></article></main>' },
+    } });
+    const extractPostings = vi.fn().mockResolvedValue({ postings: [
+      { title: "Operations Manager", url: "https://www.acme.example/opening-2026-1" },
+    ], dropped: 0, recipe: { version: 1, listItem: "article", title: "a", link: "a" } });
+    const modelDeps = { ...deps, browser: null, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    expect(await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 1 });
+    expect(extractPostings).toHaveBeenCalledTimes(1);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("explicit next page outside this source");
+    const [previous] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/previous-role"));
+    expect(previous).toMatchObject({ status: "open", missingScans: 0 });
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
+    expect(current!.recipe).toBeNull();
+  });
+  it("keeps model recovery partial when an expansion control remains unvisited", async () => {
+    const { company, source } = await htmlFixture();
+    const markup = '<main><article><a href="/opening-2026-1">Operations Manager</a></article><button><span>Load more</span></button></main>';
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: markup },
+    } });
+    const extractPostings = vi.fn().mockResolvedValue({ postings: [
+      { title: "Operations Manager", url: "https://www.acme.example/opening-2026-1" },
+    ], dropped: 0, recipe: { version: 1, listItem: "article", title: "a", link: "a" } });
+    const modelDeps = { ...deps, browser: null, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    expect(await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 1 });
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("expansion control but browser rendering is unavailable");
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
+    expect(current!.recipe).toBeNull();
+
+    const render = vi.fn(async () => ({ html: markup, finalUrl: source.url, listingPages: [{ html: markup, url: source.url }],
+      requests: [], status: 200, incomplete: false }));
+    const withBrowser = { ...modelDeps, browser: { render } as unknown as WorkerDeps["browser"] };
+    expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
+      .toMatchObject({ status: "partial", postingsFound: 1 });
+    expect(render).toHaveBeenCalledTimes(1);
+    const [renderedScan] = await db.select().from(schema.scans)
+      .where(and(eq(schema.scans.sourceId, source.id), eq(schema.scans.fetchMethod, "browser"))).limit(1);
+    expect(renderedScan!.error).toContain("final browser capture still has an expansion control");
   });
   it("marks a known visible model omission partial and preserves the omitted role", async () => {
     const { company, source } = await htmlFixture();
@@ -1380,28 +1688,68 @@ it("files role-type and seniority suggestions from the latest scan evidence", as
   expect(await db.select().from(schema.filterSuggestions)).toHaveLength(rows.length);
 }, 120_000);
 
-it("reuses the last browser render while a load-more listing's first page is unchanged", async () => {
+it("refreshes expanded roles when page one is unchanged and preserves roles after a partial render", async () => {
   const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
   const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
-  const page = '<a href="/jobs/one">Operations Manager</a><button>Load more</button>';
+  const page = '<a href="/jobs/one">Operations Manager</a><button><span>Load more</span></button>';
   server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page } } });
-  const render = vi.fn(async () => ({ html: '<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a>', finalUrl: "https://www.acme.example/listing", requests: [], status: 200 }));
-  const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
-  const scan = async () => _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null);
+  const capture = (html: string, incomplete = false) => ({ html, finalUrl: "https://www.acme.example/listing", requests: [], status: 200, incomplete });
+  const render = vi.fn()
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a>'))
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a><a href="/jobs/three">Operations Analyst</a>'))
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/three">Operations Analyst</a>', true))
+    .mockResolvedValueOnce(capture('<a href="/jobs/one">Operations Manager</a><a href="/jobs/three">Operations Analyst</a>', true));
+  // Force the fetcher's real unchanged-body signal, even though this small fake page would not
+  // normally enter its large-body revalidation cache. Only page one is unchanged.
+  let scanNumber = 0;
+  const fetcher = Object.create(deps.fetcher) as WorkerDeps["fetcher"];
+  fetcher.fetchText = async (url, init) => {
+    const response = await deps.fetcher.fetchText(url, init);
+    return url === source!.url ? { ...response, contentHash: sha1(response.body), unchanged: scanNumber > 1 } : response;
+  };
+  const withBrowser = { ...deps, fetcher, browser: { render } as unknown as WorkerDeps["browser"] };
+  const scan = async () => { scanNumber++; return _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null); };
 
   expect((await scan()).postingsFound).toBe(2);
   expect(render).toHaveBeenCalledTimes(1);
   now = new Date(now.getTime() + 86_400_000);
-  expect((await scan()).postingsFound).toBe(2);
-  expect(render).toHaveBeenCalledTimes(1); // same first page: capture reused, no render
-  server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page.replace("Manager", "Manager (Hybrid)") } } });
+  expect((await scan()).postingsFound).toBe(3);
+  expect(render).toHaveBeenCalledTimes(2); // page one did not change; later capture added a role
+  expect((await db.select().from(schema.jobs)).map(job => job.title)).toContain("Operations Analyst");
   now = new Date(now.getTime() + 86_400_000);
-  await scan();
-  expect(render).toHaveBeenCalledTimes(2); // first page changed: render again
-  now = new Date(now.getTime() + 8 * 86_400_000);
-  await scan();
-  expect(render).toHaveBeenCalledTimes(3); // a week on, refresh regardless
+  expect((await scan()).status).toBe("partial");
+  now = new Date(now.getTime() + 86_400_000);
+  expect((await scan()).status).toBe("partial");
+  expect(render).toHaveBeenCalledTimes(4);
+  const [missingFromPartial] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/two"));
+  expect(missingFromPartial).toMatchObject({ status: "open", missingScans: 0 });
 }, 120_000);
+
+it("renders a nested load-more control and never closes roles when expansion is incomplete", async () => {
+  const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+  const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
+  await db.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id, title: "Existing role", normalizedTitle: "existing role",
+    url: "https://www.acme.example/jobs/old", externalKey: "url:https://www.acme.example/jobs/old" });
+  server.setRoutes({ "www.acme.example": {
+    "/robots.txt": { body: "User-agent: *\nAllow: /" },
+    "/listing": { body: '<main><a href="/jobs/new">Operations Manager</a><button><span>Load more</span></button></main>' },
+  } });
+  const render = vi.fn(async () => ({ html: '<main><a href="/jobs/new">Operations Manager</a></main>',
+    finalUrl: "https://www.acme.example/listing", requests: [], status: 200, incomplete: true }));
+  const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+  for (let i = 0; i < 2; i++) {
+    expect((await _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null)).status).toBe("partial");
+    now = new Date(now.getTime() + 86_400_000);
+  }
+  expect(render).toHaveBeenCalledTimes(2);
+  // The same first page remains partial when browser rendering is unavailable.
+  for (let i = 0; i < 2; i++) {
+    expect((await _scanSourceForTests(deps, company!, source!, await deps.settings(), null)).status).toBe("partial");
+    now = new Date(now.getTime() + 86_400_000);
+  }
+  const [existing] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/jobs/old"));
+  expect(existing).toMatchObject({ status: "open", missingScans: 0 });
+}, 60_000);
 
 it("discards a late scan when its source has been disabled", async () => {
   await setGate({});
@@ -1769,12 +2117,9 @@ describe("what a scan asks for and when", () => {
     expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(3);
   }, 120_000);
 
-  it("reuses the listing behind an unchanged large board, and still needs two misses to close", async () => {
-    // A listing over the cache's per-entry limit was re-downloaded and re-parsed every day because
-    // nothing was kept to revalidate it with. The reuse below is only ever the same bytes read
-    // again: an unchanged board lists every role it listed yesterday, so nothing is missing from
-    // it, nothing closes on it that a re-parse would not have closed, and two consecutive
-    // successful misses are still what closes a role.
+  it("refetches an unchanged first feed response when secondary indexes also shape the listing", async () => {
+    // Greenhouse's first response contains identities, but later department/office indexes shape
+    // the posting fields. Its unchanged validator cannot stand for the whole mapped listing.
     await setGate({});
     const filler = (n: number) => ({
       id: 5_000_000 + n, title: `Systems Technician ${n}`, updated_at: "2026-08-01T09:00:00Z",
@@ -1809,22 +2154,21 @@ describe("what a scan asks for and when", () => {
     expect(first.fetchedBytes).toBeGreaterThan(512 * 1024);
     expect(first.revalidated).toBe(0);
 
-    // The next day, with the board untouched.
+    // The next day, with the first response untouched, the worker revalidates it and then obtains
+    // a body to map alongside fresh secondary indexes. No old full-listing snapshot is substituted.
     now = new Date(now.getTime() + 86_400_000);
     expect((await scan()).status).toBe("ok");
     const second = await latestScan(created!.id);
     expect(second.postingsFound).toBe(902);
-    expect(second.requests).toBe(1);
+    expect(second.requests).toBe(4);
     expect(second.revalidated).toBe(1);
-    expect(second.fetchedBytes).toBe(0);
+    expect(second.fetchedBytes).toBeGreaterThan(512 * 1024);
     expect(second.closedCount).toBe(0);
-    const afterReuse = await db.select().from(schema.jobs);
-    expect(afterReuse).toHaveLength(902);
-    // Every stored role was in the reused listing, so none of them even counts as missing.
-    expect(afterReuse.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+    const afterRead = await db.select().from(schema.jobs);
+    expect(afterRead).toHaveLength(902);
+    expect(afterRead.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
 
-    // With nothing to reuse — pruned, unreadable, or written by a scan of some other listing — the
-    // scan asks again without the validators rather than inventing an observation.
+    // A pruned snapshot has the same safe behaviour: ask again without the validators.
     await db.update(schema.scans).set({ rawSnapshot: null }).where(eq(schema.scans.sourceId, created!.id));
     now = new Date(now.getTime() + 86_400_000);
     expect((await scan()).status).toBe("ok");
@@ -1846,18 +2190,47 @@ describe("what a scan asks for and when", () => {
     expect(missedOnce!.status).toBe("open");
     expect(missedOnce!.missingScans).toBe(1);
 
-    // The day after that the board is unchanged again, so this scan is served from the snapshot
-    // the shortened listing wrote. The second miss is a real one and the role closes on it.
+    // The day after that the first response is unchanged again. It is refetched and mapped with
+    // fresh indexes; this second complete miss may close the role.
     now = new Date(now.getTime() + 86_400_000);
     expect((await scan()).status).toBe("ok");
     const fourth = await latestScan(created!.id);
+    expect(fourth.requests).toBe(4);
     expect(fourth.revalidated).toBe(1);
-    expect(fourth.fetchedBytes).toBe(0);
+    expect(fourth.fetchedBytes).toBeGreaterThan(512 * 1024);
     expect(fourth.closedCount).toBe(1);
     const [closed] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
     expect(closed!.status).toBe("closed");
     expect(closed!.closedAt).toBeInstanceOf(Date);
   }, 180_000);
+
+  it("reuses a complete single-response Ashby snapshot when that response is unchanged", async () => {
+    const apiUrl = "https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true";
+    const body = { jobs: [
+      { id: "role-1", title: "Operations Lead", jobUrl: "https://jobs.ashbyhq.com/acme/role-1", isListed: true },
+      { id: "role-2", title: "Operations Analyst", jobUrl: "https://jobs.ashbyhq.com/acme/role-2", isListed: true },
+    ] };
+    server.setRoutes({ "api.ashbyhq.com": { "/posting-api/job-board/acme?includeCompensation=true": { body } } });
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "ashby", url: "https://jobs.ashbyhq.com/acme", apiUrl, atsSlug: "acme", status: "active" }).returning();
+    let scanNumber = 0;
+    const fetcher = Object.create(deps.fetcher) as WorkerDeps["fetcher"];
+    fetcher.fetchText = async (url, init) => {
+      const response = await deps.fetcher.fetchText(url, init);
+      if (url !== apiUrl) return response;
+      return scanNumber > 1
+        ? { ...response, body: "", contentHash: sha1(response.body), unchanged: true, revalidated: true }
+        : { ...response, contentHash: sha1(response.body) };
+    };
+    const withFetcher = { ...deps, fetcher };
+    const scan = async () => { scanNumber++; return _scanSourceForTests(withFetcher, company!, source!, await deps.settings(), null); };
+    expect((await scan()).postingsFound).toBe(2);
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("ok");
+    const reused = await latestScan(source!.id);
+    expect(reused).toMatchObject({ postingsFound: 2, requests: 1, revalidated: 1, fetchedBytes: 0 });
+    expect((await db.select().from(schema.jobs)).every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+  }, 60_000);
 
   it("rewrites no job row on an unchanged board, and only the row that moved when one does", async () => {
     await setGate({});
@@ -2009,7 +2382,10 @@ describe("what a scan asks for and when", () => {
     // The listing carries no text, so every admitted role waits for its description.
     expect(await scores()).toEqual([]);
     expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(4);
-    await queue.drain();
+    // Use the configured-model fixture for the description arrival as well as the scan. The
+    // suite's ordinary no-key queue correctly refuses score work, obscuring this timing invariant.
+    const descriptions = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    for (const task of descriptions) await handleFetchDescription(task, aiDeps);
     const queued = await scores();
     expect(queued).toHaveLength(4);
     expect(new Set(queued).size).toBe(4);
@@ -2103,16 +2479,17 @@ describe("a description arriving", () => {
     const byKey = async (id: number) => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${id}`)))[0]!;
     const clear = (jobId: string) => db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, jobId));
     const perFollower = /user_jobs|user_settings|"tasks"|insert into "tasks"|decisions/;
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
 
     const followers = [await follow(company.id, 0, titleGate), await follow(company.id, 1, descriptionGate)];
     const engineer = await byKey(JOB_ENGINEER.id);
     await clear(engineer.id);
-    const few = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+    const few = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, aiDeps));
 
     // The same arrival again, now with 29 followers, 27 of them new to the role.
     for (let n = 2; n < 29; n++) followers.push(await follow(company.id, n, n % 3 === 0 ? descriptionGate : titleGate));
     await clear(engineer.id);
-    const many = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+    const many = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, aiDeps));
     expect(few).toBeGreaterThan(0);
     expect(many).toBe(few);
 
@@ -2136,7 +2513,8 @@ describe("a description arriving", () => {
     await db.update(schema.jobs).set({ descriptionHash: "an older text" }).where(eq(schema.jobs.id, manager!.id));
     await db.delete(schema.tasks);
 
-    await handleFetchDescription({ payload: { jobId: manager!.id } } as never, deps);
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    await handleFetchDescription({ payload: { jobId: manager!.id } } as never, aiDeps);
     const [view] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, manager!.id)));
     expect(view).toMatchObject({ fitScore: null, scoredAt: null, scoreState: "queued" });
     const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
@@ -2366,5 +2744,308 @@ describe("mining the scans for suggestions", () => {
       for (const account of [user, second]) await handleSuggestFromScans({ payload: { userId: account.id } } as never, deps);
     });
     expect(snapshotReads).toBe(1);
+  }, 60_000);
+});
+
+describe("durable HTTP listing continuation", () => {
+  const listing = (page: number, total = 25, prefix = "Operations Role") => {
+    const next = page + 1 < total ? `<a rel="next" href="/listing?page=${page + 1}">Next page</a>` : "";
+    return `<html><body><main><p>${page + 1} - ${page + 1} of ${total} results</p><ul class="jobs"><li><a href="/jobs/role-${page + 1}">${prefix} ${page + 1}</a></li></ul>${next}</main></body></html>`;
+  };
+  async function fixture(total = 25) {
+    const [company] = await db.insert(schema.companies).values({ name: "Pager", domain: "pager.example", homepageUrl: "https://pager.example/" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://pager.example/listing?page=0", status: "active" }).returning();
+    const [run] = await db.insert(schema.scanRuns).values({ runDate: "2026-09-05", trigger: "manual", companiesTotal: 1 }).returning();
+    const id = await enqueueTask(db, "scan_company", { companyId: company!.id, scanRunId: run!.id, trigger: "manual" });
+    const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, id!));
+    const fetchText = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      const page = Number(parsed.searchParams.get("page") ?? "0");
+      const body = listing(page, total);
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    const fastDeps = { ...deps, fetcher: { fetchText, fetchBytes: deps.fetcher.fetchBytes.bind(deps.fetcher) } as unknown as WorkerDeps["fetcher"] };
+    return { company: company!, source: source!, run: run!, task: task!, fastDeps, fetchText };
+  }
+
+  it("publishes roles after twenty pages, waits to finalise, and skips a committed source after a crash", async () => {
+    const { source, run, task, fastDeps } = await fixture();
+    const first = await handleScanCompany(task, fastDeps);
+    expect(first).toBeInstanceOf(TaskDeferred);
+    expect((first as TaskDeferred).result).toMatchObject({ sourceId: source.id, htmlPages: 20 });
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(0);
+    expect(await db.select().from(schema.htmlScanPages)).toHaveLength(20);
+    expect(await db.select().from(schema.jobs)).toHaveLength(20);
+    const [progress] = await db.select().from(schema.htmlScanGenerations).where(eq(schema.htmlScanGenerations.taskId, task.id));
+    expect(progress).toMatchObject({ publishedPageCount: 20, publishedNewCount: 20, seedFirstScan: true });
+    expect(await finaliseScanRuns(deps)).toBe(0);
+    expect((await db.select().from(schema.scanRuns).where(eq(schema.scanRuns.id, run.id)))[0]!.finishedAt).toBeNull();
+
+    // A fresh invocation reads the checkpoint, not the previous handler's in-memory pages.
+    const finished = await handleScanCompany(task, fastDeps);
+    expect(finished).not.toBeInstanceOf(TaskDeferred);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan).toMatchObject({ status: "ok", postingsFound: 25, taskId: task.id, metricsComplete: true, requests: 27 });
+    expect(scan!.fetchedBytes).toBeGreaterThan(1_309); // includes the twenty pages from the first claim
+    expect(scan!.durationMs).toBeGreaterThan(0);
+    expect(scan!.elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(await db.select().from(schema.jobs)).toHaveLength(25);
+    expect(await db.select().from(schema.htmlScanGenerations)).toHaveLength(0);
+
+    // Crash after the scan transaction but before the queue writes task.done: no second scan,
+    // duplicate admission, or miss may be committed when the same task is reclaimed.
+    await handleScanCompany(task, fastDeps);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(25);
+    await db.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, task.id));
+    expect(await finaliseScanRuns(deps)).toBe(1);
+  }, 60_000);
+
+  it("queues descriptions for a description gate as soon as the first page batch is published", async () => {
+    const { company, source, task, fastDeps } = await fixture();
+    await subscribeToCompany(db, user.id, company.id);
+    await setGate({ includeKeywords: ["operations"], matchFields: ["description"] });
+    expect(await handleScanCompany(task, fastDeps)).toBeInstanceOf(TaskDeferred);
+    expect(await db.select().from(schema.jobs).where(eq(schema.jobs.sourceId, source.id))).toHaveLength(20);
+    expect(await db.select().from(schema.userJobs)).toHaveLength(0);
+    const descriptionTasks = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(descriptionTasks).toHaveLength(20);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(0);
+  }, 60_000);
+
+  it("includes positive publication time in a continued scan's active duration", async () => {
+    const { task, fastDeps } = await fixture();
+    const realNow = Date.now;
+    let addedMs = 0;
+    let delayedInsert = false;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + addedMs);
+    const timedDb = new Proxy(fastDeps.db, {
+      get(target, property) {
+        if (property === "transaction") return (callback: (tx: WorkerDeps["db"]) => Promise<unknown>) =>
+          target.transaction(async tx => callback(new Proxy(tx as unknown as WorkerDeps["db"], {
+            get(transaction, key) {
+              if (key === "insert") return (table: unknown) => {
+                if (table === schema.jobs && !delayedInsert) {
+                  addedMs += 30_000;
+                  delayedInsert = true;
+                }
+                return transaction.insert(table as typeof schema.jobs);
+              };
+              const value = Reflect.get(transaction, key);
+              return typeof value === "function" ? value.bind(transaction) : value;
+            },
+          })));
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as WorkerDeps["db"];
+    try {
+      expect(await handleScanCompany(task, { ...fastDeps, db: timedDb })).toBeInstanceOf(TaskDeferred);
+      expect(delayedInsert).toBe(true);
+      const [generation] = await db.select().from(schema.htmlScanGenerations).where(eq(schema.htmlScanGenerations.taskId, task.id));
+      expect(generation!.activeDurationMs).toBeGreaterThanOrEqual(30_000);
+      await handleScanCompany(task, fastDeps);
+      const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.taskId, task.id));
+      expect(scan!.durationMs).toBeGreaterThanOrEqual(30_000);
+    } finally {
+      clock.mockRestore();
+    }
+  }, 60_000);
+
+  it("uses freshly fetched detail text for a small HTML description gate", async () => {
+    const { company, task, fastDeps, fetchText } = await fixture(1);
+    await subscribeToCompany(db, user.id, company.id);
+    await setGate({ includeKeywords: ["operations"], matchFields: ["description"] });
+    fetchText.mockImplementation(async (url: string) => {
+      const body = new URL(url).pathname.startsWith("/jobs/")
+        ? `<html><main><p>${"Operations work across UK sites, planning shifts and supporting colleagues. ".repeat(4)}</p></main></html>` : listing(0, 1);
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    await handleScanCompany(task, fastDeps);
+    const [job] = await db.select().from(schema.jobs);
+    expect(job?.descriptionText).toContain("Operations work");
+    expect(await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, job!.id))).toHaveLength(1);
+  }, 60_000);
+
+  it("marks aggregate traffic unavailable after an interrupted claim rather than understating it", async () => {
+    const { source, task, fastDeps } = await fixture();
+    expect(await handleScanCompany(task, fastDeps)).toBeInstanceOf(TaskDeferred);
+    // The queue increments attempts after an interrupted claim, whereas ordinary TaskDeferred
+    // refunds it. The checkpoint cannot know how many requests the interrupted claim made.
+    const interruptedRetry = { ...task, attempts: 2 };
+    await handleScanCompany(interruptedRetry, fastDeps);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan).toMatchObject({ status: "ok", postingsFound: 25, metricsComplete: false,
+      requests: null, fetchedBytes: null, revalidated: null, durationMs: null });
+    expect(scan!.elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(await db.select().from(schema.jobs)).toHaveLength(25);
+  }, 60_000);
+
+  it("does not rescan a completed source while a second source continues", async () => {
+    const { company, source, task, fastDeps, fetchText } = await fixture();
+    const [small] = await db.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://pager.example/single",
+      createdAt: new Date(now.getTime() - 60_000) }).returning();
+    fetchText.mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get("page") ?? "0");
+      const body = new URL(url).pathname === "/single"
+        ? '<html><body><main><a href="/jobs/unique">Operations Singleton</a></main></body></html>' : listing(page);
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    expect(await handleScanCompany(task, fastDeps)).toBeInstanceOf(TaskDeferred);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, small!.id))).toHaveLength(1);
+    await handleScanCompany(task, fastDeps);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, small!.id))).toHaveLength(1);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(1);
+    expect(fetchText.mock.calls.filter(([url]) => url === small!.url)).toHaveLength(1);
+  }, 60_000);
+
+  it("resumes its own checkpoint despite an unrelated recent partial manual scan", async () => {
+    const { source, task, fastDeps } = await fixture();
+    const manualTask = { ...task, payload: { companyId: source.companyId, trigger: "manual" } };
+    expect(await handleScanCompany(manualTask, fastDeps)).toBeInstanceOf(TaskDeferred);
+    await db.insert(schema.scans).values({ sourceId: source.id, status: "partial", startedAt: now, postingsFound: 3 });
+    await handleScanCompany(manualTask, fastDeps);
+    const scans = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scans).toHaveLength(2);
+    expect(scans.find(row => row.taskId === task.id)).toMatchObject({ status: "ok", postingsFound: 25 });
+  }, 60_000);
+
+  it("restarts after a source edit without mixing staged roles from the old URL", async () => {
+    const { source, task, fastDeps, fetchText } = await fixture();
+    expect(await handleScanCompany(task, fastDeps)).toBeInstanceOf(TaskDeferred);
+    await db.update(schema.careerSources).set({ url: "https://pager.example/replacement?page=0" }).where(eq(schema.careerSources.id, source.id));
+    fetchText.mockImplementation(async (url: string) => {
+      const body = `<html><body><main><p>1 - 1 of 1 results</p><a href="/jobs/new">New Operations Manager</a></main></body></html>`;
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    await handleScanCompany(task, fastDeps);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan).toMatchObject({ status: "ok", postingsFound: 1, metricsComplete: false, requests: null, fetchedBytes: null });
+    // The earlier pages were already published. A source edit invalidates their coverage, not
+    // those historical positive observations.
+    expect((await db.select().from(schema.jobs)).map(job => job.title)).toContain("New Operations Manager");
+    expect(await db.select().from(schema.jobs)).toHaveLength(21);
+  }, 60_000);
+
+  it("restarts on a changed boundary page but ignores changing HTML nonces", async () => {
+    const { source, task, fastDeps, fetchText } = await fixture();
+    let nonce = 0;
+    fetchText.mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get("page") ?? "0");
+      const body = `${listing(page)}<!-- nonce ${++nonce} -->`;
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    expect(await handleScanCompany(task, fastDeps)).toBeInstanceOf(TaskDeferred);
+    // The first and last page now have different raw bytes, yet identical parsed evidence.
+    await handleScanCompany(task, fastDeps);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(25);
+
+    // A separate generation: a real role-title change on the first page invalidates all staged
+    // offsets, even if its continuation URL is unchanged.
+    await db.delete(schema.scans);
+    now = new Date(now.getTime() + 60_000);
+    const secondId = await enqueueTask(db, "scan_company", { companyId: source.companyId, trigger: "manual" });
+    const [secondTask] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, secondId!));
+    expect(await handleScanCompany(secondTask!, fastDeps)).toBeInstanceOf(TaskDeferred);
+    fetchText.mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get("page") ?? "0");
+      const body = page === 0 ? listing(page).replace("Operations Role 1", "Senior Operations Role 1") : listing(page);
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    now = new Date(now.getTime() + 60_000);
+    expect(await handleScanCompany(secondTask!, fastDeps)).toBeInstanceOf(TaskDeferred);
+    const [generation] = await db.select().from(schema.htmlScanGenerations).where(eq(schema.htmlScanGenerations.taskId, secondTask!.id));
+    expect(generation).toMatchObject({ restarts: 1 });
+    expect(await db.select().from(schema.htmlScanPages).where(eq(schema.htmlScanPages.generationId, generation!.id))).toHaveLength(20);
+    await handleScanCompany(secondTask!, fastDeps);
+    expect((await db.select().from(schema.jobs)).find(job => job.url?.endsWith("role-1"))?.title).toBe("Senior Operations Role 1");
+  }, 60_000);
+
+  it("keeps a source partial if the final page falls short of its advertised result count", async () => {
+    const { source, task, fastDeps, fetchText } = await fixture(3);
+    fetchText.mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get("page") ?? "0");
+      const body = listing(page, 3).replace("of 3 results", "of 25 results");
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    await handleScanCompany(task, fastDeps);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan).toMatchObject({ status: "partial", postingsFound: 3, closedCount: 0 });
+    expect(scan!.error).toContain("advertised at least 25");
+  }, 60_000);
+
+  it("yields before another page when slow HTTP work has used the claim's time allowance", async () => {
+    const { source, task, fastDeps, fetchText } = await fixture();
+    const realNow = Date.now;
+    let elapsed = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + elapsed);
+    fetchText.mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get("page") ?? "0");
+      const body = listing(page);
+      elapsed += 105_000; // Simulate a slow first-party response without making the test wait.
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    try {
+      const outcome = await handleScanCompany(task, fastDeps);
+      expect(outcome).toBeInstanceOf(TaskDeferred);
+      expect((outcome as TaskDeferred).result).toMatchObject({ htmlPages: 1 });
+      expect(fetchText).toHaveBeenCalledTimes(1);
+      expect(await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id))).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+    }
+  }, 60_000);
+
+  it("reuses the first browser render when an HTML source needs the legacy rendered path", async () => {
+    const { source, task, fastDeps, fetchText } = await fixture(1);
+    fetchText.mockImplementation(async (url: string) => {
+      const body = "<html><body><main><h1>Open roles</h1></main></body></html>";
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    const html = '<html><body><main><a href="/jobs/rendered">Operations Director</a></main></body></html>';
+    const render = vi.fn(async () => ({ html, finalUrl: source.url, listingPages: [{ html, url: source.url }],
+      requests: [], status: 200 }));
+    await handleScanCompany(task, { ...fastDeps, browser: { render } as unknown as WorkerDeps["browser"] });
+    expect(fetchText).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)))[0]).toMatchObject({ status: "ok", fetchMethod: "browser", postingsFound: 1 });
+  }, 60_000);
+
+  it("publishes safe partial positives when the generation expires before its last page", async () => {
+    const { source, task, fastDeps } = await fixture();
+    expect(await handleScanCompany(task, fastDeps)).toBeInstanceOf(TaskDeferred);
+    await db.update(schema.htmlScanGenerations).set({ expiresAt: new Date(now.getTime() - 1000) }).where(eq(schema.htmlScanGenerations.sourceId, source.id));
+    await handleScanCompany(task, fastDeps);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan).toMatchObject({ status: "partial", postingsFound: 20, closedCount: 0 });
+    expect(await db.select().from(schema.jobs)).toHaveLength(20);
+  }, 60_000);
+
+  it("refuses duplicate role pages even while pagination URLs keep advancing", async () => {
+    const { source, task, fastDeps, fetchText } = await fixture();
+    fetchText.mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      const page = Number(parsed.searchParams.get("page") ?? "0");
+      const body = page === 2 ? listing(2).replaceAll("role-3", "role-2").replaceAll("Role 3", "Role 2") : listing(page);
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    await handleScanCompany(task, fastDeps);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan).toMatchObject({ status: "partial", closedCount: 0 });
+    expect(scan!.error).toMatch(/repeated|duplicate/i);
+  }, 60_000);
+
+  it("retains a role on an incomplete final page as a positive sighting without closing others", async () => {
+    const { source, task, fastDeps, fetchText } = await fixture(3);
+    fetchText.mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get("page") ?? "0");
+      const body = page === 2 ? `${listing(page, 3)}<button>Load more jobs</button>` : listing(page, 3);
+      return { url, status: 200, headers: {}, body, contentHash: sha1(body) };
+    });
+    await handleScanCompany(task, fastDeps);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id));
+    expect(scan).toMatchObject({ status: "partial", postingsFound: 3, closedCount: 0 });
+    expect(await db.select().from(schema.jobs)).toHaveLength(3);
   }, 60_000);
 });

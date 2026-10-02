@@ -1,0 +1,11 @@
+2026-10-01 local browser verification
+Fixture: synthetic roles in ava_locations_web; source 70-location Workday detail JSON read from existing repository evidence.
+Chromium Playwright: 2/2 viewport checks passed at 1280x800 and 375x812.
+Both widths: collapsed and expanded document width equalled viewport; Enter expanded; End reached last location; Space collapsed; 70 locations present; Boston present; long unbroken name caused no overflow; no page errors or outbound requests.
+Targeted Vitest: 2 files, 30 tests passed.
+git diff --check: passed.
+Web typecheck: final run passed (web-typecheck.log). An earlier concurrent worker edit briefly failed, then was resolved.
+Decision integration tests: 17/17 passed against isolated ava_location_decisions_test DB; covers ordered Boston snapshot, prior-verification labels, unknown provenance, primary fallback, and snapshot immutability.
+Final mobile capture repeated after location card width correction: 2/2 browser viewports passed, no overflow or page errors.
+Web production build: final run passed, compiled and generated all static pages (web-build.log).
+Local Next dev server on port 3146 stopped after capture.

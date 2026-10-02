@@ -60,7 +60,7 @@ export function vitalRoute(pathname: string): string {
 export const VITAL_ROUTES: ReadonlySet<string> = new Set([
   "/", "/account", "/admin", "/admin/catalogue", "/admin/health", "/admin/settings", "/applications",
   "/companies", "/companies/:id", "/cv/:id", "/cv/library", "/health", "/learning", "/library",
-  "/settings", "/suggestions", "/login", "/share/:id",
+  "/roles/add", "/roles/add/:id", "/roles/:id", "/settings", "/suggestions", "/login", "/share/:id",
 ]);
 
 /** The ceiling each metric's value may take: ten minutes of milliseconds, or a layout shift of 100. */

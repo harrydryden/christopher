@@ -1,0 +1,23 @@
+[1/1] Revolut
+/Users/h_dryden/Documents/New project/christopher-jtbd-review/docs/reviews/2026-10-01/implementation-evidence/bot-source-qualification/revolut-discovery.json
+{
+  "total": 1,
+  "sourceLabelled": 1,
+  "sourceMatches": 0,
+  "sourceMismatches": 1,
+  "labelledAutomaticMatchesAt085": 0,
+  "automaticResolvedAt085": 0,
+  "wrongAutomaticAccepts": 0,
+  "extractionComplete": 0,
+  "extractionPartial": 0,
+  "extractionFailed": 0,
+  "countLabelled": 0,
+  "countMatches": 0,
+  "countDisagreements": 0,
+  "discoveryAccuracy": 0,
+  "extractionExactCountAgreement": null,
+  "postingIdentityLabelled": 0,
+  "postingIdentityFailures": 0,
+  "postingIdentityRecall": null,
+  "postingIdentityPrecision": null
+}

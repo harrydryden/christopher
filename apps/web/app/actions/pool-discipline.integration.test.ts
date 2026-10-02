@@ -8,7 +8,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { DEFAULT_SETTINGS } from "@ava/core";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb, TEST_DATABASE_URL } from "@/test/db";
@@ -27,7 +27,7 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 
 import { addCompanies, useDiscoveryCandidate } from "./companies";
 import { setRoleStage } from "./applications";
-import { decide } from "./decisions";
+import { undoDecisionIfCurrent } from "./decisions";
 import { removeCatalogueSource } from "./admin";
 import { saveCvDraft } from "./cv";
 
@@ -71,7 +71,10 @@ it("records a withdrawal's skip, an undo and a follow's admissions inside their 
   withdraw.set("status", "withdrawn");
   withdraw.set("appliedOn", "2026-09-03");
   expect(await setRoleStage(job.id, { ok: true }, withdraw)).toEqual({ ok: true });
-  expect(await decide(job.id, null, "")).toEqual({ ok: true });
+  const [standing] = await database.select().from(schema.decisions)
+    .where(and(eq(schema.decisions.jobId, job.id), eq(schema.decisions.superseded, false)));
+  expect(standing).toBeDefined();
+  expect(await undoDecisionIfCurrent(job.id, standing!.id)).toEqual({ ok: true });
 
   // Following an already-scanned company admits its roles with the follower's settings, read on the same connection.
   const [other] = await database.insert(schema.companies).values({ name: "Gamma", domain: "gamma.example", homepageUrl: "https://gamma.example" }).returning();

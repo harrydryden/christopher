@@ -1,0 +1,21 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T21:58:03.322Z","level":"warn","msg":"render failed","data":{"url":"https://www.acmeind.example/challenge-header","error":"bot challenge while rendering https://www.acmeind.example/challenge-header"}}
+{"t":"2026-10-01T21:58:04.450Z","level":"info","msg":"render refused a request","data":{"url":"https://boards-api.greenhouse.io/guarded.js","error":"run-local challenged host"}}
+{"t":"2026-10-01T21:58:47.097Z","level":"warn","msg":"render failed","data":{"url":"https://www.acmeind.example/big","error":"Rendered page exceeds 5000 bytes; refusing truncated content"}}
+{"t":"2026-10-01T21:58:51.116Z","level":"info","msg":"closing the idle browser","data":{"idleMs":500}}
+{"t":"2026-10-01T21:58:58.257Z","level":"warn","msg":"render abandoned","data":{"url":"https://www.acmeind.example/hang","error":"render of https://www.acmeind.example/hang passed its 5 s deadline"}}
+{"t":"2026-10-01T21:58:59.472Z","level":"warn","msg":"render failed","data":{"url":"http://127.0.0.1:61079/start","error":"robots.txt disallows http://127.0.0.1:61079/private"}}
+{"t":"2026-10-01T21:59:00.563Z","level":"warn","msg":"render failed","data":{"url":"http://127.0.0.1:61079/client","error":"robots.txt disallows http://127.0.0.1:61079/private"}}
+{"t":"2026-10-01T21:59:09.326Z","level":"info","msg":"render continuation blocked after a listing capture","data":{"url":"http://127.0.0.1:61079/client-pagination","error":"robots.txt disallows http://127.0.0.1:61079/private"}}
+{"t":"2026-10-01T21:59:09.505Z","level":"info","msg":"render refused a request","data":{"url":"http://[::1]:61090/frame","error":"refusing to fetch http://[::1]:61090/frame: ::1 is a private or local network address"}}
+{"t":"2026-10-01T21:59:09.509Z","level":"info","msg":"render refused a websocket","data":{"url":"ws://[::1]:61090/socket","error":"refusing to fetch http://[::1]:61090/socket: ::1 is a private or local network address"}}
+{"t":"2026-10-01T21:59:09.509Z","level":"info","msg":"render refused a request","data":{"url":"http://[::1]:61090/fetched","error":"refusing to fetch http://[::1]:61090/fetched: ::1 is a private or local network address"}}
+{"t":"2026-10-01T21:59:10.566Z","level":"warn","msg":"render failed","data":{"url":"http://127.0.0.1:61091/redirect","error":"refusing to fetch http://[::1]:61090/redirected: ::1 is a private or local network address"}}
+
+ Test Files  1 passed (1)
+      Tests  20 passed (20)
+   Start at  22:58:01
+   Duration  69.01s (tests 98%, transform 1%, import 1%)
+

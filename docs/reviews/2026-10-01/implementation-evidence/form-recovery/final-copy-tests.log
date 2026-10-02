@@ -1,0 +1,10 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+·······
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  23:25:44
+   Duration  507ms (environment 65%, import 17%, tests 9%, transform 8%)
+

@@ -14,21 +14,43 @@ import { sql } from "drizzle-orm";
  */
 export async function requeueScoresLive(db: Db, items: ReadonlyArray<Pick<ScoreBatchItem, "userId" | "jobId">>): Promise<number> {
   if (!items.length) return 0;
+  const pairs = [...new Map(items.map(item => [`${item.userId}:${item.jobId}`, item])).values()]
+    .sort((a, b) => a.userId.localeCompare(b.userId) || a.jobId.localeCompare(b.jobId));
   const priority = priorityFor("score_job");
-  const rows = items.map(item => {
+  const rows = pairs.map(item => {
     const payload = { userId: item.userId, jobId: item.jobId, live: true };
     return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority };
   });
   // One transaction: a task marked live here wakes a listening worker as it commits, as a new
   // one does through `enqueueTasks`, so the queue claims it at once rather than on its next poll.
   await db.transaction(async tx => {
+    // A failed poll task is committed before its abandonment hook runs. An orphan-state sweep can
+    // therefore mark an old waiting view failed just before this hand-back. Take the same view
+    // locks in a stable order before changing tasks, then restore waiting only when an eligible
+    // view has live score work. A newer score or request is never replaced by this older batch.
+    const values = JSON.stringify(pairs);
+    await tx.execute(sql`select uj.user_id, uj.job_id from user_jobs uj
+      where exists (select 1 from jsonb_to_recordset(${values}::jsonb) as v("userId" uuid, "jobId" uuid)
+        where v."userId" = uj.user_id and v."jobId" = uj.job_id)
+      order by uj.user_id, uj.job_id for update of uj`);
     const marked = await tx.execute(sql`update tasks set payload = payload || '{"live": true}'::jsonb, priority = least(priority, ${priority}::int), run_after = least(run_after, now())
       where type = 'score_job' and status = 'queued' and started_at is null
         and dedupe_key in (${sql.join(rows.map(row => sql`${row.dedupeKey}`), sql`, `)})`);
     if (marked.rowCount) await notifyTaskWorkers(tx);
     await enqueueTasks(tx, rows);
+    await tx.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = now()
+      where uj.score_state in ('queued', 'failed') and uj.archived_at is null
+        and exists (select 1 from jsonb_to_recordset(${values}::jsonb) as v("userId" uuid, "jobId" uuid)
+          where v."userId" = uj.user_id and v."jobId" = uj.job_id)
+        and exists (select 1 from jobs j where j.id = uj.job_id and j.status = 'open')
+        and not exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
+          and d.superseded = false and d.decision = 'skip')
+        and (uj.in_table or exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
+          and d.superseded = false and d.decision = 'apply'))
+        and exists (select 1 from tasks t where t.type = 'score_job' and t.status in ('queued', 'running')
+          and t.payload->>'userId' = uj.user_id::text and t.payload->>'jobId' = uj.job_id::text)`);
   });
-  return rows.length;
+  return items.length;
 }
 
 /** Let go of whatever a batch's holds still carry. */

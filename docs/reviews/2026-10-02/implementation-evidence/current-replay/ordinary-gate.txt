@@ -1,0 +1,5 @@
+$ pnpm exec tsx scripts/check-evaluation-reports.ts
+shipped prompt set: 27311fe3cb21; 2 committed report(s)
+note: docs/evaluations/cv-replay/report.json: at the shipped prompt set 27311fe3cb21, marked unverified (no live run behind its grade).
+note: docs/evaluations/cv-tailoring-contrast/report.json: graded at an unrecorded prompt set, marked unverified; it does not vouch for 27311fe3cb21.
+warning: Every committed report at the shipped prompt set 27311fe3cb21 is marked unverified: no live run has graded these prompts. Record and replay a live build before relying on them (docs/DEPLOY.md, "Evaluation reports and the prompt set"). (Set AVA_EVAL_GATE_REQUIRE_VERIFIED to make this a failure.)

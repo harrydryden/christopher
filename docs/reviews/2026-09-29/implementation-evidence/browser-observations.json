@@ -1,0 +1,37 @@
+{
+  "date": "2026-09-29",
+  "environment": "local production Next.js, disposable synthetic account, Chromium automation",
+  "roles": {
+    "viewport": 320,
+    "documentWidth": 320,
+    "cardLeft": 30,
+    "cardRight": 290,
+    "firstRoleTitleTop": 593.453125,
+    "firstRoleTitleHeight": 44,
+    "menuEscapeFocus": "Menu",
+    "menuExpandedAfterEscape": false
+  },
+  "libraryConflict": {
+    "viewport": 320,
+    "documentWidth": 320,
+    "trueConflictsAfterReload": 1,
+    "originalLocalBioVisible": true,
+    "savedOtherTabBioVisible": true,
+    "chosenLocalDraftSaved": true,
+    "databaseVersionAfterSave": 5,
+    "databaseContentIncludesChosenLocalBio": true
+  },
+  "applications": {
+    "status": "interview",
+    "appliedOn": null,
+    "nextActionOn": "2026-09-28",
+    "overdueViewCount": 1,
+    "dateControlMethod": "native DOM value plus input/change then real form submit after CLI fill left date blank"
+  },
+  "limitations": [
+    "Synthetic data only",
+    "No screen-reader or physical-device test",
+    "No human task-success claim",
+    "Original draft download invoked; bytes not independently inspected"
+  ]
+}

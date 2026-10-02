@@ -1,13 +1,16 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
-import { schema, queueScoring, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
-import { decisionDigest, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
+import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, lockAccountScoreInput, lockScoreModelInput, accountCanScore, type ScoreState, type Task } from "@ava/db";
+import { decisionDigest, PROMPTS, resolveRoute, routedModel, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
 import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
 import { log } from "../log";
+import { admitScores } from "../score-admission";
+import { scoreLocationInput } from "../score-location";
+import { loadUserSettings } from "../settings";
 
 /** What a handler finishes with when its account has no room left for the call it was about to make. */
 const BUDGET_SKIP = { skipped: "account ai budget exceeded" } as const;
@@ -23,6 +26,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   if (!decision) return { skipped: "decision not found" };
   if (decision.superseded || decision.tagsEdited) return { skipped: "decision superseded or tags edited by user" };
   if (!decision.reason.trim()) return { skipped: "no reason text" };
+  if (!await accountCanScore(deps.db, decision.userId)) return { skipped: "account missing or email confirmation required" };
   const tagStop = await aiBudgetStop(deps, decision.userId);
   if (tagStop) return { skipped: tagStop };
 
@@ -44,7 +48,11 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   // Behind the task's fence, so a run the queue has given up on writes nothing after its retry began.
   await deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-    await tx.update(schema.decisions).set({ tags: result.tags }).where(and(eq(schema.decisions.id, decision.id), eq(schema.decisions.userId, decision.userId), eq(schema.decisions.tagsEdited, false), eq(schema.decisions.superseded, false)));
+    await lockAccountScoreInput(tx as unknown as WorkerDeps["db"], decision.userId, "exclusive");
+    const tagged = await tx.update(schema.decisions).set({ tags: result.tags }).where(and(eq(schema.decisions.id, decision.id), eq(schema.decisions.userId, decision.userId), eq(schema.decisions.tagsEdited, false), eq(schema.decisions.superseded, false)))
+      .returning({ id: schema.decisions.id });
+    if (tagged.length && await accountCanScore(tx as unknown as WorkerDeps["db"], decision.userId))
+      await enqueueStandard(tx as unknown as WorkerDeps["db"], "rescore_all", { userId: decision.userId, onlyInTable: true });
     if (result.proposedNewTags.length) {
       await tx
         .insert(schema.tagVocabulary)
@@ -74,9 +82,44 @@ export interface PreparedScore {
   input: ScoreJobInput;
   /** What the score was computed from, stored with it so an unchanged rerun skips the call. */
   fingerprint: string;
+  /** Monotonic request number on this account's view; timestamps cannot order same-ms answers. */
+  attemptVersion: number;
   profileVersion: number | null;
   /** When the inputs were read. */
   preparedAt: Date;
+}
+
+async function scoreInputs(db: WorkerDeps["db"], userId: string,
+  job: typeof schema.jobs.$inferSelect, view: typeof schema.userJobs.$inferSelect,
+  settings: Awaited<ReturnType<WorkerDeps["userSettings"]>>) {
+  const [company] = job.companyId
+    ? await db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1)
+    : [];
+  const profile = await latestProfileFor(db, userId);
+  const digest = await buildDigest(db, userId);
+  const library = await latestCvLibrary(db, userId, { content: schema.cvLibraries.content });
+  const role = {
+    title: job.title,
+    company: company?.name ?? job.companyLabel ?? "",
+    ...scoreLocationInput(job),
+    department: job.department ?? undefined,
+    employmentType: job.employmentType ?? undefined,
+    description: view.inTable ? job.descriptionText ?? undefined : undefined,
+    keywordTerms: view.keywordTerms,
+    locationTerms: settings.gate.locationTerms,
+  };
+  const route = resolveRoute(PROMPTS.A5, settings.stageRoutes);
+  const model = routedModel(route, { callSite: modelForCallSite(settings, "A5") }, settings.defaultModel);
+  const input = {
+    profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
+    decisionDigest: digest,
+    evidence: library ? scoringEvidence(scoringEvidenceBlocks(library.content),
+      [role.title, role.department, ...(role.keywordTerms ?? []), role.description].filter(Boolean).join(" ")) : "",
+    job: role,
+    route: { model, effort: route.effort },
+  };
+  return { input, fingerprint: sha1(JSON.stringify([input, PROMPTS.A5.version])),
+    profileVersion: profile?.version ?? null };
 }
 
 /**
@@ -98,7 +141,11 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   }
   const [view] = await deps.db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
   if (!view) return { done: { skipped: "role is not in this account's table" } };
-  const settings = await deps.userSettings(userId);
+  if (job.origin === "manual" && job.manualOwnerId !== userId)
+    return { done: { skipped: "manual role belongs to another account" } };
+  if (!job.shared && job.addedBy !== userId && job.manualOwnerId !== userId && !view.addedByUrl)
+    return { done: { skipped: "role is no longer shared with this account" } };
+  const settings = await loadUserSettings(deps.db, userId);
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
   // A skipped or archived role's score has no reader: the table's order is for undecided roles,
@@ -112,57 +159,126 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
     await markScoreState(deps, userId, jobId, "ineligible");
     return { done: { skipped: "role does not match and is not shortlisted" } };
   }
-  // Asked before any of the scoring evidence is gathered: an account with nothing left to spend
-  // skips this role, and the task finishes done rather than failing at the hold and retrying.
-  const scoreStop = await aiBudgetStop(deps, userId);
-  if (scoreStop) {
-    await markScoreState(deps, userId, jobId, "budget");
-    return { done: { skipped: scoreStop } };
+  if (!await accountCanScore(deps.db, userId)) {
+    await markScoreState(deps, userId, jobId, "verification");
+    return { done: { skipped: "email confirmation required" } };
   }
-
   const preparedAt = deps.now();
-  const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
-  const profile = await latestProfileFor(deps.db, userId);
-  const digest = await buildDigest(deps, userId);
-
-  const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
-  const role = {
-    title: job.title,
-    company: company?.name ?? "",
-    location: job.location ?? undefined,
-    department: job.department ?? undefined,
-    employmentType: job.employmentType ?? undefined,
-    // Near-miss candidates are scored on metadata only (no description fetch for roles outside the gate).
-    description: view.inTable ? job.descriptionText ?? undefined : undefined,
-    keywordTerms: view.keywordTerms,
-  };
-  const input = {
-    profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
-    decisionDigest: digest,
-    // The confirmed evidence that bears on this role, bounded: never the whole library.
-    evidence: library ? scoringEvidence(scoringEvidenceBlocks(library.content),
-      [role.title, role.department, ...(role.keywordTerms ?? []), role.description].filter(Boolean).join(" ")) : "",
-    job: role,
-  };
   // What the score was computed from. It is kept on this account's own view of the role, so an
   // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
-  const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
-  if (view.fitScore !== null && view.scoreInputHash === fingerprint) {
-    // The stored score still stands, so the row is scored: say so, which also repairs a row that
-    // predates the column and one queued by a scan that found nothing to re-read.
+  const { input, fingerprint, profileVersion } = await scoreInputs(deps.db, userId, job, view, settings);
+  if ((view.fitScore !== null || view.scoredAt !== null) && view.scoreInputHash === fingerprint) {
+    // A stored fit, or a completed request with no usable fit, already covers these inputs.
     await markScoreState(deps, userId, jobId, "scored");
     return { done: { skipped: "scoring inputs unchanged" } };
   }
-  return { prepared: { userId, jobId, input, fingerprint, profileVersion: profile?.version ?? null, preparedAt } };
+  // A submitted provider batch already owns precisely these inputs. The per-role task may have
+  // been completed on hand-off, so a later admission can create another task; matching the batch
+  // fingerprint avoids a second model call while still admitting a genuinely changed profile.
+  const pendingBatch = await deps.db.execute(sql`select 1 from tasks t
+    where t.type = 'poll_score_batch' and t.status in ('queued', 'running')
+      and exists (select 1 from jsonb_array_elements(case
+        when jsonb_typeof(t.payload->'items') = 'array' then t.payload->'items'
+        else '[]'::jsonb end) item
+        where item->>'userId' = ${userId} and item->>'jobId' = ${jobId}
+          and item->>'fingerprint' = ${fingerprint}) limit 1`);
+  if (pendingBatch.rows.length) return { done: { skipped: "score already in provider batch" } };
+  // A matching stored score or submitted batch needs no new capacity. Only a new model request is
+  // refused for an unavailable provider or an account whose spend and live holds filled its month.
+  const scoreStop = await aiBudgetStop(deps, userId);
+  if (scoreStop) {
+    await markScoreState(deps, userId, jobId, scoreStop === "ai unavailable" ? "unavailable" : scoreStop === "email confirmation required" ? "verification" : "budget");
+    return { done: { skipped: scoreStop } };
+  }
+  const [attempt] = await deps.db.update(schema.userJobs)
+    .set({ scoreAttemptVersion: sql`${schema.userJobs.scoreAttemptVersion} + 1` })
+    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)))
+    .returning({ version: schema.userJobs.scoreAttemptVersion });
+  if (!attempt) return { done: { skipped: "role is not in this account's table" } };
+  return { prepared: { userId, jobId, input, fingerprint, profileVersion, preparedAt, attemptVersion: attempt.version } };
+}
+
+/** Recheck the exact request against the current role and account before publishing an AI answer. */
+export async function checkScorePublication(deps: WorkerDeps, db: WorkerDeps["db"],
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "preparedAt"> & { attemptVersion?: number }): Promise<boolean> {
+  const { userId, jobId } = score;
+  await lockScoreModelInput(db, "shared");
+  await lockAccountScoreInput(db, userId, "shared");
+  // Lock global and account input fences first, then gate, company, job and view. New profile,
+  // Library and decision rows have no stable row to lock; their writers take the account fence.
+  await db.execute(sql`select user_id from user_settings where user_id = ${userId}::uuid and key = 'gate' for share`);
+  const [jobRef] = await db.select({ companyId: schema.jobs.companyId }).from(schema.jobs)
+    .where(eq(schema.jobs.id, jobId)).limit(1);
+  if (!jobRef) return false;
+  // Company deletion locks the company before cascading to its jobs. Match that order.
+  if (jobRef.companyId) {
+    const [company] = await db.select({ id: schema.companies.id }).from(schema.companies)
+      .where(eq(schema.companies.id, jobRef.companyId)).for("share").limit(1);
+    if (!company) return false;
+  }
+  const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).for("share").limit(1);
+  if (!job || job.companyId !== jobRef.companyId ||
+      (job.origin === "manual" && job.manualOwnerId !== userId)) return false;
+  const [view] = await db.select().from(schema.userJobs)
+    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).for("update").limit(1);
+  if (!view) return false;
+  if (!await accountCanScore(db, userId)) {
+    await db.update(schema.userJobs).set({ scoreState: "verification", scoreStateAt: deps.now() })
+      .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    return false;
+  }
+  const [choice] = await db.select({ decision: schema.decisions.decision }).from(schema.decisions)
+    .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
+  const ineligible: ScoreState | null = job.status !== "open" ? "closed"
+    : !job.shared && job.addedBy !== userId && !view.addedByUrl ? "ineligible"
+    : view.archivedAt || choice?.decision === "skip" ? "decided"
+    : !view.inTable && choice?.decision !== "apply" ? "ineligible" : null;
+  if (ineligible) {
+    await db.update(schema.userJobs).set({ scoreState: ineligible, scoreStateAt: deps.now() })
+      .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    return false;
+  }
+  const settings = await loadUserSettings(db, userId);
+  const current = await scoreInputs(db, userId, job, view, settings);
+  if (current.fingerprint !== score.fingerprint) {
+    // A changed input needs durable work even when the original task is about to finish or the
+    // provider batch has already taken ownership of it. A queued task with this key deduplicates.
+    if (view.fitScore === null || view.scoreInputHash !== current.fingerprint) {
+      await enqueueStandard(db, "score_job", { userId, jobId, live: true });
+      await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
+        .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    }
+    return false;
+  }
+  if (score.attemptVersion === undefined || view.scoreAttemptVersion !== score.attemptVersion) {
+    // Old persisted batches have no request number. They still settle their bill, but a fresh
+    // request must own the view before an answer can be published.
+    if (score.attemptVersion === undefined && (view.fitScore === null || view.scoreInputHash !== current.fingerprint)) {
+      await enqueueStandard(db, "score_job", { userId, jobId, live: true });
+      await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
+        .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    }
+    return false;
+  }
+  return true;
 }
 
 /**
  * The model was asked and gave nothing usable. The view says so beside its blank score, so a scan
  * does not queue the same inputs again every day; a changed profile or gate asks again.
  */
-export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date, userId: string, jobId: string): Promise<void> {
-  await db.update(schema.userJobs).set({ scoreState: "scored", scoreStateAt: now, scoredAt: now })
-    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date,
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint"> & { attemptVersion?: number }): Promise<boolean> {
+  const written = await db.update(schema.userJobs).set({
+    // A prior fit is retained for reference, but its attempted update has failed.
+    scoreState: sql<ScoreState>`case when ${schema.userJobs.fitScore} is null then 'scored' else 'failed' end`,
+    scoreInputHash: sql<string>`case when ${schema.userJobs.fitScore} is null then ${score.fingerprint} else ${schema.userJobs.scoreInputHash} end`,
+    scoreStateAt: now, scoredAt: now,
+  })
+    .where(and(eq(schema.userJobs.userId, score.userId), eq(schema.userJobs.jobId, score.jobId),
+      score.attemptVersion === undefined ? sql`false` : eq(schema.userJobs.scoreAttemptVersion, score.attemptVersion)))
+    .returning({ jobId: schema.userJobs.jobId });
+  return written.length > 0;
 }
 
 /**
@@ -170,19 +286,16 @@ export async function markScoredWithoutResult(db: WorkerDeps["db"], now: Date, u
  * fields and the score's bookkeeping and nothing else: never `in_table`, which the gate alone
  * decides, so a score — however late it lands — changes the table's order, never what is in it.
  *
- * `notAfter` is for a score that arrives late (a batch): it is written only when no score computed
- * from newer inputs has landed since those inputs were read. Returns whether it was written.
+ * A score arriving late is written only while its prepared attempt still owns this view.
+ * Returns whether it was written.
  */
 export async function writeScore(
   db: WorkerDeps["db"],
   now: Date,
-  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "profileVersion">,
+  score: Pick<PreparedScore, "userId" | "jobId" | "fingerprint" | "profileVersion"> & { attemptVersion?: number },
   result: ScoreJobResult,
-  opts: { preparedAt?: Date } = {},
 ): Promise<boolean> {
-  const fresher = opts.preparedAt
-    ? sql`(${schema.userJobs.fitScoredAt} is null or ${schema.userJobs.fitScoredAt} <= ${opts.preparedAt})`
-    : undefined;
+  const fresher = score.attemptVersion === undefined ? sql`false` : eq(schema.userJobs.scoreAttemptVersion, score.attemptVersion);
   const written = await db
     .update(schema.userJobs)
     .set({
@@ -195,7 +308,6 @@ export async function writeScore(
       scoreState: "scored",
       scoreStateAt: now,
       scoredAt: now,
-      hidden: false,
       updatedAt: now,
     })
     .where(and(eq(schema.userJobs.userId, score.userId), eq(schema.userJobs.jobId, score.jobId), fresher))
@@ -230,14 +342,21 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   // result", which a scan would never queue again. It stays unscored and the task retries.
   if (!result && failure?.kind === "model_access") throw new ModelAccessError(failure);
   if (!result) {
-    await markScoredWithoutResult(deps.db, deps.now(), userId, jobId);
-    return { skipped: "no ai result" };
+    return deps.db.transaction(async tx => {
+      const writer = tx as unknown as WorkerDeps["db"];
+      await deps.assertOwnership?.(writer);
+      if (!await checkScorePublication(deps, writer, prep.prepared)) return { skipped: "score result no longer current" };
+      return await markScoredWithoutResult(writer, deps.now(), prep.prepared)
+        ? { skipped: "no ai result" } : { skipped: "newer score already landed" };
+    });
   }
 
   return deps.db.transaction(async tx => {
-    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-    await writeScore(tx as unknown as WorkerDeps["db"], deps.now(), prep.prepared, result);
-    return { score: result.score, verdict: result.verdict };
+    const writer = tx as unknown as WorkerDeps["db"];
+    await deps.assertOwnership?.(writer);
+    if (!await checkScorePublication(deps, writer, prep.prepared)) return { skipped: "score result no longer current" };
+    return await writeScore(writer, deps.now(), prep.prepared, result)
+      ? { score: result.score, verdict: result.verdict } : { skipped: "newer score already landed" };
   });
 }
 
@@ -264,8 +383,8 @@ export async function latestProfile(deps: WorkerDeps, userId: string) {
   return latestProfileFor(deps.db, userId);
 }
 
-async function decisionRows(deps: WorkerDeps, userId: string, limit = 200) {
-  return deps.db
+async function decisionRows(db: WorkerDeps["db"], userId: string, limit = 200) {
+  return db
     .select()
     .from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.superseded, false)))
@@ -273,8 +392,8 @@ async function decisionRows(deps: WorkerDeps, userId: string, limit = 200) {
     .limit(limit);
 }
 
-async function buildDigest(deps: WorkerDeps, userId: string): Promise<string> {
-  const rows = await decisionRows(deps, userId, 100);
+async function buildDigest(db: WorkerDeps["db"], userId: string): Promise<string> {
+  const rows = await decisionRows(db, userId, 100);
   return decisionDigest(
     rows.map((d) => ({
       title: d.jobTitle,
@@ -326,6 +445,7 @@ async function accountOutcomes(deps: WorkerDeps, userId: string) {
 export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, force } = (task.payload ?? {}) as TaskPayloads["synthesize_profile"];
   if (!userId) return { skipped: "no account on task" };
+  if (!await accountCanScore(deps.db, userId)) return { skipped: "account missing or email confirmation required" };
   const profileStop = await aiBudgetStop(deps, userId);
   if (profileStop) return { skipped: profileStop };
   const settings = await deps.userSettings(userId);
@@ -335,7 +455,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
   const since = current ? counts.since : counts.total;
   if (!force && current && since < RESYNTHESIS_THRESHOLD) return { skipped: `only ${since} new decisions` };
   // The newest decisions are the prompt's; the count above is over every one of them.
-  const decisions = await decisionRows(deps, userId, 500);
+  const decisions = await decisionRows(deps.db, userId, 500);
 
   const disagreements = decisions
     .filter((d) => d.fitScoreAtDecision !== null && ((d.fitScoreAtDecision >= 70 && d.decision === "skip") || (d.fitScoreAtDecision < 30 && d.decision === "apply")))
@@ -429,7 +549,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
   const filterStop = await aiBudgetStop(deps, userId);
   if (filterStop) return { skipped: filterStop };
   const settings = await deps.userSettings(userId);
-  const decisions = await decisionRows(deps, userId, 300);
+  const decisions = await decisionRows(deps.db, userId, 300);
   if (decisions.length === 0) return { skipped: "no decisions" };
 
   // A rejection older than its window is no longer evidence of anything: the term is not named as
@@ -523,7 +643,11 @@ export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promis
       const settings = await deps.userSettings(id);
       return deps.db.transaction(async tx => {
         await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-        return reevaluateGate(tx as unknown as WorkerDeps["db"], id, settings, deps.now(), { companyId });
+        return reevaluateGate(tx as unknown as WorkerDeps["db"], id, settings, deps.now(), { companyId }, {
+          scoreCandidates: async (writer, pairs) => (await admitScores(deps, pairs, {
+            db: writer, onlyUnscored: true, settings: new Map([[id, settings]]),
+          })).queued,
+        });
       });
     });
     outcomes[id] = outcome;
@@ -544,13 +668,22 @@ export const RESCORE_INTERVAL_MS = 60 * 60_000;
 
 /** What a full re-score is computed from for one account: its profile, gate, scoring model and evidence. */
 async function rescoreInputs(deps: WorkerDeps, userId: string): Promise<string> {
-  const settings = await deps.userSettings(userId);
+  const settings = await loadUserSettings(deps.db, userId);
   const profile = await latestProfileFor(deps.db, userId);
   const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
+  const digest = await buildDigest(deps.db, userId);
+  const route = resolveRoute(PROMPTS.A5, settings.stageRoutes);
+  const model = routedModel(route, { callSite: modelForCallSite(settings, "A5") }, settings.defaultModel);
+  const companies = await deps.db.execute<{ id: string; name: string }>(sql`select distinct c.id, c.name
+    from companies c join jobs j on j.company_id = c.id
+    join user_jobs uj on uj.job_id = j.id
+    where uj.user_id = ${userId}::uuid order by c.id`);
   return sha1(JSON.stringify([
     profile?.markdown ?? settings.seedProfile ?? "",
     settings.gate,
-    modelForCallSite(settings, "A5"),
+    digest,
+    PROMPTS.A5.version, model, route.effort,
+    companies.rows,
     library ? scoringEvidenceBlocks(library.content) : [],
   ]));
 }
@@ -558,15 +691,27 @@ async function rescoreInputs(deps: WorkerDeps, userId: string): Promise<string> 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, onlyInTable } = (task.payload ?? {}) as TaskPayloads["rescore_all"];
   if (!userId) return { skipped: "no account on task" };
+  if (!await accountCanScore(deps.db, userId)) return { skipped: "email confirmation required" };
   const inputsHash = await rescoreInputs(deps, userId);
   // The last full pass this account actually ran: when it finished, and what it scored from.
   const [last] = await deps.db.select({ finishedAt: schema.tasks.finishedAt, result: schema.tasks.result }).from(schema.tasks)
     .where(and(eq(schema.tasks.type, "rescore_all"), eq(schema.tasks.status, "done"),
       sql`${schema.tasks.payload}->>'userId' = ${userId}`, sql`${schema.tasks.result} ? 'queued'`))
     .orderBy(desc(schema.tasks.finishedAt)).limit(1);
-  if (last && (last.result as { inputsHash?: string } | null)?.inputsHash === inputsHash)
-    return { skipped: "scoring inputs unchanged since the last rescore" };
-  if (last?.finishedAt && deps.now().getTime() - last.finishedAt.getTime() < RESCORE_INTERVAL_MS) {
+  const sameInputs = !!last && (last.result as { inputsHash?: string } | null)?.inputsHash === inputsHash;
+  const retryable = sameInputs ? await deps.db.execute(sql`select 1 from user_jobs uj join jobs j on j.id = uj.job_id
+    where uj.user_id = ${userId}::uuid and j.status = 'open' and uj.archived_at is null
+      and uj.score_state in ('unavailable', 'budget', 'verification', 'failed')
+      and (uj.in_table or exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
+        and d.superseded = false and d.decision = 'apply'))
+      and not exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id
+        and d.superseded = false and d.decision = 'skip')
+      and not exists (select 1 from tasks t where t.type = 'score_job' and t.status in ('queued', 'running')
+        and t.payload->>'userId' = uj.user_id::text and t.payload->>'jobId' = uj.job_id::text)
+    limit 1`) : null;
+  const retryOnly = !!retryable?.rows.length;
+  if (sameInputs && !retryOnly) return { skipped: "scoring inputs unchanged since the last rescore" };
+  if (!retryOnly && last?.finishedAt && deps.now().getTime() - last.finishedAt.getTime() < RESCORE_INTERVAL_MS) {
     // Coalesced: one pass at the end of the hour picks up everything that changed within it, and
     // any other save in the hour folds into the same waiting row by its key.
     const retryAt = new Date(last.finishedAt.getTime() + RESCORE_INTERVAL_MS);
@@ -579,13 +724,33 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   const rows = await deps.db.select({ id: schema.userJobs.jobId, shortlisted }).from(schema.userJobs)
     .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), isNull(schema.userJobs.archivedAt),
-      sql`not ${skipped}`, sql`(${schema.userJobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
+      sql`not ${skipped}`, sql`(${schema.userJobs.inTable} or ${shortlisted})`,
+      sql`(${!retryOnly} or ${schema.userJobs.scoreState} in ('unavailable', 'budget', 'verification', 'failed'))`)).orderBy(desc(shortlisted));
   // A shortlisted role's score is the one the person is waiting on: a background score already
   // queued for it is brought up to that priority rather than left where it was, and scored live.
   // The rest only reorder a table the person has already seen, so they are marked background and
   // go through the batch collector at half price even while scoring is live. Every role a new
   // profile version will re-score reads "scoring" until its turn comes.
-  const queued = await queueScoring(deps.db, rows.filter(row => row.shortlisted).map(row => ({ userId, jobId: row.id, priority: 1 })), deps.now(), { promote: true })
-    + await queueScoring(deps.db, rows.filter(row => !row.shortlisted).map(row => ({ userId, jobId: row.id })), deps.now(), { background: true });
+  let queued = 0;
+  let unavailable = 0;
+  let budget = 0;
+  let verification = 0;
+  for (const [shortlistedRows, options] of [
+    [rows.filter(row => row.shortlisted), { priority: 1 }],
+    [rows.filter(row => !row.shortlisted), { background: true }],
+  ] as const) {
+    for (let offset = 0; offset < shortlistedRows.length; offset += 250) {
+      const admitted = await admitScores(deps, shortlistedRows.slice(offset, offset + 250).map(row => ({ userId, jobId: row.id })), options);
+      queued += admitted.queued;
+      unavailable += admitted.blockedUnavailable;
+      budget += admitted.blockedBudget;
+      verification += admitted.blockedVerification;
+    }
+  }
+  // A pass that could not create model work has not rescored these inputs. Omitting `queued` keeps
+  // the next request eligible when an operator configures AI or the account's budget resets.
+  if (!queued && (unavailable || budget || verification))
+    return { skipped: verification ? "email confirmation required" : unavailable ? "ai unavailable" : "account ai budget exceeded",
+      unavailable, budget, verification, inputsHash };
   return { queued, inputsHash };
 }

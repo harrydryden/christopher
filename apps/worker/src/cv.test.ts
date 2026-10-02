@@ -3,7 +3,7 @@ import {
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Task } from "@ava/db";
+import { createDb, listCvBuildSteps, schema, startCvBuildStep, type Task } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { AiEngine } from "@ava/ai";
 import { DEFAULT_CV_THEME } from "@ava/core/cv";
@@ -34,7 +34,9 @@ beforeEach(async () => { vi.restoreAllMocks();
       batches.push(result ? { index, status: "done" as const, result, usage: [] } : { index, status: "failed" as const, usage: [] });
     }
     return { pass: options?.pass ?? "draft", total: slices.length, batches, review: null };
-  }); await client.db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations`); });
+  }); await client.db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations`);
+  await client.db.update(schema.users).set({ role: "admin", emailVerifiedAt: new Date() }).where(eq(schema.users.id, userId));
+});
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
 async function setup(apiKey: string | undefined = "fixture-key") {
   const [draft] = await client.db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5" }).returning();
@@ -42,6 +44,18 @@ async function setup(apiKey: string | undefined = "fixture-key") {
     userSettings: async () => ({ aiBudgetUsd: 1000, aiBudgetResetAt: null }), now: () => new Date() } as unknown as WorkerDeps;
   return { draft: draft!, deps, task: { type: "generate_cv", payload: { draftId: draft!.id } } as unknown as Task };
 }
+it("stops a legacy queued CV build for an unconfirmed member before any model call or hold", async () => {
+  const build = vi.spyOn(AiEngine.prototype, "buildCv");
+  const { task, deps, draft } = await setup();
+  await startCvBuildStep(client.db, { draftId: draft.id, userId, attempt: 1, motion: "admit_budget" });
+  await client.db.update(schema.users).set({ role: "member", emailVerifiedAt: null }).where(eq(schema.users.id, userId));
+  expect(await handleGenerateCv(task, deps)).toMatchObject({ skipped: true, reason: "email confirmation required" });
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved).toMatchObject({ status: "failed", error: "Confirm your email address, then retry this CV build." });
+  expect((await listCvBuildSteps(client.db, userId, draft.id)).map(step => step.status)).toEqual(["failed"]);
+  expect(build).not.toHaveBeenCalled();
+  expect(await client.db.select().from(schema.aiReservations).where(eq(schema.aiReservations.userId, userId))).toHaveLength(0);
+});
 it("generates once on duplicate delivery, preserving the saved evidence", async () => {
   const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();

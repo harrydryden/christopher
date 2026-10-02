@@ -1,0 +1,58 @@
+{
+  "source": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+  "database": "ava_source_live",
+  "claims": [
+    {
+      "at": "2026-09-29T15:11:44.384Z",
+      "durationMs": 50809,
+      "listingFetchCalls": 20,
+      "listingResponseBytes": 3257659,
+      "pagesStaged": 20,
+      "stagedPostings": 120,
+      "publishedJobs": 0,
+      "taskStatus": "queued",
+      "scanStatus": null,
+      "scanPostings": null,
+      "sourceFingerprint": "127b89c6a007ccf5f5dc3200f3fd14a661215dd93776abe105c228042f61d891"
+    },
+    {
+      "at": "2026-09-29T15:12:42.324Z",
+      "durationMs": 56834,
+      "listingFetchCalls": 22,
+      "listingResponseBytes": 3583620,
+      "pagesStaged": 40,
+      "stagedPostings": 240,
+      "publishedJobs": 0,
+      "taskStatus": "queued",
+      "scanStatus": null,
+      "scanPostings": null,
+      "sourceFingerprint": "127b89c6a007ccf5f5dc3200f3fd14a661215dd93776abe105c228042f61d891"
+    },
+    {
+      "at": "2026-09-29T15:13:44.290Z",
+      "durationMs": 54550,
+      "listingFetchCalls": 22,
+      "listingResponseBytes": 3580286,
+      "pagesStaged": 60,
+      "stagedPostings": 360,
+      "publishedJobs": 0,
+      "taskStatus": "queued",
+      "scanStatus": null,
+      "scanPostings": null,
+      "sourceFingerprint": "127b89c6a007ccf5f5dc3200f3fd14a661215dd93776abe105c228042f61d891"
+    },
+    {
+      "at": "2026-09-29T15:14:43.776Z",
+      "durationMs": 58378,
+      "listingFetchCalls": 22,
+      "listingResponseBytes": 3591919,
+      "pagesStaged": 80,
+      "stagedPostings": 480,
+      "publishedJobs": 0,
+      "taskStatus": "queued",
+      "scanStatus": null,
+      "scanPostings": null,
+      "sourceFingerprint": "127b89c6a007ccf5f5dc3200f3fd14a661215dd93776abe105c228042f61d891"
+    }
+  ]
+}

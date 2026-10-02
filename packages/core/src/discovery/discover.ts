@@ -3,16 +3,19 @@
  * See docs/SPEC.md section 3.2. Every step adds candidates with a method; the best one decides the outcome.
  */
 import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, scanWindow, sha1, stripHtml } from "../normalize";
-import { COMPLETE_LISTING_LABEL, isExplicitEmptyListing } from "../ats/html";
+import * as cheerio from "cheerio";
+import { COMPLETE_LISTING_LABEL, isExplicitEmptyListing, visibleListingScopeRestriction } from "../ats/html";
 import { isTransientFailure, safeUrl } from "../ats/common";
 import { assertPublicHttpUrl } from "../url-safety";
-import type { FetchInit, RawPosting, SourceSpec } from "../types";
-import { confidenceFor, methodRank as rank, outcomeFor, type DiscoveryMethod } from "./confidence";
+import { SourceFetchError, type FetchInit, type RawPosting, type SourceSpec } from "../types";
+import { AUTO_ACCEPT_CONFIDENCE, CONFIRM_CONFIDENCE, confidenceFor, methodRank as rank, outcomeFor, type DiscoveryMethod } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
 import { companyNameFromTitle, companyNamesMatch, looksLikeSoft404, nameFromDomain, nameFromSlug } from "./text";
 import type { DiscoveryCandidate, DiscoveryContext, DiscoveryResult, DiscoveryVerification, HarvestedLink } from "./types";
 
 const JOB_DETAIL_RE = /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies))\//i;
+export const DEFAULT_DISCOVERY_MAX_FETCHES = 40;
+export const DEFAULT_DISCOVERY_MAX_DURATION_MS = 120_000;
 const MAX_CANDIDATE_PAGES = 6;
 /** Pages that commonly link onward to Careers when the homepage does not. */
 const HUB_PATHS: readonly string[] = ["/about", "/about-us", "/company", "/team"];
@@ -30,6 +33,8 @@ const MAX_CLASSIFICATIONS = 6;
 const MAX_CONSECUTIVE_MISSES = 8;
 /** A body larger than this is used by the step that fetched it and not kept for the rest of the run. */
 const MAX_CACHED_BODY = 2_000_000;
+const MAX_EXTRA_COMPLETE_HOPS = 2;
+const MAX_RICH_LISTING_RENDERS = 1;
 
 interface Fetched {
   html: string;
@@ -57,6 +62,9 @@ class Run {
   private readonly inspectedUrls = new Set<string>();
   private readonly inspectedBodies = new Set<string>();
   private readonly verified = new Map<string, DiscoveryVerification>();
+  /** Scoped to this discovery only; the shared fetcher remains usable by other accounts and runs. */
+  private readonly challengedHosts = new Set<string>();
+  private richListingRenders = 0;
   fetches = 0;
   verifications = 0;
   classifications = 0;
@@ -64,9 +72,10 @@ class Run {
   private readonly maxVerifications: number;
   private readonly startedAt: number;
   homepageCompanyName?: string;
+  companyDomain?: string;
 
   constructor(private readonly ctx: DiscoveryContext) {
-    this.maxFetches = ctx.maxFetches ?? 40;
+    this.maxFetches = ctx.maxFetches ?? DEFAULT_DISCOVERY_MAX_FETCHES;
     this.maxVerifications = ctx.maxVerifications ?? MAX_VERIFICATIONS;
     this.startedAt = this.now();
   }
@@ -90,7 +99,7 @@ class Run {
       this.sayOnce("discovery stopped: its task was cancelled");
       return false;
     }
-    if (this.now() - this.startedAt >= (this.ctx.maxDurationMs ?? 120_000)) {
+    if (this.now() - this.startedAt >= (this.ctx.maxDurationMs ?? DEFAULT_DISCOVERY_MAX_DURATION_MS)) {
       this.sayOnce("discovery time budget exhausted");
       return false;
     }
@@ -114,7 +123,36 @@ class Run {
     }
   }
 
+  private hostOf(url: string): string | null {
+    try { return new URL(url).hostname.toLowerCase(); } catch { return null; }
+  }
+
+  /** A deny-only guard handed through HTTP redirects, browser navigation and ATS verification. */
+  readonly allowHost = (hostname: string): void => {
+    if (this.challengedHosts.has(hostname.toLowerCase()))
+      throw new SourceFetchError(`bot challenge already observed for ${hostname}; skipping further requests in this discovery run`, "blocked", 403);
+  };
+
+  private challenged(url: string): boolean {
+    const host = this.hostOf(url);
+    if (!host || !this.challengedHosts.has(host)) return false;
+    this.sayOnce(`bot challenge already observed for ${host}; skipping further requests in this discovery run`);
+    return true;
+  }
+
+  private recordChallenge(error: unknown, requestedUrl: string): void {
+    if (!(error instanceof SourceFetchError) || !error.challengeHost) return;
+    const finalHost = error.challengeHost.toLowerCase();
+    this.challengedHosts.add(finalHost);
+    // A request that redirected to a challenged host is a known path back to it. Conservatively
+    // stop that request host as well; other ATS hosts remain available to this run.
+    const requestedHost = this.hostOf(requestedUrl);
+    if (requestedHost) this.challengedHosts.add(requestedHost);
+    this.sayOnce(`explicit bot challenge on ${finalHost}; suppressing further requests to ${[...this.challengedHosts].join(", ")}`);
+  }
+
   async fetch(url: string, init?: FetchInit): Promise<Fetched | null> {
+    if (this.challenged(url)) return null;
     const key = normalizeUrl(url);
     const cached = this.pages.get(key);
     if (cached !== undefined) return cached;
@@ -126,7 +164,10 @@ class Run {
     if (!this.budgetLeft()) return null;
     this.fetches++;
     try {
-      const res = await this.ctx.fetchText(url, init);
+      const res = await this.ctx.fetchText(url, { ...init, allowHost: async host => {
+        this.allowHost(host);
+        await init?.allowHost?.(host);
+      } });
       this.statuses.set(key, res.status);
       if (res.status === 404 || res.status === 410) this.missing.add(key);
       if (res.status >= 400) {
@@ -139,6 +180,7 @@ class Run {
       if (page.html.length <= MAX_CACHED_BODY) this.pages.set(key, page);
       return page;
     } catch (err) {
+      this.recordChallenge(err, url);
       this.say(`fetch ${url} failed: ${(err as Error).message}`);
       this.pages.set(key, null);
       return null;
@@ -161,6 +203,7 @@ class Run {
 
   /** Render a page once per run; a second request for the same URL gets the first render. */
   async render(url: string, opts: { scrollAndExpand?: boolean }): Promise<{ page: Fetched; requests: string[] } | null> {
+    if (this.challenged(url)) return null;
     const key = normalizeUrl(url);
     const cached = this.renders.get(key);
     if (cached !== undefined) return cached;
@@ -168,11 +211,12 @@ class Run {
     this.fetches++;
     this.renders.set(key, null);
     try {
-      const rendered = await this.ctx.render(url, opts);
+      const rendered = await this.ctx.render(url, { ...opts, allowHost: this.allowHost });
       const result = { page: { html: rendered.html, url: rendered.finalUrl, status: rendered.status ?? 200 }, requests: rendered.requests };
       if (result.page.html.length <= MAX_CACHED_BODY) this.renders.set(key, result);
       return result;
     } catch (err) {
+      this.recordChallenge(err, url);
       this.say(`render ${url} failed: ${(err as Error).message}`);
       return null;
     }
@@ -208,6 +252,12 @@ class Run {
     return true;
   }
 
+  reserveRichListingRender(): boolean {
+    if (!this.budgetLeft() || this.richListingRenders >= MAX_RICH_LISTING_RENDERS) return false;
+    this.richListingRenders++;
+    return true;
+  }
+
   /** A careers page on the company's site as a candidate, sampled from the postings read on it. */
   addPage(url: string, method: DiscoveryMethod, evidence: string[], postings?: RawPosting[]): void {
     this.add({ spec: { type: "html", url }, method, evidence, ...(postings ? { sample: postings.slice(0, 3), count: postings.length } : {}) });
@@ -229,7 +279,7 @@ class Run {
       companyName: existing.companyName ?? candidate.companyName,
     };
     if (rank(candidate.method) > rank(existing.method)) merged.method = candidate.method;
-    merged.evidence.push(`method:${candidate.method}`);
+    merged.evidence.push(`method:${existing.method}`, `method:${candidate.method}`);
     merged.evidence = [...new Set(merged.evidence)];
     this.candidates.set(key, merged);
   }
@@ -248,8 +298,16 @@ class Run {
   async hasResolvableCandidate(): Promise<boolean> {
     for (const candidate of this.ranked()) {
       if (rank(candidate.method) < rank("listing_html")) return false;
-      if (candidate.spec.type === "html") return true;
-      if ((await this.verify(candidate.spec)).ok) return true;
+      if (candidate.spec.type === "html") {
+        if (htmlConfidence(candidate, this.homepageCompanyName) >= AUTO_ACCEPT_CONFIDENCE) return true;
+        continue;
+      }
+      const verification = await this.verify(candidate.spec);
+      if (!verification.ok) continue;
+      const companyName = verification.companyName ?? candidate.companyName;
+      const identityUnconfirmed = !companyName && !boardMatchesCompany(candidate.spec, this.homepageCompanyName, this.companyDomain ?? "");
+      if (confidenceFor({ ...candidate, companyName, count: verification.count ?? candidate.count },
+        { homepageCompanyName: this.homepageCompanyName, methodCount: methodCount(candidate), identityUnconfirmed }) >= AUTO_ACCEPT_CONFIDENCE) return true;
     }
     return false;
   }
@@ -259,6 +317,7 @@ class Run {
    * or time budget; only the task's own cancellation stops it.
    */
   async verify(spec: SourceSpec): Promise<DiscoveryVerification> {
+    if (this.challenged(spec.url)) return { ok: false, error: `bot challenge already observed for ${this.hostOf(spec.url)}` };
     const key = specKey(spec);
     const cached = this.verified.get(key);
     if (cached) return cached;
@@ -270,8 +329,9 @@ class Run {
     this.verifications++;
     let result: DiscoveryVerification;
     try {
-      result = await this.ctx.verifySpec(spec);
+      result = await this.ctx.verifySpec(spec, this.allowHost, (error, url) => this.recordChallenge(error, url));
     } catch (err) {
+      this.recordChallenge(err, spec.url);
       result = { ok: false, error: (err as Error).message, transient: isTransientFailure(err) };
     }
     this.verified.set(key, result);
@@ -306,6 +366,32 @@ function hasJsonLdJobPosting(html: string): boolean {
   return /application\/ld\+json/i.test(page) && /"JobPosting"/i.test(page);
 }
 
+/** A full-listing claim cannot be inferred from a scoped URL, even if its link says “All jobs”. */
+function hasUnfilteredListingScope(url: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; }
+  if (/\/(?:locations?|offices?|teams?|departments?|job-categories|categories|functions)\/[^/]+/i.test(parsed.pathname)) return false;
+  for (const [rawKey, value] of parsed.searchParams) {
+    const key = rawKey.toLowerCase();
+    if (/^utm_[a-z0-9_]+$/.test(key) || ["gclid", "fbclid", "msclkid", "yclid"].includes(key)) continue;
+    if (["lang", "language", "locale", "hl"].includes(key) && /^[a-z]{2}(?:[-_][a-z]{2})?$/i.test(value)) continue;
+    if (["sort", "order"].includes(key) && /^[a-z0-9_-]{1,40}$/i.test(value)) continue;
+    if (["search", "q", "query", "keyword"].includes(key) && value === "") continue;
+    if (key === "page" && ["0", "1"].includes(value)) continue;
+    if (["offset", "start"].includes(key) && value === "0") continue;
+    // `bc`, office, category and unfamiliar keys can hide a filter. A later continuation URL
+    // may keep them for fetching, but cannot claim it is the complete source automatically.
+    return false;
+  }
+  return true;
+}
+
+function htmlConfidence(candidate: RawCandidate, homepageCompanyName?: string): number {
+  const confidence = confidenceFor(candidate, { homepageCompanyName, methodCount: methodCount(candidate) });
+  return hasUnfilteredListingScope(candidate.spec.url) && !candidate.evidence.some(line => line.startsWith("visible listing filter:"))
+    ? confidence : Math.min(confidence, CONFIRM_CONFIDENCE);
+}
+
 export function isJsShell(html: string): boolean {
   return countAnchors(html) < 5 || stripHtml(html).length < 400;
 }
@@ -323,13 +409,44 @@ export function hasEmptyJobsMount(html: string): boolean {
   return false;
 }
 
-function shouldRenderCandidate(html: string, url: string, via?: string): boolean {
+function hasRichJobsLoading(html: string): boolean {
+  const page = scanWindow(html);
+  const visible = stripHtml(page);
+  return /\b(?:loading|fetching|retrieving)\s+(?:(?:current|available|open|job|role)\s+){0,2}(?:jobs?|roles?|positions?|openings?|results?|statistics)\b/i.test(visible)
+    || /\b(?:JobBoard|JobsBoard|JobSearch)\b/.test(page) && /\b(?:loading|fetching|useAshbyData|useGreenhouseData)\b/i.test(page);
+}
+
+/** A client-mounted search can have substantial static navigation without a loading message. */
+function hasEmptyJobSearchResults(html: string): boolean {
+  const $ = cheerio.load(scanWindow(html));
+  const jobName = /(?:^|[-_\s])(?:jobs?|roles?|openings?|positions?)(?:$|[-_\s])/i;
+  const resultsName = /(?:^|[-_\s])(?:hits|results|job[-_]?list|role[-_]?list|postings|openings)(?:$|[-_\s])/i;
+  const controlName = /(?:^|[-_\s])(?:search(?:box)?|filters?|pagination|pages?)(?:$|[-_\s])/i;
+  const named = (element: { attribs?: Record<string, string> }) => `${element.attribs?.id ?? ""} ${element.attribs?.class ?? ""}`;
+  for (const root of $("main [id], main [class], section [id], section [class]").toArray()) {
+    if (!jobName.test(named(root))) continue;
+    const region = $(root).closest("main, section, article");
+    if (!region.find("h1, h2, h3, h4, [role=heading]").toArray()
+      .some(heading => /\b(?:jobs?|roles?|positions?|openings?)\b/i.test($(heading).text()))) continue;
+    const children = $(root).find("[id], [class]").toArray();
+    const emptyResults = children.some(child => resultsName.test(named(child))
+      && $(child).children().length === 0 && !$(child).text().trim());
+    const searchControls = children.some(child => controlName.test(named(child)))
+      || $(root).find('input[type="search"], [role="search"], [aria-label*="Search"]').length > 0;
+    if (emptyResults && searchControls) return true;
+  }
+  return false;
+}
+
+function shouldRenderCandidate(html: string, url: string, via?: string): "normal" | "rich" | false {
   if (!via) return false;
   try { new URL(url); } catch { return false; }
   // A careers-shaped path alone is not evidence that a content-rich informational page needs a
   // browser. Render shells and explicit empty client-side job mounts; static landing pages can be
   // followed from their harvested links without starving later candidates behind a slow render.
-  return isJsShell(html) || hasEmptyJobsMount(html);
+  if (isJsShell(html) || hasEmptyJobsMount(html)) return "normal";
+  return via.startsWith("complete listing from ") && !crossedDomainFromProbe(via, url) && hasUnfilteredListingScope(url)
+    && (hasRichJobsLoading(html) || hasEmptyJobSearchResults(html)) ? "rich" : false;
 }
 
 function isCareersContentNavigation(posting: RawPosting): boolean {
@@ -346,7 +463,8 @@ function isCareersContentNavigation(posting: RawPosting): boolean {
 }
 
 function isExplicitCompleteListingLink(link: HarvestedLink, pageUrl: string, ctx: DiscoveryContext): boolean {
-  if (link.kind !== "a" || !sameDomain(link.href, pageUrl) || normalizeUrl(link.href) === normalizeUrl(pageUrl) || ctx.resolveSpec(link.href)) return false;
+  if (link.kind !== "a" || !sameDomain(link.href, pageUrl) || normalizeUrl(link.href) === normalizeUrl(pageUrl)
+    || ctx.resolveSpec(link.href) || !hasUnfilteredListingScope(link.href)) return false;
   const label = link.text.trim() || link.context || "";
   if (COMPLETE_LISTING_LABEL.test(label)) return true;
   try {
@@ -357,15 +475,33 @@ function isExplicitCompleteListingLink(link: HarvestedLink, pageUrl: string, ctx
   }
 }
 
+/** The probe's original company URL, carried through landing and complete-listing hops. */
+function crossedDomainFromProbe(via: string | undefined, pageUrl: string): boolean {
+  const source = via?.match(/\bprobe_(?:path|subdomain|original) (https?:\/\/\S+)/)?.[1];
+  return Boolean(source && !sameDomain(source, pageUrl));
+}
+
+/** Spend the next hop on a site's stated full listing before equally scored team or culture pages. */
+function rankedOnwardLinks(links: HarvestedLink[], pageUrl: string, ctx: DiscoveryContext): Array<{ link: HarvestedLink; score: number }> {
+  const ranked = rankLinks(links, pageUrl, ctx, link => normalizeUrl(link.href) !== normalizeUrl(pageUrl), 0.5);
+  const complete = ranked.filter(({ link }) => isExplicitCompleteListingLink(link, pageUrl, ctx));
+  const others = ranked.filter(({ link }) => !isExplicitCompleteListingLink(link, pageUrl, ctx));
+  const seen = new Set<string>();
+  return [...complete, ...others].filter(({ link }) => {
+    const key = normalizeUrl(link.href);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 4);
+}
+
 /** Look for ATS references in a page's text, its links, and (optionally) its network requests. */
 function collectAtsFromPage(run: Run, ctx: DiscoveryContext, html: string, pageUrl: string, links: HarvestedLink[], via?: string): void {
   const evidenceSuffix = via ? [`via ${via}`] : [];
   // A sitemap URL can redirect through external recruitment infrastructure. That is useful as a
   // candidate, but weaker than an ATS slug linked from a page reached through first-party
   // navigation: sitemaps can contain stale or syndicated job URLs.
-  const landingSource = via?.match(/^landing\s+(\S+)/)?.[1];
-  const probeRedirectedOffDomain = Boolean(via?.includes("probe_") && landingSource && !sameDomain(pageUrl, landingSource));
-  const weakMethod = via === "sitemap" ? "ats_sitemap" : probeRedirectedOffDomain ? "ats_probe" : undefined;
+  const weakMethod = via === "sitemap" ? "ats_sitemap" : crossedDomainFromProbe(via, pageUrl) ? "ats_probe" : undefined;
   const linkMethod = weakMethod ?? "ats_link";
   const textMethod = weakMethod ?? "ats_script";
   for (const link of links) {
@@ -399,15 +535,25 @@ async function renderAndScan(run: Run, ctx: DiscoveryContext, url: string, via?:
   run.say(`rendered ${url} (${requests.length} requests)`);
   for (const request of requests) {
     const spec = ctx.resolveSpec(request);
-    if (spec) run.add({ spec, method: "ats_network", evidence: [`network request from ${url}: ${request}`, ...(via ? [`via ${via}`] : [])] });
+    if (spec) run.add({ spec, method: crossedDomainFromProbe(via, page.url) ? "ats_probe" : "ats_network",
+      evidence: [`network request from ${page.url}: ${request}`, ...(via ? [`via ${via}`] : []),
+        ...(crossedDomainFromProbe(via, page.url) ? ["probe redirected outside the company's domain"] : [])] });
   }
   const links = harvestLinks(page.html, page.url);
   collectAtsFromPage(run, ctx, page.html, page.url, links, via);
   return page;
 }
 
+function addExplicitEmptyCandidate(run: Run, url: string, via: string | undefined, rendered: boolean): void {
+  const crossed = crossedDomainFromProbe(via, url);
+  run.addPage(url, crossed ? "landing" : "listing_empty",
+    [`explicit no-openings state on ${rendered ? "rendered " : ""}${url}`,
+      ...(via ? [`via ${via}`] : []),
+      ...(crossed ? ["probe redirected outside the company's domain; empty state requires confirmation"] : [])], []);
+}
+
 /** Inspect one candidate page: is it a listing, a landing page, or neither? */
-async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: number, via?: string): Promise<void> {
+async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: number, via?: string, completeHops = 0): Promise<void> {
   if (!run.claimInspection(url)) return;
   const page = await run.fetch(url);
   if (!page) return;
@@ -424,41 +570,56 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
   }
   let html = page.html;
   let finalUrl = page.url;
+  const staticBodyHash = sha1(html);
+  const hadJobsMount = hasEmptyJobsMount(html);
+  let renderedBodyHash: string | undefined;
   let links = harvestLinks(html, finalUrl);
   collectAtsFromPage(run, ctx, html, finalUrl, links, via);
 
   let postings = safeExtract(ctx, html, finalUrl);
   if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
     run.say(`${finalUrl} is an explicitly empty listing`);
-    run.addPage(finalUrl, "listing_empty", [`explicit no-openings state on ${finalUrl}`], []);
+    addExplicitEmptyCandidate(run, finalUrl, via, false);
     return;
   }
-  if (postings.length < 3 && ctx.render && shouldRenderCandidate(html, finalUrl, via)) {
+  const renderKind = shouldRenderCandidate(html, finalUrl, via);
+  if (new Set(postings.map(posting => normalizeUrl(posting.url))).size < 3 && ctx.render && renderKind
+    && (renderKind === "normal" || run.reserveRichListingRender())) {
     const rendered = await renderAndScan(run, ctx, finalUrl, via);
-    if (rendered) {
+    if (rendered && rendered.status < 400) {
       html = rendered.html;
       finalUrl = rendered.url;
+      renderedBodyHash = sha1(html);
       links = harvestLinks(html, finalUrl);
       postings = safeExtract(ctx, html, finalUrl);
       if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
         run.say(`${finalUrl} is an explicitly empty listing after rendering`);
-        run.addPage(finalUrl, "listing_empty", [`explicit no-openings state on rendered ${finalUrl}`], []);
+        addExplicitEmptyCandidate(run, finalUrl, via, true);
         return;
       }
     }
   }
 
-  if (postings.length >= 3) {
+  const distinctPostingUrls = [...new Set(postings.map(posting => normalizeUrl(posting.url)))].sort();
+  const visibleFilter = visibleListingScopeRestriction(html);
+  const scopeEvidence = [
+    ...(visibleFilter ? [`visible listing filter: ${visibleFilter}`] : []),
+    ...(renderedBodyHash ? [`static body sha1 ${staticBodyHash}`, `rendered body sha1 ${renderedBodyHash}`,
+      `posting identities sha1 ${sha1(JSON.stringify(distinctPostingUrls))}`] : []),
+  ];
+  if (distinctPostingUrls.length >= 3) {
     const method = hasJsonLdJobPosting(html) ? "listing_jsonld" : "listing_html";
-    const evidence = [`${postings.length} postings found on ${finalUrl}`, ...(via ? [`via ${via}`] : [])];
-    run.say(`${finalUrl} is a listing (${postings.length} postings, ${method})`);
+    const evidence = [`${distinctPostingUrls.length} distinct postings found on ${finalUrl}`, ...(via ? [`via ${via}`] : []), ...scopeEvidence];
+    run.say(`${finalUrl} is a listing (${distinctPostingUrls.length} distinct postings, ${method})`);
     // Marketing and careers homepages commonly embed a few featured vacancies beside an explicit
     // "All jobs" or "Search roles" link. The embedded cards prove this is a listing, but returning
     // immediately would never inspect the complete listing and would auto-accept a short source.
     const [complete] = rankLinks(links, finalUrl, ctx, (link) => isExplicitCompleteListingLink(link, finalUrl, ctx));
     if (complete) {
-      run.say(`${finalUrl} has featured roles; ${depth > 0 ? "checking" : "cannot check"} complete listing ${complete.link.href}`);
-      if (depth > 0) await inspectPage(run, ctx, complete.link.href, depth - 1, `complete listing from ${finalUrl}`);
+      const mayFollow = depth > 0 || completeHops > 0 && completeHops < MAX_EXTRA_COMPLETE_HOPS;
+      run.say(`${finalUrl} has featured roles; ${mayFollow ? "checking" : "cannot check"} complete listing ${complete.link.href}`);
+      if (mayFollow) await inspectPage(run, ctx, complete.link.href, Math.max(0, depth - 1),
+        `complete listing from ${finalUrl}${via ? ` via ${via}` : ""}`, completeHops + 1);
       // The page's own wording says these cards are a subset. It remains a confirmation fallback
       // even when following the declared full listing fails or produces an ATS candidate that is
       // later rejected during verification; a verified full-page candidate naturally outranks it.
@@ -478,21 +639,28 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       run.addPage(finalUrl, "landing", [...evidence, `${dominantAts.count} of ${postings.length} posting links point to the same ${dominantAts.spec.type} board`], postings);
       return;
     }
-    run.addPage(finalUrl, method, evidence, postings);
+    const unverifiedScope = !hasUnfilteredListingScope(finalUrl) || !!visibleFilter;
+    run.addPage(finalUrl, crossedDomainFromProbe(via, finalUrl) || unverifiedScope ? "landing" : method,
+      crossedDomainFromProbe(via, finalUrl) ? [...evidence, "probe redirected outside the company's domain"] : evidence, postings);
     return;
   }
 
   const candidatesBeforeHops = run.candidates.size;
   let looksLikeLanding = false;
 
-  if (depth > 0) {
-    const onward = rankLinks(links, finalUrl, ctx, (link) => normalizeUrl(link.href) !== normalizeUrl(finalUrl), 0.5).slice(0, 4);
+  if (depth > 0 || completeHops > 0 && completeHops < MAX_EXTRA_COMPLETE_HOPS) {
+    const ranked = rankedOnwardLinks(links, finalUrl, ctx);
+    const onward = depth > 0 ? ranked : ranked.filter(({ link }) => isExplicitCompleteListingLink(link, finalUrl, ctx)).slice(0, 1);
     if (onward.length > 0) {
       looksLikeLanding = true;
       run.say(`${finalUrl} looks like a landing page; following ${onward.length} link(s)`);
       for (const { link } of onward) {
         if (ctx.resolveSpec(link.href)) continue; // already captured as an ATS candidate
-        await inspectPage(run, ctx, link.href, depth - 1, `landing ${finalUrl}${via ? ` via ${via}` : ""}`);
+        const explicit = isExplicitCompleteListingLink(link, finalUrl, ctx);
+        await inspectPage(run, ctx, link.href, Math.max(0, depth - 1),
+          explicit
+            ? `complete listing from ${finalUrl}${via ? ` via ${via}` : ""}`
+            : `landing ${finalUrl}${via ? ` via ${via}` : ""}`, completeHops + (explicit ? 1 : 0));
       }
       if (run.candidates.size > candidatesBeforeHops) return;
     }
@@ -520,8 +688,15 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
     }
   }
 
-  if (looksLikeLanding && run.candidates.size === candidatesBeforeHops) {
+  // The site's own full-listing link is useful for human review even when its client-driven
+  // rows could not be verified. Keep the link's provenance and landing confidence; the link
+  // alone is never evidence for automatic acceptance.
+  if (via?.startsWith("complete listing from ") && run.candidates.size === candidatesBeforeHops) {
+    run.addPage(finalUrl, "landing", [`explicit complete-listing link ${via}; no postings verified`, ...scopeEvidence]);
+  } else if (looksLikeLanding && run.candidates.size === candidatesBeforeHops) {
     run.addPage(finalUrl, "landing", [`careers landing page, no listing within one hop`]);
+  } else if ((hadJobsMount || hasRichJobsLoading(page.html)) && run.candidates.size === candidatesBeforeHops) {
+    run.addPage(finalUrl, "landing", [`job-listing mount or loading state on ${finalUrl}; no postings verified`, ...scopeEvidence]);
   }
 }
 
@@ -668,6 +843,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   const started = Date.now();
   const run = new Run(ctx);
   const normalized = ensureHttpUrl(homepageUrl);
+  run.companyDomain = extractDomain(normalized);
   const result: DiscoveryResult = {
     homepageUrl: normalized,
     outcome: "not_found",
@@ -737,7 +913,8 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
 
     for (const { link } of scored.filter((x) => sameDomain(x.link.href, home!.url)).slice(0, MAX_CANDIDATE_PAGES)) {
       if (!run.budgetLeft()) break;
-      await visit(link.href, "homepage link");
+      await visit(link.href, isExplicitCompleteListingLink(link, home.url, ctx)
+        ? `complete listing from ${home.url} via homepage link` : "homepage link");
       if (await run.hasResolvableCandidate()) break;
     }
     // Off-domain careers links (a hosted board on a different domain) are worth one visit each.
@@ -747,10 +924,6 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
       await visit(link.href, "homepage link (off-domain)");
       if (await run.hasResolvableCandidate()) break;
     }
-    // Bundles are a comparatively expensive fallback on modern sites. Inspect the explicit
-    // careers links first so a page that directly exposes its board is not starved by a row of
-    // framework chunks under the same request and time budgets.
-    if (!(await run.hasResolvableCandidate())) await scanBundles(run, ctx, links, home.url);
   } else {
     run.say(`could not fetch the homepage ${normalized}; probing careers paths, subdomains, sitemaps and ATS boards directly`);
   }
@@ -773,7 +946,8 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
       if (hubScored.length) run.say(`${hubScored.length} careers-like link(s) on ${path}`);
       for (const { link } of hubScored.slice(0, 2)) {
         if (!run.budgetLeft()) break;
-        await visit(link.href, `hub page ${path}`);
+        await visit(link.href, isExplicitCompleteListingLink(link, hub.url, ctx)
+          ? `complete listing from ${hub.url} via hub page ${path}` : `hub page ${path}`);
         if (await run.hasResolvableCandidate()) break;
       }
     }
@@ -781,7 +955,16 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
 
   if (!(await run.hasResolvableCandidate())) {
     const origin = new URL(baseUrl).origin;
+    const original = new URL(normalized);
+    const redirected = new URL(baseUrl);
+    // A public homepage may redirect to a product app on another subdomain. Keep the submitted
+    // company's own origin in the probe set; its /jobs path may point to the careers site even
+    // when the app's rendered homepage has no careers navigation at all.
+    const originalOrigin = original.hostname.replace(/^www\./, "") !== redirected.hostname.replace(/^www\./, "")
+      && sameDomain(original.origin, redirected.origin)
+      ? original.origin : null;
     const priorityProbes = [
+      ...(originalOrigin ? [`${originalOrigin}/careers`, `${originalOrigin}/jobs`] : []),
       `${origin}/careers`, `https://careers.${domain}/`,
       `${origin}/jobs`, `https://jobs.${domain}/`,
       `${origin}/join-us`, `https://join.${domain}/`,
@@ -801,7 +984,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
         run.say(`${misses} probes in a row found nothing; stopping path probes`);
         break;
       }
-      await visit(url, new URL(url).origin === origin ? "probe_path" : "probe_subdomain");
+      await visit(url, `${new URL(url).origin === origin ? "probe_path" : originalOrigin && new URL(url).origin === originalOrigin ? "probe_original" : "probe_subdomain"} ${url}`);
       if (run.isMissing(url)) misses++;
       else if (run.statusOf(url) !== undefined) misses = 0;
     }
@@ -810,6 +993,13 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   if (!(await run.hasResolvableCandidate()) && run.budgetLeft()) {
     const origin = new URL(baseUrl).origin;
     for (const url of await scanSitemaps(run, ctx, origin)) await visit(url, "sitemap");
+  }
+
+  // A homepage can expose eight framework bundles before its own careers path is checked. Under
+  // the production fetch cap that spends half the crawl on opaque assets, so inspect explicit
+  // navigation, bounded paths and sitemaps first; bundles remain a fallback for hidden ATS URLs.
+  if (home && !(await run.hasResolvableCandidate()) && run.budgetLeft()) {
+    await scanBundles(run, ctx, links, home.url);
   }
 
   if (!(await run.hasResolvableCandidate()) && home && ctx.ai?.chooseCareersLinks && run.budgetLeft()) {
@@ -856,7 +1046,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     if (candidate.spec.type === "html") {
       finalCandidates.push({
         spec: candidate.spec,
-        confidence: confidenceFor(candidate, { homepageCompanyName: run.homepageCompanyName, methodCount: methodCount(candidate) }),
+        confidence: htmlConfidence(candidate, run.homepageCompanyName),
         method: candidate.method,
         evidence: candidate.evidence,
         sample: candidate.sample ?? [],
@@ -913,8 +1103,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
 }
 
 function methodCount(candidate: RawCandidate): number {
-  const extra = candidate.evidence.filter((e) => e.startsWith("method:")).length;
-  return 1 + extra;
+  return new Set([candidate.method, ...candidate.evidence.filter(e => e.startsWith("method:")).map(e => e.slice("method:".length))]).size;
 }
 
 /** For a user-pasted URL and for verifying company suggestions. */
@@ -955,12 +1144,18 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
   if (page && !looksLikeSoft404(page.html)) {
     const links = harvestLinks(page.html, page.url);
     collectAtsFromPage(run, ctx, page.html, page.url, links);
-    let postings = safeExtract(ctx, page.html, page.url);
+    let observedHtml = page.html;
+    let observedUrl = page.url;
+    let postings = safeExtract(ctx, observedHtml, observedUrl);
     if (postings.length < 3 && isJsShell(page.html) && ctx.render) {
       const rendered = await renderAndScan(run, ctx, page.url);
-      if (rendered) postings = safeExtract(ctx, rendered.html, rendered.url);
+      if (rendered && rendered.status < 400) {
+        observedHtml = rendered.html;
+        observedUrl = rendered.url;
+        postings = safeExtract(ctx, observedHtml, observedUrl);
+      }
     }
-    const domain = extractDomain(page.url);
+    const domain = extractDomain(normalized);
     for (const candidate of run.ranked()) {
       const verification = await run.verify(candidate.spec);
       if (!verification.ok) continue;
@@ -977,15 +1172,17 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
       return done({ outcome: outcomeFor(best.confidence), best, candidates: [best], companyName: best.companyName });
     }
     if (postings.length >= 3) {
+      const visibleFilter = visibleListingScopeRestriction(observedHtml);
       const candidate: DiscoveryCandidate = {
-        spec: { type: "html", url: page.url },
-        confidence: confidenceFor({ method: "pasted_listing" }, {}),
+        spec: { type: "html", url: observedUrl },
+        confidence: hasUnfilteredListingScope(observedUrl) && !visibleFilter && sameDomain(normalized, observedUrl)
+          ? confidenceFor({ method: "pasted_listing" }, {}) : CONFIRM_CONFIDENCE,
         method: "pasted_listing",
-        evidence: [`${postings.length} postings found on the pasted page`],
+        evidence: [`${postings.length} postings found on the pasted page`, ...(visibleFilter ? [`visible listing filter: ${visibleFilter}`] : [])],
         sample: postings.slice(0, 3),
         count: postings.length,
       };
-      return done({ outcome: "resolved", best: candidate, candidates: [candidate] });
+      return done({ outcome: outcomeFor(candidate.confidence), best: candidate, candidates: [candidate] });
     }
   }
 

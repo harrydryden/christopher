@@ -19,6 +19,8 @@ import { CvShareCard } from "@/components/CvShareCard";
 import { CvShareComments } from "@/components/CvShareComments";
 import { getOwnCvSharing } from "@/lib/queries/cv-shares";
 import { openCommentCounts } from "@/lib/cv-share";
+import { cvNextAction } from "@/lib/cv-next-action";
+import { CvNextAction } from "@/components/CvNextAction";
 import { assertCvFinalisable, cvAssessmentCurrent } from "@ava/core/cv-review";
 import { resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
 import type { CvAssessment } from "@ava/core/cv-assessment";
@@ -217,6 +219,16 @@ export default async function CvDraftPage({
           )
         }
       />
+      <CvNextAction id={id} next={cvNextAction({
+        status: draft.status,
+        finalised: !!draft.finalisedAt,
+        hasContent: !!content,
+        assessmentCurrent: current,
+        factualConcerns: draft.assessment?.review.claims.filter(claim => claim.status !== "supported").length ?? 0,
+        finaliseReason,
+        improving: draft.status === "ready" && reading.live,
+        libraryChanged: !!drift,
+      })} />
       <CvWorkspace
         description={
           <>

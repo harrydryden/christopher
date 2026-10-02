@@ -1,12 +1,12 @@
 "use server";
 import { assertCvFinalisable } from "@ava/core/cv-review";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, companies, cvDrafts, decisions, jobs, type ApplicationStatus } from "@ava/db";
+import { actionCvs, applications, companies, cvDrafts, decisions, jobs, lockAccountScoreInput, type ApplicationStatus } from "@ava/db";
 import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications";
 import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@ava/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { isRecordableDay, todayDay } from "@/lib/application-dates";
+import { isRecordableDay } from "@/lib/application-dates";
 import { cvPdfFor } from "@/lib/cv-pdf-store";
 import { lockRoleView, recordDecisions } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
@@ -34,6 +34,7 @@ interface StageFields {
   status: ApplicationStatus;
   notes: string;
   appliedOn: string;
+  clearAppliedOn: boolean;
   on: string;
   nextAction: string;
   nextActionOn: string;
@@ -44,24 +45,21 @@ type StageForm = { ok: true; fields: StageFields } | { ok: false; error: string 
 /** A refusal in the shape both call sites return straight back to the form. */
 const refuse = (error: string): StageForm => ({ ok: false, error });
 
-function readStageForm(form: FormData, options: { insistOnAppliedOn?: boolean } = {}): StageForm {
+function readStageForm(form: FormData): StageForm {
   const status = String(form.get("status") ?? "") as ApplicationStatus;
   if (!statuses.includes(status)) return refuse("Choose a status from the list.");
   const notes = String(form.get("notes") ?? "").trim();
   if (notes.length > 4000) return refuse("Keep notes under 4,000 characters.");
   const appliedOn = String(form.get("appliedOn") ?? "").trim();
-  // The date only means anything once something was submitted; before that there is nothing to
-  // date, so "Applying" leaves the field out and the row carries today as a placeholder.
   if (appliedOn && !isRecordableDay(appliedOn)) return refuse("Enter a valid application date.");
-  if (options.insistOnAppliedOn && !appliedOn && status !== "applying" && form.has("appliedOn"))
-    return refuse("Enter a valid application date.");
+  const clearAppliedOn = form.has("appliedOn") && !appliedOn && status !== "applied";
   const on = String(form.get("on") ?? "").trim();
   if (on && !isRecordableDay(on)) return refuse("Enter a valid date for this update.");
   const nextAction = String(form.get("nextAction") ?? "").trim();
   if (nextAction.length > NEXT_ACTION_MAX) return refuse(`Keep the next step under ${NEXT_ACTION_MAX} characters.`);
   const nextActionOn = String(form.get("nextActionOn") ?? "").trim();
   if (nextActionOn && !isRecordableDay(nextActionOn)) return refuse("Enter a valid date for the next step.");
-  return { ok: true, fields: { status, notes, appliedOn, on, nextAction, nextActionOn } };
+  return { ok: true, fields: { status, notes, appliedOn, clearAppliedOn, on, nextAction, nextActionOn } };
 }
 
 /** The next step as the row stores it: the text and its day, or neither once the text is blank. */
@@ -75,7 +73,7 @@ function nextActionColumns(fields: StageFields): { nextAction: string | null; ne
  * Applied is the one status whose day the row already carries — the application date — so the
  * form does not ask for it twice and this reads it from there.
  */
-function historyEntry(fields: StageFields, at: string, appliedOn: string): HistoryEntry {
+function historyEntry(fields: StageFields, at: string, appliedOn: string | null): HistoryEntry {
   const on = fields.on || (fields.status === "applied" ? appliedOn : "");
   return { status: fields.status, at, notes: fields.notes, ...(on ? { on } : {}) };
 }
@@ -107,7 +105,7 @@ function confirmBackwards(form: FormData, from: ApplicationStatus, to: Applicati
 }
 
 /** As much of a stored row as a save is compared against. */
-type StoredStage = { status: ApplicationStatus; notes: string; appliedOn: string; nextAction: string | null; nextActionOn: string | null };
+type StoredStage = { status: ApplicationStatus; notes: string; appliedOn: string | null; nextAction: string | null; nextActionOn: string | null };
 
 /**
  * A save that changes nothing is not an event. Re-reading a row and pressing Save used to append a
@@ -133,6 +131,7 @@ function recordsEvent(existing: Pick<StoredStage, "status" | "notes" | "appliedO
     existing.status !== next.status ||
     existing.notes !== next.notes ||
     (!!next.appliedOn && existing.appliedOn !== next.appliedOn) ||
+    (next.clearAppliedOn && existing.appliedOn !== null) ||
     !!next.on
   );
 }
@@ -163,26 +162,29 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
   let companyId: string | null = null;
   try {
     zUuid().parse(jobId);
-    const read = readStageForm(form, { insistOnAppliedOn: true });
+    const read = readStageForm(form);
     if (!read.ok) return fail(read.error);
     const fields = read.fields;
     const { status, notes, appliedOn: supplied } = fields;
     await db().transaction(async (tx) => {
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
       // The role lock `decide` and a CV build take, first, so a stage change, a decision and the
       // first application row of a build never interleave on one role.
       const view = await lockRoleView(tx, user.id, jobId);
       if (!view) throw new UserFacingError("Role not found.");
       const [role] = await tx
-        .select({ title: jobs.title, companyId: companies.id, companyName: companies.name })
+        .select({ title: jobs.title, companyId: companies.id,
+          companyName: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')` })
         .from(jobs)
-        .innerJoin(companies, eq(companies.id, jobs.companyId))
-        .where(eq(jobs.id, jobId))
+        .leftJoin(companies, eq(companies.id, jobs.companyId))
+        .where(and(eq(jobs.id, jobId), sql`(${jobs.manualOwnerId} is null or ${jobs.manualOwnerId} = ${user.id}::uuid)`))
         .limit(1);
       if (!role) throw new UserFacingError("Role not found.");
       companyId = role.companyId;
       const at = new Date().toISOString();
       const existing = await latestApplicationRow(tx, user.id, jobId);
       if (!existing) {
+        if (status === "applied" && !supplied) throw new UserFacingError("Enter the date you applied.");
         // A CV already built for this role is the revision this stage is about, so the row starts
         // pointing at it; nothing was submitted through us, so it stores no PDF.
         const [draft] = await tx
@@ -191,7 +193,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
           .where(and(eq(cvDrafts.userId, user.id), eq(cvDrafts.jobId, jobId), eq(cvDrafts.status, "ready"), isNull(cvDrafts.archivedAt)))
           .orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id))
           .limit(1);
-        const appliedOn = supplied || todayDay();
+        const appliedOn = supplied || null;
         await tx.insert(applications).values({
           userId: user.id, jobId, cvId: draft?.id ?? null, pdfBase64: null,
           jobTitle: role.title, companyName: role.companyName,
@@ -200,17 +202,18 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
           history: [historyEntry(fields, at, appliedOn)] satisfies HistoryEntry[],
         });
       } else {
+        if (status === "applied" && !supplied && !existing.appliedOn) throw new UserFacingError("Enter the date you applied.");
         const refusal = confirmBackwards(form, existing.status, status);
         if (refusal) throw new UserFacingError(refusal);
         // A save that changed nothing writes nothing.
         if (!unchanged(existing, fields)) {
-          const appliedOn = supplied || existing.appliedOn;
+          const appliedOn = supplied || (fields.clearAppliedOn ? null : existing.appliedOn);
           await tx
             .update(applications)
             .set({
               status,
               notes,
-              ...(supplied ? { appliedOn: supplied } : {}),
+              ...(supplied || fields.clearAppliedOn ? { appliedOn } : {}),
               ...nextActionColumns(fields),
               ...(recordsEvent(existing, fields) ? { history: [...existing.history, historyEntry(fields, at, appliedOn)] } : {}),
             })
@@ -353,18 +356,19 @@ export async function updateApplication(
         .where(and(eq(applications.id, id), eq(applications.userId, user.id)))
         .for("update");
       if (!row) throw new UserFacingError("Application not found.");
+      if (status === "applied" && !supplied && !row.appliedOn) throw new UserFacingError("Enter the date you applied.");
       // The same status control, so the same two rules: an outcome is never walked back without
       // the row asking first, and a save that changes nothing appends nothing.
       const refusal = confirmBackwards(form, row.status, status);
       if (refusal) throw new UserFacingError(refusal);
       if (unchanged(row, fields)) return;
-      const appliedOn = supplied || row.appliedOn;
+      const appliedOn = supplied || (fields.clearAppliedOn ? null : row.appliedOn);
       await tx
         .update(applications)
         .set({
           status,
           notes,
-          ...(supplied ? { appliedOn: supplied } : {}),
+          ...(supplied || fields.clearAppliedOn ? { appliedOn } : {}),
           ...nextActionColumns(fields),
           ...(recordsEvent(row, fields)
             ? { history: [...row.history, historyEntry(fields, new Date().toISOString(), appliedOn)] }

@@ -18,6 +18,7 @@ import { getSystemSettings } from "@/lib/settings";
 import { hasChosenGate } from "@/lib/queries/setup";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { CompanyManageMenu } from "@/components/CompanyManageMenu";
+import { getWorkerStatus } from "@/lib/queries/health";
 import { nextScanSentence } from "./scan-line";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { RefusalNotice } from "@/components/RefusalNotice";
@@ -38,12 +39,21 @@ function SortTH({ label, sortKey, order, title }: { label: string; sortKey: Comp
   );
 }
 
+function activityLabel(type: "discover" | "scan_company" | null, state: "queued" | "running" | null, workerState: "healthy" | "stopped" | "restarting" | null): string | null {
+  if (!type || !state) return null;
+  if (state === "running" && workerState === "stopped") return type === "discover" ? "Discovery waiting for monitoring" : "Scan waiting for monitoring";
+  if (state === "running" && workerState === "restarting") return type === "discover" ? "Discovery may be interrupted" : "Scan may be interrupted";
+  return type === "discover" ? (state === "running" ? "Discovering…" : "Discovery queued")
+    : state === "running" ? "Scanning…" : "Scan queued";
+}
+
 export default async function CompaniesPage({ searchParams }: { searchParams: Promise<{ added?: string; followed?: string; skipped?: string; page?: string; error?: string; sort?: string; dir?: string }> }) {
   const user = await requireUser();
   const sp = await searchParams;
   const order = parseCompanySort(sp.sort, sp.dir);
   // The count, the page and the rest in one wave: a page past the end is re-read at the last one.
   const [{ rows, total, page }, work, system, gateChosen] = await Promise.all([listCompanyPage(user.id, pageNumber(sp.page), "", order), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id)]);
+  const workerState = rows.some(row => row.activityState === "running") ? (await getWorkerStatus()).state : null;
   const now = new Date();
   const unverified = needsEmailConfirmation(user);
 
@@ -78,8 +88,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
           description="Follow a company to see its matching roles here."
           action={<Link prefetch={false} href="/suggestions" className={buttonLinkClass("primary")}>Discover companies</Link>}
         />
-      ) : (
-        <Table>
+      ) : (<>
+        <div className="hidden md:block"><Table>
           <THead>
             <tr>
               <SortTH label="Company" sortKey="company" order={order} />
@@ -92,7 +102,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, discovering, discoveryState, needsSource, lastDiscovery }) => (
+            {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, discovering, activityState, activityType, needsSource, lastDiscovery }) => (
               <TR key={company.id}>
                 <TD>
                   <Link prefetch={false} href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
@@ -134,7 +144,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       )}
                     </>
                   )}
-                  {discovering && <p className="mt-1 text-12 text-info">{discoveryState === "running" ? "Discovering…" : "Discovery queued"}</p>}
+                  {discovering && <p className="mt-1 text-12 text-info">{activityLabel(activityType, activityState, workerState)}{activityState === "running" && workerState && workerState !== "healthy" && <> · <Link href="/health" className="underline">Check Health</Link></>}</p>}
                 </TD>
                 <TD>
                   {openRoles > 0 ? (
@@ -160,12 +170,47 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                 <TD>
                   {/* Refresh is occasional, so it sits in the row's Manage menu rather than beside it. */}
                   <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
-                    extra="refresh" running={discoveryState === "running"} blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
+                    extra="refresh" running={activityState === "running"} monitoringIssue={activityState === "running" && workerState !== "healthy" ? workerState ?? undefined : undefined}
+                    blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
                 </TD>
               </TR>
             ))}
           </TBody>
-        </Table>
+        </Table></div>
+        <div className="grid gap-3 md:hidden" aria-label="Tracked companies">
+          {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, discovering, activityState, activityType, needsSource, lastDiscovery }) => (
+            <article key={company.id} className="min-w-0 border-2 border-line p-4">
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <Link prefetch={false} href={`/companies/${company.id}`} className="flex min-h-11 items-center gap-2 font-semibold text-fg underline">
+                    <CompanyFavicon {...companyIcon(company)} /><span className="min-w-0 truncate">{company.name}</span>
+                  </Link>
+                  <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block min-h-11 truncate py-2 text-12 text-muted underline">{company.domain}</a>
+                </div>
+                <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
+                  extra="refresh" running={activityState === "running"} monitoringIssue={activityState === "running" && workerState !== "healthy" ? workerState ?? undefined : undefined}
+                  blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-12">
+                {needsSource && !discovering && subscription.status === "active" ? <Badge tone="amber">no careers source</Badge>
+                  : <Badge tone={companyStatusTone(subscription.status)}>{subscription.status}</Badge>}
+                {sourceType && <Badge tone="neutral">{sourceType}</Badge>}
+                {discovering && <span className="text-info">{activityLabel(activityType, activityState, workerState)}{activityState === "running" && workerState && workerState !== "healthy" && <> · <Link href="/health" className="underline">Check Health</Link></>}</span>}
+              </div>
+              {needsSource && !discovering && subscription.status === "active" && <p className="mt-2 text-13 text-muted">
+                {lastDiscovery === "not_found" ? "Careers source not found." : lastDiscovery === "needs_confirmation" ? "Careers source needs confirming." : "No careers source yet."}{" "}
+                <Link prefetch={false} href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</Link>
+              </p>}
+              <p className="mt-2 text-12 text-muted">{lastScan ? `${scanStatusLabel(lastScan.status)} ${relativeTime(lastScan.startedAt, now)}` : needsSource ? "Waiting for a source" : "Never scanned"}</p>
+              <div className="mt-3 grid grid-cols-3 gap-2 border-t border-line-faint pt-3 text-center text-12">
+                <Link prefetch={false} href={`/companies/${company.id}#roles`} className="min-h-11 underline"><strong className="block text-16">{openRoles}</strong>Open</Link>
+                <Link prefetch={false} href={`/companies/${company.id}?view=auto-matched#roles`} className="min-h-11 underline"><strong className="block text-16">{reviewRoles}</strong>Review</Link>
+                <Link prefetch={false} href={`/companies/${company.id}?view=user-shortlisted#roles`} className="min-h-11 underline"><strong className="block text-16">{shortlistedRoles}</strong>Shortlisted</Link>
+              </div>
+            </article>
+          ))}
+        </div>
+      </>
       )}
     </div>
   );

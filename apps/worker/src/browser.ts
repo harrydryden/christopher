@@ -8,7 +8,10 @@
  * that answers public to the guard and private to Chromium a moment later is not caught here.
  */
 import { SourceFetchError, type RenderedPage } from "@ava/core";
-import { AddressGuard, type HttpTrafficLedger, type ResolveHost } from "./fetcher";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
+import { AddressGuard, explicitBotChallenge, type HttpTrafficLedger, type ResolveHost } from "./fetcher";
+import { MAX_DECODED_LISTING_BYTES } from "./listing-captures";
 import { log } from "./log";
 import { within } from "./timers";
 
@@ -18,6 +21,8 @@ type BrowserContext = import("playwright").BrowserContext;
 
 export interface RenderOptions {
   scrollAndExpand?: boolean;
+  /** Additional deny-only, run-local guard for every request and WebSocket. */
+  allowHost?: (hostname: string) => void | Promise<void>;
   /** Gives the render up: a queued one leaves the queue, a running one has its page closed. */
   signal?: AbortSignal;
 }
@@ -38,8 +43,10 @@ export const BROWSER_IDLE_CLOSE_MS = 5 * 60_000;
 
 /** The longest one render may take, navigation to last snapshot, before its page is closed. */
 export const RENDER_TIMEOUT_MS = 60_000;
-/** The most page HTML one render may hold, all snapshots together. */
-export const MAX_RENDER_BYTES = 5_000_000;
+/** Each decoded page and all retained compressed captures have this separate byte ceiling. */
+export const MAX_RENDER_BYTES = MAX_DECODED_LISTING_BYTES;
+/** A hard safeguard; the render deadline will usually stop changing listings sooner. */
+export const MAX_LISTING_STEPS = 100;
 /** How many elements whose text reads as a listing control are examined on one pass. */
 const MAX_LISTING_CONTROL_CANDIDATES = 200;
 
@@ -52,7 +59,7 @@ export interface BrowserOptions {
   /** Politeness for one navigation: reserved once, before the page is opened, never per subresource. */
   beforeNavigate?: (host: string) => Promise<void>;
   /** Robots/policy guard for every top-level document request, including redirects. */
-  allowNavigate?: (url: string) => Promise<void>;
+  allowNavigate?: (url: string, allowHost?: RenderOptions["allowHost"]) => Promise<void>;
   /**
    * The same ledger the fetcher writes to, so a render is visible as traffic too. A render is
    * counted as one request under `via: "browser"` — the subresources it makes are the page's
@@ -76,9 +83,8 @@ export interface BrowserOptions {
    */
   renderTimeoutMs?: number;
   /**
-   * The most page HTML one render may hold, all snapshots together (default 5 MB). A "load more"
-   * board snapshots its whole growing list after every click; at the cap the render stops and says
-   * it is incomplete, so a scan of it is partial and closes nothing.
+   * The most decoded HTML per capture, and the total retained gzip bytes (default 5 MB for each).
+   * At either cap the render says it is incomplete, so a scan closes nothing.
    */
   maxRenderBytes?: number;
   /** How long an unused browser is kept before it is closed (default five minutes); relaunched on the next render. */
@@ -90,7 +96,16 @@ const LOCAL_SCHEMES = /^(?:data|blob|about):/i;
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
 const LOAD_MORE_TEXT = /^(?:(?:load|show|view|see) more(?: (?:jobs|roles|positions|openings|results))?|more (?:jobs|roles|positions|openings))$/i;
-const NEXT_TEXT = /^next(?: page| jobs| roles| results)?(?:\s*[›»→>])?$/i;
+// Keep this label set aligned with NEXT_TEXT_RE in packages/core/src/ats/html.ts: a control
+// recognised as pending expansion must also be clickable by the renderer.
+const NEXT_TEXT = /^(?:next(?: page| jobs| roles| results| pagination page)?(?:\s*[›»→>]+)?|go to next page(?:,\s*number\s*\d+)?)$/i;
+
+interface ListingState {
+  roleSignature: string;
+  roleCount: number;
+  textSignature: string;
+  loading: boolean;
+}
 
 export class BrowserRenderer {
   private browser: Browser | null = null;
@@ -286,7 +301,7 @@ export class BrowserRenderer {
       await context.close().catch(() => undefined);
       throw new SourceFetchError(`render of ${url} was given up`, "timeout");
     }
-    const maxBytes = this.opts.maxRenderBytes ?? MAX_RENDER_BYTES;
+    const maxBytes = Math.min(this.opts.maxRenderBytes ?? MAX_RENDER_BYTES, MAX_RENDER_BYTES);
     const requests: string[] = [];
     let status: number | null = null;
     let navigationError: unknown;
@@ -306,10 +321,11 @@ export class BrowserRenderer {
       cdp.on("Fetch.requestPaused", async (event: { requestId: string; frameId?: string; request: { url: string }; resourceType?: string }) => {
         const navigation = event.frameId === mainFrameId && event.resourceType === "Document";
         try {
+          await opts.allowHost?.(new URL(event.request.url).hostname);
           await this.guardRequest(event.request.url);
           if (navigation) {
             await this.opts.beforeNavigate?.(new URL(event.request.url).hostname);
-            await this.opts.allowNavigate?.(event.request.url);
+            await this.opts.allowNavigate?.(event.request.url, opts.allowHost);
           }
           await cdp.send("Fetch.continueRequest", { requestId: event.requestId });
         } catch (error) {
@@ -321,6 +337,7 @@ export class BrowserRenderer {
       // Neither interception sees a WebSocket, so it is guarded where Playwright hands it over.
       await page.routeWebSocket(/.*/, async (ws) => {
         try {
+          await opts.allowHost?.(new URL(ws.url()).hostname);
           await this.guardRequest(ws.url());
           ws.connectToServer();
         } catch (error) {
@@ -331,6 +348,8 @@ export class BrowserRenderer {
       const hostMap = this.opts.hostMap ?? {};
       await page.route("**/*", async (route) => {
         const req = route.request();
+        try { await opts.allowHost?.(new URL(req.url()).hostname); }
+        catch { return route.abort(); }
         const type = req.resourceType();
         if (type === "image" || type === "font" || type === "media") return route.abort();
         const target = new URL(req.url());
@@ -371,6 +390,18 @@ export class BrowserRenderer {
       // Reserve once per top-level document navigation (including redirects), never per subresource.
       const response = await page.goto(url, { waitUntil: "domcontentloaded" }).catch(error => { throw navigationError ?? error; });
       status = response?.status() ?? null;
+      if (response) {
+        const headers = await response.allHeaders();
+        // Read only bounded title/script evidence before the normal size-capped DOM snapshot.
+        const snippet = await page.evaluate(() => {
+          const title = `<title>${document.title.slice(0, 200)}</title>`;
+          const scripts = Array.from(document.querySelectorAll("script")).slice(0, 20)
+            .map(script => `${script.getAttribute("src") ?? ""} ${script.textContent?.slice(0, 500) ?? ""}`);
+          return [title, ...scripts].join("\n").slice(0, 20_000);
+        });
+        if (explicitBotChallenge(headers, snippet, status ?? 200))
+          throw new SourceFetchError(`bot challenge while rendering ${url}`, "blocked", status ?? 403, new URL(response.url()).hostname);
+      }
       if (response && (status === 429 || status === 503)) {
         // The fetcher defers a host that says this; a render must too, or the next render asks
         // again at the ordinary pace.
@@ -380,60 +411,105 @@ export class BrowserRenderer {
       }
       await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
 
-      const listingPages: Array<{ html: string; url: string }> = [];
+      const compressedListingPages: NonNullable<RenderedPage["compressedListingPages"]> = [];
       let incomplete = false;
+      let latestHtml: string | undefined;
+      let latestUrl = page.url();
+      let lastDigest: string | undefined;
+      const seen = new Set<string>();
+      let held = 0;
+      const digest = (html: string) => createHash("sha256").update(html).digest("hex");
+      const retain = (html: string, captureUrl: string): "added" | "seen" | "cap" => {
+        const key = digest(html);
+        if (seen.has(key)) return "seen";
+        const gzip = gzipSync(html);
+        if (held + gzip.byteLength > maxBytes) return "cap";
+        seen.add(key);
+        lastDigest = key;
+        held += gzip.byteLength;
+        latestHtml = html;
+        latestUrl = captureUrl;
+          compressedListingPages.push({ gzip, decodedBytes: Buffer.byteLength(html, "utf8"), url: captureUrl });
+        return "added";
+      };
       if (opts.scrollAndExpand) {
         await this.dismissCookieBanners(page);
-        const seen = new Set<string>();
-        let held = 0;
         // Stops short of the render's own deadline, so what was read is returned as incomplete
         // rather than lost to the timeout.
         const deadline = Math.min(Date.now() + 60_000, deadlineAt - 10_000);
-        for (let i = 0; i < 20; i++) {
-          const html = await this.snapshot(page, maxBytes - held);
+        for (let i = 0; i < MAX_LISTING_STEPS; i++) {
+          if (navigationError) { incomplete = true; break; }
+          const html = await this.snapshot(page, maxBytes);
           if (html === null) { incomplete = true; break; }
-          if (seen.has(html)) { incomplete = true; break; }
-          seen.add(html);
-          listingPages.push({ html, url: page.url() });
-          held += Buffer.byteLength(html, "utf8");
+          if (retain(html, page.url()) !== "added") { incomplete = true; break; }
           if (Date.now() >= deadline) { incomplete = true; break; }
           const before = await page.locator("body").innerText();
-          await page.mouse.wheel(0, 4000).catch(() => undefined);
-          await page.waitForTimeout(600);
-          if (Date.now() >= deadline) { incomplete = true; break; }
           await this.dismissCookieBanners(page);
+          let beforeListing = await this.listingState(page);
           let clicked: boolean;
           try { clicked = await this.clickListingControl(page); }
           catch { incomplete = true; break; }
-          if (clicked) {
-            await page.waitForFunction(old => document.body.innerText !== old, before, { timeout: 8000 }).catch(() => { incomplete = true; });
-            await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => undefined);
+          if (!clicked) {
+            // A real Next/Load more control scrolls into view during Playwright's click. Only an
+            // infinite-scroll board needs a wheel; paying this delay on every explicit page can
+            // consume the whole render deadline before the last roles are reached.
+            await page.mouse.wheel(0, 4000).catch(() => undefined);
+            await page.waitForTimeout(600);
+            if (Date.now() >= deadline) { incomplete = true; break; }
+            await this.dismissCookieBanners(page);
+            beforeListing = await this.listingState(page);
+            try { clicked = await this.clickListingControl(page); }
+            catch { incomplete = true; break; }
           }
+          if (clicked) {
+            const remaining = Math.min(8_000, Math.max(0, deadline - Date.now()));
+            const transition = await this.waitForListingTransition(page, beforeListing, remaining);
+            if (!transition.trustworthy) incomplete = true;
+            if (!transition.advanced) break;
+          }
+          if (navigationError) { incomplete = true; break; }
           const after = await page.locator("body").innerText();
           if (!clicked && after === before) break;
-          if (clicked && after === before) { incomplete = true; break; }
-          if (i === 19) incomplete = true;
+          if (i === MAX_LISTING_STEPS - 1) incomplete = true;
         }
       } else {
         await page.waitForTimeout(500);
       }
-      // A later client-side navigation can be denied after page.goto has already resolved. Never
-      // return the previous page as a successful render when that happens.
-      if (navigationError) throw navigationError;
+      // A later client-side pagination request can be denied after the first listing was read.
+      // Keep that verified first page as partial evidence, while never treating the denied
+      // navigation as a successful, complete render. Initial/uncaptured denials still throw.
+      if (navigationError) {
+        if (!(navigationError instanceof SourceFetchError && navigationError.kind === "blocked" && latestHtml)) throw navigationError;
+        log.info("render continuation blocked after a listing capture", { url, error: navigationError.message });
+        const bytes = response ? await within(response.request().sizes().then(sizes => sizes.responseBodySize), 2_000, 0) : 0;
+        if (!job.abandoned) this.opts.traffic?.request(host, "browser", { status, bytes, durationMs: Date.now() - started });
+        return { html: latestHtml, finalUrl: latestUrl, requests: [...new Set(requests)], status, compressedListingPages, incomplete: true };
+      }
       let html = await this.snapshot(page, maxBytes);
       if (navigationError) throw navigationError;
+      let finalCaptureUnstored = false;
+      let fellBackToLatest = false;
       if (html === null) {
-        // Too large to hold. What the listing snapshots already read is kept, marked incomplete;
+        // Too large to decode. What the listing snapshots already read is kept, marked incomplete;
         // with nothing read, the render is refused as the fetcher refuses an oversized body.
-        const last = listingPages.at(-1);
-        if (!last) throw new SourceFetchError(`Rendered page exceeds ${maxBytes} bytes; refusing truncated content`, "parse");
-        html = last.html;
+        if (!latestHtml) throw new SourceFetchError(`Rendered page exceeds ${maxBytes} bytes; refusing truncated content`, "parse");
+        html = latestHtml;
+        fellBackToLatest = true;
         incomplete = true;
+      } else if (opts.scrollAndExpand) {
+        const finalDigest = digest(html);
+        if (finalDigest !== lastDigest) {
+          if (seen.has(finalDigest)) incomplete = true;
+          else if (retain(html, page.url()) === "cap") { finalCaptureUnstored = true; incomplete = true; }
+        }
       }
+      if (explicitBotChallenge({}, html, 200))
+        throw new SourceFetchError(`bot challenge while rendering ${page.url()}`, "blocked", 403, new URL(page.url()).hostname);
       // What came over the wire for the page itself, not the size of the DOM its scripts built.
       const bytes = response ? await within(response.request().sizes().then(sizes => sizes.responseBodySize), 2_000, 0) : 0;
       if (!job.abandoned) this.opts.traffic?.request(host, "browser", { status, bytes, durationMs: Date.now() - started });
-      return { html, finalUrl: page.url(), requests: [...new Set(requests)], status, listingPages, incomplete };
+      return { html, finalUrl: fellBackToLatest ? latestUrl : page.url(), requests: [...new Set(requests)], status,
+        compressedListingPages, finalCaptureUnstored, incomplete };
 
     } catch (err) {
       // A render that never produced a page is still traffic: a navigation timeout and a dead
@@ -453,6 +529,7 @@ export class BrowserRenderer {
     const selectors = [
       ".consent-modal .consent-reject",
       ".consent-modal .consent-agree",
+      "#twcc__decline-button",
       "#onetrust-accept-btn-handler",
       "button#accept-cookies",
       "button[data-testid*='accept']",
@@ -475,6 +552,62 @@ export class BrowserRenderer {
         if (await b.click({ timeout: 2000 }).then(() => true, () => false)) return;
       }
     }
+  }
+
+  /** A changed page number or spinner alone is not evidence that the next role slice arrived. */
+  private async listingState(page: import("playwright").Page): Promise<ListingState> {
+    return page.evaluate(() => {
+      const root = document.querySelector("main, [role='main']") ?? document.body;
+      const roleLinks: string[] = [];
+      for (const link of root.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+        if (link.closest("nav, [class*='pagination' i], [id*='pagination' i]")) continue;
+        let target: URL;
+        try { target = new URL(link.getAttribute("href") ?? "", location.href); } catch { continue; }
+        if (!/^https?:$/.test(target.protocol)) continue;
+        const rolePath = /\/(?:jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|roles?|apply|detail|job-details?|joblisting)\//i.test(target.pathname);
+        let roleQuery = false;
+        for (const key of target.searchParams.keys()) {
+          if (/^(?:gh_jid|jobid|job_id|reqid|requisitionid)$/i.test(key)) { roleQuery = true; break; }
+        }
+        if (!rolePath && !roleQuery) continue;
+        roleLinks.push(`${target.href}|${(link.textContent ?? "").replace(/\s+/g, " ").trim()}`);
+      }
+      for (const script of root.querySelectorAll<HTMLScriptElement>("script[type='application/ld+json']")) {
+        if (/JobPosting/i.test(script.textContent ?? "")) roleLinks.push(script.textContent ?? "");
+      }
+      const roles = [...new Set(roleLinks)].sort();
+      let roleHash = 2166136261;
+      for (const role of roles) for (let i = 0; i < role.length; i++) roleHash = Math.imul(roleHash ^ role.charCodeAt(i), 16777619);
+      const text = (root as HTMLElement).innerText ?? "";
+      let textHash = 2166136261;
+      for (let i = 0; i < Math.min(text.length, 50_000); i++) textHash = Math.imul(textHash ^ text.charCodeAt(i), 16777619);
+      let loading = false;
+      for (const element of root.querySelectorAll<HTMLElement>("[aria-busy='true'], [role='progressbar'], [class*='loading' i], [class*='spinner' i]")) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== "hidden") { loading = true; break; }
+      }
+      return { roleSignature: `${roles.length}:${(roleHash >>> 0).toString(16)}`, roleCount: roles.length,
+        textSignature: `${text.length}:${(textHash >>> 0).toString(16)}`, loading };
+    });
+  }
+
+  /** Wait for changed role identities to settle; body-only changes stay explicitly unverified. */
+  private async waitForListingTransition(page: import("playwright").Page, before: ListingState, timeoutMs: number): Promise<{ advanced: boolean; trustworthy: boolean }> {
+    const until = Date.now() + timeoutMs;
+    let candidate = "";
+    let stableSince = 0;
+    while (Date.now() < until) {
+      await page.waitForTimeout(100);
+      const after = await this.listingState(page).catch(() => null);
+      if (!after || after.loading) { candidate = ""; continue; }
+      const roleChanged = after.roleCount > 0 && after.roleSignature !== before.roleSignature;
+      const bodyChanged = after.textSignature !== before.textSignature;
+      const next = roleChanged ? `roles:${after.roleSignature}` : before.roleCount === 0 && bodyChanged ? `body:${after.textSignature}` : "";
+      if (!next) { candidate = ""; continue; }
+      if (next !== candidate) { candidate = next; stableSince = Date.now(); continue; }
+      if (Date.now() - stableSince >= 250) return { advanced: true, trustworthy: roleChanged };
+    }
+    return { advanced: false, trustworthy: false };
   }
 
   /**
@@ -503,9 +636,11 @@ export class BrowserRenderer {
         if (el.matches(":disabled") || el.getAttribute("aria-disabled") === "true") continue;
         const href = el.getAttribute("href");
         if (href) {
-          let origin: string;
-          try { origin = new URL(href, location.href).origin; } catch { return "unparsable"; }
-          if (origin !== location.origin) continue;
+          let target: URL;
+          try { target = new URL(href, location.href); } catch { return "unparsable"; }
+          // Some job boards paginate through an explicitly labelled javascript: control. The
+          // guarded browser may click it; every network request it starts is still checked.
+          if (target.protocol !== "javascript:" && target.origin !== location.origin) continue;
         }
         el.setAttribute("data-ava-listing-control", "");
         return "found";

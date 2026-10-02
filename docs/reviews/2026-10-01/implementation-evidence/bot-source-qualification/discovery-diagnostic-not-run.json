@@ -1,0 +1,9 @@
+{
+  "caseId": "revolut",
+  "modeRequested": "one-case production-budget discovery-only, AI and browser disabled",
+  "runAtThisCheckpoint": false,
+  "status": "superseded by the guarded one-case run in revolut-discovery.json",
+  "reason": "The production discovery crawl can continue making same-host requests after a challenged response: packages/core/src/discovery/discover.ts catches the blocked fetch as a null page, then probes hub pages, well-known paths and sitemaps up to the 40-fetch production cap. apps/worker/src/fetcher.ts marks HTTP 403 as blocked but does not stop the host for the rest of discovery. With an explicit challenge already observed, a live run would risk repeated attempts after that challenge.",
+  "productHandlingObserved": false,
+  "paidCalls": 0
+}

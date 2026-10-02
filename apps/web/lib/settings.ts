@@ -2,7 +2,7 @@ import { cache } from "react";
 import { eq, notLike, sql } from "drizzle-orm";
 import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
 import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
-import { enqueueTask, reevaluateGate } from "@ava/db";
+import { accountCanScore, enqueueTask, enqueueTasks, taskRow, reevaluateGate, lockAccountScoreInput, lockScoreModelInput } from "@ava/db";
 import { requireUser } from "./auth";
 import { db } from "./db";
 import { enqueue } from "./enqueue";
@@ -43,18 +43,52 @@ export const getSettings = cache(async (): Promise<AppSettings> => getSettingsFo
 
 export async function setSystemSetting(key: keyof SystemSettings, value: unknown): Promise<void> {
   if (!isSystemSettingsKey(key)) throw new Error(`Not a system setting: ${key}`);
-  await db()
-    .insert(settingsTable)
-    .values({ key, value: value as object, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: settingsTable.key, set: { value: value as object, updatedAt: new Date() } });
+  await db().transaction(async tx => {
+    const changesA5Route = key === "defaultModel" || key === "modelOverrides" || key === "stageRoutes";
+    if (changesA5Route)
+      await lockScoreModelInput(tx as unknown as ReturnType<typeof db>, "exclusive");
+    await tx.insert(settingsTable)
+      .values({ key, value: value as object, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: settingsTable.key, set: { value: value as object, updatedAt: new Date() } });
+    if (changesA5Route) {
+      const accounts = await tx.execute<{ id: string }>(sql`select id from users
+        where role = 'admin' or email_verified_at is not null`);
+      await enqueueTasks(tx as unknown as ReturnType<typeof db>, accounts.rows.map(row =>
+        taskRow("rescore_all", { userId: row.id, onlyInTable: true })), 250);
+    }
+  });
 }
 
 export async function setUserSetting(userId: string, key: keyof UserSettings, value: unknown): Promise<void> {
   if (!isUserSettingsKey(key)) throw new Error(`Not a user setting: ${key}`);
-  await db()
-    .insert(userSettingsTable)
-    .values({ userId, key, value: value as object, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
+  if (key === "seedProfile") throw new Error("Use saveSeedProfileIfCurrent for starting preferences.");
+  await db().transaction(async tx => {
+    if (key === "gate")
+      await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
+    await tx.insert(userSettingsTable)
+      .values({ userId, key, value: value as object, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
+  });
+}
+
+/** Save setup preferences only if the text this editor opened with is still current.
+ * The comparison, write and model follow-ups share the account score fence and transaction. */
+export async function saveSeedProfileIfCurrent(userId: string, expected: string, text: string): Promise<boolean> {
+  return db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
+    const current = (await getSettingsFor(userId, tx as unknown as Writer)).seedProfile;
+    if (current !== expected) return false;
+    if (current === text) return true;
+    await tx.insert(userSettingsTable)
+      .values({ userId, key: "seedProfile", value: text, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: text, updatedAt: new Date() } });
+    if (await accountCanScore(tx as unknown as ReturnType<typeof db>, userId)) {
+      await enqueueTask(tx as unknown as ReturnType<typeof db>, "rescore_all", { userId, onlyInTable: true },
+        { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+      await enqueue("synthesize_profile", { userId, force: true }, tx);
+    }
+    return true;
+  });
 }
 
 /** A gate's settings as one comparable string, whatever order its keys were stored in. */
@@ -73,10 +107,14 @@ function gateFingerprint(gate: GateSettings): string {
  * saves arrive before it starts, because it reads the settings when it runs; a save made while a
  * pass is already running queues the next one, so no change is ever left unapplied.
  */
-export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>, options: { rescore?: boolean } = {}): Promise<void> {
-  await db().transaction(async (tx) => {
-    // One save per account at a time, so the queued-pass check below cannot race another save.
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${userId}`}))`);
+/** Use inside a transaction holding the account's settings lock. Keeping the gate pass here lets
+ * suggestion acceptance merge its term and settle its row atomically with an ordinary settings save. */
+export async function saveSettingsAndGateLocked(
+  tx: Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0],
+  userId: string,
+  entries: Partial<UserSettings>,
+  options: { rescore?: boolean } = {},
+): Promise<void> {
     const before = await getSettingsFor(userId, tx as unknown as Writer);
     for (const [key, value] of Object.entries(entries)) {
       if (!isUserSettingsKey(key)) throw new Error(`Not a user setting: ${key}`);
@@ -93,6 +131,15 @@ export async function saveSettingsAndGate(userId: string, entries: Partial<UserS
       const payload = { userId };
       await enqueue("reevaluate_gate", payload, tx);
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
-    if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
+    if ((options.rescore ?? true) && await accountCanScore(tx as unknown as ReturnType<typeof db>, userId))
+      await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
+}
+
+export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>, options: { rescore?: boolean } = {}): Promise<void> {
+  await db().transaction(async (tx) => {
+    // One save per account at a time, including a suggestion accept or reject.
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${userId}`}))`);
+    await saveSettingsAndGateLocked(tx, userId, entries, options);
   });
 }

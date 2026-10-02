@@ -27,7 +27,7 @@ import type { WorkerDeps } from "../context";
 import { budgetLimits, tryReserveAi, type AiHold } from "../budget";
 import { log } from "../log";
 import { TaskDeferred } from "../queue";
-import { markScoreState, markScoredWithoutResult, prepareScoreJob, writeScore, type PreparedScore } from "./learning";
+import { checkScorePublication, markScoreState, markScoredWithoutResult, prepareScoreJob, writeScore, type PreparedScore } from "./learning";
 import { releaseScoreBatchHolds, requeueScoresLive } from "./score-batch-recovery";
 
 /**
@@ -194,6 +194,7 @@ export async function handleCollectScoreBatch(task: Task, deps: WorkerDeps): Pro
       items: batchable.map((item): ScoreBatchItem => ({
         customId: item.customId, taskId: item.task.id, userId: item.prepared.userId, jobId: item.prepared.jobId,
         estimateUsd: item.request.estimateUsd, fingerprint: item.prepared.fingerprint, profileVersion: item.prepared.profileVersion,
+        attemptVersion: item.prepared.attemptVersion,
         preparedAt: item.prepared.preparedAt.toISOString(),
       })),
       holds: Object.fromEntries([...holds].map(([userId, hold]) => [userId, hold.id])),
@@ -243,11 +244,12 @@ async function applyResult(deps: WorkerDeps, record: ScoreBatchRecord, item: Sco
     // `undefined`: the request errored and created no message, so the view is left as it was.
     if (score === undefined) return "failed" as const;
     const now = deps.now();
+    const prepared = { ...item, preparedAt: new Date(item.preparedAt) };
+    if (!await checkScorePublication(deps, writer, prepared)) return "stale" as const;
     if (score === null) {
-      await markScoredWithoutResult(writer, now, item.userId, item.jobId);
-      return "unscored" as const;
+      return await markScoredWithoutResult(writer, now, prepared) ? "unscored" as const : "stale" as const;
     }
-    return (await writeScore(writer, now, item, score, { preparedAt: new Date(item.preparedAt) })) ? "scored" as const : "stale" as const;
+    return (await writeScore(writer, now, item, score)) ? "scored" as const : "stale" as const;
   });
 }
 

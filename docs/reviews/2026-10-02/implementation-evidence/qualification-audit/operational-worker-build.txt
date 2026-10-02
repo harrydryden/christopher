@@ -1,0 +1,9 @@
+Command: pnpm --filter @ava/worker build
+
+
+> @ava/worker@0.1.0 build /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+> node build.mjs
+
+built dist/index.mjs and dist/otel.mjs
+
+Exit code: 0

@@ -54,13 +54,14 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await deps?.close(); });
 beforeEach(async () => {
-  await db.execute(sql`truncate tasks, applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations, worker_events`);
+  await db.execute(sql`delete from tasks`);
+  await db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations, worker_events`);
   deps.userSettings = (async () => ({ aiBudgetUsd: 1000, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
   deps.aiClient = undefined;
 });
 
 const answered = (parsed_output: unknown): ParseResponse => ({ parsed_output, usage: USAGE, stop_reason: "end_turn", model: "claude-sonnet-5" });
-type ScriptOptions = { plan?: CvTailoringPlan; rejectImprovement?: boolean; failImprovement?: boolean; omitRequiredEntryOnImprovement?: boolean };
+type ScriptOptions = { plan?: CvTailoringPlan; rejectImprovement?: boolean; failImprovement?: boolean; omitRequiredEntryOnImprovement?: boolean; onImprovement?: () => Promise<void> };
 
 function scriptedClient(options: ScriptOptions = {}) {
   const calls: string[] = [];
@@ -103,6 +104,7 @@ function scriptedClient(options: ScriptOptions = {}) {
     calls.push(improving ? "improvement" : "author");
     authorInputs.push(input);
     authors++;
+    if (improving) await options.onImprovement?.();
     if (options.failImprovement && improving) throw new Error("optional writer unavailable");
     const improved = improving;
     return answered({
@@ -118,9 +120,9 @@ function scriptedClient(options: ScriptOptions = {}) {
   return { client, calls, authorInputs };
 }
 
-async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }, jobDescription = "Lead a team. Deliver transformation.") {
+async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }, jobDescription = "Lead a team. Deliver transformation.", jobId?: string) {
   const [draft] = await db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme",
-    jobDescription, libraryVersion: 1, librarySnapshot: library,
+    jobId, jobDescription, libraryVersion: 1, librarySnapshot: library,
     model: "claude-sonnet-5", buildCheckpoint: checkpoint }).returning();
   const payload = { draftId: draft!.id, userId };
   await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
@@ -142,6 +144,32 @@ it("pauses before authoring and a duplicate delivery spends no more AI", async (
   expect(scripted.calls).toEqual(["rubric", "planner"]);
 });
 
+it("a private manual role without company or source follows the quiz and continuation path", async () => {
+  const scripted = scriptedClient({ plan: gapPlan }); deps.aiClient = scripted.client;
+  const fingerprint = crypto.randomUUID();
+  const [job] = await db.insert(schema.jobs).values({
+    externalKey: `manual:${fingerprint}`, title: "Operations Director", normalizedTitle: "operations director",
+    companyLabel: "Acme", manualOwnerId: userId, manualFingerprint: fingerprint,
+    inputKind: "pdf", shared: false, origin: "manual", descriptionText: "Lead a team. Deliver transformation.",
+    descriptionSource: "direct",
+  }).returning();
+  await db.insert(schema.userJobs).values({ userId, jobId: job!.id, inTable: true });
+  const draft = await makeDraft({ tailoringEnabled: true }, "Lead a team. Deliver transformation.", job!.id);
+  await queue().drain();
+  const paused = await draftAfter(draft.id);
+  expect(paused).toMatchObject({ jobId: job!.id, status: "awaiting_evidence", gapQuiz: { status: "awaiting_answers" } });
+  expect(scripted.calls).toEqual(["rubric", "planner"]);
+
+  await db.update(schema.cvDrafts).set({ status: "queued", gapQuiz: { ...paused.gapQuiz!, status: "skipped", completedAt: new Date().toISOString() },
+    buildCheckpoint: { ...paused.buildCheckpoint!, quizCompleted: true } }).where(eq(schema.cvDrafts.id, draft.id));
+  await enqueueTask(db, "generate_cv", { draftId: draft.id, userId }, { dedupeKey: `generate_cv:${draft.id}:quiz-complete` });
+  await queue().drain();
+  const continued = await draftAfter(draft.id);
+  expect(continued.status).toBe("ready");
+  expect(scripted.calls.filter(call => call === "planner")).toHaveLength(1);
+  expect(scripted.calls).toContain("author");
+});
+
 it("a completed quiz reuses its semantic plan, skips another pause and passes provenance to the author", async () => {
   const scripted = scriptedClient(); deps.aiClient = scripted.client;
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
@@ -154,8 +182,13 @@ it("a completed quiz reuses its semantic plan, skips another pause and passes pr
 });
 
 it("publishes the baseline first, then adopts one verified improvement as a new revision of the same chain", async () => {
-  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  let draftId = "";
+  let progressAtWhenImprovementStarted: number | null | undefined;
+  const scripted = scriptedClient({ onImprovement: async () => {
+    progressAtWhenImprovementStarted = (await draftAfter(draftId)).progressAt?.getTime() ?? null;
+  } }); deps.aiClient = scripted.client;
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  draftId = draft.id;
   await queue().drain();
   // The baseline is the CV that was published first, and it keeps the wording it was published with.
   const baseline = await draftAfter(draft.id);
@@ -189,9 +222,10 @@ it("publishes the baseline first, then adopts one verified improvement as a new 
   expect(adopt.detail).toMatchObject({ draftId: revision!.id, revisionId: revision!.id, revision: 2, version: expect.any(Number) });
   expect(adopt.detail.label).toBe(adopt.detail.name);
   expect(adopt.detail.name).toMatch(/^\d\d-[A-Z][a-z]{2}-V\d+$/);
-  // Once published, nothing the build did moved the baseline's last moment of progress.
-  const publishedAt = steps.find(step => step.motion === "publish")!.finishedAt!;
-  expect(baseline.progressAt!.getTime()).toBeLessThanOrEqual(publishedAt.getTime());
+  // The optional pass must not move the published baseline's progress marker. Compare the stored
+  // value itself: the worker's clock and PostgreSQL's step timestamps can differ by milliseconds.
+  expect(progressAtWhenImprovementStarted).toEqual(expect.any(Number));
+  expect(baseline.progressAt!.getTime()).toBe(progressAtWhenImprovementStarted);
   expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
 });
 

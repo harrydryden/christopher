@@ -1,0 +1,786 @@
+$ pnpm test:release
+
+> ava@0.1.0 test:release /Users/h_dryden/Documents/New project/christopher-jtbd-review
+> node --test scripts/*.test.mjs scripts/perf/*.test.mjs
+
+TAP version 13
+# Subtest: database guard accepts only the exact dedicated local database
+ok 1 - database guard accepts only the exact dedicated local database
+  ---
+  duration_ms: 0.893708
+  type: 'test'
+  ...
+# Subtest: summary reports errors and percentiles
+ok 2 - summary reports errors and percentiles
+  ---
+  duration_ms: 0.50175
+  type: 'test'
+  ...
+# Subtest: the default shape is the hundred-account fixture, and the thousand-account one shares a large catalogue out
+ok 3 - the default shape is the hundred-account fixture, and the thousand-account one shares a large catalogue out
+  ---
+  duration_ms: 0.301791
+  type: 'test'
+  ...
+# Subtest: the poll model is the app's backoff: ten seconds, half as long again while nothing changes, a minute at most, ten again after a change
+ok 4 - the poll model is the app's backoff: ten seconds, half as long again while nothing changes, a minute at most, ten again after a change
+  ---
+  duration_ms: 0.187
+  type: 'test'
+  ...
+# Subtest: an idle tab asks nothing, and before a run only the banner asks, backing off to a minute
+ok 5 - an idle tab asks nothing, and before a run only the banner asks, backing off to a minute
+  ---
+  duration_ms: 0.273417
+  type: 'test'
+  ...
+# Subtest: a refresh is the Shortlisted view for nine tabs in ten and Matched for the tenth, held to the measured rate
+ok 6 - a refresh is the Shortlisted view for nine tabs in ten and Matched for the tenth, held to the measured rate
+  ---
+  duration_ms: 0.2055
+  type: 'test'
+  ...
+# Subtest: a tab renders again only for a version it has not shown, and never for its first reading or a failed one
+ok 7 - a tab renders again only for a version it has not shown, and never for its first reading or a failed one
+  ---
+  duration_ms: 0.068916
+  type: 'test'
+  ...
+# Subtest: the shared account seed leaves the rows the shape expects, when an empty database is at hand
+ok 8 - the shared account seed leaves the rows the shape expects, when an empty database is at hand # SKIP no database
+  ---
+  duration_ms: 0.133625
+  type: 'test'
+  ...
+# Subtest: routes drop their groups and the page segment
+ok 9 - routes drop their groups and the page segment
+  ---
+  duration_ms: 1.614542
+  type: 'test'
+  ...
+# Subtest: a first load is the union of the root files, every layout above the page and the page, each chunk once
+ok 10 - a first load is the union of the root files, every layout above the page and the page, each chunk once
+  ---
+  duration_ms: 0.261916
+  type: 'test'
+  ...
+# Subtest: sizes are gzip level 9, shared chunks count once per route, and CSS does not count
+ok 11 - sizes are gzip level 9, shared chunks count once per route, and CSS does not count
+  ---
+  duration_ms: 17.547334
+  type: 'test'
+  ...
+# Subtest: every route passes under its budget, and an unlisted route falls back to "*"
+ok 12 - every route passes under its budget, and an unlisted route falls back to "*"
+  ---
+  duration_ms: 34.404917
+  type: 'test'
+  ...
+# Subtest: a route over its budget fails, and so does the shared root
+ok 13 - a route over its budget fails, and so does the shared root
+  ---
+  duration_ms: 5.71925
+  type: 'test'
+  ...
+# Subtest: a chunk of 20 KB gzip or more newly entering a first load fails even inside the byte budget
+ok 14 - a chunk of 20 KB gzip or more newly entering a first load fails even inside the byte budget
+  ---
+  duration_ms: 10.231917
+  type: 'test'
+  ...
+# Subtest: capacity drill accepts only its named local database
+ok 15 - capacity drill accepts only its named local database
+  ---
+  duration_ms: 1.112792
+  type: 'test'
+  ...
+# Subtest: recovery application smoke accepts only its retained local restore
+ok 16 - recovery application smoke accepts only its retained local restore
+  ---
+  duration_ms: 0.274542
+  type: 'test'
+  ...
+# Subtest: resource summary reports peaks and bounded CPU delta
+ok 17 - resource summary reports peaks and bounded CPU delta
+  ---
+  duration_ms: 0.672542
+  type: 'test'
+  ...
+# Subtest: representative suite covers the declared risks with synthetic libraries
+ok 18 - representative suite covers the declared risks with synthetic libraries
+  ---
+  duration_ms: 1.332042
+  type: 'test'
+  ...
+# Subtest: ground-truth grading is independent of a model assessment
+ok 19 - ground-truth grading is independent of a model assessment
+  ---
+  duration_ms: 1.576875
+  type: 'test'
+  ...
+# Subtest: rubric intents and semantic requirement outcomes are explicit
+ok 20 - rubric intents and semantic requirement outcomes are explicit
+  ---
+  duration_ms: 0.479833
+  type: 'test'
+  ...
+# Subtest: ground-truth grading requires every role and the document limit
+ok 21 - ground-truth grading requires every role and the document limit
+  ---
+  duration_ms: 0.168958
+  type: 'test'
+  ...
+# Subtest: rubric intent requires three distinct candidate requirements and excludes benefits
+ok 22 - rubric intent requires three distinct candidate requirements and excludes benefits
+  ---
+  duration_ms: 1.434459
+  type: 'test'
+  ...
+# Subtest: negative cases must classify the relevant requirement correctly
+ok 23 - negative cases must classify the relevant requirement correctly
+  ---
+  duration_ms: 0.414541
+  type: 'test'
+  ...
+# Subtest: inflation must flag the exact inflated claim
+ok 24 - inflation must flag the exact inflated claim
+  ---
+  duration_ms: 2.292709
+  type: 'test'
+  ...
+# Subtest: generated CV grading is non-vacuous and requires useful requirement coverage
+ok 25 - generated CV grading is non-vacuous and requires useful requirement coverage
+  ---
+  duration_ms: 0.406541
+  type: 'test'
+  ...
+# Subtest: database guard accepts only a local ava_cvload scratch database
+ok 26 - database guard accepts only a local ava_cvload scratch database
+  ---
+  duration_ms: 1.844
+  type: 'test'
+  ...
+# Subtest: the default shape is fifty accounts asking for two CVs each at the production concurrency
+ok 27 - the default shape is fifty accounts asking for two CVs each at the production concurrency
+  ---
+  duration_ms: 1.378125
+  type: 'test'
+  ...
+# Subtest: latency is one number or a range
+ok 28 - latency is one number or a range
+  ---
+  duration_ms: 0.200583
+  type: 'test'
+  ...
+# Subtest: the worker figures follow the production formulas
+ok 29 - the worker figures follow the production formulas
+  ---
+  duration_ms: 0.134292
+  type: 'test'
+  ...
+# Subtest: every account asks for each of its CVs once, inside the window, in time order, the same way every run
+ok 30 - every account asks for each of its CVs once, inside the window, in time order, the same way every run
+  ---
+  duration_ms: 0.696208
+  type: 'test'
+  ...
+# Subtest: summaries and overlaps
+ok 31 - summaries and overlaps
+  ---
+  duration_ms: 3.603875
+  type: 'test'
+  ...
+# Subtest: the fixtures are a usable Library and advert
+ok 32 - the fixtures are a usable Library and advert
+  ---
+  duration_ms: 0.87825
+  type: 'test'
+  ...
+# Subtest: build analysis: slots, waits, overlap, narrative, duplicates and leftovers
+ok 33 - build analysis: slots, waits, overlap, narrative, duplicates and leftovers
+  ---
+  duration_ms: 1.162292
+  type: 'test'
+  ...
+# Subtest: missed targets are named; a clean run at full concurrency passes
+ok 34 - missed targets are named; a clean run at full concurrency passes
+  ---
+  duration_ms: 1.495958
+  type: 'test'
+  ...
+# Subtest: the Next.js stubs cover the request modules the action and the route import
+ok 35 - the Next.js stubs cover the request modules the action and the route import
+  ---
+  duration_ms: 28.035666
+  type: 'test'
+  ...
+# Subtest: the same library produces useful, role-specific contrasts
+ok 36 - the same library produces useful, role-specific contrasts
+  ---
+  duration_ms: 1.1385
+  type: 'test'
+  ...
+# Subtest: generic wording fails contrast and the blinded export records no invented verdict
+ok 37 - generic wording fails contrast and the blinded export records no invented verdict
+  ---
+  duration_ms: 1.457709
+  type: 'test'
+  ...
+# Subtest: no manifest takes whatever version happens to be newest
+ok 38 - no manifest takes whatever version happens to be newest
+  ---
+  duration_ms: 3.846542
+  type: 'test'
+  ...
+# Subtest: a dependency declared by several workspaces is declared the same way in each
+ok 39 - a dependency declared by several workspaces is declared the same way in each
+  ---
+  duration_ms: 1.322083
+  type: 'test'
+  ...
+# Subtest: every file the image copies is a worker input, so changing it redeploys the worker
+ok 40 - every file the image copies is a worker input, so changing it redeploys the worker
+  ---
+  duration_ms: 3.162625
+  type: 'test'
+  ...
+# Subtest: the Render blueprint deploys the worker only for worker inputs, in the interface's region
+ok 41 - the Render blueprint deploys the worker only for worker inputs, in the interface's region
+  ---
+  duration_ms: 1.889583
+  type: 'test'
+  ...
+# Subtest: the worker image runs under an init process as the image's unprivileged user
+ok 42 - the worker image runs under an init process as the image's unprivileged user
+  ---
+  duration_ms: 0.400708
+  type: 'test'
+  ...
+# Subtest: the Playwright base image matches the Playwright the worker installs
+ok 43 - the Playwright base image matches the Playwright the worker installs
+  ---
+  duration_ms: 0.44125
+  type: 'test'
+  ...
+# Subtest: the example environment points at the local database the README creates
+ok 44 - the example environment points at the local database the README creates
+  ---
+  duration_ms: 0.601042
+  type: 'test'
+  ...
+# Subtest: release identity checks wait for verified evaluation while pull-request CI keeps fixture checks
+ok 45 - release identity checks wait for verified evaluation while pull-request CI keeps fixture checks
+  ---
+  duration_ms: 0.67875
+  type: 'test'
+  ...
+# Subtest: parallel assessment calls reserve against spent and in-flight cost
+ok 46 - parallel assessment calls reserve against spent and in-flight cost
+  ---
+  duration_ms: 0.683542
+  type: 'test'
+  ...
+# Subtest: releases do not charge estimates, and failed answered calls still count actual usage
+ok 47 - releases do not charge estimates, and failed answered calls still count actual usage
+  ---
+  duration_ms: 0.117417
+  type: 'test'
+  ...
+# Subtest: invalid budgets and cost estimates fail closed
+ok 48 - invalid budgets and cost estimates fail closed
+  ---
+  duration_ms: 4.680541
+  type: 'test'
+  ...
+# Subtest: prior spend counts against the cap, a hard cap throws past it, and every change is reported
+ok 49 - prior spend counts against the cap, a hard cap throws past it, and every change is reported
+  ---
+  duration_ms: 0.575
+  type: 'test'
+  ...
+# Subtest: names the newest replay report at the shipped prompt set, and renders its routes beside the registry's defaults
+ok 50 - names the newest replay report at the shipped prompt set, and renders its routes beside the registry's defaults
+  ---
+  duration_ms: 11.881834
+  type: 'test'
+  ...
+# Subtest: passes when a report is graded at the shipped prompt set
+ok 51 - passes when a report is graded at the shipped prompt set
+  ---
+  duration_ms: 0.839833
+  type: 'test'
+  ...
+# Subtest: fails a report graded at another prompt set unless it is marked unverified
+ok 52 - fails a report graded at another prompt set unless it is marked unverified
+  ---
+  duration_ms: 0.2435
+  type: 'test'
+  ...
+# Subtest: fails when no report is at the shipped prompt set, however the others are marked
+ok 53 - fails when no report is at the shipped prompt set, however the others are marked
+  ---
+  duration_ms: 0.108542
+  type: 'test'
+  ...
+# Subtest: an unverified report at the shipped prompt set satisfies the gate, and says so
+ok 54 - an unverified report at the shipped prompt set satisfies the gate, and says so
+  ---
+  duration_ms: 0.200333
+  type: 'test'
+  ...
+# Subtest: reads the prompt set wherever an evaluation script wrote it, and fails a report that names none
+ok 55 - reads the prompt set wherever an evaluation script wrote it, and fails a report that names none
+  ---
+  duration_ms: 0.097666
+  type: 'test'
+  ...
+# Subtest: fails a replay report at the shipped prompt set whose rebuild failed or whose grade did not pass
+ok 56 - fails a replay report at the shipped prompt set whose rebuild failed or whose grade did not pass
+  ---
+  duration_ms: 0.215166
+  type: 'test'
+  ...
+# Subtest: warns when every report at the shipped prompt set is unverified, and fails when a verified one is required
+ok 57 - warns when every report at the shipped prompt set is unverified, and fails when a verified one is required
+  ---
+  duration_ms: 0.22475
+  type: 'test'
+  ...
+# Subtest: frozen extraction evidence is identity and field level
+ok 58 - frozen extraction evidence is identity and field level
+  ---
+  duration_ms: 32.131459
+  type: 'test'
+  ...
+# Subtest: post-fix report replays the same frozen identities without field mismatches
+ok 59 - post-fix report replays the same frozen identities without field mismatches
+  ---
+  duration_ms: 22.096083
+  type: 'test'
+  ...
+# Subtest: expanded evidence includes two complete independently enumerated Workday boards
+ok 60 - expanded evidence includes two complete independently enumerated Workday boards
+  ---
+  duration_ms: 65.172292
+  type: 'test'
+  ...
+# Subtest: zero-cost A3 regrade preserves source evidence and exposes field mismatches
+ok 61 - zero-cost A3 regrade preserves source evidence and exposes field mismatches
+  ---
+  duration_ms: 1711.928917
+  type: 'test'
+  ...
+# Subtest: offline corpus check reports current deficiencies with blocked exit code 2
+not ok 62 - offline corpus check reports current deficiencies with blocked exit code 2
+  ---
+  duration_ms: 1660.217916
+  type: 'test'
+  location: '/Users/h_dryden/Documents/New project/christopher-jtbd-review/scripts/live-acceptance.test.mjs:9:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    0 !== 2
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/h_dryden/Documents/New%20project/christopher-jtbd-review/scripts/live-acceptance.test.mjs:14:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: managed recovery drill accepts only its isolated direct endpoint
+ok 63 - managed recovery drill accepts only its isolated direct endpoint
+  ---
+  duration_ms: 0.715583
+  type: 'test'
+  ...
+# Subtest: the committed config errors on LCP, CLS and TBT, and only warns on script transfer, which the bundle budget gates
+ok 64 - the committed config errors on LCP, CLS and TBT, and only warns on script transfer, which the bundle budget gates
+  ---
+  duration_ms: 1.225084
+  type: 'test'
+  ...
+# Subtest: the signed-in config fills in the CV and the cookie, and moves the port when asked
+ok 65 - the signed-in config fills in the CV and the cookie, and moves the port when asked
+  ---
+  duration_ms: 0.367542
+  type: 'test'
+  ...
+# Subtest: the mobile pass drops the desktop preset and only warns
+ok 66 - the mobile pass drops the desktop preset and only warns
+  ---
+  duration_ms: 0.239708
+  type: 'test'
+  ...
+# Subtest: the cookie is the interface's own shape
+ok 67 - the cookie is the interface's own shape
+  ---
+  duration_ms: 0.450834
+  type: 'test'
+  ...
+# Subtest: the preview pass is /login signed out, with the bypass header, warnings only, and no cookie
+ok 68 - the preview pass is /login signed out, with the bypass header, warnings only, and no cookie
+  ---
+  duration_ms: 0.4955
+  type: 'test'
+  ...
+# Subtest: only a local ava_perf* database is accepted
+ok 69 - only a local ava_perf* database is accepted
+  ---
+  duration_ms: 1.92225
+  type: 'test'
+  ...
+# Subtest: the wire reader counts simple queries and executes, across chunk boundaries and after an SSL request
+ok 70 - the wire reader counts simple queries and executes, across chunk boundaries and after an SSL request
+  ---
+  duration_ms: 1.404625
+  type: 'test'
+  ...
+# Subtest: percentiles, medians and the audits' page summary
+ok 71 - percentiles, medians and the audits' page summary
+  ---
+  duration_ms: 0.484417
+  type: 'test'
+  ...
+# Subtest: every page the baseline holds is one the scripts measure
+ok 72 - every page the baseline holds is one the scripts measure
+  ---
+  duration_ms: 0.478166
+  type: 'test'
+  ...
+# Subtest: round trips are the delayed p50 less the undelayed, over the delay
+ok 73 - round trips are the delayed p50 less the undelayed, over the delay
+  ---
+  duration_ms: 0.210667
+  type: 'test'
+  ...
+# Subtest: of two round-trip passes, each page keeps the lower
+ok 74 - of two round-trip passes, each page keeps the lower
+  ---
+  duration_ms: 0.336208
+  type: 'test'
+  ...
+# Subtest: a decision round and the rounds' medians
+ok 75 - a decision round and the rounds' medians
+  ---
+  duration_ms: 0.768875
+  type: 'test'
+  ...
+# Subtest: the baseline's own figures pass, and one statement, one round trip or 10 % more bytes fails
+ok 76 - the baseline's own figures pass, and one statement, one round trip or 10 % more bytes fails
+  ---
+  duration_ms: 1.006416
+  type: 'test'
+  ...
+# Subtest: a page that stops rendering, or goes unmeasured, fails rather than passing by absence
+ok 77 - a page that stops rendering, or goes unmeasured, fails rather than passing by absence
+  ---
+  duration_ms: 0.89375
+  type: 'test'
+  ...
+# Subtest: the relay counts the statements a real client sends, when a database is at hand
+ok 78 - the relay counts the statements a real client sends, when a database is at hand # SKIP no database
+  ---
+  duration_ms: 0.685042
+  type: 'test'
+  ...
+# Subtest: the cookie is the interface's own shape
+ok 79 - the cookie is the interface's own shape
+  ---
+  duration_ms: 0.758667
+  type: 'test'
+  ...
+# Subtest: the probe reads a lost or refused prepared statement as "not supported", and nothing else
+ok 80 - the probe reads a lost or refused prepared statement as "not supported", and nothing else
+  ---
+  duration_ms: 1.354375
+  type: 'test'
+  ...
+# Subtest: a missing credential is blocked, not a successful skipped evaluation
+ok 81 - a missing credential is blocked, not a successful skipped evaluation
+  ---
+  duration_ms: 0.801792
+  type: 'test'
+  ...
+# Subtest: checks access to the chosen model and accepts its dated provider identity
+ok 82 - checks access to the chosen model and accepts its dated provider identity
+  ---
+  duration_ms: 32.829375
+  type: 'test'
+  ...
+# Subtest: denied access, wrong model, unknown pricing and an empty selection cannot pass
+ok 83 - denied access, wrong model, unknown pricing and an empty selection cannot pass
+  ---
+  duration_ms: 0.640958
+  type: 'test'
+  ...
+# Subtest: recovery guard accepts only the two named databases on one local server
+ok 84 - recovery guard accepts only the two named databases on one local server
+  ---
+  duration_ms: 3.361792
+  type: 'test'
+  ...
+# Subtest: integrity query covers tenant records, fingerprints, orphans, constraints and migrations
+ok 85 - integrity query covers tenant records, fingerprints, orphans, constraints and migrations
+  ---
+  duration_ms: 0.305084
+  type: 'test'
+  ...
+# Subtest: integrity query counts and fingerprints the learning signal, settings, profiles, sources and scans
+ok 86 - integrity query counts and fingerprints the learning signal, settings, profiles, sources and scans
+  ---
+  duration_ms: 0.289291
+  type: 'test'
+  ...
+# Subtest: release configuration fails visibly when identity or URL is missing
+ok 87 - release configuration fails visibly when identity or URL is missing
+  ---
+  duration_ms: 1.214583
+  type: 'test'
+  ...
+# Subtest: operational configuration requires an explicit full commit and worker URL
+ok 88 - operational configuration requires an explicit full commit and worker URL
+  ---
+  duration_ms: 0.687
+  type: 'test'
+  ...
+# Subtest: operational figures come from the status URL, with its bearer token, when one is configured
+ok 89 - operational figures come from the status URL, with its bearer token, when one is configured
+  ---
+  duration_ms: 0.1505
+  type: 'test'
+  ...
+# Subtest: release health requires both an explicit healthy state and a full commit
+ok 90 - release health requires both an explicit healthy state and a full commit
+  ---
+  duration_ms: 0.108583
+  type: 'test'
+  ...
+# Subtest: operational samples reject missing readings instead of treating them as zero
+ok 91 - operational samples reject missing readings instead of treating them as zero
+  ---
+  duration_ms: 0.720334
+  type: 'test'
+  ...
+# Subtest: healthy idle and working samples pass without making an uptime claim
+ok 92 - healthy idle and working samples pass without making an uptime claim
+  ---
+  duration_ms: 0.297292
+  type: 'test'
+  ...
+# Subtest: a materially old queue fails
+ok 93 - a materially old queue fails
+  ---
+  duration_ms: 0.127667
+  type: 'test'
+  ...
+# Subtest: a few overdue companies are reported as attention, and the gate fails only when many are
+ok 94 - a few overdue companies are reported as attention, and the gate fails only when many are
+  ---
+  duration_ms: 1.015667
+  type: 'test'
+  ...
+# Subtest: companies that cannot be scanned are attention when a worker reports them, and optional otherwise
+ok 95 - companies that cannot be scanned are attention when a worker reports them, and optional otherwise
+  ---
+  duration_ms: 2.06675
+  type: 'test'
+  ...
+# Subtest: transient pressure passes but sustained memory and database waits fail
+ok 96 - transient pressure passes but sustained memory and database waits fail
+  ---
+  duration_ms: 0.715417
+  type: 'test'
+  ...
+# Subtest: the heap gate keeps its exact 85% boundary, including legacy rounded readings
+ok 97 - the heap gate keeps its exact 85% boundary, including legacy rounded readings
+  ---
+  duration_ms: 0.415209
+  type: 'test'
+  ...
+# Subtest: failed-gate diagnostics report only bounded memory samples and worker identity
+ok 98 - failed-gate diagnostics report only bounded memory samples and worker identity
+  ---
+  duration_ms: 0.325583
+  type: 'test'
+  ...
+# Subtest: material queue growth fails once the queue is also large
+ok 99 - material queue growth fails once the queue is also large
+  ---
+  duration_ms: 0.075084
+  type: 'test'
+  ...
+# Subtest: one uptime regression permits a rollout but repeated regressions identify a restart loop
+ok 100 - one uptime regression permits a rollout but repeated regressions identify a restart loop
+  ---
+  duration_ms: 0.077333
+  type: 'test'
+  ...
+# Subtest: worker identity changes detect replacements even when sampled uptime does not decrease
+ok 101 - worker identity changes detect replacements even when sampled uptime does not decrease
+  ---
+  duration_ms: 0.069792
+  type: 'test'
+  ...
+# Subtest: uptime remains a fallback when a restarted process reuses its worker identity
+ok 102 - uptime remains a fallback when a restarted process reuses its worker identity
+  ---
+  duration_ms: 0.057209
+  type: 'test'
+  ...
+# Subtest: mixed identity replacement and reused-ID restart still fail
+ok 103 - mixed identity replacement and reused-ID restart still fail
+  ---
+  duration_ms: 0.054292
+  type: 'test'
+  ...
+# Subtest: persisted crash recovery evidence catches a loop outside the thirty-second sample
+ok 104 - persisted crash recovery evidence catches a loop outside the thirty-second sample
+  ---
+  duration_ms: 0.066542
+  type: 'test'
+  ...
+# Subtest: one failing provider group fails and an observed recovery clears it
+ok 105 - one failing provider group fails and an observed recovery clears it
+  ---
+  duration_ms: 0.068416
+  type: 'test'
+  ...
+# Subtest: configured account budget exhaustion warns without failing global operations or exposing identity
+ok 106 - configured account budget exhaustion warns without failing global operations or exposing identity
+  ---
+  duration_ms: 0.140166
+  type: 'test'
+  ...
+# Subtest: new telemetry cannot disappear or become invalid and silently pass
+ok 107 - new telemetry cannot disappear or become invalid and silently pass
+  ---
+  duration_ms: 0.439459
+  type: 'test'
+  ...
+# Subtest: a worker that does not report event-loop lag, slow queries or pool totals still passes
+ok 108 - a worker that does not report event-loop lag, slow queries or pool totals still passes
+  ---
+  duration_ms: 0.235083
+  type: 'test'
+  ...
+# Subtest: event-loop lag, slow queries and pool totals are read when reported, and refused when malformed
+ok 109 - event-loop lag, slow queries and pool totals are read when reported, and refused when malformed
+  ---
+  duration_ms: 0.3795
+  type: 'test'
+  ...
+# Subtest: event-loop lag is attention at 200 ms and fails at a second in two samples
+ok 110 - event-loop lag is attention at 200 ms and fails at a second in two samples
+  ---
+  duration_ms: 0.612459
+  type: 'test'
+  ...
+# Subtest: slow queries are compared within one process: attention at 20, a failure at 100, a restart resets the count
+ok 111 - slow queries are compared within one process: attention at 20, a failure at 100, a restart resets the count
+  ---
+  duration_ms: 0.587917
+  type: 'test'
+  ...
+# Subtest: heap, a single pool wait and a five-minute-old task are attention below their failures
+ok 112 - heap, a single pool wait and a five-minute-old task are attention below their failures
+  ---
+  duration_ms: 0.283041
+  type: 'test'
+  ...
+# Subtest: the monitor's sample is optional, and read when a worker serves it
+ok 113 - the monitor's sample is optional, and read when a worker serves it
+  ---
+  duration_ms: 0.364291
+  type: 'test'
+  ...
+# Subtest: active backends, scan failures, model rate limits and slow queries warn and fail at the guide's lines
+ok 114 - active backends, scan failures, model rate limits and slow queries warn and fail at the guide's lines
+  ---
+  duration_ms: 0.613167
+  type: 'test'
+  ...
+# Subtest: a monitor sample twenty minutes old is attention: the task that takes it has stopped
+ok 115 - a monitor sample twenty minutes old is attention: the task that takes it has stopped
+  ---
+  duration_ms: 0.072708
+  type: 'test'
+  ...
+# Subtest: a merge that changes no worker input leaves the running worker current
+ok 116 - a merge that changes no worker input leaves the running worker current
+  ---
+  duration_ms: 970.108125
+  type: 'test'
+  ...
+# Subtest: a worker on a commit that is not in the merged history, or unknown, is not current
+ok 117 - a worker on a commit that is not in the merged history, or unknown, is not current
+  ---
+  duration_ms: 432.1095
+  type: 'test'
+  ...
+# Subtest: a merge commit that brings worker changes needs the worker to redeploy
+ok 118 - a merge commit that brings worker changes needs the worker to redeploy
+  ---
+  duration_ms: 406.382709
+  type: 'test'
+  ...
+# Subtest: a worker behind a fresh merge is deploying, and behind an old one is stale
+ok 119 - a worker behind a fresh merge is deploying, and behind an old one is stale
+  ---
+  duration_ms: 0.351167
+  type: 'test'
+  ...
+# Subtest: restored pair drill accepts only the named Docker server and two local database names
+ok 120 - restored pair drill accepts only the named Docker server and two local database names
+  ---
+  duration_ms: 1.50725
+  type: 'test'
+  ...
+# Subtest: the restored worker will not boot with a non-synthetic or runnable fixture
+ok 121 - the restored worker will not boot with a non-synthetic or runnable fixture
+  ---
+  duration_ms: 0.765917
+  type: 'test'
+  ...
+# Subtest: the operational CLI fails on sustained heap pressure and prints safe, useful samples
+ok 122 - the operational CLI fails on sustained heap pressure and prints safe, useful samples
+  ---
+  duration_ms: 195.503833
+  type: 'test'
+  ...
+# Subtest: startWeb returns once /api/health answers, and stop takes the whole process group down
+ok 123 - startWeb returns once /api/health answers, and stop takes the whole process group down
+  ---
+  duration_ms: 335.238292
+  type: 'test'
+  ...
+# Subtest: startWeb stops the server and says so when health never answers
+ok 124 - startWeb stops the server and says so when health never answers
+  ---
+  duration_ms: 357.147416
+  type: 'test'
+  ...
+# Subtest: localDatabaseUrl accepts one loopback list and refuses with the caller's message
+ok 125 - localDatabaseUrl accepts one loopback list and refuses with the caller's message
+  ---
+  duration_ms: 0.951542
+  type: 'test'
+  ...
+1..125
+# tests 125
+# suites 0
+# pass 122
+# fail 1
+# cancelled 0
+# skipped 2
+# todo 0
+# duration_ms 2073.113459
+ ELIFECYCLE  Command failed with exit code 1.
+
+Exit code: 1

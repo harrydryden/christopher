@@ -35,8 +35,8 @@ export interface DiscoveryContext extends FetchContext {
   resolveSpec: (url: string) => SourceSpec | null;
   /** Scan raw HTML/JS text for ATS references (embed snippets, API URLs). */
   findSpecsInText: (text: string, baseUrl?: string) => SourceSpec[];
-  /** Verify a spec by reading one page of it; returns a sample and the board's count. */
-  verifySpec: (spec: SourceSpec) => Promise<DiscoveryVerification>;
+  /** Verify a spec, guarding secondary fetches and reporting challenges even if an adapter catches them. */
+  verifySpec: (spec: SourceSpec, allowHost?: (hostname: string) => void | Promise<void>, onChallenge?: (error: unknown, requestedUrl: string) => void) => Promise<DiscoveryVerification>;
   /** Extract postings from a same-domain HTML listing page (JSON-LD, heuristics). */
   extractFromHtml: (html: string, pageUrl: string) => RawPosting[];
   ai?: DiscoveryAiHooks;

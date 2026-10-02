@@ -64,6 +64,16 @@ function SuggestionCard({ row }: { row: SuggestionRow }) {
   return <article aria-label={row.suggestion.name} className="border border-line-muted p-4"><SuggestionCardContent row={row}/></article>;
 }
 
+function bulkResults(raw?: string): Array<[string, string]> {
+  if (!raw || raw.length > 9000) return [];
+  try {
+    const rows: unknown = JSON.parse(raw);
+    if (!Array.isArray(rows)) return [];
+    return rows.slice(0, 25).filter((row): row is [string, string] =>
+      Array.isArray(row) && row.length === 2 && typeof row[0] === "string" && typeof row[1] === "string" && row[0].length <= 100 && row[1].length <= 100);
+  } catch { return []; }
+}
+
 /**
  * The one box at the top of Review: a name searches the shared catalogue, and a homepage that is
  * not in it yet can be added from here. Following and adding both wait on a confirmed address and
@@ -99,6 +109,18 @@ function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matche
       </form>}
       {!matches.length && !domain && <p className="text-14 text-muted">No match for “{q}”. Paste its homepage to add it.</p>}
     </div>}
+    <details className="mt-4 border-t border-line-faint pt-4">
+      <summary className="min-h-11 cursor-pointer font-semibold underline">Add several company homepages</summary>
+      <form action={addCompanies} className="mt-3 grid gap-3">
+        <input type="hidden" name="returnTo" value="/suggestions" />
+        <input type="hidden" name="bulk" value="1" />
+        <label className="grid gap-1.5"><span className={labelClass}>Company homepages, one per line</span>
+          <textarea name="urls" required rows={5} maxLength={6000} placeholder={"https://acme.com\nhttps://example.org"} className={`resize-y ${inputClass}`} />
+        </label>
+        <p className="text-12 text-muted">Up to 25 homepages. Each is checked; existing companies are followed, and skipped addresses are reported below.</p>
+        <div><Button type="submit" variant="primary" disabled={!!blockedReason}>Add company homepages</Button></div>
+      </form>
+    </details>
   </section>;
 }
 
@@ -110,7 +132,7 @@ function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matche
  */
 const DECK_CARDS = 8;
 
-export default async function SuggestionsPage({ searchParams }: { searchParams: Promise<{ view?: string; notice?: string; page?: string; q?: string; error?: string; added?: string; followed?: string; skipped?: string }> }) {
+export default async function SuggestionsPage({ searchParams }: { searchParams: Promise<{ view?: string; notice?: string; page?: string; q?: string; error?: string; added?: string; followed?: string; skipped?: string; results?: string }> }) {
   const user = await requireUser();
   const params = await searchParams;
   const view = params.view === "sources" || params.view === "history" ? params.view : "review";
@@ -152,6 +174,11 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
     </nav>
     <RefusalNotice sentence={params.error} className="mb-4"/>
     <AddedNotice added={params.added} followed={params.followed} skipped={params.skipped} className="mb-4"/>
+    {bulkResults(params.results).length > 0 && <section aria-label="Company import results" className="mb-4 border border-line-muted p-3 text-13">
+      <h2 className="font-semibold">Each homepage</h2>
+      <ul className="mt-2 space-y-1">{bulkResults(params.results).map(([input, result], index) =>
+        <li key={`${input}-${index}`} className="break-words"><span className="font-medium">{input}</span>: {result}</li>)}</ul>
+    </section>}
     {params.notice && <p role="status" className="mb-4 border border-line-muted p-3 text-14">{params.notice.slice(0, 300)}</p>}
     {broken.length > 0 && <div role="alert" className="mb-4 border-2 border-warn p-3 text-14 text-warn">
       <p><span className="font-semibold">{broken.length === 1 ? "1 source is not being checked" : `${broken.length} sources are not being checked`}:</span> {broken.map(s => s.name).join(", ")}. <a href="/suggestions?view=sources" className="underline">See why</a></p>

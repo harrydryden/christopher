@@ -347,8 +347,13 @@ export function validateLibraryProposal(
     }
     const passage = passageOf(item);
     const startDate = anchoredDate(job.startDate, item.heading.text);
-    const current = job.current === true;
-    const endDate = current ? "" : anchoredDate(job.endDate, item.heading.text);
+    const anchoredEndDate = anchoredDate(job.endDate, item.heading.text);
+    // "Current" is a career claim too. A model may call an ended role current even while its
+    // own quote says when it ended; only an explicit present-tense date in this job's heading can
+    // support that flag, and an anchored end date wins over it.
+    const current = job.current === true && !anchoredEndDate
+      && /\b(?:19|20)\d{2}\s*(?:-|–|—|\bto\b)\s*(?:present|current|ongoing|date)\b/i.test(item.heading.text);
+    const endDate = current ? "" : anchoredEndDate;
     const jobKey = [key(company), key(title), startDate, endDate, String(current)].join("|");
     if (seenJobs.has(jobKey) || employment.length >= LIBRARY_IMPORT_MAX_JOBS) {
       dropped += 1 + rows.length;

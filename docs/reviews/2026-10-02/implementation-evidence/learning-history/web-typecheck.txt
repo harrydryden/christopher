@@ -1,0 +1,7 @@
+$ pnpm --filter @ava/web typecheck
+
+> @ava/web@0.1.0 typecheck /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+> tsc --noEmit -p tsconfig.json
+
+
+Exit code: 0

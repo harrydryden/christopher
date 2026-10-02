@@ -113,7 +113,7 @@ describe("task queue", () => {
     // its follow-up holds the key: none may collide with it, and the two still never run at once.
     const key = "review_library:account";
     const cycle = async (putBack: (task: schema.Task) => Promise<unknown>) => {
-      await db.execute(sql`truncate tasks`);
+      await db.execute(sql`delete from tasks`);
       await enqueueTask(db, "review_library", { userId: "account", libraryVersion: 1 }, { dedupeKey: key });
       const task = (await claimTask(db, "back#0", "interactive"))!;
       const followUp = await enqueueTask(db, "review_library", { userId: "account", libraryVersion: 2 }, { dedupeKey: key });
@@ -1025,7 +1025,7 @@ describe("crash recovery", () => {
     // requeue the live run anyway — or, at its last attempt, fail it and run its hook.
     let abandoned = 0;
     for (const attempts of [1, 3]) {
-      await db.execute(sql`truncate tasks`);
+      await db.execute(sql`delete from tasks`);
       await enqueueTask(db, "discover", { companyId: `renewed-${attempts}` }, {});
       const task = (await claimTask(db, "owner#0", "interactive"))!;
       await db.update(schema.tasks).set({ attempts, lockedAt: past() }).where(eq(schema.tasks.id, task.id));

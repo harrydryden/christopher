@@ -1,0 +1,51 @@
+{
+  "fixture": "synthetic mocked 25-page HTML listing",
+  "mode": "partial",
+  "at": "2026-10-01T16:16:17.194Z",
+  "state": {
+    "userId": "de757f11-b1f5-4963-96c1-3351436b8839",
+    "companyId": "0538c0c3-3b34-43cb-a4f7-af2f49d7518e",
+    "sourceId": "708dcd5d-658f-42c8-8818-cfa03bd3050f",
+    "taskId": "5787f618-a3b0-4e30-957d-6a3e88fffd73"
+  },
+  "fetched": [
+    "https://pager.example/listing?page=0",
+    "https://pager.example/listing?page=1",
+    "https://pager.example/listing?page=2",
+    "https://pager.example/listing?page=3",
+    "https://pager.example/listing?page=4",
+    "https://pager.example/listing?page=5",
+    "https://pager.example/listing?page=6",
+    "https://pager.example/listing?page=7",
+    "https://pager.example/listing?page=8",
+    "https://pager.example/listing?page=9",
+    "https://pager.example/listing?page=10",
+    "https://pager.example/listing?page=11",
+    "https://pager.example/listing?page=12",
+    "https://pager.example/listing?page=13",
+    "https://pager.example/listing?page=14",
+    "https://pager.example/listing?page=15",
+    "https://pager.example/listing?page=16",
+    "https://pager.example/listing?page=17",
+    "https://pager.example/listing?page=18",
+    "https://pager.example/listing?page=19"
+  ],
+  "result": {
+    "deferredUntil": "2026-10-01T16:16:18.164Z",
+    "details": {
+      "sourceId": "708dcd5d-658f-42c8-8818-cfa03bd3050f",
+      "htmlPages": 20,
+      "busyRetries": 0,
+      "reason": "Reading a paged HTML listing"
+    }
+  },
+  "generation": {
+    "publishedPageCount": 20,
+    "publishedNewCount": 20,
+    "seedFirstScan": true
+  },
+  "sourceLastOkScanAt": null,
+  "jobs": 20,
+  "matchingViews": 20,
+  "scans": []
+}

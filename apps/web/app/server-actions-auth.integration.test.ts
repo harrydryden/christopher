@@ -113,21 +113,34 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
     saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", assessCvDraft: "verified",
-    finaliseCvDraft: "user", rescoreLibrary: "verified",
+    finaliseCvDraft: "user", rescoreLibrary: "verified", quoteCvBuild: "verified",
   },
-  "actions/decisions.ts": { roleDetails: "user", decide: "user", saveDecisionTags: "verified", archiveRoles: "user", decideRoles: "user" },
+  "actions/decisions.ts": {
+    roleDetails: "user", decide: "user", decideWithUndoToken: "user", undoDecisionIfCurrent: "user",
+    saveDecisionTags: "verified", saveDecisionTagsSetting: "verified", archiveRoles: "user", decideRoles: "user", decideRolesWithUndoTokens: "user", undoDecisionsIfCurrent: "user",
+  },
   "actions/discovery-sources.ts": {
     saveDiscoverySource: "verified", updateDiscoverySource: "verified", checkDiscoverySource: "verified", importDiscoveryDocument: "verified",
   },
-  "actions/health.ts": { retryTask: "admin", keepCurrentSource: "user" },
-  "actions/learning.ts": {
-    savePinnedStatements: "verified", answerOpenQuestion: "verified", saveSeedProfile: "user", saveSeedProfileSetting: "user",
-    acceptFilterSuggestionWithReport: "verified", acceptFilterSuggestion: "verified", suggestFromScansNow: "verified",
-    rejectFilterSuggestion: "user", resynthesizeNow: "verified", rescoreAllRoles: "verified", savePreferenceProfile: "verified",
-    acceptReasonTag: "user",
+  "actions/health.ts": {
+    retryTask: "admin", retryLocationCheck: "verified", keepCurrentSource: "user",
+    confirmHealthSource: "verified", useHealthCandidate: "verified", keepHealthCurrentSource: "user",
   },
+  "actions/learning.ts": {
+    savePinnedStatements: "verified", savePinnedStatementsSetting: "verified", answerOpenQuestion: "verified", answerOpenQuestionSetting: "verified",
+    saveSeedProfile: "user", saveSeedProfileSetting: "user", savePreferenceProfile: "verified", savePreferenceProfileSetting: "verified",
+    acceptFilterSuggestionWithReport: "verified", acceptFilterSuggestion: "verified", acceptFilterSuggestionSetting: "verified",
+    suggestFromScansNow: "verified", suggestFromScansNowSetting: "verified",
+    rejectFilterSuggestion: "user", rejectFilterSuggestionSetting: "user",
+    resynthesizeNow: "verified", resynthesizeNowSetting: "verified", rescoreAllRoles: "verified", rescoreAllRolesSetting: "verified",
+    acceptReasonTag: "user", acceptReasonTagSetting: "user",
+  },
+  "actions/scores.ts": { retryFailedScore: "verified" },
   "actions/library-import.ts": {
     importLibraryDocument: "verified", acceptLibraryImport: "user", dismissLibraryImport: "user", retryLibraryImport: "verified",
+  },
+  "actions/role-import.ts": {
+    startRoleImport: "verified", retryRoleImport: "verified", saveImportedRole: "verified",
   },
   "actions/settings.ts": {
     saveGate: "user", saveMatchFields: "user", saveTableSettings: "user",

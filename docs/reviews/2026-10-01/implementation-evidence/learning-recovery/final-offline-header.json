@@ -1,0 +1,14 @@
+{
+  "alerts": [
+    "We couldn't confirm whether this went through. Keep this page open; your entries are still here. Check saved work in a new tab before trying again.",
+    "Your preference profile changed since this page loaded. Your edits are still here. Open the latest profile in a new tab, compare it with this draft and copy across the changes you want to keep. Check the latest profile in a new tab",
+    "Your preference profile changed since this page loaded. Your edits are still here. Open the latest profile in a new tab, compare it with this draft and copy across the changes you want to keep. Check the latest profile in a new tab",
+    "Your preference profile changed since this page loaded. Your edits are still here. Open the latest profile in a new tab, compare it with this draft and copy across the changes you want to keep. Check the latest profile in a new tab",
+    "This decision's tags changed since this page loaded. Your selection is still here. Open the latest tags in a new tab and apply the tags you want to keep there. Check the latest tags in a new tab"
+  ],
+  "answer": "Final protected answer draft.",
+  "pins": "Final protected pinned draft.",
+  "profile": "This local draft must not overwrite version nine.",
+  "viewport": 375,
+  "width": 375
+}

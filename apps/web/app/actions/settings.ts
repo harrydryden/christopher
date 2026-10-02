@@ -1,16 +1,20 @@
 "use server";
 
-import { needsEmailConfirmation, requireAdmin, requireUser } from "@/lib/auth";
+import { requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { and, eq, sql } from "drizzle-orm";
+import { userSettings as userSettingsTable } from "@ava/db/schema";
+import { lockAccountScoreInput } from "@ava/db";
 import {
   isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD, parseTermList, SCORING_BATCH_MINUTES_MAX,
   SCORING_BATCH_MINUTES_MIN, SCORING_MODES, scoringBatchMinutesFrom, type GateSettings, type MatchField,
 } from "@ava/core";
 import { enqueue } from "@/lib/enqueue";
 import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
-import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
+import { getSettings, getSettingsFor, setSystemSetting, setUserSetting, saveSettingsAndGateLocked } from "@/lib/settings";
+import { db } from "@/lib/db";
 import { stageRoutesFromForm } from "@/lib/stage-routes";
 import { fail, ok, type ActionResult } from "@/lib/validation";
 import { revalidate } from "@/lib/action-helpers";
@@ -45,22 +49,46 @@ function gateFromForm(formData: FormData, current: GateSettings): { ok: true; ga
 /** The whole gate from one form: what the setup block and the Companies page save. */
 export async function saveGate(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const settings = await getSettings();
-  const parsed = gateFromForm(formData, settings.gate);
-  if (!parsed.ok) return fail(parsed.error);
-  await saveSettingsAndGate(user.id, { gate: parsed.gate }, { rescore: !needsEmailConfirmation(user) });
+  const result = await db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
+    // Merge only submitted fields after taking the same per-account lock as suggestion acceptance.
+    // Otherwise two cards or tabs can overwrite one another with a stale whole-gate read.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${user.id}`}))`);
+    const [saved] = await tx.select({ key: userSettingsTable.key }).from(userSettingsTable)
+      .where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "gate"))).limit(1);
+    // A first save must be the complete setup form. Otherwise the untouched half is inherited
+    // from the application defaults and a location-only save silently chooses "operations".
+    if (!saved && (!formData.has("includeKeywords") || !formData.has("locationTerms"))) {
+      return fail("Choose your keywords and locations together before monitoring starts.");
+    }
+    const settings = await getSettingsFor(user.id, tx as unknown as ReturnType<typeof db>);
+    const parsed = gateFromForm(formData, settings.gate);
+    if (!parsed.ok) return fail(parsed.error);
+    await saveSettingsAndGateLocked(tx, user.id, { gate: parsed.gate });
+    return ok();
+  });
+  if (!result.ok) return result;
   revalidate("/settings", "/companies", "/");
-  return ok();
+  return result;
 }
 
 export async function saveMatchFields(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const settings = await getSettings();
-  const raw = formData.getAll("matchFields").map(String);
-  const matchFields = MATCH_FIELDS.filter((f) => raw.includes(f));
-  await saveSettingsAndGate(user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } }, { rescore: !needsEmailConfirmation(user) });
+  const result = await db().transaction(async tx => {
+    await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${user.id}`}))`);
+    const [saved] = await tx.select({ key: userSettingsTable.key }).from(userSettingsTable)
+      .where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "gate"))).limit(1);
+    if (!saved) return fail("Save your keywords and locations first.");
+    const settings = await getSettingsFor(user.id, tx as unknown as ReturnType<typeof db>);
+    const raw = formData.getAll("matchFields").map(String);
+    const matchFields = MATCH_FIELDS.filter((f) => raw.includes(f));
+    await saveSettingsAndGateLocked(tx, user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } });
+    return ok();
+  });
+  if (!result.ok) return result;
   revalidate("/settings", "/");
-  return ok();
+  return result;
 }
 
 /** Automatic score hiding is retired: a stored `hideThreshold` is left where it is and ignored. */

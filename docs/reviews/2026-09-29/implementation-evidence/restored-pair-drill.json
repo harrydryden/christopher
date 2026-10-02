@@ -1,0 +1,205 @@
+{
+  "at": "2026-09-29T15:50:14.862Z",
+  "passed": true,
+  "elapsedSeconds": 6.81,
+  "sourceDatabase": "christopher_users_benchmark",
+  "targetDatabase": "christopher_recovery_drill",
+  "syntheticOnly": true,
+  "provenance": {
+    "sourceCommit": "d798ccfc617612bc864618a4884f639401e49ebf",
+    "webBuildId": "KnoFYghfgYO8mhSe0336D",
+    "drillSha256": "a01f8b62c213d230b8a1b8f313252071b85ac026011591c3b68b967e3293e0aa",
+    "workerEntrypointSha256": "ca783e6f794b3cf00b90d2a69d7dcdcac9e76e529d3b3b2a6d3bb5abb0595a82",
+    "gateHandlerSha256": "681f85443d7c9757c475b32bfea34dd46725f21d536f53538c28e870ef301a4f"
+  },
+  "logicalRestore": {
+    "at": "2026-09-29T15:50:11.678Z",
+    "passed": true,
+    "failures": [],
+    "elapsedSeconds": 1.94,
+    "sourceDatabase": "christopher_users_benchmark",
+    "targetDatabase": "christopher_recovery_drill",
+    "sourceVersion": {
+      "server_version": "16.15",
+      "server_version_num": 160015
+    },
+    "targetVersion": {
+      "server_version": "16.15",
+      "server_version_num": 160015
+    },
+    "pgDumpVersion": "pg_dump (PostgreSQL) 16.15",
+    "before": {
+      "cvs": 0,
+      "jobs": 1,
+      "scans": 0,
+      "tasks": 1,
+      "users": 1,
+      "orphans": {
+        "scans": 0,
+        "sources": 0,
+        "userJobs": 0,
+        "decisions": 0,
+        "libraries": 0,
+        "applications": 0,
+        "userSettings": 0,
+        "subscriptions": 0
+      },
+      "sources": 1,
+      "companies": 1,
+      "decisions": 0,
+      "libraries": 1,
+      "user_jobs": 1,
+      "applications": 1,
+      "authAccounts": 0,
+      "cvBuildSteps": 0,
+      "userSettings": 2,
+      "subscriptions": 1,
+      "migrationCount": 47,
+      "systemSettings": 3,
+      "companyProfiles": 0,
+      "sourceFingerprint": "4272874563511931649",
+      "invalidConstraints": 0,
+      "preferenceProfiles": 0,
+      "userJobFingerprint": "-1705977793225287360",
+      "decisionFingerprint": "0",
+      "userSettingsFingerprint": "-6524873644332688677"
+    },
+    "after": {
+      "cvs": 0,
+      "jobs": 1,
+      "scans": 0,
+      "tasks": 1,
+      "users": 1,
+      "orphans": {
+        "scans": 0,
+        "sources": 0,
+        "userJobs": 0,
+        "decisions": 0,
+        "libraries": 0,
+        "applications": 0,
+        "userSettings": 0,
+        "subscriptions": 0
+      },
+      "sources": 1,
+      "companies": 1,
+      "decisions": 0,
+      "libraries": 1,
+      "user_jobs": 1,
+      "applications": 1,
+      "authAccounts": 0,
+      "cvBuildSteps": 0,
+      "userSettings": 2,
+      "subscriptions": 1,
+      "migrationCount": 47,
+      "systemSettings": 3,
+      "companyProfiles": 0,
+      "sourceFingerprint": "4272874563511931649",
+      "invalidConstraints": 0,
+      "preferenceProfiles": 0,
+      "userJobFingerprint": "-1705977793225287360",
+      "decisionFingerprint": "0",
+      "userSettingsFingerprint": "-6524873644332688677"
+    },
+    "commands": [
+      {
+        "command": "docker pg_dump",
+        "seconds": 0.06,
+        "code": 0
+      },
+      {
+        "command": "docker pg_dump",
+        "seconds": 0.11,
+        "code": 0
+      },
+      {
+        "command": "docker cp",
+        "seconds": 0.02,
+        "code": 0
+      },
+      {
+        "command": "docker createdb",
+        "seconds": 0.09,
+        "code": 0
+      },
+      {
+        "command": "docker pg_restore",
+        "seconds": 0.44,
+        "code": 0
+      },
+      {
+        "command": "docker vacuumdb",
+        "seconds": 0.29,
+        "code": 0
+      },
+      {
+        "command": "pnpm",
+        "seconds": 0.9,
+        "code": 0
+      }
+    ],
+    "compatibility": {
+      "currentMigrationsReran": true,
+      "sourceAndTargetServerMatch": true
+    },
+    "limitations": [
+      "This is a local logical dump, not a managed snapshot or point-in-time restore.",
+      "It does not establish production backup scheduling, retention, encryption, access control, RPO or hosted RTO.",
+      "Rollback to an older application revision is not automated; destructive down-migrations are deliberately excluded."
+    ]
+  },
+  "actualWorkerHealthy": true,
+  "workerHeartbeatRecorded": true,
+  "realGateTask": {
+    "status": "done",
+    "accounts": 1,
+    "changed": 1,
+    "taskCount": 2
+  },
+  "accountContent": {
+    "email": "restored-drill@example.invalid",
+    "company": "Restoration Drill Co",
+    "role": "Operations Analyst — Restoration Drill",
+    "library_version": 1,
+    "application_status": "applied",
+    "role_visible": true
+  },
+  "webPages": [
+    {
+      "path": "/",
+      "status": 200,
+      "markerFound": true
+    },
+    {
+      "path": "/companies",
+      "status": 200,
+      "markerFound": true
+    },
+    {
+      "path": "/applications",
+      "status": 200,
+      "markerFound": true
+    },
+    {
+      "path": "/library",
+      "status": 200,
+      "markerFound": true
+    }
+  ],
+  "revokedSession": {
+    "status": 401,
+    "cacheControl": "private, no-store"
+  },
+  "workerStarted": true,
+  "webStarted": true,
+  "limitations": [
+    "Local Docker PostgreSQL logical backup/restore and local web/worker processes only.",
+    "No managed snapshot, production data, hosted deployment, RPO, RTO, rollback or external provider was exercised.",
+    "Only a reversible gate task ran; source and restored databases remain for inspection."
+  ],
+  "cleanup": {
+    "sessionRemoved": true,
+    "webPortClosed": true,
+    "workerPortClosed": true,
+    "errors": []
+  }
+}

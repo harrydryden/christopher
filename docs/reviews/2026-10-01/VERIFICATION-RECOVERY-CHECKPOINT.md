@@ -1,0 +1,39 @@
+# Confirmation recovery and protected-source discovery — 1 October 2026
+
+This local checkpoint follows `d1afded`. Astra directed the failure analysis, concurrency design and browser checks; Sol agents implemented and independently reviewed the repairs. It advances the 90-point roadmap without asserting that any job has reached its acceptance threshold.
+
+## Saved work, confirmation and model admission
+
+An unconfirmed member could save a decision that queued tagging and profile synthesis. Older queued scoring, Library review or CV tasks could also reach a provider even though the corresponding web actions required confirmation. The worker now checks account eligibility before model admission, and the normal account engine checks again before reserving budget. Batch scoring uses the same preparation guard. Library model passes refuse before taking a hold; deterministic Library feedback remains available. A legacy CV build preserves its draft, closes running steps and gives an actionable confirmation message.
+
+A role waiting for confirmation now has a distinct verification state. It does not masquerade as an exhausted budget, missing provider or indefinitely running score. Existing scores remain visible with an explanation. Changed admission and recovery paths retain verified-member and administrator behaviour.
+
+Stopping work before confirmation must not lose the user's saved input. First confirmation now holds the same account fence as preference and decision writers, marks the account verified and durably queues appropriate saved work in one transaction. Starting preferences and standing decisions can trigger profile synthesis; open matched or shortlisted roles can trigger re-scoring. Reasons are reconciled in pages of 100, avoiding a large fanout in the confirmation transaction. Repeated verified sign-ins do not restart this work. Seed and gate saves recheck eligibility inside their locked transaction rather than relying on an earlier session snapshot.
+
+Failure injection exposed a further partial-commit problem: confirmation/reset tokens were consumed before claim recovery could fail. Token consumption, account claim and saved-work enqueueing now share a transaction. Password resets also commit their password and session changes with that claim, so failure leaves the token reusable and the previous password/sessions intact. The Google linked-account path retries an incomplete claim after an earlier link succeeded. Its link transaction re-reads the account under the same fence, preserving a password and session established by a concurrent reset. The account/global-user lock order is preserved when a reset changes the password.
+
+## User experience
+
+Learning now explains the confirmation dependency before submission. Controls that require confirmation, including their editable fields, are disabled with a reason; saving starting preferences and permitted non-model actions remain available. “Update preference profile” and “Starting preferences” replace technical labels. Starting preferences, pinned statements and question answers have explicit accessible names, and question forms stack on phones.
+
+The [local browser check](implementation-evidence/verification-admission/BROWSER-VERIFICATION.md) used a synthetic account and real Next server. At 1280 and 375 pixels the checked page had no horizontal overflow, framework overlay or reported browser error. Keyboard entry and Save persisted starting preferences with zero tasks before confirmation. Calling the real claim function on that fixture queued its profile work and enabled the controls. A populated question fixture then saved its answer as a new profile version by keyboard. No worker or model ran. This is not evidence of email delivery, live OAuth, representative task success or assistive-technology qualification.
+
+## Source composition and bot challenges
+
+The [protected-source checkpoint](BOT-PROTECTED-CORPUS-VERIFICATION.md) records an explicit Cloudflare challenge on Revolut's first-party careers listing and an independently checked homepage-to-listing link. Updating the existing Revolut case completes the structural corpus: 31 companies, eight primary ATS families, five custom HTML cases, two JavaScript-heavy cases, two multi-region Workday boards, a landing-to-board hop and a genuinely evidenced bot-protected case. Posting counts remain unreviewed; a structural pass is not a discovery or extraction-quality pass.
+
+The observation exposed another implementation gap: discovery could continue trying paths on a host after an explicit challenge. The new protection is scoped to one discovery run. It carries a deny-only host guard through fetches, redirects, adapter verification and browser requests, without relaxing existing address or robots checks or permanently banning a shared host. Plain path-level 403 responses and robots denial are not mislabelled as explicit challenges. Unrelated ATS hosts remain available. Synthetic tests, rather than repeated attempts against the live challenge, establish these boundaries.
+
+The single guarded Revolut discovery-only diagnostic returned `not_found`, with four discovery fetches, three verifications and no browser or AI use. It did not extract postings. Its report does not retain enough per-host traffic to prove which request encountered a challenge, so it cannot independently establish live suppression. It is a failed source-resolution diagnostic, not a successful final-corpus rate.
+
+## Evidence, release requirements and remaining limits
+
+The [confirmation test record](implementation-evidence/verification-admission/README.md) contains exact commands and focused counts for worker admission, Library/CV refusal, first-confirmation recovery, token rollback, reason pagination and score wording. It distinguishes fake provider tests and isolated PostgreSQL checks from live evidence. The protected-source checkpoint retains its coverage, HTTP, browser and discovery regressions. Final typechecks and builds are linked from those evidence records. Raw test output may retain terminal whitespace.
+
+The new `resume_reason_tags` task and `verification` score-state value use existing text columns; no additional schema migration is needed for this checkpoint. Migration 0053 from the preceding checkpoint is still required. Drain or stop old workers before the new web build can enqueue confirmation recovery. All writers and workers must be upgraded coherently: old code does not enforce these admission fences and does not understand the new task handler. No production migration, deployment, push, email or paid model call was performed.
+
+Synthesis and re-scoring are independent durable tasks. They can produce a seed-based score before a new profile leads to another pass; normal coalescing bounds frequency, but this is not a live cost qualification. Reason tagging may also complete after the initial synthesis, whose input still includes the raw reasons. Recovery targets an unconfirmed non-administrator's first confirmation; an existing bootstrap administrator is already eligible and does not receive this new transition fanout. Admission checks cannot cancel provider work already submitted or remove its incurred cost. The source guard cannot retract requests already in flight when a challenge is detected. Representative usability, verified provider judgement, full posting recall/precision and hosted continuity remain unqualified.
+
+## Re-score
+
+Scores remain **J1 83, J2 77, J3 85, J4 83, J5 85, J6 85, J7 80, J8 83 and J9 70**. Dimension ratings and the acceptance formula are unchanged in the [canonical scorecard and ordered roadmap](../2026-09-29/RESCORE-90.md). The source-composition gate has advanced to passed, and concrete local first-use/recovery defects are repaired. Those improvements do not supply the human, model-quality, complete-corpus or hosted evidence required to certify every job at 90 with the requested dimension floors.

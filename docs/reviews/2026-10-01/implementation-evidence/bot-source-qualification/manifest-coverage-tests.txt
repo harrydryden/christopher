@@ -1,0 +1,9 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+
+ Test Files  2 passed (2)
+      Tests  36 passed (36)
+   Start at  22:42:28
+   Duration  1.44s (transform 52%, import 45%, tests 3%)
+

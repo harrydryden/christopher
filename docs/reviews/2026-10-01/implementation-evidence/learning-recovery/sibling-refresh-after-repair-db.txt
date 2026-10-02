@@ -1,0 +1,5 @@
+ version |                                               markdown
+---------+-------------------------------------------------------------------------------------------------------
+       6 | Unsaved older draft that should not replace newer work.Newer saved work must survive the stale draft.
+       5 | Unsaved older draft that should not replace newer work.
+(2 rows)

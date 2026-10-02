@@ -1,0 +1,12 @@
+{
+  "duplicateResult": "Duplicate acceptance result: a",
+  "unknownResult": "Unknown acceptance result: unknown",
+  "missingResultVerdict": {
+    "verdict": "blocked",
+    "reasons": [
+      "1 case(s) lack an independent role-count label",
+      "1 case(s) lack a qualifying independent posting-identity snapshot",
+      "1 selected case(s) have no result"
+    ]
+  }
+}

@@ -6,17 +6,27 @@
  * careers page, whose name was taken from its domain — proposes one instead, and this is the one
  * place that turns a proposal into the rename.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { enqueueTasks, taskRow } from "@ava/db";
 import { companies, companyNameSuggestions } from "@ava/db/schema";
 import type { db } from "./db";
 
-type Writer = Pick<ReturnType<typeof db>, "select" | "insert" | "update">;
+type Writer = Pick<ReturnType<typeof db>, "select" | "insert" | "update" | "execute">;
 
 export const MAX_COMPANY_NAME = 200;
 
 /** The catalogue's name rule in one place: trimmed and bounded. Empty means "no name given". */
 export function normaliseCompanyName(raw: string): string {
   return raw.trim().slice(0, MAX_COMPANY_NAME);
+}
+
+/** Queue every account with a view of this company's roles after its name changes. */
+export async function enqueueCompanyNameRescores(writer: Writer, companyId: string): Promise<void> {
+  const affected = await writer.execute<{ user_id: string }>(sql`select distinct uj.user_id
+    from user_jobs uj join jobs j on j.id = uj.job_id join users u on u.id = uj.user_id
+    where j.company_id = ${companyId}::uuid and (u.role = 'admin' or u.email_verified_at is not null)`);
+  await enqueueTasks(writer as ReturnType<typeof db>, affected.rows.map(row =>
+    taskRow("rescore_all", { userId: row.user_id, onlyInTable: true })), 250);
 }
 
 /**
@@ -34,6 +44,7 @@ export async function applySuggestedName(writer: Writer, suggestionId: string, r
   const name = normaliseCompanyName(resolved.name);
   if (!name) return null;
   await writer.update(companies).set({ name }).where(eq(companies.id, resolved.companyId));
+  await enqueueCompanyNameRescores(writer, resolved.companyId);
   return { companyId: resolved.companyId, name };
 }
 

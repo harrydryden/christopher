@@ -1,23 +1,31 @@
 import * as cheerio from "cheerio";
 import type { HtmlRecipe, RawPosting } from "../types";
-import { absoluteUrl, normalizeUrl } from "../normalize";
+import { absoluteUrl, looksRemote, normalizeUrl } from "../normalize";
 import { extractJsonLdPostings } from "./jsonld";
 import { isAtsHost } from "./common";
 
 const JOB_PATH_RE =
-  /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-details?|joblisting)\/|[?&](?:gh_jid|jobId|job_id|reqId|requisitionId)=/i;
+  /\/(?:jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-?details?|joblisting)\//i;
+const JOB_QUERY_KEYS = new Set(["gh_jid", "jobid", "job_id", "reqid", "requisitionid"]);
 
 /** A link label saying it leads to the complete listing: "All jobs", "Search roles", "View open positions". */
 export const COMPLETE_LISTING_LABEL =
-  /\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities))\b/i;
+  /\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:jobs?|roles?|positions?|vacancies)\s+listings?)\b/i;
 
 // These are listing, subscription or careers-content destinations, never posting-detail slugs.
 // Exact segment matching preserves genuine titles such as `/jobs/benefits-lead`.
 const NON_DETAIL_LAST_SEGMENT_RE =
-  /^(?:search|listings?|all-jobs?|open-jobs?|feed|rss|compatibility|emerging-talent|benefits?|teams?|locations?)$/i;
+  /^(?:search|listings?|all-jobs?|open-jobs?|feed|rss|compatibility|emerging-talent|benefits?|teams?|locations?|faqs?|support|help|legal|privacy|terms|polic(?:y|ies)|accessibility|code-of-conduct|accommodations?(?:-for-disability)?|(?:our-)?commitment-to-(?:applicants|candidates)|(?:working-on-)?diversity-and-inclus(?:ion|ivity)|culture-and-values(?:-at-[a-z0-9-]+)?|total-rewards|interview-guide|how-(?:we-hire|to-apply)|life-at-[a-z0-9-]+)$/i;
 
 const NAV_TEXT_RE =
-  /^(careers?|jobs?|all (?:jobs|roles|openings|positions)|view all(?: jobs| roles| openings)?|see (?:all|open) (?:jobs|roles|positions|openings)|open (?:roles|positions|jobs)|apply(?: now)?|learn more|read more|find out more|back(?: to .*)?|home|search|our team|join us|join the team|next|previous|more|show more|load more|view openings|browse jobs|filter|sort|menu|close)$/i;
+  /^(careers?|jobs?|all (?:jobs|roles|openings|positions)|view all(?: jobs| roles| openings)?|see (?:all|open) (?:jobs|roles|positions|openings)|open (?:roles|positions|jobs)|apply(?: now)?|learn more|read more|discover more|find out more|how to apply|back(?: to .*)?|home|search|our team|join us|join the team|next|previous|more|show more|load more|view openings|browse jobs|filter|sort|menu|close)$/i;
+const INFORMATIONAL_CTA_RE = /^(?:learn|read|discover|explore|find out) more about\b/i;
+const POLICY_LINK_TEXT_RE =
+  /^(?:report (?:this|a) (?:content|page)|(?:faqs?|frequently asked questions)(?:\s*(?:&|and)\s*support)?|(?:review\s+)?accommodations? for disability|(?:our\s+)?code of conduct|(?:our\s+)?commitment to applicants?)$/i;
+// Match the BrowserRenderer's expansion labels; detecting one in the HTTP page means that page
+// alone cannot prove the whole listing, even when it already contains some role links.
+const LOAD_MORE_TEXT_RE = /^(?:(?:load|show|view|see) more(?: (?:jobs|roles|positions|openings|results))?|more (?:jobs|roles|positions|openings))$/i;
+const NEXT_TEXT_RE = /^(?:next(?: page| jobs| roles| results| pagination page)?(?:\s*[›»→>]+)?|go to next page(?:,\s*number\s*\d+)?)$/i;
 
 const LOCATION_HINT_RE =
   /(remote|hybrid|on-?site|,\s*[A-Z]{2}\b|,\s*(?:UK|USA|US|UAE)\b|london|new york|san francisco|berlin|paris|amsterdam|dublin|singapore|sydney|toronto|austin|seattle|boston|chicago|denver|los angeles|washington|manchester|edinburgh|cambridge|oxford|bristol|leeds|glasgow|tel aviv|bangalore|tokyo|madrid|barcelona|munich|zurich|stockholm|copenhagen|milan|lisbon|warsaw|dubai|costa mesa|irvine|el segundo|reston|arlington)/i;
@@ -29,10 +37,55 @@ export interface JobLink {
   text: string;
   context: string;
   location?: string;
+  locations?: string[];
 }
 
 function cleanText(s: string | undefined | null): string {
   return (s ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** Find a usable expansion control in static HTML, including nested labels and accessible names. */
+export function hasListingExpansionControl(html: string, pageUrl: string): boolean {
+  const $ = cheerio.load(html);
+  for (const element of $("button, a, [role='button']").toArray()) {
+    const node = $(element);
+    if (node.is(":disabled") || node.is("[disabled], [aria-disabled='true']") || node.closest("fieldset[disabled]").length) continue;
+    if (node.is("[data-toggle='collapse'], [data-bs-toggle='collapse']")) continue;
+    if (node.closest("template, [hidden], [aria-hidden='true']").length) continue;
+    if (node.parents().addBack().toArray().some(parent => /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test($(parent).attr("style") ?? ""))) continue;
+    const label = cleanText(node.attr("aria-label") || node.text());
+    if (label.length > 60 || !(LOAD_MORE_TEXT_RE.test(label) || NEXT_TEXT_RE.test(label) || node.attr("rel") === "next")) continue;
+    const href = node.attr("href");
+    if (href) {
+      try {
+        const target = new URL(href, pageUrl);
+        // JavaScript pagination has no HTTP next URL. Its explicit, visible control still proves
+        // that this static page is only a slice; the guarded browser may click it.
+        if (target.protocol !== "javascript:" && target.origin !== new URL(pageUrl).origin) continue;
+      }
+      catch { return true; } // An unparseable candidate still requires browser verification.
+    }
+    return true;
+  }
+  return false;
+}
+
+/** A selected job-listing filter, excluding unchecked choices and unrelated navigation controls. */
+export function visibleListingScopeRestriction(html: string): string | undefined {
+  const $ = cheerio.load(html);
+  const regions = $("main [class*='job-filter' i], main [class*='role-filter' i], main [class*='search-filter' i], main [data-testid*='job-filter' i], main [data-testid*='role-filter' i], main [id*='job-filter' i]");
+  for (const region of regions.toArray().slice(0, 20)) {
+    const node = $(region);
+    if (node.closest("[hidden], [aria-hidden='true']").length) continue;
+    for (const control of node.find("option[selected], [aria-pressed='true'], [aria-selected='true'], input[type='checkbox'][checked], input[type='radio'][checked], input[type='text'][value], input[type='search'][value]").toArray().slice(0, 30)) {
+      const selected = $(control);
+      if (selected.closest("[hidden], [aria-hidden='true']").length) continue;
+      if (selected.closest("[class*='sort' i], [id*='sort' i], [class*='locale' i], [id*='locale' i], [class*='language' i]").length) continue;
+      const value = (selected.attr("value") ?? selected.text()).replace(/\s+/g, " ").trim();
+      if (value && !/^(?:all|any|all jobs|all roles|all locations|all teams|all departments|select)$/i.test(value)) return value.slice(0, 80);
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -48,6 +101,7 @@ export function isExplicitEmptyListing(html: string, url: string): boolean {
     return false;
   }
   if (parsed.search) return false;
+  if (visibleListingScopeRestriction(html)) return false;
   const lastSegment = parsed.pathname.split("/").filter(Boolean).at(-1) ?? "";
   if (!/^(?:careers?|jobs?|open-roles?|openings?|positions?|vacancies)$/i.test(lastSegment)) return false;
 
@@ -82,34 +136,75 @@ function looksLikeTitle(text: string): boolean {
   if (t.length < 2 || t.length > 120) return false;
   if (!/\p{L}/u.test(t)) return false;
   if (NAV_TEXT_RE.test(t)) return false;
+  if (INFORMATIONAL_CTA_RE.test(t)) return false;
+  if (POLICY_LINK_TEXT_RE.test(t)) return false;
   return true;
 }
 
+/** A role card's named title is more specific than the whole link, which may also wrap team and location. */
+function linkTitle($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]): string {
+  const link = $(el);
+  const named = link.find("h1, h2, h3, h4, h5, h6, [data-job-title], [itemprop='title'], [class*='job-title'], [class*='role-title'], [class*='position-title']").first();
+  const title = cleanLinkText(named.text());
+  if (named.length) return title;
+  return cleanLinkText(link.text()) || cleanLinkText(link.attr("aria-label")) || cleanLinkText(link.attr("title"));
+}
+
 function isJobHref(url: string, pageUrl: string): boolean {
+  let u: URL;
   try {
-    if (isAtsHost(new URL(url).hostname)) return true;
+    u = new URL(url);
   } catch {
     return false;
   }
-  if (!JOB_PATH_RE.test(url)) return false;
+  // Query values may contain a whole `/jobs/` URL (for example an abuse report's report_url).
+  // Only the destination's own pathname or a named requisition parameter can identify a job.
+  const jobQuery = [...u.searchParams.keys()].some(key => JOB_QUERY_KEYS.has(key.toLowerCase()));
+  if (!isAtsHost(u.hostname) && !JOB_PATH_RE.test(u.pathname) && !jobQuery) return false;
   const norm = normalizeUrl(url);
   if (norm === normalizeUrl(pageUrl)) return false;
-  try {
-    // A bare listing root such as /careers or /jobs is not a job detail page.
-    const u = new URL(url);
-    const segs = u.pathname.split("/").filter(Boolean);
-    if (segs.length <= 1 && !u.search) return false;
-    if (NON_DETAIL_LAST_SEGMENT_RE.test(segs.at(-1) ?? "")) return false;
-  } catch {
-    return false;
-  }
+  // Exact topic slugs are navigation/content pages, not a profession containing the same word.
+  // Strip .html for company sites which publish both postings and help articles as HTML files.
+  const segs = u.pathname.split("/").filter(Boolean);
+  const last = (segs.at(-1) ?? "").replace(/\.html?$/i, "");
+  if (segs.length <= 1 && !u.search) return false;
+  if (NON_DETAIL_LAST_SEGMENT_RE.test(last)) return false;
   return true;
 }
 
 function containerOf($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]) {
   const node = $(el);
-  const container = node.closest("li, article, tr, .job, .position, .opening, [class*='job'], [class*='role'], [class*='posting']");
-  return container.length ? container : node.parent();
+  let cursor = node.parent();
+  let fallback = node;
+  for (let depth = 0; depth < 8 && cursor.length; depth++, cursor = cursor.parent()) {
+    const text = cleanText(cursor.text());
+    if (text.length > 500) break;
+    // A semantic article can contain a whole grid of jobs. Metadata in it belongs to this role
+    // only if it contains one distinct posting destination; duplicate links to that role are OK.
+    const destinations = new Set(cursor.find("a[href]").toArray().flatMap(anchor => {
+      const href = $(anchor).attr("href") ?? "";
+      const absolute = absoluteUrl(href, "https://listing.invalid/");
+      return absolute && isJobHref(absolute, "https://listing.invalid/") ? [normalizeUrl(absolute)] : [];
+    }));
+    if (destinations.size > 1) break;
+    if (destinations.size === 0) continue;
+    const tag = cursor.get(0)?.tagName?.toLowerCase();
+    const classes = cursor.attr("class") ?? "";
+    const card = tag === "li" || tag === "article" || tag === "tr"
+      || /(?:^|[-_\s])(?:job|role|position|opening|posting)(?:[-_\s]|$)/i.test(classes)
+      && !/(?:^|[-_\s])(?:title|link)(?:[-_\s]|$)/i.test(classes);
+    const location = cursor.is("[data-location]") || cursor.find(".location, .job-location, .loc, [itemprop='jobLocation'], [class*='location' i], [data-testid*='location' i], [data-location]").length > 0;
+    if (card || location) return cursor;
+    fallback = cursor;
+  }
+  return fallback;
+}
+
+function mergeLocationValues<T extends { location?: string; locations?: string[] }>(previous: T, location: string | undefined): void {
+  if (!location) return;
+  if (!previous.location) previous.location = location;
+  const values = new Set([...(previous.locations ?? []), previous.location, location].filter((value): value is string => !!value));
+  if (values.size > 1) previous.locations = [...values];
 }
 
 function isGlobalChrome($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]): boolean {
@@ -124,7 +219,7 @@ function isGlobalChrome($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI
 export function findJobLinks(html: string, pageUrl: string): JobLink[] {
   const $ = cheerio.load(html);
   const out: JobLink[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, JobLink>();
   $("a[href]").each((_, el) => {
     // Navigation paths often sit below `/careers/` and therefore resemble job-detail URLs. The
     // element's semantic container is stronger evidence than words such as "Benefits" or
@@ -134,21 +229,36 @@ export function findJobLinks(html: string, pageUrl: string): JobLink[] {
     if (!href) return;
     const abs = absoluteUrl(href, pageUrl);
     if (!abs) return;
-    const text = cleanLinkText($(el).text()) || cleanLinkText($(el).attr("aria-label")) || cleanLinkText($(el).attr("title"));
+    const text = linkTitle($, el);
     if (!looksLikeTitle(text)) return;
     if (!isJobHref(abs, pageUrl)) return;
     const key = normalizeUrl(abs);
-    if (seen.has(key)) return;
-    seen.add(key);
     const container = containerOf($, el);
     const context = cleanText(container.text()).replace(text, "").slice(0, 160);
     // Prefer an explicit field on this posting card to flattened card prose, which can join a
     // location and department (for example "Remote US Core Services") into one false location.
-    const location = cleanText(container.attr("data-location")) || cleanText(container.find("[data-location]").first().attr("data-location"))
-      || cleanText(container.find(".location, .job-location, .loc, [itemprop='jobLocation']").first().text());
-    out.push({ url: abs, text, context, ...(location ? { location } : {}) });
+    const locationField = container.find(".location, .job-location, .loc, [itemprop='jobLocation'], [class*='location' i], [data-testid*='location' i]")
+      .toArray().map(field => cleanText($(field).text())).find(value => value.length > 0 && value.length <= 80);
+    const location = cleanText(container.attr("data-location")) || cleanText(container.find("[data-location]").first().attr("data-location")) || locationField;
+    const previous = seen.get(key);
+    if (previous) { mergeLocationValues(previous, location); return; }
+    const link: JobLink = { url: abs, text, context, ...(location ? { location } : {}) };
+    seen.set(key, link);
+    out.push(link);
   });
   return out;
+}
+
+/** A narrowly scoped distinct-role total, not page numbers or repeated location-row counts. */
+export function advertisedDistinctJobTotal(html: string): number | undefined {
+  const $ = cheerio.load(html);
+  const totals = $(".ais-Stats-text").toArray().flatMap(element => {
+    const match = cleanText($(element).text()).match(/^([\d,]+) jobs? available$/i);
+    if (!match) return [];
+    const count = Number(match[1]!.replaceAll(",", ""));
+    return Number.isSafeInteger(count) && count >= 0 && count <= 100_000 ? [count] : [];
+  });
+  return totals.length ? Math.max(...totals) : undefined;
 }
 
 function locationFromContext(context: string): string | undefined {
@@ -166,7 +276,7 @@ function locationFromContext(context: string): string | undefined {
 export function applyRecipe(html: string, pageUrl: string, recipe: HtmlRecipe): RawPosting[] {
   const $ = cheerio.load(html);
   const out: RawPosting[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, RawPosting>();
   $(recipe.listItem).each((_, el) => {
     const item = $(el);
     const titleEl = recipe.title === ":self" ? item : item.find(recipe.title).first();
@@ -177,11 +287,13 @@ export function applyRecipe(html: string, pageUrl: string, recipe: HtmlRecipe): 
     const url = absoluteUrl(href, pageUrl);
     if (!url) return;
     const key = normalizeUrl(url);
-    if (seen.has(key)) return;
-    seen.add(key);
     const location = recipe.location ? cleanText(item.find(recipe.location).first().text()) || undefined : undefined;
     const department = recipe.department ? cleanText(item.find(recipe.department).first().text()) || undefined : undefined;
-    out.push({ title, url, location, department, remote: location ? /remote/i.test(location) || undefined : undefined });
+    const previous = seen.get(key);
+    if (previous) { mergeLocationValues(previous, location); previous.remote ||= looksRemote(location) || undefined; return; }
+    const posting = { title, url, location, department, remote: looksRemote(location) || undefined };
+    seen.set(key, posting);
+    out.push(posting);
   });
   return out;
 }
@@ -225,11 +337,13 @@ export function extractPostingsFromHtml(html: string, pageUrl: string, recipe?: 
   if (jsonld.length > 0) return jsonld;
   return findJobLinks(html, pageUrl).map((link) => {
     const location = link.location ?? locationFromContext(link.context);
+    const remote = [location, ...(link.locations ?? [])].some(value => looksRemote(value)) || undefined;
     return {
       title: link.text,
       url: link.url,
       location,
-      remote: location ? /remote/i.test(location) || undefined : undefined,
+      ...(link.locations?.length ? { locations: link.locations } : {}),
+      remote,
     };
   });
 }
@@ -350,10 +464,33 @@ export function nextListingPage(html: string, pageUrl: string): string | null {
     const node = $(element);
     const label = cleanText(node.attr("aria-label") || node.text());
     const explicit = (node.attr("rel") ?? "").split(/\s+/).includes("next");
-    if (!explicit && !/^(next(?: page)?|older (?:jobs|posts)|next [›»→])$/i.test(label)) continue;
+    if (!explicit && !NEXT_TEXT_RE.test(label) && !/^older (?:jobs|posts)$/i.test(label)) continue;
     if (node.attr("aria-disabled") === "true") continue;
     const target = absoluteUrl(node.attr("href") ?? "", pageUrl);
     if (target && new URL(target).origin === new URL(pageUrl).origin && normalizeUrl(target) !== normalizeUrl(pageUrl)) return target;
   }
   return null;
+}
+
+/** An explicit next page that cannot be traversed under the same-origin listing policy. */
+export function hasUnfollowableListingContinuation(html: string, pageUrl: string): boolean {
+  let origin: string;
+  try { origin = new URL(pageUrl).origin; }
+  catch { return false; }
+  const $ = cheerio.load(html);
+  for (const element of $("link[rel~='next'], a[href]").toArray()) {
+    const node = $(element);
+    const relNext = (node.attr("rel") ?? "").split(/\s+/).some(value => value.toLowerCase() === "next");
+    const label = cleanText(node.attr("aria-label") || node.text());
+    const explicitLabel = /^(?:next (?:page|jobs|roles|results)(?:\s*[›»→>]+)?|go to next page(?:,\s*number\s*\d+)?|older (?:jobs|posts))$/i.test(label);
+    const paginationContext = node.closest("nav[aria-label*='pagination' i], [class*='pagination' i], [id*='pagination' i]").length > 0;
+    if (!relNext && !explicitLabel && !(paginationContext && NEXT_TEXT_RE.test(label))) continue;
+    if (node.is("a")) {
+      if (node.is("[disabled], [aria-disabled='true']") || node.closest("fieldset[disabled], template, [hidden], [aria-hidden='true']").length) continue;
+      if (node.parents().addBack().toArray().some(parent => /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test($(parent).attr("style") ?? ""))) continue;
+    }
+    const target = absoluteUrl(node.attr("href") ?? "", pageUrl);
+    if (target && new URL(target).origin !== origin) return true;
+  }
+  return false;
 }

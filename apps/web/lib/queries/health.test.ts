@@ -385,6 +385,9 @@ it("shows what is running against its deadline, and what a crash handed back", a
     .toEqual({ kind: "cv", id: "33333333-3333-4333-8333-333333333333" });
   // Work that names an account and nothing resolvable still says whose queue is stuck.
   expect(taskSubjectRef("score_job", { userId: account.id })).toEqual({ kind: "user", id: account.id });
+  expect(taskSubjectRef("fetch_locations", { jobId: "33333333-3333-4333-8333-333333333333", locationRevision: "rev" }))
+    .toEqual({ kind: "job", id: "33333333-3333-4333-8333-333333333333" });
+  expect(taskSubjectRef("admit_scores", { userId: account.id, jobIds: [] })).toEqual({ kind: "user", id: account.id });
   expect(taskSubjectRef("run_daily", { trigger: "schedule" })).toBeNull();
 });
 
@@ -726,6 +729,40 @@ it("puts a spent AI budget first, and says what stops until it resets", async ()
 
   // Raising the budget resolves it, which is what the item's link leads to.
   await database.update(schema.userSettings).set({ value: 20 }).where(sql`user_id = ${account.id} and key = 'aiBudgetUsd'`);
+  expect(await healthItems(account.id)).toEqual([]);
+  expect(await countHealthItems(account.id)).toBe(0);
+});
+
+it("keeps incomplete and unexpectedly empty scans in attention until a complete scan clears them", async () => {
+  await resetAttention();
+  const account = await ensureTestUser(database, "incomplete@example.com");
+  const emptyCompany = await company("Empty Board", account);
+  const partialCompany = await company("Partial Board", account);
+  const [emptySource, partialSource] = await database.insert(schema.careerSources).values([
+    { companyId: emptyCompany.id, type: "html", url: "https://emptyboard.example/jobs", status: "active" },
+    { companyId: partialCompany.id, type: "html", url: "https://partialboard.example/jobs", status: "active" },
+  ]).returning();
+  const at = (minute: number) => new Date(Date.now() - (10 - minute) * 60_000);
+  await database.insert(schema.scans).values([
+    { sourceId: emptySource!.id, status: "ok", postingsFound: 12, startedAt: at(1) },
+    { sourceId: emptySource!.id, status: "suspect_empty", postingsFound: 0, startedAt: at(2) },
+    { sourceId: partialSource!.id, status: "ok", postingsFound: 12, startedAt: at(1) },
+    { sourceId: partialSource!.id, status: "partial", postingsFound: 3, error: "pagination stopped", startedAt: at(2) },
+  ]);
+  // Re-discovery found no replacement; a later failed request does not establish recovery.
+  await database.insert(schema.discoveryRuns).values({ companyId: emptyCompany.id, status: "not_found", candidates: [], startedAt: at(3) });
+  await database.insert(schema.scans).values({ sourceId: partialSource!.id, status: "failed", error: "HTTP 500", startedAt: at(3) });
+  const items = await healthItems(account.id);
+  expect(items.map(item => [item.kind, item.company?.id])).toEqual([
+    ["suspect_empty", emptyCompany.id], ["partial", partialCompany.id],
+  ]);
+  expect(items.find(item => item.kind === "partial")?.reason).toBe("pagination stopped");
+  expect(await countHealthItems(account.id)).toBe(items.length);
+
+  await database.insert(schema.scans).values({ sourceId: emptySource!.id, status: "ok", postingsFound: 0, startedAt: at(4) });
+  expect((await healthItems(account.id)).map(item => item.kind)).toEqual(["partial"]);
+  expect(await countHealthItems(account.id)).toBe(1);
+  await database.insert(schema.scans).values({ sourceId: partialSource!.id, status: "ok", postingsFound: 10, startedAt: at(4) });
   expect(await healthItems(account.id)).toEqual([]);
   expect(await countHealthItems(account.id)).toBe(0);
 });

@@ -1,0 +1,12 @@
+{
+  "observedOn": "2026-09-29",
+  "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/",
+  "httpStatus": 200,
+  "method": "read-only public HTTP response via PoliteFetcher with robots checks",
+  "visibleJobLinksOnFirstPage": 6,
+  "resultLegend": "1 - 6 of 999+ results",
+  "nextAnchorAriaLabel": "Go to Next Page, Number 2",
+  "nextPageUrl": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/?folderRecordsPerPage=6&folderOffset=6",
+  "sampleFirstJobUrl": "https://jobs.siemens.com/en_US/externaljobs/JobDetail/524218",
+  "limitation": "The first page and its pagination signal were inspected; total posting identities and traversal completion were not measured."
+}

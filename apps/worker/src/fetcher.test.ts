@@ -13,7 +13,7 @@ import { startTestServer, type TestServer } from "./test-server";
 
 let server: TestServer;
 
-const HOSTS = ["www.example.test", "blocked.test", "boards-api.greenhouse.io"];
+const HOSTS = ["www.example.test", "blocked.test", "boards-api.greenhouse.io", "robots-redirect.test", "robots-target.test", "robots-challenge.test"];
 
 beforeAll(async () => {
   server = await startTestServer(
@@ -25,20 +25,35 @@ beforeAll(async () => {
         "/robots.txt": { body: "User-agent: *\nDisallow: /private/\nAllow: /private/public\n", contentType: "text/plain" },
         "/private/public": { body: "<html><body>public under a disallowed prefix</body></html>" },
         "/echo": (req) => ({ body: JSON.stringify({ ua: req.headers["user-agent"], host: req.headers["x-forwarded-host"] }) }),
+        "/to-challenge": { status: 302, body: "", headers: { location: "https://blocked.test/403-challenge-header" } },
       },
       "blocked.test": {
         "/robots.txt": { status: 404, body: "" },
         "/403": { status: 403, body: "<html><body>forbidden</body></html>" },
+        "/403-challenge-header": { status: 403, body: "<html><body>ordinary wrapper</body></html>", headers: { "cf-mitigated": "challenge" } },
         "/429": { status: 429, body: "<html><body>slow down</body></html>", headers: { "retry-after": "5" } },
         "/429-no-hint": { status: 429, body: "<html><body>slow down</body></html>" },
         "/503": { status: 503, body: "<html><body>unavailable</body></html>" },
         "/503-challenge": { status: 503, body: "<html><head><title>Just a moment...</title></head><body>cf-browser-verification</body></html>" },
         "/challenge": { body: "<html><head><title>Just a moment...</title></head><body>cf-browser-verification</body></html>" },
+        "/padded-challenge": { body: `<html><head><title>Just a moment...</title></head><body>${"x".repeat(25_000)}</body></html>` },
+        "/captcha-widget-listing": { body: `<html><body><a href="/jobs/one">Operations Director</a><div class="g-recaptcha"></div></body></html>` },
       },
       "boards-api.greenhouse.io": {
         "/robots.txt": { body: "User-agent: *\nDisallow: /\n", contentType: "text/plain" },
         "/v1/boards/acme/jobs": { body: { jobs: [] } },
         "/429": { status: 429, body: "slow down", headers: { "retry-after": "30" } },
+      },
+      "robots-redirect.test": {
+        "/robots.txt": { status: 302, body: "", headers: { location: "https://robots-target.test/robots.txt" } },
+        "/jobs": { body: "<html><body>jobs</body></html>" },
+      },
+      "robots-target.test": {
+        "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain", headers: { etag: '"robots-v1"' } },
+      },
+      "robots-challenge.test": {
+        "/robots.txt": { status: 403, body: "ordinary wrapper", headers: { "cf-mitigated": "challenge" } },
+        "/jobs": { body: "Should not be requested" },
       },
     },
     HOSTS,
@@ -120,8 +135,51 @@ describe("polite fetcher", () => {
     expect(error).toBeInstanceOf(SourceFetchError);
     expect((error as SourceFetchError).kind).toBe("blocked");
     expect((error as SourceFetchError).status).toBe(403);
+    expect((error as SourceFetchError).challengeHost).toBeUndefined();
     const challenge = await f.fetchText("https://blocked.test/challenge").catch((e: unknown) => e);
     expect((challenge as SourceFetchError).kind).toBe("blocked");
+    expect((challenge as SourceFetchError).challengeHost).toBe("blocked.test");
+  });
+
+  it("marks an explicit challenge header on the final redirect host and guards future redirects", async () => {
+    const f = fetcher();
+    const error = await f.fetchText("https://www.example.test/to-challenge").catch((e: unknown) => e);
+    expect(error).toMatchObject({ kind: "blocked", status: 403, challengeHost: "blocked.test" });
+    const before = server.requests.filter(request => request.url === "/403-challenge-header").length;
+    await expect(f.fetchText("https://www.example.test/to-challenge", {
+      allowHost: host => { if (host === "blocked.test") throw new Error("run-local challenged host"); },
+    })).rejects.toThrow("run-local challenged host");
+    expect(server.requests.filter(request => request.url === "/403-challenge-header")).toHaveLength(before);
+  });
+
+  it("recognises a padded challenge while leaving an ordinary captcha widget listing readable", async () => {
+    const f = fetcher();
+    await expect(f.fetchText("https://blocked.test/padded-challenge")).rejects.toMatchObject({
+      kind: "blocked", challengeHost: "blocked.test",
+    });
+    expect((await f.fetchText("https://blocked.test/captcha-widget-listing")).body).toContain("Operations Director");
+  });
+
+  it("guards robots redirects without poisoning the shared robots cache", async () => {
+    let now = Date.now();
+    const f = fetcher({ now: () => now });
+    expect((await f.fetchText("https://robots-redirect.test/jobs")).status).toBe(200);
+    now += 24 * 60 * 60 * 1000;
+    const before = server.requests.filter(request => request.host === "robots-target.test" && request.url === "/robots.txt").length;
+    await expect(f.fetchText("https://robots-redirect.test/jobs", {
+      allowHost: host => { if (host === "robots-target.test") throw new Error("run-local refusal"); },
+    })).rejects.toThrow("run-local refusal");
+    expect(server.requests.filter(request => request.host === "robots-target.test" && request.url === "/robots.txt")).toHaveLength(before);
+    expect((await f.fetchText("https://robots-redirect.test/jobs")).status).toBe(200);
+    expect(server.requests.filter(request => request.host === "robots-target.test" && request.url === "/robots.txt")).toHaveLength(before + 1);
+  });
+
+  it("reports a definitive challenge on robots.txt without requesting the page", async () => {
+    const f = fetcher();
+    await expect(f.fetchText("https://robots-challenge.test/jobs")).rejects.toMatchObject({
+      kind: "blocked", challengeHost: "robots-challenge.test",
+    });
+    expect(server.requests.some(request => request.host === "robots-challenge.test" && request.url === "/jobs")).toBe(false);
   });
 
   it("treats 429 and 503 as a back-off: rate limited, paced, never blocked", async () => {
@@ -817,12 +875,13 @@ describe("private and local destinations", () => {
   });
 
   it("guards every hop without a host map too, with the address policy deciding what is public", async () => {
-    // The page is on 127.0.0.1, which this test's policy treats as public; the service is on
-    // 127.0.0.2, which it does not. That is the production shape: a public page redirecting inward.
-    const service = await internalService("127.0.0.2");
+    // The page is on 127.0.0.1, which this test's policy treats as public. The redirect points
+    // to 127.0.0.2, which it does not. No server needs to bind that loopback alias (macOS does not
+    // configure it by default); a broken guard would return a network error, failing this test.
+    const inward = "http://127.0.0.2:9/secret";
     const page = http.createServer((req, res) => {
       if (req.url === "/robots.txt") { res.writeHead(404); return res.end(); }
-      res.writeHead(302, { location: service.url() });
+      res.writeHead(302, { location: inward });
       res.end();
     });
     await new Promise<void>(resolve => page.listen(0, "127.0.0.1", resolve));
@@ -832,8 +891,7 @@ describe("private and local destinations", () => {
       const error = await f.fetchText(`http://127.0.0.1:${port}/careers`).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(PrivateAddressError);
       expect((error as Error).message).toContain("127.0.0.2");
-      expect(service.hits).toEqual([]);
-    } finally { await new Promise<void>(resolve => page.close(() => resolve())); await service.close(); }
+    } finally { await new Promise<void>(resolve => page.close(() => resolve())); }
   });
 });
 

@@ -253,6 +253,27 @@ it("counts the next steps due in the coming week, and never another account's", 
   expect(await pipelineDueCount(other.id, { now })).toBe(0);
 });
 
+it("filters and orders due work before pagination, including legacy rows", async () => {
+  const now = new Date("2026-09-19T12:00:00.000Z");
+  const filler = Array.from({ length: 60 }, (_, index) => ({
+    userId: user.id, jobId: null, jobTitle: `Legacy role ${index}`, companyName: "Acme", appliedOn: null,
+    status: "interview" as const, nextAction: "Follow up", nextActionOn: "2026-10-30",
+    history: [{ status: "interview", at: "2026-09-01T09:00:00.000Z", notes: "" }],
+  }));
+  await database.insert(schema.applications).values(filler);
+  await record(null, "interview", { jobTitle: "Overdue legacy", appliedOn: null, nextAction: "Ask for answer", nextActionOn: "2026-09-10" });
+  await record(null, "interview", { jobTitle: "Due soon", appliedOn: null, nextAction: "Send references", nextActionOn: "2026-09-21" });
+  const due = await listPipeline(user.id, { filter: "all", focus: "due", now });
+  expect(due.total).toBe(2);
+  expect(due.rows.map((row) => row.jobTitle)).toEqual(["Overdue legacy", "Due soon"]);
+  expect(due.due).toBe(2);
+  expect(due.overdue).toBe(1);
+  expect(due.counts.all).toBe(62);
+  expect((await listPipeline(user.id, { filter: "all", focus: "overdue", now })).rows.map((row) => row.jobTitle)).toEqual(["Overdue legacy"]);
+  expect((await listPipeline(user.id, { filter: "all", stage: "in_process", now })).total).toBe(62);
+  expect((await listPipeline(user.id, { filter: "all", stage: "accepted", now })).total).toBe(0);
+});
+
 it("hands each row the next step stored on it", async () => {
   const { job } = await role();
   await shortlist(job.id);

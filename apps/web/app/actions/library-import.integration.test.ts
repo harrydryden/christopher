@@ -17,6 +17,7 @@ import { renderCvPdf } from "@ava/core/cv-pdf";
 import { responsibilityRows, type CvLibrary } from "@ava/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
+import { libraryImportView } from "@/lib/library-import";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -364,13 +365,16 @@ it("dismisses an import without adding anything, and only once", async () => {
 
 it("reads a refused document again only while the text is still here", async () => {
   const row = await createLibraryImport(database, { userId: user.id, kind: "paste", content: DOCUMENT });
+  const oldAttempt = new Date(Date.now() - 60 * 60_000);
   await database.update(schema.libraryImports)
-    .set({ error: "Library document import needs about $0.09; your budget has $0.00 left this month.", processedAt: new Date() })
+    .set({ error: "Library document import needs about $0.09; your budget has $0.00 left this month.", processedAt: new Date(), createdAt: oldAttempt })
     .where(eq(schema.libraryImports.id, row.id));
 
   expect(await retryLibraryImport(row.id)).toMatchObject({ ok: true, message: expect.stringContaining("reading your document again") });
   const reopened = await getLibraryImport(database, user.id, row.id);
   expect(reopened).toMatchObject({ error: null, proposal: null, processedAt: null, content: DOCUMENT });
+  expect(reopened!.createdAt.getTime()).toBeGreaterThan(oldAttempt.getTime());
+  expect(libraryImportView(reopened!).stalled).toBe(false);
   expect((await tasks()).map(task => task.type)).toEqual(["import_library_document"]);
 
   // A file that could never be converted has nothing left to read.

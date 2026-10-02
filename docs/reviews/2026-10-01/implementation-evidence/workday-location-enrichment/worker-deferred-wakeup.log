@@ -1,0 +1,13 @@
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T20:51:11.172Z","level":"info","msg":"task start","taskId":"5d148d2a-d14f-4d3f-a247-da300860bc4c","taskType":"poll_score_batch","data":{"id":"5d148d2a-d14f-4d3f-a247-da300860bc4c","type":"poll_score_batch","attempt":1,"workerId":"deferring","commit":null,"readyWaitMs":12,"heapUsedMb":110,"heapLimitMb":4144,"rssMb":212}}
+{"t":"2026-10-01T20:51:11.174Z","level":"info","msg":"task deferred","taskId":"5d148d2a-d14f-4d3f-a247-da300860bc4c","taskType":"poll_score_batch","data":{"id":"5d148d2a-d14f-4d3f-a247-da300860bc4c","type":"poll_score_batch","until":"2026-10-01T20:51:11.573Z","ms":2}}
+{"t":"2026-10-01T20:51:11.583Z","level":"info","msg":"task start","taskId":"5d148d2a-d14f-4d3f-a247-da300860bc4c","taskType":"poll_score_batch","data":{"id":"5d148d2a-d14f-4d3f-a247-da300860bc4c","type":"poll_score_batch","attempt":1,"workerId":"deferring","commit":null,"readyWaitMs":10,"heapUsedMb":103,"heapLimitMb":4144,"rssMb":215}}
+{"t":"2026-10-01T20:51:11.585Z","level":"info","msg":"task done","taskId":"5d148d2a-d14f-4d3f-a247-da300860bc4c","taskType":"poll_score_batch","data":{"id":"5d148d2a-d14f-4d3f-a247-da300860bc4c","type":"poll_score_batch","ms":2,"heapUsedMb":103,"heapDeltaMb":0,"heapLimitMb":4144,"rssMb":215,"rssDeltaMb":0}}
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 5 skipped (6)
+   Start at  21:51:09
+   Duration  1.99s (tests 45%, import 30%, transform 25%)
+

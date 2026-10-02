@@ -11,6 +11,7 @@ import { jobRemovalConfirm } from "../components/EmploymentHistoryTable";
 import type { LibraryEvidence } from "./cv-library-evidence";
 import { libraryEvidence } from "./cv-library-reviews";
 import { openStoredLibrary } from "./cv-library-open";
+import { saveCvLibrary } from "@/app/actions/cv";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,8 +47,14 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   expect(html).not.toContain("sticky top-0");
   expect(html).toContain("Ready to build: yes");
   // The employment grid is a table above `md` and stacked cards below it.
-  expect(html).toContain('class="hidden md:block"');
-  expect(html).toContain('class="space-y-3 md:hidden"');
+  expect(html).toContain("md:table-row");
+  expect(html.match(/aria-label="Job 1 company"/g)).toHaveLength(1);
+  expect(html.match(/aria-label="Job 1 industry descriptions"/g)).toHaveLength(1);
+  expect(html.match(/aria-label="Job 1 title"/g)).toHaveLength(1);
+  expect(html.match(/aria-label="Job 1 start date"/g)).toHaveLength(1);
+  expect(html.match(/aria-label="Job 1 end date"/g)).toHaveLength(1);
+  expect(html.match(/aria-label="Job 1 current"/g)).toHaveLength(1);
+  expect(html.match(/aria-label="Acme Director evidence 1"/g)).toHaveLength(1);
 });
 
 it("sets the evidence table's column heads in the pixel face's one weight, not a bold <th>", () => {
@@ -133,7 +140,7 @@ it("tags every row with the types it serves and says what the job is still missi
   expect(second.slice(0, second.indexOf("</button>")).match(/>(Problems solved|Outcomes|Metrics moved)</g))
     .toEqual([">Problems solved<", ">Outcomes<", ">Metrics moved<"]);
   // The trigger fills its cell at the narrative's own minimum height, so the two line up.
-  expect(html).toMatch(/<td class="h-px[^"]*"><div class="h-full"><button[^>]*class="[^"]*h-full min-h-16/);
+  expect(html).toMatch(/<td class="[^"]*md:h-px[^"]*">[\s\S]*?<button[^>]*class="[^"]*h-full min-h-16/);
   expect(html).toMatch(/<textarea[^>]*class="block min-h-16/);
   // What the six types say is missing, from the tags on screen: one row carrying three covers all
   // three, and the word facet is nowhere a person can read it.
@@ -375,4 +382,45 @@ it("does not let a landing evidence score change what the form will post", () =>
   expect(posted(waiting)).toBe(posted(landed));
   expect(waiting).toContain("Evaluating…");
   expect(landed).not.toContain("Evaluating…");
+});
+
+it("keeps the exact unsaved draft after a conflicting reload and lets the person choose their wording", async () => {
+  const base: CvLibrary = { name: "Rowan", contact: "", profile: "First bio", structuredExperience: true,
+    employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
+    entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
+  const latest: CvLibrary = { ...base, profile: "Saved in another tab" };
+  vi.mocked(saveCvLibrary).mockResolvedValue({ ok: false, error: "The library changed. Reload before saving." });
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: 2, content: openStoredLibrary(latest) }) });
+  vi.stubGlobal("fetch", fetch);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const posted = () => JSON.parse(container.querySelector<HTMLInputElement>('input[name="library"]')!.value) as CvLibrary;
+  const button = (label: string) => [...container.querySelectorAll("button")].find(item => item.textContent === label)!;
+  try {
+    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(base), version: 1 })));
+    const bio = container.querySelector<HTMLTextAreaElement>('#library-panel-intro textarea')!;
+    // Use the prototype setter so React observes the same native input event as a person typing.
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bio, "My unsaved bio");
+    await act(async () => bio.dispatchEvent(new Event("input", { bubbles: true })));
+    expect(posted().profile).toBe("My unsaved bio");
+    await act(async () => button("Save library").click());
+    expect(button("Reload and keep my text")).toBeTruthy();
+    await act(async () => { button("Reload and keep my text").click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(posted().profile).toBe("Saved in another tab");
+    expect(container.textContent).toContain("My unsaved bio");
+    expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Original unsaved Library draft"]')!.value).toContain("My unsaved bio");
+    expect(button("Save library")).toBeUndefined();
+    expect(container.textContent).toContain("Choose wording for 1 conflict before saving");
+    await act(async () => { button("Use my version").click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(posted().profile).toBe("My unsaved bio");
+    expect(button("Save library").disabled).toBe(false);
+    expect(button("Reload and keep my text")).toBeUndefined();
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+    vi.mocked(saveCvLibrary).mockReset();
+  }
 });

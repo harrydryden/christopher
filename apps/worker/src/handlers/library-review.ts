@@ -40,6 +40,7 @@ import {
 } from "@ava/core";
 import { estimateLibraryReviewUsd, type LibraryReviewEntry } from "@ava/ai";
 import {
+  accountCanScore,
   latestCvLibrary,
   latestLibraryReviews,
   latestModelReviewsByEntry,
@@ -141,6 +142,8 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
   const pending = entries.filter(entry => stored.get(entry.id)?.source !== "model");
   const reused = entries.length - pending.length;
   if (!pending.length) return { reviewed: 0, reused, ...newer, cost: 0 };
+  if (!await accountCanScore(deps.db, userId))
+    return { reviewed: 0, reused, ...newer, skipped: "email confirmation required", cost: 0 };
 
   const settings = await deps.userSettings(userId);
   // The model the account chose for its own CV work: a library review is the same judgement about

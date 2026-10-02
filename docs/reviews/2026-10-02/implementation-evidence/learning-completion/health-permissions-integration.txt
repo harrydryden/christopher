@@ -1,0 +1,12 @@
+Command: TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/health_candidate_atomic_1002 pnpm --filter @ava/web exec vitest run app/actions/health.integration.test.ts
+Started: 2026-10-01T23:33:05.756Z
+Exit code: 0
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/web
+
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  00:33:06
+   Duration  2.40s (tests 71%, import 15%, transform 14%)

@@ -1,0 +1,150 @@
+{
+  "generatedAt": "2026-09-29T16:29:00.762983+00:00",
+  "baselineCommit": "d798ccfc617612bc864618a4884f639401e49ebf",
+  "scope": "Working implementation subsequently committed with this manifest. Local qualification only; original failed and partial live runs retained.",
+  "results": {
+    "core": {
+      "passed": 708,
+      "files": 42
+    },
+    "ai": {
+      "passed": 184,
+      "files": 11,
+      "provider": "fixtures only"
+    },
+    "db": {
+      "passed": 98,
+      "files": 10
+    },
+    "worker": {
+      "fullRunPassed": 714,
+      "fullRunFailed": 1,
+      "files": 54,
+      "failure": "Cross-clock assertion in cv-tailoring.test.ts; replaced with exact stored-progress immutability check.",
+      "correctedFilePassed": 22,
+      "correctedFileFailed": 0,
+      "focusedEvidence": "../CV-TAILORING-TIMESTAMP-VERIFICATION.md",
+      "fullRunAfterTestOnlyCorrection": false
+    },
+    "web": {
+      "passed": 1236,
+      "files": 138,
+      "previousMixedRunPassed": 1231,
+      "previousMixedRunFailed": 5
+    },
+    "releaseScripts": {
+      "passed": 121,
+      "skipped": 0
+    },
+    "packageTypechecks": "all five passed on final state",
+    "productionBuilds": {
+      "worker": "passed",
+      "web": "passed",
+      "webBuildId": "OG5LiVjY1O3s9juCWyHEE"
+    }
+  },
+  "logs": {
+    "jtbd-final-core-clean.log": {
+      "location": "/tmp/jtbd-final-core-clean.log",
+      "sha256": "c699a97b325b83ad28babc0e5840cb52a980f64bc26ab15d22e78f3a8df73de5",
+      "bytes": 557
+    },
+    "jtbd-final-ai-clean.log": {
+      "location": "/tmp/jtbd-final-ai-clean.log",
+      "sha256": "b394aaeef6efc522abf49203ab1f88ca17f518aca19d3e95832ca308a61bab98",
+      "bytes": 593
+    },
+    "jtbd-firstuse-db-full.log": {
+      "location": "/tmp/jtbd-firstuse-db-full.log",
+      "sha256": "f201d73ccb289023b00d5b73a6fc4f4f1998b21a7320046c0b31494a98223799",
+      "bytes": 1332
+    },
+    "jtbd-discovery-worker-clean.log": {
+      "location": "/tmp/jtbd-discovery-worker-clean.log",
+      "sha256": "4ff33efece96b27ceefa440f96375710fffe07468ecda6b1752522a733579bc6",
+      "bytes": 696547
+    },
+    "jtbd-final-web-clean.log": {
+      "location": "/tmp/jtbd-final-web-clean.log",
+      "sha256": "71a31552463efd4917c5b84bf83b9a990f7fc4cb3c6e647a9464ecd12431a452",
+      "bytes": 73743
+    },
+    "jtbd-web-frozen-final.log": {
+      "location": "/tmp/jtbd-web-frozen-final.log",
+      "sha256": "897b7dcea06eeb42262ab43c7a3ce71267cc00187fe3eee74c063ebff26ab59e",
+      "bytes": 49221
+    },
+    "jtbd-discovery-firstuse-release.log": {
+      "location": "/tmp/jtbd-discovery-firstuse-release.log",
+      "sha256": "1a47b0a35a5f20240de04f95c2f39c2e9bc986b481c47f48fb62271bd79048eb",
+      "bytes": 26989
+    },
+    "jtbd-frozen-final-typecheck.log": {
+      "location": "/tmp/jtbd-frozen-final-typecheck.log",
+      "sha256": "02d9e02aee258a21e843036be8c0bcfd3972c8f6d024b5fe27b64ac4d81e37b0",
+      "bytes": 542
+    },
+    "jtbd-final-worker-build.log": {
+      "location": "/tmp/jtbd-final-worker-build.log",
+      "sha256": "529a7c8e21c773f62a1f93762169ff8ad5eb0cbc23b9f5e82c7ce9de4b22972e",
+      "bytes": 158
+    },
+    "jtbd-scoped-empty-build.log": {
+      "location": "/tmp/jtbd-scoped-empty-build.log",
+      "sha256": "0068bd93020fcdcd8027d76dcf1ea2a582b999f3994b9d8b11d99f1d5d201381",
+      "bytes": 4086
+    }
+  },
+  "implementationSha256": {
+    "apps/web/app/(app)/settings/page.tsx": "d4b97c83e3bcd329cc056f345c588070f554ee61a651dd50b0f84f2913bf7092",
+    "apps/web/app/actions/learning.integration.test.ts": "42b10c2b67a4c668277dfe7adadcc0bbfad078a9c3d7a27fa52ff538027a0b5d",
+    "apps/web/app/actions/learning.ts": "84208f59956ec33b7302861baf8f41a5bb10f8312519762f115df8891061bd3f",
+    "apps/web/app/actions/settings.integration.test.ts": "3cef6916121567e0c5709252ef7aa505ba1920f67cc3d812ad986e0a166ffa6d",
+    "apps/web/app/actions/settings.ts": "ceabeae8e6666af136da56ce87f571969eb19244f160d86902d345499cc79ee5",
+    "apps/web/app/actions/setup.integration.test.ts": "d3a52e7e9d19a8f96e4aef890f648e6669f35345443b60584ab7d59094d08e42",
+    "apps/web/components/GateSetup.tsx": "a1c7a2d0861c344b3efb96634a7d3c0c3a0d8a5baa64c0e1073497afacb58f38",
+    "apps/web/components/RoleWorkspace.tsx": "c92676ef06d56e358afb5a2ceb5da9d6465fa5a02aee4ea6bc67b7c7d6cdd683",
+    "apps/web/components/ScanHealthCards.tsx": "9ea1f9edf23d479a40ab0a03f68a1b0a12a2a562e16a1b226fddfa9e0ba7ae12",
+    "apps/web/components/SettingsForm.tsx": "a06a384ac742fab2bee3832cd2b55ca2b364610c9aaa6c6fb8352267c38521be",
+    "apps/web/lib/queries/jobs.test.ts": "db318f753cc374c720078bfaabdccdcb39897af26e522b24fb7ea5f85d7aacce",
+    "apps/web/lib/queries/jobs.ts": "3aa0610009746e1bf1615ccb94d60c9d1153a436bfd7312ef3ff523601b87cf5",
+    "apps/web/lib/work-status.test.ts": "e26c9b4a340d677fc4fcc353307da5ec605bb6307dabfd9a8b2eba10b25013be",
+    "apps/web/lib/work-status.ts": "2ad7768c0d5e9754b8c3d7cd9efd29fc8e928ee17882720e8a997bb48f77c421",
+    "apps/worker/src/cv-tailoring.test.ts": "f8ecab59c0bacb70a6f6a49d7d83d6337fedd6f96f16da173f1e8f21c0a37a66",
+    "apps/worker/src/e2e.test.ts": "263e11503c38c9792179c9003970d75f3c2242fb57f7d5aa01a070a3af18c327",
+    "apps/worker/src/handlers/learning.ts": "681f85443d7c9757c475b32bfea34dd46725f21d536f53538c28e870ef301a4f",
+    "apps/worker/src/handlers/scan.ts": "ea235b3b2d42dcd367c03b606f3103b41edd87b95b786c543c0a44ae9d6bc86f",
+    "apps/worker/src/learning-signals.test.ts": "51faf7f89aa17f3265bdeb35bbffed05078ac6b4fea634a1b4020a6b7b46820e",
+    "apps/worker/src/live-acceptance-cli.ts": "d4ce6da42e6d7a48980fbaeafc80b560909e0c2c85bb5dd2b370b415ca084046",
+    "apps/worker/src/live-acceptance-manifest.ts": "57163e8d98c0346aab6b08a8d39cf4dc5fc314fc662a414044fc069373a4cf1d",
+    "apps/worker/src/live-acceptance.test.ts": "48a47f4ab3f7f1c091141041930e44d449383f50abc2faa0b5231105ae95aadd",
+    "apps/worker/src/live-acceptance.ts": "47ce3b096b612d78f447e25dfcb0719c0e7fe8fe1ca13751e68710adfcc18596",
+    "apps/worker/src/score-batch.test.ts": "3b4de7df60227b2a7e69cae959eccca17883515def43f65bfdf28b65a920eb42",
+    "packages/core/src/ats/ats.test.ts": "52defab87cef4ede8c47d48b21ae54159061270870544912be35da984a7afcce",
+    "packages/core/src/ats/html.ts": "4a0ca3edaf96ffbe3b0b8d163e336805c608a5537b2579d0f6356ac099578659",
+    "packages/core/src/ats/index.ts": "d47110f17bae0e93528ca103f6519d45098b1b641366a279e8db5b1a7dfcc29d",
+    "packages/core/src/discovery/confidence.test.ts": "1ec68f136312451e142e243685c2a3f7474b0c6f37cdd3899d7073d19b4adddd",
+    "packages/core/src/discovery/confidence.ts": "74c6974845e4725406fbdf92012522bbe5827d8930baa61d3ecdc18782f6926e",
+    "packages/core/src/discovery/discover-scope.test.ts": "5f84afa55d9d2dbc02f4b099601febf7b1fe724cef039e745090baf500408b54",
+    "packages/core/src/discovery/discover.test.ts": "d7021cf6a5fd5ebdaae7c8db3b7e059fd254c6b46136d038aa85a9c5b73f6f2b",
+    "packages/core/src/discovery/discover.ts": "f6770d0f03503754e8b615fb4e366afcf1061355ac664d2fc8c0892ebaec5a6e",
+    "packages/core/src/discovery/index.ts": "958fd8c662217eed88beb021c31ca7034ae16c6469661c78491eeb3124e49e2e",
+    "packages/core/src/role-workflow.test.ts": "93b373afad3afe93bc97cc9a1157de1573bc4a34a5a73aa14e761591d5100657",
+    "packages/core/src/role-workflow.ts": "8af1de03ed7e096bc2733d40237191af9b742bdb307133bb8cd9d85b2f94f25d",
+    "packages/db/src/schema.ts": "cbb646f38af9673cd17690271246457ba782b156f4f369caa78b0d3489fed02d",
+    "scripts/restored-pair-drill.mjs": "a01f8b62c213d230b8a1b8f313252071b85ac026011591c3b68b967e3293e0aa",
+    "scripts/restored-pair-drill.test.mjs": "0d02ecdb98d8a79bd8905ee39c391294da332fb422e4c57b80ce32d31fa35ad7"
+  },
+  "liveEvidence": {
+    "discovery": "20/25 correct automatic sources, zero wrong automatic accepts; discovery only, posting recall/precision unmeasured",
+    "coldFirstUse": "40 public Render postings, 17 matching account views, zero model calls; synthetic pre-confirmed account",
+    "siemens": "297 pages/1780 URLs staged, lease refusal, Next active, no published jobs/scan",
+    "restoredPair": "Local logical restore, real web and worker, state-changing task; not hosted RPO/RTO"
+  },
+  "limitations": [
+    "Worker full result is retained as714/715; subsequent22/22 focused file proves corrected invariant without relabelling fullrun.",
+    "The initial full web run overlapped new score-refresh tests with old loaded code and had a timeout/colliding fixture; frozen rerun passed without timeout changes.",
+    "No paid-provider semantic, human usability/calibration, full independent posting corpus or hosted continuity qualification.",
+    "No JTBD meets90; remaining no-key non-scan scoring producers can briefly show queued until worker admission."
+  ]
+}

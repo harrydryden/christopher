@@ -1,0 +1,16 @@
+{
+  "alerts": [
+    "Your preference profile changed since this page loaded. Your edits are still here. Open the latest profile in a new tab, compare it with this draft and copy across the changes you want to keep. Check the latest profile in a new tab",
+    "Your preference profile changed since this page loaded. Your edits are still here. Open the latest profile in a new tab, compare it with this draft and copy across the changes you want to keep. Check the latest profile in a new tab"
+  ],
+  "answer": "Final protected answer draft.",
+  "guards": [
+    "7",
+    "6",
+    "6"
+  ],
+  "pins": "Final protected pinned draft.",
+  "profile": "Unsaved older draft that should not replace newer work.Newer saved work must survive the stale draft.Final protected profile draft.",
+  "viewport": 375,
+  "width": 375
+}

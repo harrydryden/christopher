@@ -69,4 +69,5 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   return mapPostings(list, mapJob);
 }
 
-export const ashby = feedAdapter({ type: "ashby", fromUrl: (url) => specOrNull(slugFromUrl(url), ashbySpec), read: fetchPostings });
+export const ashby = feedAdapter({ type: "ashby", fromUrl: (url) => specOrNull(slugFromUrl(url), ashbySpec), read: fetchPostings,
+  completeFromFirstResponse: true });

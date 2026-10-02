@@ -1,0 +1,38 @@
+{
+  "fixture": "synthetic mocked 25-page HTML listing",
+  "mode": "terminal",
+  "at": "2026-10-01T16:18:11.527Z",
+  "state": {
+    "userId": "de757f11-b1f5-4963-96c1-3351436b8839",
+    "companyId": "0538c0c3-3b34-43cb-a4f7-af2f49d7518e",
+    "sourceId": "708dcd5d-658f-42c8-8818-cfa03bd3050f",
+    "taskId": "5787f618-a3b0-4e30-957d-6a3e88fffd73"
+  },
+  "fetched": [
+    "https://pager.example/listing?page=0",
+    "https://pager.example/listing?page=19",
+    "https://pager.example/listing?page=20",
+    "https://pager.example/listing?page=21",
+    "https://pager.example/listing?page=22",
+    "https://pager.example/listing?page=23",
+    "https://pager.example/listing?page=24"
+  ],
+  "result": {
+    "sources": 1,
+    "new": 25,
+    "closed": 0,
+    "statuses": [
+      "ok"
+    ]
+  },
+  "generation": null,
+  "sourceLastOkScanAt": "2026-10-01T16:18:11.501Z",
+  "jobs": 25,
+  "matchingViews": 25,
+  "scans": [
+    {
+      "status": "ok",
+      "taskId": "5787f618-a3b0-4e30-957d-6a3e88fffd73"
+    }
+  ]
+}

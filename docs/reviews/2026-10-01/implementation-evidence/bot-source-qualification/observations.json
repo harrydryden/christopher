@@ -1,0 +1,102 @@
+{
+  "checkedAtUtc": "2026-10-01T21:37:50.676765+00:00",
+  "userAgent": "AvaSourceQualification/1.0",
+  "candidates": [
+    {
+      "id": "cloudflare",
+      "url": "https://www.cloudflare.com/careers/jobs/",
+      "robotsUrl": "https://www.cloudflare.com/robots.txt",
+      "robotsStatus": 200,
+      "robotsFinalUrl": "https://www.cloudflare.com/robots.txt",
+      "robotsAllowed": true,
+      "status": 200,
+      "responseUrl": "https://www.cloudflare.com/careers/jobs/",
+      "responseDateHeader": "Thu, 01 Oct 2026 21:37:50 GMT",
+      "headers": {
+        "Content-Type": "text/html",
+        "Server": "cloudflare",
+        "CF-RAY": "a43e9c654f53eef7-LHR"
+      },
+      "bodyBytes": 164404,
+      "bodySha256": "316cb7f7a0436c99991f5903ede7d519f7d7c1c6987eabc0cc46d0894fe80b05"
+    },
+    {
+      "id": "stripe",
+      "url": "https://stripe.com/careers/search",
+      "robotsUrl": "https://stripe.com/robots.txt",
+      "robotsStatus": 200,
+      "robotsFinalUrl": "https://stripe.com/robots.txt",
+      "robotsAllowed": true,
+      "status": 200,
+      "responseUrl": "https://stripe.com/careers/search",
+      "responseDateHeader": "Thu, 01 Oct 2026 21:37:51 GMT",
+      "headers": {
+        "Server": "nginx",
+        "Content-Type": "text/html; charset=utf-8"
+      },
+      "bodyBytes": 374427,
+      "bodySha256": "3fb0799ca4f27abe2d6e552841856a11be8d47b022cf42db4c02510566dfb2e8"
+    },
+    {
+      "id": "salesforce",
+      "url": "https://careers.salesforce.com/en/jobs/",
+      "robotsUrl": "https://careers.salesforce.com/robots.txt",
+      "robotsStatus": 301,
+      "robotsFinalUrl": "https://careers.salesforce.com/robots.txt",
+      "robotsAllowed": false
+    },
+    {
+      "id": "revolut",
+      "url": "https://www.revolut.com/careers/",
+      "robotsUrl": "https://www.revolut.com/robots.txt",
+      "robotsStatus": 200,
+      "robotsFinalUrl": "https://www.revolut.com/robots.txt",
+      "robotsAllowed": true,
+      "status": 403,
+      "responseUrl": "https://www.revolut.com/careers/",
+      "responseDateHeader": "Thu, 01 Oct 2026 21:37:52 GMT",
+      "headers": {
+        "Content-Type": "text/html; charset=UTF-8",
+        "Cf-Mitigated": "challenge",
+        "Server": "cloudflare",
+        "CF-RAY": "a43e9c6bed625e45-LHR"
+      },
+      "bodyBytes": 872825,
+      "bodySha256": "7c6511b3451cc8ffa902ba7b7ec8ef3ec94961064ab69c5de04e5938dfefd980"
+    },
+    {
+      "id": "wise",
+      "url": "https://wise.jobs/jobs",
+      "robotsUrl": "https://wise.jobs/robots.txt",
+      "robotsStatus": 200,
+      "robotsFinalUrl": "https://wise.jobs/robots.txt",
+      "robotsAllowed": true,
+      "status": 200,
+      "responseUrl": "https://wise.jobs/jobs",
+      "responseDateHeader": "Thu, 01 Oct 2026 21:37:52 GMT",
+      "headers": {
+        "Content-Type": "text/html",
+        "Server": "cloudflare",
+        "CF-RAY": "a43e9c6f0a692968-LHR"
+      },
+      "bodyBytes": 460466,
+      "bodySha256": "2a05af948372734182c8eda6251c8d434730c40b0a1bc3a1d4d7004f02bdc07e"
+    },
+    {
+      "id": "spotify",
+      "url": "https://www.lifeatspotify.com/jobs",
+      "robotsUrl": "https://www.lifeatspotify.com/robots.txt",
+      "robotsStatus": 200,
+      "robotsFinalUrl": "https://www.lifeatspotify.com/robots.txt",
+      "robotsAllowed": true,
+      "status": 200,
+      "responseUrl": "https://www.lifeatspotify.com/jobs",
+      "responseDateHeader": "Thu, 01 Oct 2026 21:37:53 GMT",
+      "headers": {
+        "Content-Type": "text/html; charset=utf-8"
+      },
+      "bodyBytes": 28554,
+      "bodySha256": "1f06717ac80f1df3cc16b3a986d1f23e45d32dbdc864b6bc04320395a7851ba3"
+    }
+  ]
+}

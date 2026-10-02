@@ -88,6 +88,67 @@ async function isCompletedQuizPredecessor(
  * worker that ran it and, later, by a sweep that finds the row.
  */
 export const onAbandon: AbandonHookMap = {
+  fetch_locations: async (task, deps, reason) => {
+    const jobId = typeof task.payload.jobId === "string" ? task.payload.jobId : null;
+    const revision = typeof task.payload.locationRevision === "string" ? task.payload.locationRevision : null;
+    if (!jobId || !revision) return;
+    // A killed worker may never reach the handler's catch. Mark only this unresolved revision,
+    // and leave a newer fetch or a changed listing alone. The member can then retry explicitly.
+    await deps.db.execute(sql`update jobs j set location_resolution = 'unavailable',
+      location_error = ${`Location lookup stopped after its final attempt: ${reason}`.slice(0, 500)},
+      updated_at = now()
+      from career_sources s where j.id = ${jobId}::uuid and j.source_id = s.id
+        and s.type = 'workday' and s.status in ('active', 'failing')
+        and j.status = 'open' and j.location_revision = ${revision}
+        and j.location_resolution in ('pending', 'unavailable')
+        and not exists (select 1 from tasks t where t.id <> ${task.id}::uuid and t.type = 'fetch_locations'
+          and t.status in ('queued', 'running') and t.payload->>'jobId' = j.id::text
+          and t.payload->>'locationRevision' = j.location_revision)`);
+  },
+  admit_scores: async (task, deps) => {
+    const userId = typeof task.payload.userId === "string" ? task.payload.userId : null;
+    const jobIds = Array.isArray(task.payload.jobIds) ? task.payload.jobIds.filter((id): id is string => typeof id === "string") : [];
+    if (!userId || !jobIds.length) return;
+    await deps.db.transaction(async tx => {
+      // A newer request writes the view and its task atomically. Take the same view lock first,
+      // then use a fresh statement snapshot for the active-task check after any wait.
+      await tx.execute(sql`select job_id from user_jobs where user_id = ${userId}::uuid
+        and job_id in (${sql.join(jobIds.map(id => sql`${id}::uuid`), sql`, `)}) order by job_id for update`);
+      await tx.execute(sql`update user_jobs uj set score_state = 'failed', score_state_at = now()
+      where uj.user_id = ${userId}::uuid and uj.job_id in (${sql.join(jobIds.map(id => sql`${id}::uuid`), sql`, `)})
+        and uj.score_state = 'requested'
+        and not exists (select 1 from tasks t where t.id <> ${task.id}::uuid and t.type = 'admit_scores'
+          and t.status in ('queued', 'running') and t.payload->>'userId' = uj.user_id::text
+          and t.payload->'jobIds' ? uj.job_id::text)
+        and not exists (select 1 from tasks t where t.type = 'score_job' and t.status in ('queued', 'running')
+          and t.payload->>'userId' = uj.user_id::text and t.payload->>'jobId' = uj.job_id::text)
+        and not exists (select 1 from tasks t, jsonb_array_elements(case
+          when t.type = 'poll_score_batch' and jsonb_typeof(t.payload->'items') = 'array' then t.payload->'items'
+          else '[]'::jsonb end) item
+          where t.type = 'poll_score_batch' and t.status in ('queued', 'running')
+            and item->>'userId' = uj.user_id::text and item->>'jobId' = uj.job_id::text)`);
+    });
+  },
+  score_job: async (task, deps) => {
+    const userId = typeof task.payload.userId === "string" ? task.payload.userId : null;
+    const jobId = typeof task.payload.jobId === "string" ? task.payload.jobId : null;
+    if (!userId || !jobId) return;
+    await deps.db.transaction(async tx => {
+      await tx.execute(sql`select job_id from user_jobs where user_id = ${userId}::uuid and job_id = ${jobId}::uuid for update`);
+      await tx.execute(sql`update user_jobs uj set score_state = 'failed', score_state_at = now()
+      where uj.user_id = ${userId}::uuid and uj.job_id = ${jobId}::uuid and uj.score_state = 'queued'
+        and not exists (select 1 from tasks t where t.id <> ${task.id}::uuid and t.type = 'score_job'
+          and t.status in ('queued', 'running') and t.payload->>'userId' = uj.user_id::text
+          and t.payload->>'jobId' = uj.job_id::text)
+        and not exists (select 1 from tasks t where t.type = 'admit_scores' and t.status in ('queued', 'running')
+          and t.payload->>'userId' = uj.user_id::text and t.payload->'jobIds' ? uj.job_id::text)
+        and not exists (select 1 from tasks t, jsonb_array_elements(case
+          when t.type = 'poll_score_batch' and jsonb_typeof(t.payload->'items') = 'array' then t.payload->'items'
+          else '[]'::jsonb end) item
+          where t.type = 'poll_score_batch' and t.status in ('queued', 'running')
+            and item->>'userId' = uj.user_id::text and item->>'jobId' = uj.job_id::text)`);
+    });
+  },
   generate_cv: async (task, deps, reason) => {
     const draftId = draftIdOf(task);
     if (!draftId) return;

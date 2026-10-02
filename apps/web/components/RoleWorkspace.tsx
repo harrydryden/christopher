@@ -9,6 +9,8 @@ import { RolesFilterBar } from "./RolesFilterBar";
 import { appliedRoleCount, buildRoleCompanies, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
 import { pipelineCompany, pipelineStageCounts } from "@/lib/queries/applications";
+import { setupStatus } from "@/lib/queries/setup";
+import { monitoringNotice } from "@/lib/setup";
 
 /** The columns that sort (R-7.1), and the key each one sorts by. */
 const SORTABLE_COLUMNS = ["company", "title", "location", "fit"] as const;
@@ -31,9 +33,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   const scoped = companyId ? { company: companyId } : {};
   const countsPending = fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
   const pageFor = (view: RoleStatus) => fetchRolePage(userId, parseRolesFilters({ ...sp, view, ...scoped }), false, null, Number(sp.page));
-  // A link that names no view (the landing URL) opens on Matched unless this scope has no matched
-  // roles. Matched is what it nearly always is, so its page is read beside the counts rather than
-  // after them, and read again as Shortlisted only when the counts say Matched is empty. A link that
+  // A link that names no view (the landing URL) opens on Matched unless only Shortlisted has roles.
+  // Matched is what it nearly always is, so its page is read beside the counts rather than
+  // after them, and read again as Shortlisted only when the counts point there. A link that
   // names its view (every tab, sort and page link does) reads the counts beside that view's page.
   const named = roleTabFor(sp);
   const likely = named ? null : pageFor("auto-matched");
@@ -70,12 +72,24 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   const href = (page: number) => `${path}?${query}${archivedResult && archivedResult.page > 1 ? `&archivedPage=${archivedResult.page}` : ""}&page=${page}#roles`;
   const archivedHref = (page: number) => `${path}?${query}${result.page > 1 ? `&page=${result.page}` : ""}&archivedPage=${page}#archived`;
   const viewHref = (status: RoleStatus) => `${path}?view=${status}${!companyId && filters.company ? `&company=${filters.company}` : ""}#roles`;
+  // An empty Matched tab can mean no company has finished, a failed source, or a successful scan
+  // whose roles were filtered out. Account-wide monitoring facts cannot verify one selected
+  // company's scan, so use them only for the all-companies view.
+  const scopedEmpty = view === "auto-matched" && counts[view] === 0 && !!(companyId || filters.company);
+  const selectedCompany = !companyId && filters.company ? options.find(company => company.id === filters.company) : null;
+  const emptyNotice = !companyId && !filters.company && view === "auto-matched" && counts[view] === 0
+    ? monitoringNotice(await setupStatus(userId)) : null;
+  const emptyDescription = scopedEmpty
+    ? "No roles are waiting in Matched for this company. Its scan may still be pending or incomplete, or its roles may not match your preferences. Check the company's status and scan history."
+    : emptyNotice?.state === "complete"
+      ? "A complete scan has finished. Nothing is waiting in Matched; your keywords and locations may have excluded roles found. Review your preferences or follow another company."
+      : emptyNotice?.description;
   return <section id="roles">
-    <nav aria-label="Role status" className="mb-4 flex flex-wrap gap-2">
+    <nav aria-label="Role status" className="mb-3 grid grid-cols-3 gap-1 md:mb-4 md:flex md:flex-wrap md:gap-2">
       {ROLE_TABS.map(status => <Link prefetch={false} key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
-        className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
-        {ROLE_STATUS_LABELS[status]}{" "}<span className="ml-1 tabular-nums">{counts[status]}</span>
-        {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="ml-1 tabular-nums">· {applied} applied</span>}
+        className={`min-h-11 min-w-0 border-2 px-0.5 py-1.5 text-center font-mono text-13 leading-tight no-underline [overflow-wrap:anywhere] md:px-3 md:py-2 ${status === view ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
+        {ROLE_STATUS_LABELS[status]}{" "}<span className="block tabular-nums md:ml-1 md:inline">{counts[status]}</span>
+        {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="hidden tabular-nums md:ml-1 md:inline">· {applied} applied</span>}
       </Link>)}
     </nav>
     <RolesFilterBar key={query} filters={filters} companyOptions={options}
@@ -83,10 +97,14 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
     {result.total !== counts[view] && <p className="mb-3 text-12 text-muted">Showing {result.total} of {counts[view]}</p>}
     {/* Outside the keyed tables, so a refusal that lands after paging or filtering still shows. */}
     <RoleRefusalNotices />
-    <RolesTable key={`${query}:${result.page}`} rows={rows} companies={companies} keyboard hideCompany={!!companyId}
+    <RolesTable key={`${query}:${result.page}`} rows={rows} companies={companies} keyboard hideCompany={!!companyId} historyScope={userId}
       sortLinks={sortLinksFor(path, view, filters)} sort={filters.sort} dir={filters.dir}
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}
-        action={counts[view] ? <Link prefetch={false} href={`${path}?view=${view}#roles`} className={buttonLinkClass("secondary")}>Clear filters</Link> : undefined} />} />
+        description={emptyDescription}
+        action={counts[view]
+          ? <Link prefetch={false} href={`${path}?view=${view}#roles`} className={buttonLinkClass("secondary")}>Clear filters</Link>
+          : emptyNotice ? <Link prefetch={false} href={emptyNotice.href} className={buttonLinkClass("secondary")}>{emptyNotice.action}</Link>
+          : selectedCompany ? <Link prefetch={false} href={`/companies/${selectedCompany.id}`} className={buttonLinkClass("secondary")}>View company status</Link> : undefined} />} />
     {result.pageCount > 1 && <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-13">
       {result.page > 1 && <Link prefetch={false} className="underline" href={href(result.page - 1)}>Previous</Link>}
       <span>Page {result.page} of {result.pageCount}</span>
@@ -96,7 +114,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
     {archivedResult && <div id="archived" className="mt-6">
       <Card title="Archived" actions={<span className="text-12 text-muted tabular-nums">{counts.archived}</span>}>
         {archivedResult.total !== counts.archived && <p className="mb-3 text-12 text-muted">Showing {archivedResult.total} of {counts.archived}</p>}
-        <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} companies={archivedCompanies} archived hideCompany={!!companyId}
+        <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} companies={archivedCompanies} archived hideCompany={!!companyId} historyScope={userId}
           emptyState={<EmptyState title="No archived roles" description="Roles you archived or that stopped matching." />} />
         {archivedResult.pageCount > 1 && <nav aria-label="Archived role pages" className="mt-4 flex items-center gap-4 text-13">
           {archivedResult.page > 1 && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}

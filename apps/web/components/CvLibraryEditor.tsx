@@ -6,6 +6,7 @@ import type { CvLibrary, Employment } from "@ava/core/cv";
 import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { cvJobReadiness, cvLibraryReadiness } from "@/lib/cv-ready";
 import type { OpenedCvLibrary } from "@/lib/cv-library-open";
+import type { CvLibraryConflict } from "@/lib/cv-library-merge";
 import { addJobRow, archivedBlocks, editableEmployment, jobEntry, jobRows, pendingRowKey, removeJob, removeJobRow, restoreBlock, restoreJob, setJobRows, tagRow, withArchivedEmployment } from "@/lib/cv-library-rows";
 import { NO_EVIDENCE, evidenceByEntry, missingFacetLine, rowGuidance, rowsMovedOn, untaggedFacets, type EvidencePrompt, type LibraryEvidence } from "@/lib/cv-library-evidence";
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
@@ -28,6 +29,17 @@ const DISCARD = "Discard your unsaved Library changes?";
 const clockOf = (at: Date) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 /** What a row is keyed by everywhere it is remembered: confirmations, types and reviews. */
 const rowKey = (text: string) => responsibilityRows(text)[0] ?? "";
+type ConflictChoice = "mine" | "stored";
+type Recovery = {
+  original: CvLibrary;
+  base: CvLibrary;
+  latest: CvLibrary;
+  version: number;
+  conflicts: CvLibraryConflict[];
+  choices: Record<string, ConflictChoice>;
+  valid: boolean;
+};
+const conflictText = (value: unknown) => value === null ? "Removed in your draft" : typeof value === "string" ? value : JSON.stringify(value, null, 2) ?? "(empty)";
 
 export function CvLibraryEditor({ library, version: storedVersion, evidence = NO_EVIDENCE, need = null, job = null }: {
   /** Opened on the server (`openStoredLibrary`); the type is how that is required. */
@@ -56,6 +68,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const [baseline, setBaseline] = useState<CvLibrary>(() => library ?? empty);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [notice, setNotice] = useState("");
+  const [recovery, setRecovery] = useState<Recovery | null>(null);
+  const [copyMessage, setCopyMessage] = useState("");
   const [focusRow, setFocusRow] = useState<{ job: string; index: number } | null>(null);
   const [needShown, setNeedShown] = useState(true);
   /**
@@ -66,10 +80,17 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const [state, action, pending] = useActionState(saveCvLibrary, { ok: true } as Awaited<ReturnType<typeof saveCvLibrary>>);
   const [rescoreState, rescore, rescoring] = useActionState(rescoreLibrary, { ok: true } as Awaited<ReturnType<typeof rescoreLibrary>>);
   const submitted = useRef<CvLibrary | null>(null);
+  const submittedVersion = useRef<number | null>(null);
+  const recoveryRef = useRef<Recovery | null>(null);
+  const recoveryHeading = useRef<HTMLHeadingElement | null>(null);
+  const recoveryFocused = useRef(false);
+  const choiceRevision = useRef(0);
   const opened = useRef(false);
   const serialised = useMemo(() => JSON.stringify(value), [value]);
   const baselineJson = useMemo(() => JSON.stringify(baseline), [baseline]);
   const dirty = serialised !== baselineJson;
+  const unresolved = recovery?.conflicts.filter(conflict => !recovery.choices[conflict.key]).length ?? 0;
+  const recoveryPending = !!recovery && (unresolved > 0 || !recovery.valid);
   const readiness = useMemo(() => cvLibraryReadiness(value), [value]);
   /**
    * The jobs on the screen: employment history minus the ones that were removed.
@@ -99,11 +120,21 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const changedRows = evidence.entries.some(entry => entry.provisional);
   const unreviewed = version > 0 && !evidence.evaluating && evidence.entries.some(entry => entry.provisional || entry.source !== "model");
 
+  // The reload control disappears when its result becomes a conflict review. Put keyboard
+  // focus at the new section once, so Tab reaches Download and the choices rather than
+  // restarting at the page navigation. Re-rendering a choice must not steal focus back.
+  useEffect(() => {
+    if (!recovery) { recoveryFocused.current = false; return; }
+    if (recoveryFocused.current) return;
+    recoveryHeading.current?.focus();
+    recoveryFocused.current = true;
+  }, [recovery]);
+
   // What the form posted, for the moment it lands. `onSubmit` records it; this is the belt for
   // that brace, because a version left behind by a save makes the *next* save look obsolete.
   useEffect(() => {
-    if (pending && !submitted.current) submitted.current = value;
-  }, [pending, value]);
+    if (pending && !submitted.current) { submitted.current = value; submittedVersion.current = version; }
+  }, [pending, value, version]);
 
   // A save that landed: what was sent is now stored, one version on from what it replaced.
   useEffect(() => {
@@ -112,6 +143,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     setVersion(current => current + 1);
     setSavedAt(new Date());
     setNotice("");
+    setRecovery(null);
+    recoveryRef.current = null;
+    choiceRevision.current++;
     submitted.current = null;
   }, [state]);
 
@@ -120,13 +154,13 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   // there is nothing on the screen to lose; while there is, the save says so and offers the merge,
   // which is the one path that keeps both.
   useEffect(() => {
-    if (dirty) return;
+    if (dirty || recovery) return;
     const stored = library ?? empty;
     if (JSON.stringify(stored) === baselineJson) return;
     setValue(stored);
     setBaseline(stored);
     setVersion(storedVersion);
-  }, [library, storedVersion, dirty, baselineJson]);
+  }, [library, storedVersion, dirty, baselineJson, recovery]);
 
   /**
    * Arriving from a CV's evidence gap: open the job the gap was about with an empty row waiting
@@ -156,7 +190,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
    * no way to intercept otherwise.
    */
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !recovery) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     const intercept = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -177,7 +211,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       window.removeEventListener("beforeunload", warn);
       document.removeEventListener("click", intercept, true);
     };
-  }, [dirty]);
+  }, [dirty, recovery]);
 
   // A row added by the button is a row to type in, so the caret goes there.
   useEffect(() => {
@@ -202,12 +236,60 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       // actually runs rather than with the page.
       const { mergeCvLibrary } = await import("@/lib/cv-library-merge");
       const merged = mergeCvLibrary(baseline, value, latest, stored.version);
+      const nextRecovery = { original: value, base: baseline, latest, version: stored.version, conflicts: merged.conflicts, choices: {}, valid: merged.valid };
+      recoveryRef.current = nextRecovery;
+      choiceRevision.current++;
+      setRecovery(nextRecovery);
       setValue(merged.library);
       setBaseline(latest);
       setVersion(stored.version);
       setNotice(merged.note);
     } catch {
       setNotice("Could not read the saved library. Your text is still here; try again.");
+    }
+  }
+
+  /** A conflict is changed only after the person sees both versions and chooses one. */
+  async function chooseConflict(key: string, choice: ConflictChoice) {
+    const current = recoveryRef.current;
+    if (!current) return;
+    const choices = { ...current.choices, [key]: choice };
+    const next = { ...current, choices };
+    recoveryRef.current = next;
+    const revision = ++choiceRevision.current;
+    setRecovery(next);
+    const { mergeCvLibrary } = await import("@/lib/cv-library-merge");
+    const preferred = new Set(Object.entries(choices).filter(([, value]) => value === "mine").map(([id]) => id));
+    const merged = mergeCvLibrary(next.base, next.original, next.latest, next.version, preferred);
+    if (revision !== choiceRevision.current) return;
+    const resolved = { ...next, valid: merged.valid };
+    recoveryRef.current = resolved;
+    setRecovery(resolved);
+    if (merged.valid) setValue(merged.library);
+    setNotice(merged.note);
+  }
+
+  /** The exact local document before the reload remains available even if a merge is impossible. */
+  function downloadOriginal() {
+    if (!recovery) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(recovery.original, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ava-library-unsaved-v${recovery.version - 1}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setCopyMessage("Original draft downloaded. Keep it until this Library is saved.");
+  }
+
+  async function copyOriginal() {
+    if (!recovery) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(recovery.original, null, 2));
+      setCopyMessage("Original draft copied. Keep it until this Library is saved.");
+    } catch {
+      setCopyMessage("Clipboard unavailable. Open the original draft below and copy its text, or download it.");
     }
   }
 
@@ -256,17 +338,23 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   function discard() {
     if (!window.confirm(DISCARD)) return;
     setValue(baseline);
+    setRecovery(null);
+    recoveryRef.current = null;
+    choiceRevision.current++;
     setPendingFacets({});
     setNotice("");
   }
-  const obsolete = !state.ok && state.error === OBSOLETE;
+  // Once the newer version has been loaded, the prior refusal is history. Only a refusal of the
+  // version currently held should offer another reload or appear beside its Save control.
+  const currentRefusal = !state.ok && submittedVersion.current === version;
+  const obsolete = currentRefusal && state.error === OBSOLETE && !recovery;
   const asked = (need ?? "").trim();
   // The bar at the top of the editor is there only when there is something to do in it: changes to
   // save, the saved rows to re-score, or a sentence about either.
   // A refusal is shown only while there is still something to re-score; a later pass clears it.
   const refused = !rescoreState.ok && (unreviewed || rescoring) ? rescoreState.error : "";
-  const bar = dirty || unreviewed || rescoring || !!notice || !!refused;
-  return <form action={action} onSubmit={() => { submitted.current = value; }} className="min-w-0 space-y-4 pb-4">
+  const bar = dirty || unreviewed || rescoring || !!notice || !!refused || !!recovery;
+  return <form action={action} onSubmit={event => { if (recoveryPending) { event.preventDefault(); return; } submitted.current = value; submittedVersion.current = version; }} className="min-w-0 space-y-4 pb-4">
     {/* Saving is only ever the person's own act, so the control that does it is pinned above the
         fold as soon as there is anything to save, and gone when there is not. Once a save has
         changed rows, the same place offers the re-score — never automatic, because it spends the
@@ -274,9 +362,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {bar && <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b-2 border-line bg-bg py-3">
       {dirty ? <>
         <span className="ds-pixel text-12" aria-live="polite">Unsaved changes</span>
-        <button disabled={pending} className={buttonClass("primary")}>{pending ? "Saving…" : "Save library"}</button>
+        <button disabled={pending || recoveryPending} className={buttonClass("primary")}>{pending ? "Saving…" : "Save library"}</button>
         <button type="button" disabled={pending} className={buttonClass("ghost")} onClick={discard}>Discard</button>
-        {!state.ok && <span role="alert" className="text-14 text-danger">{state.error}</span>}
+        {currentRefusal && !recovery && <span role="alert" className="text-14 text-danger">{state.error}</span>}
         {obsolete && <button type="button" className={buttonClass("secondary")} onClick={reloadAndKeep}>Reload and keep my text</button>}
       </> : (unreviewed || rescoring) && <>
         <span className="text-14" role="status">{savedAt ? `Saved ${clockOf(savedAt)}. ` : ""}{changedRows ? "Rows changed since the last review." : "Some rows have no full review yet."}</span>
@@ -285,6 +373,30 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       {refused && <span role="alert" className="text-14 text-danger">{refused}</span>}
       {notice && <span role="status" className="text-12 text-muted">{notice}</span>}
     </div>}
+    {recovery && <section className="space-y-3 border-2 border-warn p-4" aria-labelledby="library-recovery-title">
+      <h2 id="library-recovery-title" ref={recoveryHeading} tabIndex={-1} className="ds-pixel scroll-mt-32 text-12 focus:outline-2 focus:outline-offset-2 focus:outline-line">Keep your original Library draft</h2>
+      <p className="text-14">Your complete local draft from before the reload is still here. Download or copy it, then choose the wording for each conflict. The latest saved version stays unchanged until you press Save library.</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={buttonClass("secondary")} onClick={downloadOriginal}>Download original draft</button>
+        <button type="button" className={buttonClass("ghost")} onClick={() => void copyOriginal()}>Copy original draft</button>
+      </div>
+      {copyMessage && <p role="status" className="text-12 text-muted">{copyMessage}</p>}
+      <details><summary className="cursor-pointer text-12 underline">Show original draft text</summary><textarea readOnly aria-label="Original unsaved Library draft" className={`mt-2 w-full ${input}`} rows={8} value={JSON.stringify(recovery.original, null, 2)} /></details>
+      {recovery.conflicts.map(conflict => <div key={conflict.key} className="space-y-2 border-t border-line-muted pt-3">
+        <h3 className="text-14 font-semibold">{conflict.label}</h3>
+        <div className="grid gap-2 md:grid-cols-2">
+          <div><p className="text-12 font-semibold">Your unsaved version</p><pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words border border-line-muted p-2 text-12">{conflictText(conflict.mine)}</pre></div>
+          <div><p className="text-12 font-semibold">Latest saved version</p><pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words border border-line-muted p-2 text-12">{conflictText(conflict.stored)}</pre></div>
+        </div>
+        <div className="flex flex-wrap gap-2" role="group" aria-label={`Choose wording for ${conflict.label}`}>
+          <button type="button" aria-pressed={recovery.choices[conflict.key] === "mine"} className={buttonClass(recovery.choices[conflict.key] === "mine" ? "primary" : "secondary")} onClick={() => void chooseConflict(conflict.key, "mine")}>Use my version</button>
+          <button type="button" aria-pressed={recovery.choices[conflict.key] === "stored"} className={buttonClass(recovery.choices[conflict.key] === "stored" ? "primary" : "secondary")} onClick={() => void chooseConflict(conflict.key, "stored")}>Keep saved version</button>
+        </div>
+      </div>)}
+      {unresolved > 0 && <p role="status" className="text-12 text-warn">Choose wording for {unresolved} {unresolved === 1 ? "conflict" : "conflicts"} before saving.</p>}
+      {unresolved === 0 && recovery.valid && !dirty && <button type="button" className={buttonClass("secondary")} onClick={() => { recoveryRef.current = null; choiceRevision.current++; setRecovery(null); }}>Finish review</button>}
+      {!recovery.valid && <div className="space-y-2"><p role="alert" className="text-12 text-danger">These versions cannot be combined into a valid Library automatically. Your original draft remains above. Save a copy, then reapply its wording in the editor.</p><button type="button" className={buttonClass("secondary")} onClick={() => { if (window.confirm("Have you copied or downloaded your original draft? The editor will continue from the latest saved Library.")) { setValue(recovery.latest); setBaseline(recovery.latest); setVersion(recovery.version); recoveryRef.current = null; choiceRevision.current++; setRecovery(null); setNotice(""); } }}>Continue editing from saved version</button></div>}
+    </section>}
     {/* A save that changed nothing to re-score leaves no bar behind; this says it landed. */}
     <span className="sr-only" aria-live="polite">{!dirty && savedAt ? `Saved ${clockOf(savedAt)}` : ""}</span>
     {/* A gap in a CV's evidence, carried here from the row that named it. Client state only: it is
@@ -312,6 +424,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
           document.getElementById(`library-tab-${next}`)?.focus();
         }}>{label}</button>)}
     </div>
+    <fieldset disabled={recoveryPending} className="min-w-0 space-y-4">
     <div role="tabpanel" id="library-panel-intro" aria-labelledby="library-tab-intro" hidden={tab !== 'intro'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'intro')}>
     {line("name", "Name", { autoComplete: "name" })}
     {/* The three details a CV header prints, in the order it prints them: email · phone · location. */}
@@ -363,9 +476,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
           />}
           {entry && untagged && untagged !== score?.missingLine && <p className="text-12 text-muted">{untagged}</p>}
           {rows.length > 20 && <p role="alert" className="text-14 text-warn">Combine rows to 20 or fewer before saving.</p>}
-          {rows.length > 0 && <div className="relative overflow-x-auto border-2 border-line"><table className="w-full min-w-[820px] text-left text-14" aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibilities and outcomes`}>
-            <thead className="bg-sunken text-9 text-muted"><tr><th scope="col" className="ds-pixel tracking-th w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="ds-pixel tracking-th border-b-2 border-line px-3 py-2">Narrative</th><th scope="col" className="ds-pixel tracking-th w-44 border-b-2 border-line px-3 py-2">Type</th><th scope="col" className="ds-pixel tracking-th w-32 border-b-2 border-line px-3 py-2">Score</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2"><span className="sr-only">Actions</span></th></tr></thead>
-            <tbody>{rows.map((row, index) => {
+          {rows.length > 0 && <div className="relative md:overflow-x-auto md:border-2 md:border-line"><table className="block w-full text-left text-14 md:table md:min-w-[820px]" aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibilities and outcomes`}>
+            <thead className="hidden bg-sunken text-9 text-muted md:table-header-group"><tr><th scope="col" className="ds-pixel tracking-th w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="ds-pixel tracking-th border-b-2 border-line px-3 py-2">Narrative</th><th scope="col" className="ds-pixel tracking-th w-44 border-b-2 border-line px-3 py-2">Type</th><th scope="col" className="ds-pixel tracking-th w-32 border-b-2 border-line px-3 py-2">Score</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody className="block space-y-3 md:table-row-group md:space-y-0">{rows.map((row, index) => {
               const key = rowKey(row);
               // What this row is for: what it is tagged with once there is text to key a tag to,
               // and until then what the prompt that asked for the row promised it would be.
@@ -383,29 +496,29 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
                   return rest;
                 });
               };
-              return <tr key={index} className="border-t border-line-faint align-top">
-              <th scope="row" className="px-3 py-2 pt-4 font-normal text-muted">{index + 1}</th>
-              <td className="px-3 py-2 pt-4 text-center"><input type="checkbox" aria-label={`Confirm ${currentJob.company} ${currentJob.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(key) ?? false} onChange={event => {
+              return <tr key={index} className="block min-w-0 border-2 border-line-muted p-2 align-top md:table-row md:border-x-0 md:border-t md:border-b-0 md:border-line-faint md:p-0">
+              <th scope="row" className="block px-3 py-2 font-semibold text-muted md:table-cell md:pt-4 md:font-normal"><span className="md:hidden">Row </span>{index + 1}</th>
+              <td className="block px-3 py-2 md:table-cell md:pt-4 md:text-center"><label className="flex items-center gap-2 md:justify-center"><input type="checkbox" aria-label={`Confirm ${currentJob.company} ${currentJob.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(key) ?? false} onChange={event => {
                   if (!entry || !key) return;
                   const confirmed = new Set(entry.confirmedResponsibilities ?? []);
                   if (event.target.checked) confirmed.add(key); else confirmed.delete(key);
                   setValue({ ...value, entries: value.entries.map(item => item.id === entry.id ? { ...item, confirmedResponsibilities: [...confirmed] } : item) });
-                }} /></td>
-              <td className="px-3 py-2">
+                }} /><span className="text-12 md:hidden">Confirmed</span></label></td>
+              <td className="block px-3 py-2 md:table-cell"><span className="mb-1 block text-12 font-semibold md:hidden">Narrative</span>
                 <textarea required rows={2} id={`responsibility-${currentJob.id}-${index}`} className={`block min-h-16 resize-y ${input}`} placeholder={facets[0] ? EVIDENCE_FACET_PROMPTS[facets[0]] : undefined} aria-label={`${currentJob.company} ${currentJob.jobTitle} evidence ${index + 1}`} value={row} onChange={event => writeRow(currentJob, rows, index, event.target.value)} />
               </td>
               {/* One pixel tall so the menu's trigger, at full height, stretches with the row. */}
-              <td className="h-px px-3 py-2">
+              <td className="block px-3 py-2 md:table-cell md:h-px"><span className="mb-1 block text-12 font-semibold md:hidden">Type</span>
                 <LibraryRowTypeMenu
                   label={`Type of row ${index + 1}`}
                   value={facets}
                   onChange={setFacets}
                 />
               </td>
-              <td className="px-3 py-2">
+              <td className="block px-3 py-2 md:table-cell"><span className="mb-1 block text-12 font-semibold md:hidden">Score</span>
                 <RowScoreButton index={index + 1} guidance={rowGuidance({ text: key, facets, view: rowScore, source: score?.source ?? "rules", evaluating: !!score?.evaluating })} onAdopt={setFacets} />
               </td>
-              <td className="px-3 py-2">
+              <td className="block px-3 py-2 md:table-cell">
                 {/* The row goes and its tags go with it. The last row leaves an empty one to write
                     in: a job keeps its evidence block until the job itself is removed. */}
                 <button type="button" className="min-h-11 text-12 text-muted underline hover:text-fg" aria-label={`Remove ${currentJob.company} ${currentJob.jobTitle} evidence ${index + 1}`} onClick={() => {
@@ -460,5 +573,6 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     <div role="tabpanel" id="library-panel-guide" aria-labelledby="library-tab-guide" hidden={tab !== 'guide'} className="space-y-4">
       <EvidenceGuide />
     </div>
+    </fieldset>
   </form>;
 }

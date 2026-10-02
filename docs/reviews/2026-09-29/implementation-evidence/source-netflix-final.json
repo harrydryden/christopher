@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-29T14:16:34.017Z",
+  "mode": "discovery_and_extraction",
+  "concurrency": {
+    "cases": 1,
+    "source": "explicit",
+    "productionShape": true,
+    "note": "Serial case execution avoids charging a case's 45-second discovery budget for time queued behind the shared browser or AI lane."
+  },
+  "browser": {
+    "enabled": false,
+    "skipCode": "browser_not_requested",
+    "aiEnabled": false
+  },
+  "ai": {
+    "enabled": false,
+    "skipCode": "ai_not_requested",
+    "calls": []
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "Extraction starts from each labelled source, independently of discovery. Completion is not an end-to-end success or posting-recall claim.",
+    "HTML diagnostics traverse HTTP/browser listings and reject unverified empty results; they do not exercise the worker cache, learned recipes or AI extraction recovery.",
+    "Machine-enumerated posting references produce diagnostic comparisons only; they do not qualify human-reviewed full-site recall/precision.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Browser fallback is disabled; AI fallback is disabled; no database or account data is read or written.",
+    "No paid model request is made without --ai and an explicit --ai-max-usd cap."
+  ],
+  "scope": {
+    "selectedCaseIds": [
+      "netflix"
+    ],
+    "requiredCaseIds": [
+      "anduril",
+      "airbnb",
+      "stripe",
+      "openai",
+      "notion",
+      "anthropic",
+      "netflix",
+      "figma",
+      "datadog",
+      "cloudflare",
+      "canonical",
+      "automattic",
+      "gitlab",
+      "wise",
+      "salesforce",
+      "siemens",
+      "spotify",
+      "mozilla",
+      "basecamp",
+      "monzo",
+      "revolut",
+      "zapier",
+      "linear",
+      "vercel",
+      "render"
+    ],
+    "fullCorpusSelected": false
+  },
+  "postingReferences": null,
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "24 required corpus case(s) were not selected; subset diagnostics cannot qualify the full corpus",
+      "labelled automatic discovery agreement is 0.0%, below 80%",
+      "1 case(s) lack an independent role-count label",
+      "1 case(s) lack a qualifying independent posting-identity snapshot",
+      "posting-identity recall and precision have not been measured"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 1,
+    "sourceMismatches": 0,
+    "labelledAutomaticMatchesAt085": 0,
+    "automaticResolvedAt085": 0,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 1,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0,
+    "extractionExactCountAgreement": null,
+    "postingIdentityLabelled": 0,
+    "postingIdentityFailures": 0,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "netflix",
+        "company": "Netflix",
+        "homepageUrl": "https://www.netflix.com",
+        "expectedSource": {
+          "type": "eightfold",
+          "url": "https://netflix.eightfold.ai/careers",
+          "equivalentUrls": [
+            "https://explore.jobs.netflix.net/careers"
+          ]
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Independently rechecked by the orchestration reviewer on 29 September: Netflix’s official careers landing page links View roles to explore.jobs.netflix.net/careers; netflix.eightfold.ai/careers redirects to that exact listing. The former jobs.netflix.com label was a landing page. This corrects source identity only, not posting coverage or automatic discovery quality.",
+        "sourceEvidenceUrls": [
+          "https://jobs.netflix.com/",
+          "https://explore.jobs.netflix.net/careers",
+          "https://netflix.eightfold.ai/careers"
+        ],
+        "sourceCheckedAt": "2026-09-29"
+      },
+      "result": {
+        "id": "netflix",
+        "company": "Netflix",
+        "startedAt": "2026-09-29T14:15:46.931Z",
+        "durationMs": 47086,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "eightfold",
+          "observedUrl": "https://netflix.eightfold.ai/careers",
+          "confidence": 0.7,
+          "fetches": 16,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "basis": "labelled_source_diagnostic",
+          "outcome": "complete",
+          "observedRoleCount": 475,
+          "rawObservedRoleCount": 475,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Senior Measurement Partner, UK (12 month FTC)",
+              "location": "London,United Kingdom",
+              "url": "https://explore.jobs.netflix.net/careers/job/790318592572"
+            },
+            {
+              "title": "Ads Measurement Analyst, UK",
+              "location": "London,United Kingdom",
+              "url": "https://explore.jobs.netflix.net/careers/job/790318582740"
+            },
+            {
+              "title": "Director, F&S Partnerships EMEA",
+              "location": "London,United Kingdom",
+              "url": "https://explore.jobs.netflix.net/careers/job/790318484737"
+            }
+          ],
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": []
+        }
+      }
+    }
+  ]
+}

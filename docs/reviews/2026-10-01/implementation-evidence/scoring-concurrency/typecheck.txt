@@ -1,0 +1,7 @@
+Scope: 3 of 6 workspace projects
+packages/db typecheck$ tsc --noEmit -p tsconfig.json
+packages/db typecheck: Done
+apps/worker typecheck$ tsc --noEmit -p tsconfig.json
+apps/worker typecheck: Done
+apps/web typecheck$ tsc --noEmit -p tsconfig.json
+apps/web typecheck: Done

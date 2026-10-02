@@ -1,0 +1,42 @@
+{
+  "date": "2026-09-29",
+  "basis": "Separate local runs with disposable PostgreSQL; not hosted CI, provider or human acceptance",
+  "packages": {
+    "core": {
+      "passed": 664,
+      "skipped": 0,
+      "evidence": "core-final.log"
+    },
+    "ai": {
+      "passed": 184,
+      "skipped": 0,
+      "evidence": "local ignored tests.log AI section"
+    },
+    "db": {
+      "passed": 98,
+      "skipped": 0,
+      "evidence": "local ignored tests.log database section"
+    },
+    "worker": {
+      "passed": 635,
+      "skipped": 13,
+      "evidence": "local ignored tests.log worker section"
+    }
+  },
+  "release": {
+    "passed": 117,
+    "skipped": 2,
+    "evidence": "release-tests.log"
+  },
+  "web": {
+    "passed": 1228,
+    "skipped": 0,
+    "filesPassed": 137,
+    "evidence": "web-final.log"
+  },
+  "lint": "No lint configured in package scripts",
+  "strictEvaluation": "Fails correctly because current committed replay is unverified",
+  "productionBuild": "Passed",
+  "browserSmoke": "Passed with renamed writing-preferences selector",
+  "typecheck": "All five packages and evaluation scripts passed"
+}

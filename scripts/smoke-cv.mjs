@@ -192,7 +192,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     // field exist in the DOM and only the one for this viewport is visible.
     await page.locator('input[aria-label="Job 1 company"]:visible').fill("Smoke Co");
     await page.locator('input[aria-label="Job 1 title"]:visible').fill("Operations Lead");
-    const smokeJob = page.locator("fieldset").filter({ hasText: "Operations Lead · Smoke Co" });
+    const smokeJob = page.getByRole("group", { name: "Operations Lead · Smoke Co", exact: true });
     await smokeJob.getByRole("button", { name: "Add new responsibility or outcome", exact: true }).click();
     // The row that was just added takes the caret, so it can be typed into straight away.
     assert.match(await page.evaluate(() => document.activeElement?.id ?? ""), /^responsibility-/);
@@ -263,7 +263,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("textbox", { name: "Saved phrasing", exact: true }).fill("Led the team");
     await Promise.all([
       page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/library"),
-      page.locator("form").filter({ has: writingStyle }).getByRole("button", { name: "Save", exact: true }).click(),
+      page.locator("form").filter({ has: writingStyle }).getByRole("button", { name: "Save writing preferences", exact: true }).click(),
     ]);
     await page.reload();
     await writingStyle.waitFor();

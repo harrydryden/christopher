@@ -1,0 +1,2 @@
+$ node -e <create isolated operational_release_1002 database>
+Created isolated scratch database operational_release_1002

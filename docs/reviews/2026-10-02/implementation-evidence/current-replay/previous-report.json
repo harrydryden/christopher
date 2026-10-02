@@ -1,8 +1,8 @@
 {
   "kind": "cv-replay",
-  "at": "2026-10-01T23:56:16.074Z",
-  "draftId": "b0e47a09-7622-4994-8c18-72bf32ffcfb7",
-  "promptSetVersion": "27311fe3cb21",
+  "at": "2026-09-28T20:00:38.399Z",
+  "draftId": "6ce445c8-52c3-4e6d-9700-dea6b66edbd1",
+  "promptSetVersion": "e06dce7dc560",
   "unverified": true,
   "source": "recording",
   "recording": "docs/evaluations/recordings/cv-replay-fixture.jsonl",
@@ -54,7 +54,7 @@
       "costUsd": 0.2956
     }
   },
-  "wallMs": 283,
+  "wallMs": 333,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",

@@ -1,0 +1,20 @@
+$ env DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/cv_replay_1002 ANTHROPIC_API_KEY= OPENAI_API_KEY= pnpm --filter @ava/worker cli replay b0e47a09-7622-4994-8c18-72bf32ffcfb7 --recordings /Users/h_dryden/Documents/New\ project/christopher-jtbd-review/docs/evaluations/recordings/cv-replay-fixture.jsonl --out /Users/h_dryden/Documents/New\ project/christopher-jtbd-review/docs/evaluations/cv-replay/report.json
+
+> @ava/worker@0.1.0 cli /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+> tsx src/cli.ts replay b0e47a09-7622-4994-8c18-72bf32ffcfb7 --recordings '/Users/h_dryden/Documents/New project/christopher-jtbd-review/docs/evaluations/recordings/cv-replay-fixture.jsonl' --out '/Users/h_dryden/Documents/New project/christopher-jtbd-review/docs/evaluations/cv-replay/report.json'
+
+prompt set 27311fe3cb21 · recording (unverified: answers not from the provider)
+  cv.rubric            claude-fable-5-1 at high
+  cv.planning          claude-fable-5-1 at high
+  cv.author            claude-fable-5-1 at high
+  cv.improvement       claude-fable-5-1 at high
+  cv.review            claude-fable-5-1 at high
+  cv.review_candidate  claude-fable-5-1 at high
+outcome: published
+cost: $0.4676 over 4 call(s), 0.3 s
+grade: PASSED · coverage 90 (baseline 90, recording) · 2/3 pages
+  claimsSupported: ok
+  coverageNotLower: ok
+  pageLimitMet: ok
+  noEssentialRegressed: ok
+report written to /Users/h_dryden/Documents/New project/christopher-jtbd-review/docs/evaluations/cv-replay/report.json

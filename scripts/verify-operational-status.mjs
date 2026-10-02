@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { OPERATIONAL_THRESHOLDS, operationalAttentionMessage, operationalFailures, operationalSuccessMessage, operationalWarnings, readOperationalSample, readReleaseHealth, requiredOperationalConfig, workerIdentity } from "./release-checks.mjs";
+import { OPERATIONAL_THRESHOLDS, operationalAttentionMessage, operationalFailureDiagnostics, operationalFailures, operationalSuccessMessage, operationalWarnings, readOperationalSample, readReleaseHealth, requiredOperationalConfig, workerIdentity } from "./release-checks.mjs";
 
 const { expected, url, headers } = requiredOperationalConfig(process.env);
 const sampleCount = 3;
@@ -25,12 +25,12 @@ for (let index = 0; index < sampleCount; index++) {
   else if (identity !== "current") {
     throw new Error(`Worker identity mismatch: expected a healthy worker built from ${expected}, received ${release.commit}.`);
   }
-  samples.push(readOperationalSample(body));
+  samples.push({ ...readOperationalSample(body), sampledAt: new Date().toISOString() });
   if (index + 1 < sampleCount) await sleep(intervalMs);
 }
 
 const failures = operationalFailures(samples);
-if (failures.length) throw new Error(`Operational gate failed:\n- ${failures.join("\n- ")}`);
+if (failures.length) throw new Error(`Operational gate failed:\n- ${failures.join("\n- ")}\nMemory samples:\n${operationalFailureDiagnostics(samples)}`);
 const latest = samples.at(-1);
 const warnings = operationalWarnings(samples);
 console.log(operationalSuccessMessage(latest));

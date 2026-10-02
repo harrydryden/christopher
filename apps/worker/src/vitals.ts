@@ -20,6 +20,11 @@ export interface Vitals {
 
 const mb = (bytes: number) => Math.round(bytes / 1_048_576);
 
+/** Keep the ratio exact until presentation: rounding to whole percentage points can trip an 85% alert at 84.5%. */
+export function heapUsedFraction(usedBytes: number, limitBytes: number): number {
+  return limitBytes > 0 ? usedBytes / limitBytes : 0;
+}
+
 /**
  * Started once, at import, and never reset: the percentiles are cumulative since boot, which is
  * what makes a heartbeat comparable with the one before it. A synchronous stretch — parsing a 40 MB
@@ -40,7 +45,7 @@ export function vitals(): Vitals {
   return {
     heapUsedMb: mb(mem.heapUsed),
     heapLimitMb: mb(limit),
-    heapFraction: limit > 0 ? Math.round((mem.heapUsed / limit) * 100) / 100 : 0,
+    heapFraction: heapUsedFraction(mem.heapUsed, limit),
     rssMb: mb(mem.rss),
     externalMb: mb(mem.external + mem.arrayBuffers),
     uptimeSeconds: Math.round(process.uptime()),

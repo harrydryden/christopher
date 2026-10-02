@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   OPERATIONAL_THRESHOLDS,
   operationalFailures,
+  operationalFailureDiagnostics,
   operationalAttentionMessage,
   operationalSuccessMessage,
   operationalWarnings,
@@ -137,6 +138,21 @@ test("transient pressure passes but sustained memory and database waits fail", (
   const failures = operationalFailures([healthy({ heapFraction: 0.9, dbWaiting: 1 }), healthy({ heapFraction: 0.86, dbWaiting: 2 })]);
   assert.ok(failures.some(value => value.includes("heap pressure")));
   assert.ok(failures.some(value => value.includes("connection waits")));
+});
+
+test("the heap gate keeps its exact 85% boundary, including legacy rounded readings", () => {
+  assert.deepEqual(operationalFailures([healthy({ heapFraction: 0.846 }), healthy({ heapFraction: 0.849 })]), []);
+  assert.ok(operationalWarnings([healthy({ heapFraction: 0.846 }), healthy({ heapFraction: 0.849 })]).some(value => value.includes("worker heap")));
+  assert.ok(operationalFailures([healthy({ heapFraction: 0.85 }), healthy({ heapFraction: 0.85 })]).some(value => value.includes("heap pressure")));
+});
+
+test("failed-gate diagnostics report only bounded memory samples and worker identity", () => {
+  const sample = readOperationalSample(statusBody({ heapFraction: 0.851, heapUsedMb: 219, heapLimitMb: 258, rssMb: 403 }));
+  const lines = operationalFailureDiagnostics([{ ...sample, sampledAt: "2026-10-02T08:00:00.000Z" }, { ...sample, workerId: "worker\nsecret", sampledAt: "2026-10-02T08:00:15.000Z" }]);
+  assert.equal(lines, 'sample 1 at 2026-10-02T08:00:00.000Z from "worker-a": heapUsedMb=219, heapLimitMb=258, heapFraction=0.851, rssMb=403\n' +
+    'sample 2 at 2026-10-02T08:00:15.000Z from "worker\\nsecret": heapUsedMb=219, heapLimitMb=258, heapFraction=0.851, rssMb=403');
+  assert.ok(operationalFailures([sample, sample]).some(value => value.includes("heap pressure")));
+  assert.throws(() => readOperationalSample(statusBody({ heapUsedMb: "219" })), /heapUsedMb/);
 });
 
 test("material queue growth fails once the queue is also large", () => {

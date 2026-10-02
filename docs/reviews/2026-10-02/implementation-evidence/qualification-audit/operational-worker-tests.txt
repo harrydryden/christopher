@@ -1,0 +1,30 @@
+Command: TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/operational_heap_1002 pnpm --filter @ava/worker exec vitest run src/vitals.test.ts src/health.test.ts src/monitor-sample.test.ts --fileParallelism=false
+
+
+ RUN  v5.0.0 /Users/h_dryden/Documents/New project/christopher-jtbd-review/apps/worker
+
+{"t":"2026-10-01T23:59:11.696Z","level":"info","msg":"slow database query","data":{"durationMs":258,"statement":"truncate tasks, ai_calls, ai_reservations, worker_events, companies, discovery_sources, users restart identity cascade"}}
+{"t":"2026-10-01T23:59:11.711Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:11.974Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:12.261Z","level":"info","msg":"slow database query","data":{"durationMs":279,"statement":"truncate tasks, ai_calls, ai_reservations, worker_events, companies, discovery_sources, users restart identity cascade"}}
+{"t":"2026-10-01T23:59:12.262Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:16.501Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:16.731Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:17.109Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:17.127Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:17.294Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:17.499Z","level":"info","msg":"health server listening","data":{"port":0}}
+{"t":"2026-10-01T23:59:18.283Z","level":"warn","msg":"monitor sample needs attention","data":{"levels":{"oldestReady":"warn"}}}
+{"t":"2026-10-01T23:59:18.496Z","level":"warn","msg":"monitor sample needs attention","data":{"levels":{"oldestReady":"fail"}}}
+{"t":"2026-10-01T23:59:18.511Z","level":"warn","msg":"monitor sample needs attention","data":{"levels":{"oldestReady":"fail"}}}
+{"t":"2026-10-01T23:59:18.810Z","level":"warn","msg":"monitor sample needs attention","data":{"levels":{"scanFailures":"warn","modelRateLimited":"warn"}}}
+{"t":"2026-10-01T23:59:18.957Z","level":"warn","msg":"monitor sample needs attention","data":{"levels":{"slowQueries":"fail"}}}
+{"t":"2026-10-01T23:59:19.088Z","level":"error","msg":"monitor sample failed","data":{"error":"gone"}}
+
+ Test Files  3 passed (3)
+      Tests  18 passed (18)
+   Start at  00:59:09
+   Duration  10.67s (tests 77%, import 17%, transform 7%)
+
+
+Exit code: 0

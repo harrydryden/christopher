@@ -1,0 +1,6 @@
+$ env DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/operational_release_1002 pnpm --filter @ava/db migrate
+
+> @ava/db@0.1.0 migrate /Users/h_dryden/Documents/New project/christopher-jtbd-review/packages/db
+> tsx src/migrate-cli.ts
+
+migrations applied

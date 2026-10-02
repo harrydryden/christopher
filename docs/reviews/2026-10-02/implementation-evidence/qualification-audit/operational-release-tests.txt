@@ -1,0 +1,218 @@
+Command: node --test scripts/release-checks.test.mjs scripts/verify-operational-status.test.mjs
+
+TAP version 13
+# Subtest: release configuration fails visibly when identity or URL is missing
+ok 1 - release configuration fails visibly when identity or URL is missing
+  ---
+  duration_ms: 0.7315
+  type: 'test'
+  ...
+# Subtest: operational configuration requires an explicit full commit and worker URL
+ok 2 - operational configuration requires an explicit full commit and worker URL
+  ---
+  duration_ms: 0.411167
+  type: 'test'
+  ...
+# Subtest: operational figures come from the status URL, with its bearer token, when one is configured
+ok 3 - operational figures come from the status URL, with its bearer token, when one is configured
+  ---
+  duration_ms: 0.092708
+  type: 'test'
+  ...
+# Subtest: release health requires both an explicit healthy state and a full commit
+ok 4 - release health requires both an explicit healthy state and a full commit
+  ---
+  duration_ms: 0.070416
+  type: 'test'
+  ...
+# Subtest: operational samples reject missing readings instead of treating them as zero
+ok 5 - operational samples reject missing readings instead of treating them as zero
+  ---
+  duration_ms: 0.427875
+  type: 'test'
+  ...
+# Subtest: healthy idle and working samples pass without making an uptime claim
+ok 6 - healthy idle and working samples pass without making an uptime claim
+  ---
+  duration_ms: 0.172458
+  type: 'test'
+  ...
+# Subtest: a materially old queue fails
+ok 7 - a materially old queue fails
+  ---
+  duration_ms: 0.596625
+  type: 'test'
+  ...
+# Subtest: a few overdue companies are reported as attention, and the gate fails only when many are
+ok 8 - a few overdue companies are reported as attention, and the gate fails only when many are
+  ---
+  duration_ms: 0.403834
+  type: 'test'
+  ...
+# Subtest: companies that cannot be scanned are attention when a worker reports them, and optional otherwise
+ok 9 - companies that cannot be scanned are attention when a worker reports them, and optional otherwise
+  ---
+  duration_ms: 0.76125
+  type: 'test'
+  ...
+# Subtest: transient pressure passes but sustained memory and database waits fail
+ok 10 - transient pressure passes but sustained memory and database waits fail
+  ---
+  duration_ms: 0.503375
+  type: 'test'
+  ...
+# Subtest: the heap gate keeps its exact 85% boundary, including legacy rounded readings
+ok 11 - the heap gate keeps its exact 85% boundary, including legacy rounded readings
+  ---
+  duration_ms: 0.303583
+  type: 'test'
+  ...
+# Subtest: failed-gate diagnostics report only bounded memory samples and worker identity
+ok 12 - failed-gate diagnostics report only bounded memory samples and worker identity
+  ---
+  duration_ms: 0.1715
+  type: 'test'
+  ...
+# Subtest: material queue growth fails once the queue is also large
+ok 13 - material queue growth fails once the queue is also large
+  ---
+  duration_ms: 0.041
+  type: 'test'
+  ...
+# Subtest: one uptime regression permits a rollout but repeated regressions identify a restart loop
+ok 14 - one uptime regression permits a rollout but repeated regressions identify a restart loop
+  ---
+  duration_ms: 0.045875
+  type: 'test'
+  ...
+# Subtest: worker identity changes detect replacements even when sampled uptime does not decrease
+ok 15 - worker identity changes detect replacements even when sampled uptime does not decrease
+  ---
+  duration_ms: 0.038791
+  type: 'test'
+  ...
+# Subtest: uptime remains a fallback when a restarted process reuses its worker identity
+ok 16 - uptime remains a fallback when a restarted process reuses its worker identity
+  ---
+  duration_ms: 0.030417
+  type: 'test'
+  ...
+# Subtest: mixed identity replacement and reused-ID restart still fail
+ok 17 - mixed identity replacement and reused-ID restart still fail
+  ---
+  duration_ms: 0.029542
+  type: 'test'
+  ...
+# Subtest: persisted crash recovery evidence catches a loop outside the thirty-second sample
+ok 18 - persisted crash recovery evidence catches a loop outside the thirty-second sample
+  ---
+  duration_ms: 0.037458
+  type: 'test'
+  ...
+# Subtest: one failing provider group fails and an observed recovery clears it
+ok 19 - one failing provider group fails and an observed recovery clears it
+  ---
+  duration_ms: 0.037916
+  type: 'test'
+  ...
+# Subtest: configured account budget exhaustion warns without failing global operations or exposing identity
+ok 20 - configured account budget exhaustion warns without failing global operations or exposing identity
+  ---
+  duration_ms: 0.075708
+  type: 'test'
+  ...
+# Subtest: new telemetry cannot disappear or become invalid and silently pass
+ok 21 - new telemetry cannot disappear or become invalid and silently pass
+  ---
+  duration_ms: 0.076334
+  type: 'test'
+  ...
+# Subtest: a worker that does not report event-loop lag, slow queries or pool totals still passes
+ok 22 - a worker that does not report event-loop lag, slow queries or pool totals still passes
+  ---
+  duration_ms: 0.05575
+  type: 'test'
+  ...
+# Subtest: event-loop lag, slow queries and pool totals are read when reported, and refused when malformed
+ok 23 - event-loop lag, slow queries and pool totals are read when reported, and refused when malformed
+  ---
+  duration_ms: 0.119125
+  type: 'test'
+  ...
+# Subtest: event-loop lag is attention at 200 ms and fails at a second in two samples
+ok 24 - event-loop lag is attention at 200 ms and fails at a second in two samples
+  ---
+  duration_ms: 0.171208
+  type: 'test'
+  ...
+# Subtest: slow queries are compared within one process: attention at 20, a failure at 100, a restart resets the count
+ok 25 - slow queries are compared within one process: attention at 20, a failure at 100, a restart resets the count
+  ---
+  duration_ms: 0.107417
+  type: 'test'
+  ...
+# Subtest: heap, a single pool wait and a five-minute-old task are attention below their failures
+ok 26 - heap, a single pool wait and a five-minute-old task are attention below their failures
+  ---
+  duration_ms: 0.070042
+  type: 'test'
+  ...
+# Subtest: the monitor's sample is optional, and read when a worker serves it
+ok 27 - the monitor's sample is optional, and read when a worker serves it
+  ---
+  duration_ms: 0.17175
+  type: 'test'
+  ...
+# Subtest: active backends, scan failures, model rate limits and slow queries warn and fail at the guide's lines
+ok 28 - active backends, scan failures, model rate limits and slow queries warn and fail at the guide's lines
+  ---
+  duration_ms: 0.331875
+  type: 'test'
+  ...
+# Subtest: a monitor sample twenty minutes old is attention: the task that takes it has stopped
+ok 29 - a monitor sample twenty minutes old is attention: the task that takes it has stopped
+  ---
+  duration_ms: 0.392959
+  type: 'test'
+  ...
+# Subtest: a merge that changes no worker input leaves the running worker current
+ok 30 - a merge that changes no worker input leaves the running worker current
+  ---
+  duration_ms: 762.675166
+  type: 'test'
+  ...
+# Subtest: a worker on a commit that is not in the merged history, or unknown, is not current
+ok 31 - a worker on a commit that is not in the merged history, or unknown, is not current
+  ---
+  duration_ms: 400.108833
+  type: 'test'
+  ...
+# Subtest: a merge commit that brings worker changes needs the worker to redeploy
+ok 32 - a merge commit that brings worker changes needs the worker to redeploy
+  ---
+  duration_ms: 553.288666
+  type: 'test'
+  ...
+# Subtest: a worker behind a fresh merge is deploying, and behind an old one is stale
+ok 33 - a worker behind a fresh merge is deploying, and behind an old one is stale
+  ---
+  duration_ms: 0.350417
+  type: 'test'
+  ...
+# Subtest: the operational CLI fails on sustained heap pressure and prints safe, useful samples
+ok 34 - the operational CLI fails on sustained heap pressure and prints safe, useful samples
+  ---
+  duration_ms: 115.147166
+  type: 'test'
+  ...
+1..34
+# tests 34
+# suites 0
+# pass 34
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1793.664333
+
+Exit code: 0

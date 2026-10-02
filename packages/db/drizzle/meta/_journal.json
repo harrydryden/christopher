@@ -365,6 +365,13 @@
       "when": 1792404000000,
       "tag": "0053_score_publication_fence",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792490400000,
+      "tag": "0054_manual_role_imports",
+      "breakpoints": true
     }
   ]
 }

@@ -23,10 +23,11 @@ export async function handleFetchLocations(task: Task, deps: WorkerDeps): Promis
   const { jobId, locationRevision } = (task.payload ?? {}) as TaskPayloads["fetch_locations"];
   if (!jobId || !locationRevision) return { skipped: "location task has no job or revision" };
   const [job] = await deps.db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).limit(1);
-  if (!job || job.status !== "open" || job.locationRevision !== locationRevision
+  if (!job || !job.sourceId || !job.companyId || !job.url || job.status !== "open" || job.locationRevision !== locationRevision
       || !job.locationLabel || !["pending", "unavailable"].includes(job.locationResolution ?? "")) {
     return { skipped: "location revision is no longer pending" };
   }
+  const companyId = job.companyId;
   const [source] = await deps.db.select().from(schema.careerSources).where(eq(schema.careerSources.id, job.sourceId)).limit(1);
   if (!source || source.type !== "workday" || !["active", "failing"].includes(source.status))
     return { skipped: "Workday source is no longer active" };
@@ -62,7 +63,7 @@ export async function handleFetchLocations(task: Task, deps: WorkerDeps): Promis
     // The scan also takes the source before gate share locks, then writes jobs and views. Keep that
     // order so a settings save or scan cannot deadlock with this shared follower refresh.
     const followers = await tx.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
-      .where(and(eq(schema.companySubscriptions.companyId, job.companyId), ne(schema.companySubscriptions.status, "archived")));
+      .where(and(eq(schema.companySubscriptions.companyId, companyId), ne(schema.companySubscriptions.status, "archived")));
     const allSettings = await loadUserSettingsMany(tx as unknown as WorkerDeps["db"],
       followers.map(follower => follower.userId), { lockGates: true });
     const [current] = await tx.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).for("update").limit(1);

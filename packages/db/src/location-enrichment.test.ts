@@ -38,6 +38,7 @@ it("a new subscription queues one revision from an old null-revision row without
 
   await db.insert(schema.companySubscriptions).values({ userId: user.id, companyId: company.id });
   await reevaluateGate(db, user.id, settings(["Boston"]), now, { companyId: company.id });
+  if (!job.url) throw new Error("seeded source job has no URL");
   const revision = locationRevisionFor({ sourceId: source.id, externalKey: job.externalKey, url: job.url,
     title: job.title, locationLabel: "70 Locations" }, now);
   expect((await db.select().from(schema.jobs).where(eq(schema.jobs.id, job.id)))[0]!.locationRevision).toBe(revision);

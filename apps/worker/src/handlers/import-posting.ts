@@ -120,7 +120,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     .select({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title })
     .from(schema.jobs)
     .where(eq(schema.jobs.companyId, companyId));
-  const known = stored.find((job) => job.url === url || normalisePostingUrl(job.url) === canonical);
+  const known = stored.find((job) => job.url === url || (job.url !== null && normalisePostingUrl(job.url) === canonical));
   if (known) {
     return deps.db.transaction(async (tx) => {
       await deps.assertOwnership?.(tx as unknown as Db);
@@ -248,7 +248,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     // Another import of the same URL got there first — the same posting, not a second one.
     if (!created) {
       const [raced] = await tx.select({ id: schema.jobs.id }).from(schema.jobs)
-        .where(and(eq(schema.jobs.sourceId, row.sourceId), eq(schema.jobs.externalKey, row.externalKey))).limit(1);
+        .where(and(eq(schema.jobs.sourceId, source.id), eq(schema.jobs.externalKey, row.externalKey))).limit(1);
       if (!raced) throw new Error(`Could not store the posting at ${host}`);
       return adoptExistingView(raced.id, { ...deps, db: tx as unknown as Db }, { userId, settings, now });
     }

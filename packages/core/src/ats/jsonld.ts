@@ -95,6 +95,7 @@ export function extractJsonLdPostings(html: string, pageUrl: string): RawPosting
     out.push({
       externalId: str(identifier?.value) ?? str(node.identifier),
       title,
+      companyName: str(rec(node.hiringOrganization)?.name),
       url,
       location: locations[0],
       locations: locations.length > 1 ? locations : undefined,

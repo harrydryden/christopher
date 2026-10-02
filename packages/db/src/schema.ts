@@ -53,7 +53,9 @@ export const SCAN_STATUSES = ["ok", "partial", "suspect_empty", "failed"] as con
 export const FETCH_METHODS = ["api", "http", "browser"] as const;
 export const JOB_STATUSES = ["open", "closed"] as const;
 /** Where a posting came from: the daily scan of a source, or a follower who pasted its URL. */
-export const JOB_ORIGINS = ["scan", "user"] as const;
+export const JOB_ORIGINS = ["scan", "user", "manual"] as const;
+export const ROLE_IMPORT_KINDS = ["link", "pdf"] as const;
+export const ROLE_IMPORT_STATUSES = ["queued", "ready", "failed", "saved"] as const;
 /**
  * Why one account's view of a posting carries the fit score it carries — or none.
  *
@@ -374,12 +376,19 @@ export const jobs = pgTable(
   "jobs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
-    sourceId: uuid("source_id").notNull().references(() => careerSources.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    sourceId: uuid("source_id").references(() => careerSources.id, { onDelete: "cascade" }),
     externalKey: text("external_key").notNull(),
     title: text("title").notNull(),
     normalizedTitle: text("normalized_title").notNull(),
-    url: text("url").notNull(),
+    url: text("url"),
+    /** A manually supplied employer name, independent of the shared company catalogue. */
+    companyLabel: text("company_label"),
+    /** Manual roles are private to this account, even when another account knows the same URL. */
+    manualOwnerId: uuid("manual_owner_id").references(() => users.id, { onDelete: "cascade" }),
+    manualFingerprint: text("manual_fingerprint"),
+    inputKind: text("input_kind", { enum: ROLE_IMPORT_KINDS }),
+    sourceFilename: text("source_filename"),
     location: text("location"),
     locations: jsonb("locations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     locationResolution: text("location_resolution", { enum: ["pending", "resolved", "unavailable"] }),
@@ -429,6 +438,8 @@ export const jobs = pgTable(
   },
   (t) => [
     uniqueIndex("jobs_source_external_key_uidx").on(t.sourceId, t.externalKey),
+    uniqueIndex("jobs_manual_owner_fingerprint_uidx").on(t.manualOwnerId, t.manualFingerprint)
+      .where(sql`${t.manualOwnerId} is not null and ${t.manualFingerprint} is not null`),
     index("jobs_company_status_idx").on(t.companyId, t.status),
     index("jobs_first_seen_idx").on(t.firstSeenAt),
     index("jobs_company_origin_idx").on(t.companyId, t.origin),
@@ -1234,6 +1245,33 @@ export const libraryImports = pgTable("library_imports", {
 ]);
 export type LibraryImport = typeof libraryImports.$inferSelect;
 export type NewLibraryImport = typeof libraryImports.$inferInsert;
+
+/** A private, unconfirmed role description. Only a person's confirmation creates a job row. */
+export const roleImports = pgTable("role_imports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ROLE_IMPORT_KINDS }).notNull(),
+  url: text("url"),
+  filename: text("filename"),
+  /** Temporary base64 upload; removed after parsing or a terminal refusal. */
+  sourceBytes: text("source_bytes"),
+  fingerprint: text("fingerprint").notNull(),
+  status: text("status", { enum: ROLE_IMPORT_STATUSES }).notNull().default("queued"),
+  title: text("title"),
+  companyName: text("company_name"),
+  location: text("location"),
+  descriptionText: text("description_text"),
+  truncated: boolean("truncated").notNull().default(false),
+  error: text("error"),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  createdAt: tsNow("created_at"),
+  updatedAt: tsNow("updated_at"),
+}, t => [
+  uniqueIndex("role_imports_user_fingerprint_uidx").on(t.userId, t.fingerprint),
+  index("role_imports_user_created_idx").on(t.userId, t.createdAt.desc()),
+]);
+export type RoleImport = typeof roleImports.$inferSelect;
+export type NewRoleImport = typeof roleImports.$inferInsert;
 
 /**
  * A link that shows one CV preview to someone the person chose, for as long as they choose.

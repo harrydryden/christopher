@@ -2959,7 +2959,7 @@ describe("durable HTTP listing continuation", () => {
     expect(generation).toMatchObject({ restarts: 1 });
     expect(await db.select().from(schema.htmlScanPages).where(eq(schema.htmlScanPages.generationId, generation!.id))).toHaveLength(20);
     await handleScanCompany(secondTask!, fastDeps);
-    expect((await db.select().from(schema.jobs)).find(job => job.url.endsWith("role-1"))?.title).toBe("Senior Operations Role 1");
+    expect((await db.select().from(schema.jobs)).find(job => job.url?.endsWith("role-1"))?.title).toBe("Senior Operations Role 1");
   }, 60_000);
 
   it("keeps a source partial if the final page falls short of its advertised result count", async () => {

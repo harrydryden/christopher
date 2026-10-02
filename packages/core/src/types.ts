@@ -10,6 +10,8 @@ export interface RawPosting {
   /** Stable identifier from the ATS when it provides one. */
   externalId?: string;
   title: string;
+  /** Employer explicitly named by JobPosting structured data, when present. */
+  companyName?: string;
   /** Public URL of the posting. */
   url: string;
   /** Primary location string as displayed by the source. */

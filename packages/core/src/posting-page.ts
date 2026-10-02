@@ -41,6 +41,8 @@ export function extractMainText(html: string): string | undefined {
 
 export interface ExtractedPosting {
   title: string;
+  /** Only populated from JobPosting.hiringOrganization.name. */
+  companyName?: string;
   location?: string;
   locations?: string[];
   department?: string;
@@ -121,6 +123,7 @@ export function extractPostingFromPage(html: string, url: string): ExtractedPost
     if (title) {
       return {
         title,
+        companyName: structured.companyName,
         location: structured.location,
         locations: structured.locations,
         department: structured.department,

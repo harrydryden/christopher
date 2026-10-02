@@ -4,12 +4,15 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { inputClass, labelClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
+import { BillingOverview } from "@/components/BillingOverview";
 import { SettingsForm } from "@/components/SettingsForm";
 import { linkedProviders } from "@/lib/accounts";
 import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
 import { googleConfigured } from "@/lib/google";
 import { MIN_PASSWORD_LENGTH } from "@ava/core";
+import { getBillingSummary } from "@/lib/billing/service";
+import { openBillingPortal, startCreditCheckout, startPlanCheckout } from "@/app/actions/billing";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -19,24 +22,34 @@ const NOTICES: Record<string, string> = {
   "verify:done": "Your email address is confirmed.",
   "verify:invalid": "That confirmation link is no longer valid. Send a new one below.",
   "verify:required": "Confirm your email address before adding companies, running discovery or building CVs. The link asks for your password.",
+  "billing:plan_started": "Checkout complete. Your plan will appear here once payment is confirmed.",
+  "billing:credits_added": "Checkout complete. Your CV credits will appear here once payment is confirmed.",
+  "billing:cancelled": "Checkout closed. No purchase was made.",
+  "billing:setup_required": "Purchases are unavailable here at the moment. Please try again later.",
+  "billing:unknown_plan": "That plan is unavailable. Choose one of the plans below.",
+  "billing:unknown_pack": "That credit pack is unavailable. Choose one of the packs below.",
+  "billing:checkout_failed": "Checkout could not start. Please try again.",
+  "billing:no_customer": "No billing account is linked to this plan yet.",
 };
 
-export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string; verify?: string }> }) {
+export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string; verify?: string; billing?: string }> }) {
   const current = await getCurrentUser();
   if (!current) redirect("/login");
   const { user } = current;
   const sp = await searchParams;
   // `?verify=required` outlives the redirect that set it, so the notice it names is shown only
   // while that account really is held back.
-  const key = sp.reset ? "reset" : sp.verify ? `verify:${sp.verify}` : null;
+  const key = sp.reset ? "reset" : sp.verify ? `verify:${sp.verify}` : sp.billing ? `billing:${sp.billing}` : null;
   const notice = key && (key !== "verify:required" || needsEmailConfirmation(user)) ? NOTICES[key] : null;
-  const providers = await linkedProviders(user.id);
+  const [providers, billing] = await Promise.all([linkedProviders(user.id), getBillingSummary(user.id)]);
   const labelClassName = "flex flex-col gap-1.5 text-14";
 
   return (
     <div className="space-y-6">
       <PageHeader title="Account" />
       {notice && <p role="status" className="border-2 border-ok px-3 py-2 text-14 text-ok">{notice}</p>}
+
+      <BillingOverview billing={billing} actions={{ openBillingPortal, startCreditCheckout, startPlanCheckout }} />
 
       <Card title="Profile">
         <SettingsForm action={updateProfile}>

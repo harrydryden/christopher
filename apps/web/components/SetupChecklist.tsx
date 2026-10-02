@@ -11,6 +11,7 @@ export function SetupChecklist({ checklist, variant }: { checklist: Checklist; v
       <p className="max-w-3xl text-14 text-muted">{checklist.notice.description}</p>
       <a href={checklist.notice.href} className="inline-flex min-h-11 items-center text-14 font-semibold underline">{checklist.notice.action}</a>
     </div>}
+    {explanation && <p className="text-13 text-muted">Your Free plan includes 25 active companies and your first 3 tailored CVs. <a href="/account#plan-and-credits" className="underline">See your plan and credits</a>.</p>}
     {!checklist.complete && <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-14"><span className="font-semibold">{explanation ? "Start here" : "Monitoring setup"}</span> · {checklist.summary}</p>

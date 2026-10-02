@@ -1,4 +1,5 @@
 import type { CvContent } from "@ava/core/cv";
+import { CV_LIMITS } from "@ava/core/cv-format";
 
 export type AddedSkillSection = { entryId: string; heading: string; items: string[] };
 
@@ -23,7 +24,7 @@ export function cvReviewSections(
     if (!changed) return [section];
     return [{
       ...section,
-      ...(section.skillItems ? { skillItems: edited, bullets: edited } : { bullets: edited }),
+      ...(section.skillItems ? { skillItems: edited, bullets: edited.slice(0, CV_LIMITS.bulletsPerSection) } : { bullets: edited }),
       bulletSources: undefined,
     }];
   });
@@ -34,7 +35,7 @@ export function cvReviewSections(
     seen.add(entryId);
     const skillItems = items.map((item) => item.trim()).filter(Boolean);
     if (!skillItems.length) return [];
-    return [{ entryId, kind: "skill" as const, heading: heading.trim() || "Skills", skillItems, bullets: skillItems }];
+    return [{ entryId, kind: "skill" as const, heading: heading.trim() || "Skills", skillItems, bullets: skillItems.slice(0, CV_LIMITS.bulletsPerSection) }];
   });
   return [...existing, ...added];
 }

@@ -103,8 +103,10 @@ async function rememberWording(tx: Tx, userId: string, before: CvContent, after:
   // buried the user's own style guidance in repetition.
   const changes: string[] = [];
   if (after.summary !== before.summary) changes.push(`${REMEMBERED}profile: ${after.summary}`);
-  after.sections.forEach((section, i) => {
-    const previous = before.sections[i]!;
+  after.sections.forEach((section) => {
+    // A new manual skill is direct CV wording, not evidence to suggest on the next CV.
+    const previous = before.sections.find((candidate) => candidate.entryId === section.entryId);
+    if (!previous) return;
     const kept = new Set(previous.skillItems ?? previous.bullets);
     const changed = (section.skillItems ?? section.bullets).filter((item) => !kept.has(item));
     if (changed.length) changes.push(`${REMEMBERED}${section.heading}: ${changed.join(" ")}`);

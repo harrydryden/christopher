@@ -31,3 +31,15 @@ it("rejects removal of non-skill sections and leaves invalid non-skill edits for
   const sections = cvReviewSections(saved, ["", "Python"], [], []);
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(false);
 });
+
+it("accepts more than six skills without exceeding the bullet limit", () => {
+  const items = ["Python", "SQL", "Excel", "R", "Tableau", "Power BI", "Looker"];
+  const sections = cvReviewSections(saved, ["Built systems.", items.join("\n")], [], [
+    { entryId: "manual-skill-12345678-1234-1234-1234-123456789abc", heading: "More tools", items },
+  ]);
+  expect(sections[1]?.skillItems).toHaveLength(7);
+  expect(sections[1]?.bullets).toHaveLength(6);
+  expect(sections[2]?.skillItems).toHaveLength(7);
+  expect(sections[2]?.bullets).toHaveLength(6);
+  expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
+});

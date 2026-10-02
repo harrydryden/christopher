@@ -152,6 +152,9 @@ importers:
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
+      pdfkit:
+        specifier: ^0.20.2
+        version: 0.20.2
       pg:
         specifier: 8.23.0
         version: 8.23.0

@@ -119,7 +119,9 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
   const stored = await deps.db
     .select({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title })
     .from(schema.jobs)
-    .where(eq(schema.jobs.companyId, companyId));
+    // A private manual role can now carry companyId for its logo. Never adopt it as a
+    // shared posting for another follower, even when the advert URL is identical.
+    .where(and(eq(schema.jobs.companyId, companyId), ne(schema.jobs.origin, "manual")));
   const known = stored.find((job) => job.url === url || (job.url !== null && normalisePostingUrl(job.url) === canonical));
   if (known) {
     return deps.db.transaction(async (tx) => {

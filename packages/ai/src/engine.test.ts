@@ -699,12 +699,50 @@ it("plans CV evidence in one bounded call and validates exact row references", a
   expect(calls).toHaveLength(1);
   expect(calls[0]!.params.max_tokens).toBe(16000);
   expect(usage[0]).toMatchObject({ callSite: "CV", stage: "planning" });
-  expect(JSON.stringify(calls[0]!.params.system)).toContain("exact source IDs");
+  expect(JSON.stringify(calls[0]!.params.system)).toContain("row.id or skillItems.id");
 
   const invalid = engineWith({ ...output, requirements: [{ ...output.requirements[0]!, evidence: [{ sourceId: "entry:role:row:999", quote: "Led operations across Europe" }] }] });
   await expect(invalid.engine.planCvTailoring({ rubric, library })).rejects.toMatchObject({
     kind: "output_invalid", message: expect.stringContaining("Unknown tailoring evidence source"),
   });
+  expect(invalid.calls).toHaveLength(2);
+});
+
+it("repairs an overlong rubric label once using specific schema feedback", async () => {
+  const valid = { requirements: [{ id: "r1", label: "Lead operations", quote: "Lead operations", importance: "essential", category: "delivery" }], caveats: [] };
+  const answers = [{ ...valid, requirements: [{ ...valid.requirements[0]!, label: "x".repeat(251) }] }, valid];
+  const calls: Captured[] = [];
+  const client: AiClientLike = { messages: { async create(params, options) {
+    calls.push({ params, options });
+    return { parsed_output: answers[calls.length - 1], stop_reason: "end_turn", model: "claude-opus-5", usage: { input_tokens: 10, output_tokens: 10 } };
+  } } };
+  const engine = createAiEngine({ client, getModel: () => "claude-opus-5" });
+  expect((await engine.analyseCvJob("Lead operations"))?.requirements).toHaveLength(1);
+  expect(calls).toHaveLength(2);
+  expect(userPayload(calls[1]!.params).repair.validationError).toContain("requirements.0.label: Too big");
+});
+
+it("stops after one rubric repair when the quote is still unanchored", async () => {
+  const answer = { requirements: [{ id: "r1", label: "Lead operations", quote: "Invented requirement", importance: "essential", category: "delivery" }], caveats: [] };
+  const { engine, calls } = engineWith(answer);
+  await expect(engine.analyseCvJob("Lead operations")).rejects.toMatchObject({ kind: "output_invalid", message: expect.stringContaining("not quoted") });
+  expect(calls).toHaveLength(2);
+  expect(userPayload(calls[1]!.params).repair.validationError).toContain("not quoted");
+});
+
+it("repairs an unknown tailoring source once without accepting an unsupported citation", async () => {
+  const rubric = { requirements: [{ id: "r1", label: "Lead operations", quote: "Lead operations", importance: "essential" as const, category: "delivery" as const }], caveats: [] };
+  const library: CvLibrary = { name: "Candidate", contact: "", profile: "", entries: [{ id: "role", kind: "experience", heading: "Director", details: "Led operations across Europe", confirmedResponsibilities: ["Led operations across Europe"] }] };
+  const answer = (sourceId: string) => ({ requirements: [{ requirementId: "r1", status: "demonstrated", evidence: [{ sourceId, quote: "Led operations across Europe" }], reason: "Direct evidence." }], gapQuestions: [] });
+  const calls: Captured[] = [];
+  const client: AiClientLike = { messages: { async create(params, options) {
+    calls.push({ params, options });
+    return { parsed_output: calls.length === 1 ? answer("entry:invented") : answer("entry:role:row:0"), stop_reason: "end_turn", model: "claude-opus-5", usage: { input_tokens: 10, output_tokens: 10 } };
+  } } };
+  const engine = createAiEngine({ client, getModel: () => "claude-opus-5" });
+  expect((await engine.planCvTailoring({ rubric, library }))?.requirements[0]!.evidence[0]!.sourceId).toBe("entry:role:row:0");
+  expect(calls).toHaveLength(2);
+  expect(userPayload(calls[1]!.params).repair.validationError).toContain("Unknown tailoring evidence source: entry:invented");
 });
 
 describe("source company extraction", () => {

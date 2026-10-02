@@ -504,14 +504,14 @@ export async function refreshCompanyProfile(companyId: string): Promise<void> {
   revalidatePath(`/companies/${id}`);
 }
 
-/** Stop following: this account's subscription and views go; the shared company and its history stay. */
+/** Stop following: catalogue views go, while this account's private manual roles stay. */
 export async function unfollowCompany(companyId: string): Promise<void> {
   const user = await requireUser();
   const id = zUuid().parse(companyId);
   await db().transaction(async tx => {
     await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, user.id, "exclusive");
     await tx.delete(companySubscriptions).where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id)));
-    await tx.execute(sql`delete from user_jobs uj using jobs j where j.id = uj.job_id and uj.user_id = ${user.id} and j.company_id = ${id}`);
+    await tx.execute(sql`delete from user_jobs uj using jobs j where j.id = uj.job_id and uj.user_id = ${user.id} and j.company_id = ${id} and j.origin <> 'manual'`);
     await syncCompanyStatus(tx, id);
   });
   revalidate("/", "/companies");

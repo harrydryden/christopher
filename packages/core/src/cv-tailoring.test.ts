@@ -31,6 +31,22 @@ it("validates every requirement and rejects invented IDs and non-source quotes",
   ] }, rubric, sources)).toThrow("quote is not present");
 });
 
+it("resolves a whole-entry citation only when its quote identifies one confirmed row", () => {
+  const sources = cvTailoringEvidence(library);
+  const wholeEntry = { ...tailoring, requirements: [
+    { ...tailoring.requirements[0]!, evidence: [{ sourceId: "entry:role", quote: "Opened a new sales channel" }] },
+    tailoring.requirements[1]!,
+  ] };
+  expect(validateCvTailoringPlan(wholeEntry, rubric, sources).requirements[0]!.evidence)
+    .toEqual([{ sourceId: "entry:role:row:0", quote: "Opened a new sales channel" }]);
+  expect(() => validateCvTailoringPlan({ ...wholeEntry, requirements: [
+    { ...wholeEntry.requirements[0]!, evidence: [{ sourceId: "entry:role", quote: "new revenue" }] },
+    tailoring.requirements[1]!,
+  ] }, rubric, sources)).toThrow("Unknown tailoring evidence source");
+  const repeated = sources.map(source => source.id === "entry:role:row:1" ? { ...source, text: "Opened a new sales channel and coached six managers" } : source);
+  expect(() => validateCvTailoringPlan(wholeEntry, rubric, repeated)).toThrow("Unknown tailoring evidence source");
+});
+
 it("gives the writer each verdict and its rows by id, without the planner's reasons or quotes", () => {
   expect(cvTailoringPlanForWriter({ ...tailoring, gapQuestions: [] })).toEqual({ requirements: [
     { requirementId: "r1", status: "demonstrated", evidence: ["entry:role:row:0"] },

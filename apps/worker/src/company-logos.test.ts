@@ -121,3 +121,13 @@ it("asks for the companies that are due and no others", async () => {
   expect(due.find((row) => row.id === never.id)?.homepageUrl).toBe("https://never.test");
   expect(await companiesDueLogoCapture(db, now, 1)).toHaveLength(1);
 });
+
+it("refreshes an archived company's logo while a private manual role uses it", async () => {
+  const subject = await company({ domain: "manual-brand.test", status: "archived" });
+  const [user] = await db.insert(schema.users).values({ email: `manual-brand-${crypto.randomUUID()}@example.test` }).returning();
+  await db.insert(schema.jobs).values({ companyId: subject.id, externalKey: `manual:${crypto.randomUUID()}`,
+    title: "Service Lead", normalizedTitle: "service lead", companyLabel: "Manual Brand",
+    manualOwnerId: user!.id, manualFingerprint: crypto.randomUUID(), inputKind: "pdf",
+    origin: "manual", shared: false });
+  expect((await companiesDueLogoCapture(db, now)).map(row => row.id)).toContain(subject.id);
+});

@@ -115,6 +115,15 @@ it("stores the icon a homepage declares, and says what it captured", async () =>
   expect(after!.logoFetchedAt?.toISOString()).toBe(now.toISOString());
 });
 
+it("captures a logo for an unfollowed company used by a manual role without discovering careers", async () => {
+  const subject = await company({ status: "archived" });
+  const result = await handleDiscover(logoTask(subject), deps) as { captured: boolean };
+  expect(result.captured).toBe(true);
+  expect((await readCompanyLogo(db, subject.id))?.bytes).toEqual(png());
+  expect(await db.select().from(schema.careerSources)).toHaveLength(0);
+  expect(await db.select().from(schema.discoveryRuns)).toHaveLength(0);
+});
+
 it("records a failure as a backoff, and finishes the task rather than failing it", async () => {
   const subject = await company({ domain: "blank.test", homepageUrl: "https://blank.test/" });
 

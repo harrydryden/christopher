@@ -214,7 +214,7 @@ describe("the engine under the governor", () => {
       return answer();
     } } };
     const engine = createAiEngine({ client, governor, getModel: () => "claude-sonnet-5" });
-    await Promise.all([engine.analyseCvJob("a"), engine.withSignal(new AbortController().signal).analyseCvJob("b"), engine.analyseCvJob("c")]);
+    await Promise.all([engine.analyseCvJob("Lead operations"), engine.withSignal(new AbortController().signal).analyseCvJob("Lead operations"), engine.analyseCvJob("Lead operations")]);
     expect(most).toBe(1);
     expect(engine.governorStats()).toMatchObject({ cap: 1, inFlight: 0, queued: 0 });
   });

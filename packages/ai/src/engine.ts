@@ -1,6 +1,6 @@
 import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
-import { mentionsDemographicAttribute } from "@ava/core/cv-review";
+import { mentionsDemographicAttribute, validateCvRubric } from "@ava/core/cv-review";
 import { cvReviewBatches, libraryVerdictLines, mergeRetry, reviewBatchIssues, markUnverifiedFindings, retryScope, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
 import {
   CV_PAGE_LIMITS,
@@ -1289,7 +1289,29 @@ export class AiEngine {
     description: string,
     ref: Ref = {},
   ): Promise<CvRubric | null> {
-    return this.run<CvRubric>(PROMPTS["cv.rubric"], { user: JSON.stringify({ description }) }, ref);
+    let failedOutput = false;
+    let outputError: string | undefined;
+    const first = await this.run<CvRubric>(PROMPTS["cv.rubric"], { user: JSON.stringify({ description }),
+      onRecord: record => { if (record.failure?.kind === "output_invalid") outputError = record.error; },
+    }, {
+      ...ref, onFailure: failure => { if (failure.kind === "output_invalid") failedOutput = true; ref.onFailure?.(failure); },
+    });
+    let feedback: string | undefined;
+    if (first) {
+      try { return validateCvRubric(description, first); }
+      catch (error) { feedback = (error as Error).message; }
+    } else if (failedOutput) {
+      feedback = outputError ?? "The previous answer was missing or did not fit the required rubric JSON schema.";
+    }
+    if (!feedback) return null;
+    const repaired = await this.run<CvRubric>(PROMPTS["cv.rubric"], {
+      user: JSON.stringify({ description, repair: { validationError: feedback,
+        instruction: "Return a complete new rubric in the required JSON schema. Quote only exact contiguous text from the description and use distinct requirements.",
+        ...(first ? { previousAnswer: first } : {}) } }),
+    }, { ...ref, stage: `${ref.stage ?? "rubric"}_retry` });
+    if (!repaired) return null;
+    try { return validateCvRubric(description, repaired); }
+    catch (error) { throw new CvBuildStop("output_invalid", (error as Error).message, { motion: "rubric" }); }
   }
 
   /** One bounded pre-writing call. The returned index is validated against exact trusted rows. */
@@ -1304,12 +1326,29 @@ export class AiEngine {
       employment: (input.library.employment ?? []).map(job => ({ employmentId: job.id, label: employmentHeading(job) })),
       evidence: input.library.entries.map(entry => ({ entryId: entry.id, label: entry.heading, kind: entry.kind })),
     };
+    const payload = { rubric: input.rubric, evidence: canonicalEvidence(input.library), destinations };
+    let failedOutput = false;
+    let outputError: string | undefined;
     const result = await this.run<CvTailoringPlan>(PROMPTS["cv.planning"], {
-      user: JSON.stringify({ rubric: input.rubric, evidence: canonicalEvidence(input.library), destinations }),
-    }, ref);
-    if (!result) return null;
+      user: JSON.stringify(payload),
+      onRecord: record => { if (record.failure?.kind === "output_invalid") outputError = record.error; },
+    }, { ...ref, onFailure: failure => { if (failure.kind === "output_invalid") failedOutput = true; ref.onFailure?.(failure); } });
+    let feedback: string | undefined;
     try {
-      return validateCvTailoringPlan(result, input.rubric, evidence, input.library);
+      if (result) return validateCvTailoringPlan(result, input.rubric, evidence, input.library);
+      if (!failedOutput) return null;
+      feedback = outputError ?? "The previous answer was missing or did not fit the required evidence-plan JSON schema.";
+    } catch (error) {
+      feedback = (error as Error).message;
+    }
+    const repaired = await this.run<CvTailoringPlan>(PROMPTS["cv.planning"], {
+      user: JSON.stringify({ ...payload, repair: { validationError: feedback,
+        instruction: "Return a complete corrected plan. Cite only row or skill IDs shown in evidence and exact quotes from those rows. Preserve every fixed requirement exactly once; never add unsupported matches.",
+        ...(result ? { previousAnswer: result } : {}) } }),
+    }, { ...ref, stage: `${ref.stage ?? "planning"}_retry` });
+    if (!repaired) return null;
+    try {
+      return validateCvTailoringPlan(repaired, input.rubric, evidence, input.library);
     } catch (error) {
       throw new CvBuildStop("output_invalid", `The evidence plan could not be verified: ${(error as Error).message}`);
     }

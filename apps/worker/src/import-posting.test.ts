@@ -134,6 +134,19 @@ const importTask = (url: string, user: User = importer) => ({
 const viewsFor = (user: User) => db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
 const tasksOfType = (type: string) => db.select().from(schema.tasks).where(eq(schema.tasks.type, type as "score_job"));
 
+it("does not adopt another account's private manual role at the same company and URL", async () => {
+  const [privateRole] = await db.insert(schema.jobs).values({ companyId: company.id,
+    externalKey: `manual:${crypto.randomUUID()}`, title: "Private version", normalizedTitle: "private version",
+    url: STAFF_ENGINEER, companyLabel: "Pasted Ltd", manualOwnerId: matching.id,
+    manualFingerprint: crypto.randomUUID(), inputKind: "link", origin: "manual", shared: false,
+  }).returning({ id: schema.jobs.id });
+  const result = await handleImportPosting(importTask(STAFF_ENGINEER, importer), deps) as { ok: true; jobId: string; existing: boolean };
+  expect(result).toMatchObject({ ok: true, existing: false });
+  expect(result.jobId).not.toBe(privateRole!.id);
+  expect((await viewsFor(importer)).some(view => view.jobId === privateRole!.id)).toBe(false);
+  expect((await viewsFor(matching)).some(view => view.jobId === privateRole!.id)).toBe(false);
+});
+
 it("stores the posting once for everyone and puts it in the asker's table whatever their gate says", async () => {
   const result = await handleImportPosting(importTask(STAFF_ENGINEER), deps) as {
     ok: true; jobId: string; title: string; existing: boolean; gate: Record<string, unknown>;

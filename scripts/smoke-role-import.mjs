@@ -17,6 +17,7 @@ const secret = "role-import-smoke-secret-0123456789abcdef0123456789abcdef";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev" });
 const suffix = randomUUID().slice(0, 8);
 const email = `role-smoke-${suffix}@ava.invalid`;
+const brandingDomain = `role-brand-${suffix}.test`;
 let browser;
 let web;
 
@@ -36,6 +37,7 @@ async function importId(page) {
 
 try {
   const account = await disposableAdmin(pool, { email, name: "Role Smoke", domain: `role-${suffix}.invalid`, companyName: "Role Smoke", secret, userAgent: "role-smoke" });
+  const initialSubscriptions = Number((await pool.query("select count(*)::int as count from company_subscriptions where user_id = $1", [account.userId])).rows[0].count);
   web = await startWeb({ port, env: { DATABASE_URL: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev", SESSION_SECRET: secret } });
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -82,8 +84,25 @@ try {
   await readyImport(account.userId, pdfId);
   await page.reload();
   await page.getByRole("heading", { name: "Confirm role details" }).waitFor();
+  await page.getByRole("textbox", { name: "Company website or domain" }).fill(brandingDomain);
+  await page.screenshot({ path: "/tmp/role-import-pdf-review-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "PDF review fits a phone width");
+  await page.screenshot({ path: "/tmp/role-import-pdf-review-375.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "Save to Shortlisted" }).click();
   await page.waitForURL(/\/roles\/[0-9a-f-]{36}$/);
+  const branded = await pool.query(`select j.company_id, j.company_label, c.name as catalogue_name,
+      c.domain, c.homepage_url from role_imports ri join jobs j on j.id = ri.job_id
+      join companies c on c.id = j.company_id where ri.id = $1 and ri.user_id = $2`, [pdfId, account.userId]);
+  assert.equal(branded.rowCount, 1, "the PDF role is linked to a branding company");
+  assert.equal(branded.rows[0].company_label, "Smoke Employer", "the reviewed employer label stays on the private role");
+  assert.equal(branded.rows[0].catalogue_name, brandingDomain, "the shared catalogue uses a neutral domain name");
+  assert.equal(branded.rows[0].domain, brandingDomain);
+  assert.equal(branded.rows[0].homepage_url, `https://${brandingDomain}/`);
+  const subscriptions = await pool.query("select company_id from company_subscriptions where user_id = $1", [account.userId]);
+  assert.equal(subscriptions.rowCount, initialSubscriptions, "branding does not add a subscription");
+  assert.equal(subscriptions.rows.some(row => row.company_id === branded.rows[0].company_id), false);
   assert.match(await page.locator("main").innerText(), /Added from PDF/i);
   assert.doesNotMatch(await page.locator("main").innerText(), /View vacancy/);
   await page.getByText("Save your Library first.").waitFor();
@@ -100,6 +119,8 @@ try {
   await browser?.close();
   await web?.stop();
   await pool.query("delete from users where email = $1", [email]).catch(() => {});
+  await pool.query("delete from tasks where payload->>'companyId' = (select id::text from companies where domain = $1)", [brandingDomain]).catch(() => {});
+  await pool.query("delete from companies where domain = $1", [brandingDomain]).catch(() => {});
   await pool.query("delete from companies where domain = $1", [`role-${suffix}.invalid`]).catch(() => {});
   await pool.end();
 }

@@ -391,7 +391,7 @@ export async function requestCv(
     }
     // The role must be one this account can see.
     const [row] = await db()
-      .select({ job: jobs, company: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')` })
+      .select({ job: jobs, company: sql<string>`coalesce(${jobs.companyLabel}, ${companies.name}, 'Unknown employer')` })
       .from(userJobs)
       .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
       .leftJoin(companies, eq(jobs.companyId, companies.id))

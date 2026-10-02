@@ -34,6 +34,7 @@ export default async function ReviewImportedRolePage({ params }: { params: Promi
           <input type="hidden" name="manualRecovery" value="1" />
           <Field label="Job title" htmlFor="recovery-title"><Input id="recovery-title" name="title" defaultValue={row.title || ""} required maxLength={300} /></Field>
           <Field label="Company name" htmlFor="recovery-company"><Input id="recovery-company" name="companyName" defaultValue={row.companyName || ""} required maxLength={300} /></Field>
+          <Field label="Company website or domain" htmlFor="recovery-website" hint="Optional. Add the employer’s own website to show its logo on this role. This does not follow the company."><Input id="recovery-website" name="companyWebsite" placeholder="https://example.com" autoComplete="url" maxLength={2048} /></Field>
           <Field label="Location" htmlFor="recovery-location" hint="Leave blank if the advert does not give a location."><Input id="recovery-location" name="location" defaultValue={row.location || ""} maxLength={300} /></Field>
           <Field label="Job description" htmlFor="recovery-description"><Textarea id="recovery-description" name="description" defaultValue={row.descriptionText || ""} rows={14} minLength={80} maxLength={60000} required /></Field>
         </SettingsForm>
@@ -45,6 +46,7 @@ export default async function ReviewImportedRolePage({ params }: { params: Promi
       <SettingsForm action={saveImportedRole.bind(null, id)} submitLabel="Save to Shortlisted" resetOnSuccess={false}>
         <Field label="Job title" htmlFor="import-title"><Input id="import-title" name="title" defaultValue={row.title || ""} required maxLength={300} /></Field>
         <Field label="Company name" htmlFor="import-company"><Input id="import-company" name="companyName" defaultValue={row.companyName || ""} required maxLength={300} /></Field>
+        <Field label="Company website or domain" htmlFor="import-website" hint="Optional. Add the employer’s own website to show its logo on this role. This does not follow the company."><Input id="import-website" name="companyWebsite" placeholder="https://example.com" autoComplete="url" maxLength={2048} /></Field>
         <Field label="Location" htmlFor="import-location" hint="Leave blank if the advert does not give a location."><Input id="import-location" name="location" defaultValue={row.location || ""} maxLength={300} /></Field>
         <Field label="Job description" htmlFor="import-description" hint="This text is used to tailor your CV. Review it carefully, especially if extraction was incomplete."><Textarea id="import-description" name="description" defaultValue={row.descriptionText || ""} rows={14} minLength={80} maxLength={60000} required /></Field>
         {row.truncated && <label className="flex items-start gap-2 text-13 text-fg">

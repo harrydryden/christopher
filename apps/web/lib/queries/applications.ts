@@ -392,7 +392,7 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
       jobTitle: jobs.title,
       jobUrl: jobs.url,
       companyId: companies.id,
-      companyName: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')`,
+      companyName: sql<string>`coalesce(${jobs.companyLabel}, ${companies.name}, 'Unknown employer')`,
       faviconUrl: companies.faviconUrl,
       companyDomain: companies.domain,
       logoFetchedAt: companies.logoFetchedAt,

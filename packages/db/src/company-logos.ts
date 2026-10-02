@@ -88,7 +88,7 @@ export async function readCompanyLogo(db: Db, companyId: string): Promise<{ cont
 
 /**
  * Companies whose logo should be captured now: never captured or captured long enough ago to be
- * stale, and not inside a retry backoff. Archived companies are nobody's, so they are skipped.
+ * stale, and not inside a retry backoff. Archived companies without any manual role are skipped.
  * Oldest attempt first — a company nobody has ever captured has the oldest attempt of all — so a
  * queue that cannot be drained in one pass still makes progress and a newly followed company gets
  * its logo before a retry that has already failed five times.
@@ -99,7 +99,8 @@ export async function companiesDueLogoCapture(db: Db, now = new Date(), limit = 
     .select({ id: companies.id, homepageUrl: companies.homepageUrl })
     .from(companies)
     .where(and(
-      ne(companies.status, "archived"),
+      // An unfollowed company can still brand a private, manually imported role.
+      or(ne(companies.status, "archived"), sql`exists (select 1 from jobs j where j.company_id = ${companies.id} and j.origin = 'manual')`),
       or(isNull(companies.logoFetchedAt), lt(companies.logoFetchedAt, stale)),
       or(isNull(companies.logoNextAttemptAt), lte(companies.logoNextAttemptAt, now)),
     ))

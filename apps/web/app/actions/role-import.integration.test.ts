@@ -74,6 +74,55 @@ it("saves an owned role and shortlist once, visible in Roles and Applications", 
   expect(exported.find(row => row.job.id === saved!.jobId)?.company.name).toBe("Example");
 });
 
+it("attaches a manual PDF role to company branding without following or discovering careers", async () => {
+  const user = (await database.select().from(schema.users))[0]!;
+  const [row] = await database.insert(schema.roleImports).values({ userId: user.id, kind: "pdf",
+    filename: "job.pdf", fingerprint: "branded-pdf", status: "ready",
+    title: "Operations Lead", companyName: "Example Ltd", descriptionText: description }).returning();
+  const reviewed = new FormData();
+  reviewed.set("title", "Operations Lead"); reviewed.set("companyName", "Example Ltd");
+  reviewed.set("companyWebsite", "https://www.example.com/about"); reviewed.set("description", description);
+  await expect(saveImportedRole(row!.id, { ok: true }, reviewed)).rejects.toThrow(/^redirect:\/roles\//);
+  const [company] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "example.com"));
+  const [job] = await database.select().from(schema.jobs).where(eq(schema.jobs.manualOwnerId, user.id));
+  expect(company).toMatchObject({ domain: "example.com", homepageUrl: "https://www.example.com/", status: "archived" });
+  expect(job).toMatchObject({ companyId: company!.id, companyLabel: "Example Ltd", manualOwnerId: user.id, shared: false });
+  expect(await database.select().from(schema.companySubscriptions)).toHaveLength(0);
+  expect((await database.select().from(schema.tasks)).map(task => task.type)).toEqual(["discover"]);
+  expect((await database.select().from(schema.tasks)).find(task => task.type === "discover")?.payload).toMatchObject({ companyId: company!.id, logoOnly: true });
+  await database.update(schema.companies).set({ name: "Different catalogue name" }).where(eq(schema.companies.id, company!.id));
+  const [role] = await fetchRoleDetails(user.id, [job!.id]);
+  expect(role?.company).toMatchObject({ name: "Example Ltd", domain: "example.com", homepageUrl: "https://www.example.com/" });
+  const other = await signInTestUser(database, process.env.SESSION_SECRET!, "other@example.com");
+  expect(await fetchRoleDetails(other.user.id, [job!.id])).toHaveLength(0);
+  expect((await fetchRoleRows(other.user.id, parseRolesFilters({ view: "user-shortlisted" }), false)).some(row => row.job.id === job!.id)).toBe(false);
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: {
+    name: "Example", contact: "London", profile: "Operations leader", entries: [
+      { id: "one", kind: "experience", heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] },
+    ],
+  } });
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 200 });
+  const request = new FormData(); request.set("jobId", job!.id);
+  await expect(requestCv({ ok: true }, request)).rejects.toThrow(/^redirect:\/cv\//);
+  expect((await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.jobId, job!.id)))[0]).toMatchObject({ companyName: "Example Ltd", jobId: job!.id });
+  await expect(saveImportedRole(row!.id, { ok: true }, reviewed)).rejects.toThrow(/^redirect:\/roles\//);
+  expect(await database.select().from(schema.companies).where(eq(schema.companies.domain, "example.com"))).toHaveLength(1);
+  expect((await database.select().from(schema.tasks)).filter(task => task.type === "discover")).toHaveLength(1);
+});
+
+it("refuses an unsafe company website before creating the manual role", async () => {
+  const user = (await database.select().from(schema.users))[0]!;
+  const [row] = await database.insert(schema.roleImports).values({ userId: user.id, kind: "pdf",
+    filename: "job.pdf", fingerprint: "unsafe-website", status: "ready",
+    title: "Operations Lead", companyName: "Example", descriptionText: description }).returning();
+  const reviewed = new FormData();
+  reviewed.set("title", "Operations Lead"); reviewed.set("companyName", "Example");
+  reviewed.set("companyWebsite", "http://127.0.0.1/secret"); reviewed.set("description", description);
+  expect(await saveImportedRole(row!.id, { ok: true }, reviewed)).toMatchObject({ ok: false });
+  expect(await database.select().from(schema.jobs)).toHaveLength(0);
+  expect(await database.select().from(schema.companies).where(eq(schema.companies.domain, "127.0.0.1"))).toHaveLength(0);
+});
+
 it("retries a failed PDF without exposing or duplicating its bytes", async () => {
   const user = (await database.select().from(schema.users))[0]!;
   const [row] = await database.insert(schema.roleImports).values({ userId: user.id, kind: "pdf", filename: "role.pdf",

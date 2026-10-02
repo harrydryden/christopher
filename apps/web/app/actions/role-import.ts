@@ -3,8 +3,8 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { jobs, roleImports, tasks, userJobs, users } from "@ava/db";
-import { assertPublicHttpUrl, normalisePostingUrl, normalizeTitle, sha1, UnsafeUrlError } from "@ava/core";
+import { companies, jobs, roleImports, tasks, userJobs, users } from "@ava/db";
+import { assertPublicHttpUrl, ensureHttpUrl, extractDomain, normalisePostingUrl, normalizeTitle, sha1, UnsafeUrlError } from "@ava/core";
 import { requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { recordDecisions } from "@/lib/decisions";
@@ -14,6 +14,21 @@ import { actionError, fail, UserFacingError, zUuid, type ActionResult } from "@/
 
 const MAX_PDF_BYTES = 5 * 1024 * 1024;
 const MAX_PENDING = 5;
+
+function companyWebsite(raw: string): { domain: string; homepageUrl: string } | null {
+  const value = raw.trim();
+  if (!value) return null;
+  if (value.length > 2048 || /\s/.test(value)) throw new UserFacingError("Enter a company website up to 2,048 characters.");
+  try {
+    const url = assertPublicHttpUrl(ensureHttpUrl(value));
+    const domain = extractDomain(url.toString());
+    if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(domain)) throw new Error("invalid domain");
+    return { domain, homepageUrl: `${url.origin}/` };
+  } catch (error) {
+    if (error instanceof UnsafeUrlError) throw new UserFacingError(error.message);
+    throw new UserFacingError("Enter a public company website or domain, such as https://example.com.");
+  }
+}
 
 type Prepared = { kind: "link"; url: string; fingerprint: string } |
   { kind: "pdf"; filename: string; sourceBytes: string; fingerprint: string };
@@ -111,6 +126,9 @@ export async function saveImportedRole(id: string, _previous: ActionResult, form
   if (!zUuid().safeParse(id).success) return fail("Role import not found.");
   const title = String(form.get("title") ?? "").trim();
   const companyName = String(form.get("companyName") ?? "").trim();
+  let website: ReturnType<typeof companyWebsite>;
+  try { website = companyWebsite(String(form.get("companyWebsite") ?? "")); }
+  catch (error) { return actionError(error, "Enter a valid company website."); }
   const location = String(form.get("location") ?? "").trim();
   const description = String(form.get("description") ?? "").trim();
   if (!title || title.length > 300) return fail("Enter a role title up to 300 characters.");
@@ -133,9 +151,25 @@ export async function saveImportedRole(id: string, _previous: ActionResult, form
         throw new UserFacingError("Wait for this role to finish reading before saving it.");
       if (row.truncated && description === row.descriptionText)
         throw new UserFacingError("The extracted description is shortened. Paste the complete advert before saving.");
+      let companyId: string | null = null;
+      if (website) {
+        // A manual role can use shared branding without following or scanning the company.
+        const [created] = await tx.insert(companies).values({ name: companyName,
+          domain: website.domain, homepageUrl: website.homepageUrl, addedBy: user.id,
+          status: "archived", archivedAt: new Date(),
+        }).onConflictDoNothing().returning({ id: companies.id });
+        const [company] = await tx.select({ id: companies.id, homepageUrl: companies.homepageUrl,
+          logoFetchedAt: companies.logoFetchedAt, logoNextAttemptAt: companies.logoNextAttemptAt }).from(companies)
+          .where(eq(companies.domain, website.domain)).limit(1);
+        if (!company) throw new Error("Company domain conflict without catalogue row");
+        companyId = company.id;
+        // Logo capture is independent of source discovery and does not subscribe this account.
+        if (created || (!company.logoFetchedAt && (!company.logoNextAttemptAt || company.logoNextAttemptAt <= new Date())))
+          await enqueue("discover", { companyId, logoOnly: true, homepageUrl: company.homepageUrl }, tx);
+      }
       const [inserted] = await tx.insert(jobs).values({
         title, normalizedTitle: normalizeTitle(title), externalKey: `manual:${row.id}`,
-        url: row.url, companyLabel: companyName, manualOwnerId: user.id,
+        url: row.url, companyId, companyLabel: companyName, manualOwnerId: user.id,
         manualFingerprint: row.fingerprint, inputKind: row.kind, sourceFilename: row.filename,
         location: location || null, descriptionText: description, descriptionSource: "direct",
         descriptionHash: sha1(description), descriptionFetchedAt: new Date(),

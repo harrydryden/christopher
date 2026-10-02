@@ -69,7 +69,7 @@ function roleRowSelection(latest: LatestApplication, userId: string) {
   return {
     company: {
       id: sql<string>`coalesce(${companies.id}, ${jobs.id})`,
-      name: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')`,
+      name: sql<string>`coalesce(${jobs.companyLabel}, ${companies.name}, 'Unknown employer')`,
       faviconUrl: sql<string | null>`${companies.faviconUrl}`,
       logoFetchedAt: sql<Date | null>`${companies.logoFetchedAt}`,
       homepageUrl: sql<string>`coalesce(${companies.homepageUrl}, '')`,
@@ -540,7 +540,7 @@ function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, no
   );
   const sorts = {
     status: sql`case ${status} when 'new' then 0 when 'active' then 1 else 2 end`,
-    fit: userJobs.fitScore, company: sql`coalesce(${companies.name}, ${jobs.companyLabel}, '')`, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
+    fit: userJobs.fitScore, company: sql`coalesce(${jobs.companyLabel}, ${companies.name}, '')`, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
     decided: decisions.createdAt,
     liveFor: sql`greatest(0, floor(extract(epoch from (case when ${jobs.status} = 'closed' then coalesce(${jobs.closedAt}, ${now}) else ${now} end - (${liveStart}))) / 86400))`,
   };

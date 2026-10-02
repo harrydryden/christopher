@@ -7,7 +7,7 @@
  * backoff and a real second claim.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db, type Task } from "@ava/db";
+import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, reserveCvCredit, schema, startCvBuildStep, type Db, type Task } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@ava/ai";
 import { DEFAULT_CV_THEME, materialiseCv } from "@ava/core/cv";
@@ -59,6 +59,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.execute(sql`delete from tasks`);
   await db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations, worker_events, settings`);
+  await db.execute(sql`truncate credit_ledger, credit_reservations, credit_grants, billing_accounts cascade`);
   deps.userSettings = (async () => ({ aiBudgetUsd: 1000, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
   deps.aiClient = undefined;
 });
@@ -144,6 +145,7 @@ it("narrates every motion of a clean build, with the figures and the cost of eac
   const scripted = scriptedClient();
   deps.aiClient = scripted.client;
   const draft = await makeDraft();
+  await db.transaction(tx => reserveCvCredit(tx, userId, draft.id));
 
   await queueFor().drain();
 
@@ -204,6 +206,7 @@ it("narrates every motion of a clean build, with the figures and the cost of eac
   expect(saved.failure).toBeNull();
   expect(saved.buildCheckpoint).toBeNull();
   expect(saved.progressAt).not.toBeNull();
+  expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("consumed");
   expect(await aiCallsByStage()).toEqual({ rubric: 1, author: 1, review: 1 });
 });
 
@@ -327,19 +330,20 @@ it("names the second charge when a batch has to be re-run to correct its attribu
   expect(await aiCallsByStage()).toEqual({ rubric: 1, author: 1, review: 1, review_retry: 1 });
 });
 
-it("refuses a build the account cannot afford before any model call, and asks for the budget", async () => {
+it("returns the credit when an internal budget limit prevents a build", async () => {
   const scripted = scriptedClient();
   deps.aiClient = scripted.client;
   deps.userSettings = (async () => ({ aiBudgetUsd: 0.01, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
   const draft = await makeDraft();
+  await db.transaction(tx => reserveCvCredit(tx, userId, draft.id));
 
   await queueFor().drain();
 
   const refused = await draftAfter(draft.id);
   expect(refused.status).toBe("failed");
   expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", retryable: false, action: "raise_budget", motion: "admit_budget" });
-  expect(refused.error).toContain("This build's requirements analysis needs about $");
-  expect(refused.error).toContain("your budget of $0.01");
+  expect(refused.error).toContain("CV generation is unavailable right now");
+  expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("released");
   const rows = await steps(draft.id);
   expect(motions(rows)).toEqual(["load_inputs", "admit_budget"]);
   const admit = rows[1]!;

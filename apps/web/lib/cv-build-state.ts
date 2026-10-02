@@ -135,7 +135,7 @@ function resumeNoteFor(checkpoint: CvBuildCheckpoint | null | undefined): string
     (part): part is string => part !== null,
   );
   if (!parts.length) return null;
-  return `A retry resumes from ${parts.join(" and ")}, so it does not pay for that again.`;
+  return `A retry resumes from ${parts.join(" and ")}, so it does not repeat that work.`;
 }
 
 /**
@@ -158,7 +158,8 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
   const failure = draft.failure ?? null;
   // The kind's policy names the failure; the record itself says who resolves it, because a kind can
   // change hands with repetition (the system tries a refused prompt once, then it is the person's).
-  const policyTitle = failure ? CV_FAILURE_POLICIES[failure.kind]?.title ?? "The build failed" : null;
+  const budgetFailure = failure?.kind === "budget_exhausted" || /AI budget|budget.{0,40}\$/i.test(draft.error ?? "");
+  const policyTitle = budgetFailure ? "CV generation unavailable" : failure ? CV_FAILURE_POLICIES[failure.kind]?.title ?? "The build failed" : null;
   // A failure the queue has already moved past: the worker has claimed a later attempt, so the
   // record on the draft is history and the build is simply running again.
   const superseded = !!failure && task?.status === "running" && failure.attempt !== undefined && task.attempts > failure.attempt;
@@ -170,7 +171,10 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
   // A task handed back to the queue carries the message of the attempt that bounced — a lease
   // another worker was holding, most often. That is the queue talking to itself, never the
   // explanation of a build that stopped, so only a task the queue gave up on has one of those.
-  const taskError = task?.status === "failed" ? task.error ?? null : null;
+  const taskError = budgetFailure ? null : task?.status === "failed" ? task.error ?? null : null;
+  const failureMessage = budgetFailure
+    ? "CV generation is unavailable right now. Your CV credit was returned. Please try again later."
+    : failure?.message ?? draft.error ?? "This build stopped before it finished.";
   const resumeNote = resumeNoteFor(draft.buildCheckpoint);
   const base = {
     lastProgressAt,
@@ -233,7 +237,7 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
       action: failure?.action ?? "retry",
       resumeNote,
       taskError,
-      message: failure?.message ?? draft.error ?? "This build stopped before it finished.",
+      message: failureMessage,
     };
   }
 
@@ -245,7 +249,7 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
       phase: "stopped",
       tone: "red",
       title: policyTitle,
-      message: failure?.message ?? draft.error ?? "This build stopped before it finished.",
+      message: failureMessage,
       taskError,
     };
   }
@@ -296,7 +300,7 @@ export function failureWayForward(
   const done = { retry: canRetry, retryNote: canRetry ? "When you have done that, retry generation." : null };
   switch (action) {
     case "raise_budget":
-      return { links: [{ label: "Raise the AI budget", href: "/settings" }], note: null, ...done };
+      return { links: [], note: "Your credit was returned. Please try again later.", retry: canRetry, retryNote: null };
     case "fix_library":
       return { links: [{ label: "Open the Library", href: "/library" }], note: null, ...done };
     case "shorten_or_raise_pages":

@@ -21,7 +21,7 @@ let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 let other: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { cvBuildQuote, cvEditCosts, cvQuoteButtonLine, cvQuoteLine, generatingDraftRemainingUsd, queuedDraftParts } from "./cv-quote";
+import { cvBuildQuote, cvEditCosts, generatingDraftRemainingUsd, queuedDraftParts } from "./cv-quote";
 
 const DESCRIPTION = [
   "Head of Operations at a community health provider.",
@@ -113,9 +113,6 @@ it("quotes the build this account would pay for, from the same estimator the wor
   expect(quote.limitUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
   expect(quote).toMatchObject({ spentUsd: 0, heldUsd: 0, refusal: null });
   expect(quote.leftUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
-  expect(cvQuoteLine(quote)).toMatch(/^about .{0,3}\$\d+\.\d\d of your .{0,3}\$\d+\.\d\d left this month$/);
-  // The same figures inside a button's own label, where the sentence has to be short.
-  expect(cvQuoteButtonLine(quote)).toMatch(/^about .{0,3}\$\d+\.\d\d of .{0,3}\$\d+\.\d\d left$/);
   // There is a Library to write from, which is a different answer from "this build is free".
   expect(quote.hasLibrary).toBe(true);
 });

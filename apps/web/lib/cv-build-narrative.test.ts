@@ -60,14 +60,14 @@ it("reads the library and the role, with the version, the shape and the descript
   expect(narrateStep(step("load_inputs", "failed"), now).text).toBe("Could not read your Library and the role");
 });
 
-it("names what the budget reservation took and what it left", () => {
+it("keeps provider budget figures out of the CV progress line", () => {
   expect(narrateStep(step("admit_budget", "done", { expectedUsd: 3.06, leftUsd: 18.4, limitUsd: 50, heldUsd: 0 }), now).text).toBe(
-    "Reserved US$3.06 of your AI budget (US$18.40 left of US$50.00 this month)",
+    "Prepared the next CV stage",
   );
   expect(narrateStep(step("admit_budget", "done", { expectedUsd: 3.06, leftUsd: 18.4, heldUsd: 2 }), now).text).toBe(
-    "Reserved US$3.06 of your AI budget (US$18.40 left this month, US$2.00 held by calls in flight)",
+    "Prepared the next CV stage",
   );
-  expect(narrateStep(step("admit_budget", "running"), now).text).toBe("Reserving this build's share of your AI budget");
+  expect(narrateStep(step("admit_budget", "running"), now).text).toBe("Preparing the next CV stage");
   const refused = narrateStep(
     step("admit_budget", "failed", {}, {
       error: "budget",
@@ -75,8 +75,8 @@ it("names what the budget reservation took and what it left", () => {
     }),
     now,
   );
-  expect(refused.text).toBe("Could not reserve this build's share of your AI budget");
-  expect(refused.note).toBe("This build needs $3.06 and $1.20 is left of your $50.00 budget this month.");
+  expect(refused.text).toBe("Could not prepare this CV stage");
+  expect(refused.note).toBe("This CV build stopped before completion. Your CV credit was returned.");
   expect(refused.glyph).toBe("✗");
   expect(refused.tone).toBe("red");
 });
@@ -86,8 +86,8 @@ it("counts the requirements it extracted, and says where reused ones came from",
     step("rubric", "done", { requirements: 12, essential: 5, desirable: 4, responsibilities: 3, usd: 0.28, tokens: 23_120 }, { ms: 52_000 }),
     now,
   );
-  expect(line(extracted)).toBe("18:10:25 ✓ Extracted 12 requirements (5 essential, 4 desirable, 3 responsibilities) · 52 s · US$0.28");
-  expect(extracted.hint).toBe("23,120 tokens");
+  expect(line(extracted)).toBe("18:10:25 ✓ Extracted 12 requirements (5 essential, 4 desirable, 3 responsibilities) · 52 s");
+  expect(extracted.hint).toBeNull();
   expect(narrateStep(step("rubric", "running"), now).text).toBe("Extracting the role's requirements");
   expect(narrateStep(step("rubric", "skipped", { reused: "checkpoint" }), now).text).toBe("Reused the requirements from the previous attempt");
   expect(narrateStep(step("rubric", "skipped", { reused: "parent" }), now).text).toBe("Reused the requirements from the parent revision");
@@ -103,8 +103,8 @@ it("says what the writer produced, and keeps its content budget as a hint", () =
     step("write", "done", { attempt: 1, budgetCharacters: 2400, budgetScale: 0.8, maxPages: 2, roles: 6, bullets: 18, characters: 1980, usd: 1.17, tokens: 40_000 }, { ms: 180_000 }),
     now,
   );
-  expect(line(wrote)).toBe("18:10:25 ✓ Wrote the CV: 6 roles, 18 bullets, 1,980 characters · 3 min · US$1.17");
-  expect(wrote.hint).toBe("budget 2,400 characters at 80% of full length · for 2 pages · 40,000 tokens");
+  expect(line(wrote)).toBe("18:10:25 ✓ Wrote the CV: 6 roles, 18 bullets, 1,980 characters · 3 min");
+  expect(wrote.hint).toBe("budget 2,400 characters at 80% of full length · for 2 pages");
   expect(narrateStep(step("write", "running"), now).text).toBe("Writing the CV");
   expect(narrateStep(step("write", "running", { attempt: 2 }), now).text).toBe("Writing the CV again (attempt 2)");
   expect(narrateStep(step("write", "done", { attempt: 2, roles: 6, bullets: 16, characters: 1740 }), now).text).toBe(
@@ -148,7 +148,7 @@ it("measures, trims and rewrites in the reader's units", () => {
     now,
   );
   expect(rewrote.text).toBe("Rewrote the CV to a smaller budget (attempt 2): 6 roles, 14 bullets, 1,500 characters");
-  expect(rewrote.hint).toBe("budget 1,824 characters at 76% of full length · for 2 pages · 31,000 tokens");
+  expect(rewrote.hint).toBe("budget 1,824 characters at 76% of full length · for 2 pages");
   expect(narrateStep(step("rewrite", "running", { attempt: 3, budgetCharacters: 1386 }), now).text).toBe(
     "Rewriting to a smaller budget (attempt 3)",
   );
@@ -238,14 +238,14 @@ it("totals a build by wall clock, not by adding up batches that ran together", (
   const totals = cvBuildTotals(steps, now);
   expect(totals).toMatchObject({ motions: 3, ms: 100_000, running: false });
   expect(totals.usd).toBeCloseTo(0.5, 5);
-  expect(cvBuildTotalsLine(totals)).toBe("3 motions in 1 min 40 s, costing US$0.50.");
+  expect(cvBuildTotalsLine(totals)).toBe("3 motions in 1 min 40 s.");
 
   // A build still running counts up to now, and says the figures are not final.
   const running = [...steps, step("assemble", "running", {}, { seq: 4, startedAt: at("2026-09-18T18:11:50.000Z") })];
-  expect(cvBuildTotalsLine(cvBuildTotals(running, now, { live: true }))).toBe("4 motions in 2 min, costing US$0.50 so far.");
+  expect(cvBuildTotalsLine(cvBuildTotals(running, now, { live: true }))).toBe("4 motions in 2 min so far.");
   // The same row on a draft nothing is working on any more is a leftover, not a build in progress:
   // the total is what the build came to, and it is never "so far".
-  expect(cvBuildTotalsLine(cvBuildTotals(running, now))).toBe("4 motions in 1 min 50 s, costing US$0.50.");
+  expect(cvBuildTotalsLine(cvBuildTotals(running, now))).toBe("4 motions in 1 min 50 s.");
   expect(cvBuildTotalsLine(cvBuildTotals([], now))).toBe("No motions recorded for this build.");
 });
 

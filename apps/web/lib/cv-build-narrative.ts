@@ -12,8 +12,7 @@
  * browser from its progress feed as the tests assert here.
  *
  * Rules the lines follow:
- * - Counts are `formatCount` (thousands separators); money is `formatUsdPrecise`, because a single
- *   motion can cost less than a cent and "$0" would be a lie; durations are `formatStepDuration`
+ * - Counts are `formatCount` (thousands separators); durations are `formatStepDuration`
  *   ("0.3 s", "52 s", "3 min").
  * - A figure that is missing is left out rather than printed as "0" or "undefined": the worker may
  *   be a release ahead of or behind the interface, and a half-written detail must still read.
@@ -21,7 +20,7 @@
  */
 import type { CvJournalStep } from "./cv-build-journal";
 import { revisionName } from "./cv-build-adopted";
-import { formatClock, formatCount, formatPercent, formatStepDuration, formatUsdPrecise, pluralize } from "./format";
+import { formatClock, formatCount, formatPercent, formatStepDuration, pluralize } from "./format";
 
 /** A subset of the badge tones; the narrative never needs the other two. */
 export type NarrativeTone = "green" | "blue" | "gray" | "red";
@@ -88,7 +87,7 @@ export interface NarratedStep {
   meta: string;
   /** A second line: the failure message, or what the fitter changed. */
   note: string | null;
-  /** Figures worth keeping but not worth the line: tokens, the content budget. Hover text. */
+  /** Figures worth keeping but not worth the line: the content length and claim tally. Hover text. */
   hint: string | null;
   /** For a screen reader, which the glyph says nothing to. */
   status: NarratedStatus;
@@ -200,7 +199,7 @@ function failedPhrase(step: CvJournalStep): string {
     case "load_inputs":
       return "Could not read your Library and the role";
     case "admit_budget":
-      return "Could not reserve this build's share of your AI budget";
+      return "Could not prepare this CV stage";
     case "rubric":
       return "Could not extract the role's requirements";
     case "plan_evidence":
@@ -243,6 +242,8 @@ function skippedPhrase(step: CvJournalStep, context: NarrativeContext = {}): str
   // having had nothing to do.
   const cancelled = flag(detail, "cancelled");
   switch (step.motion) {
+    case "admit_budget":
+      return cancelled ? "Stopped preparing the next CV stage" : "No preparation needed";
     case "rubric": {
       const from = text(detail, "reused");
       return `Reused the requirements ${(from && REUSED_FROM[from]) ?? "already extracted"}`;
@@ -288,6 +289,8 @@ function skippedPhrase(step: CvJournalStep, context: NarrativeContext = {}): str
 function runningPhrase(step: CvJournalStep): string {
   const detail = step.detail;
   switch (step.motion) {
+    case "admit_budget":
+      return "Preparing the next CV stage";
     case "write": {
       const attempt = number(detail, "attempt");
       return attempt !== null && attempt > 1 ? `Writing the CV again (attempt ${formatCount(attempt)})` : "Writing the CV";
@@ -367,17 +370,8 @@ function donePhrase(step: CvJournalStep, context: NarrativeContext): string {
       ].join("");
     }
     case "admit_budget": {
-      const expected = number(detail, "expectedUsd");
-      const left = number(detail, "leftUsd");
-      const limit = number(detail, "limitUsd");
-      const held = number(detail, "heldUsd");
       const stage = text(detail, "stage");
-      const inside = [
-        left === null ? null : `${formatUsdPrecise(left)} left${limit === null ? "" : ` of ${formatUsdPrecise(limit)}`} this month`,
-        // Per stage, what is held excludes this stage's own reservation: other calls in flight.
-        held !== null && held > 0 ? `${formatUsdPrecise(held)} held by ${stage ? "other " : ""}calls in flight` : null,
-      ].filter((part): part is string => part !== null);
-      return `Reserved ${expected === null ? "this build's share" : formatUsdPrecise(expected)} of your AI budget${stage ? ` for ${budgetStage(stage)}` : ""}${inside.length ? ` (${inside.join(", ")})` : ""}`;
+      return `Prepared${stage ? ` for ${budgetStage(stage)}` : " the next CV stage"}`;
     }
     case "rubric": {
       const requirements = number(detail, "requirements");
@@ -468,11 +462,10 @@ function donePhrase(step: CvJournalStep, context: NarrativeContext): string {
   }
 }
 
-/** Figures worth keeping off the line itself: tokens, the content budget, the claim tally. */
+/** Figures worth keeping off the line itself: content length and claim tally. */
 function hintFor(step: CvJournalStep): string | null {
   const detail = step.detail;
   const parts: string[] = [];
-  const tokens = number(detail, "tokens");
   if (step.motion === "write" || step.motion === "rewrite") {
     const budget = number(detail, "budgetCharacters");
     const scale = number(detail, "budgetScale");
@@ -490,7 +483,6 @@ function hintFor(step: CvJournalStep): string | null {
     if (supported !== null) parts.push(`${count(supported, "claim")} supported`);
     if (pageCount !== null) parts.push(count(pageCount, "page"));
   }
-  if (tokens !== null) parts.push(`${count(tokens, "token")}`);
   return parts.length ? parts.join(" · ") : null;
 }
 
@@ -505,6 +497,7 @@ function interruptedMeta(startedAt: Date, stoppedAt: Date | null | undefined): s
 
 /** The failure's own sentence for a failed step, whichever of the places the worker put it. */
 function failureNote(step: CvJournalStep): string | null {
+  if (step.motion === "admit_budget") return "This CV build stopped before completion. Your CV credit was returned.";
   return step.failure?.message ?? text(step.detail, "error") ?? step.error ?? null;
 }
 
@@ -516,7 +509,6 @@ export function narrateStep(input: CvJournalStep, now: Date = new Date(), contex
   // A status a worker a release ahead writes that this interface has never heard of reads as the
   // grey, figure-free line of a skipped motion, never as a blank glyph or a red "Could not".
   const step: CvJournalStep = input.status in GLYPH ? input : { ...input, status: "skipped" };
-  const usd = number(step.detail, "usd");
   const optional = OPTIONAL_MOTIONS.has(step.motion) || !!context.afterPublish;
   const status: NarratedStatus =
     step.status === "running" && context.interrupted ? "interrupted" : step.status === "failed" && optional ? "skipped" : step.status;
@@ -529,7 +521,6 @@ export function narrateStep(input: CvJournalStep, now: Date = new Date(), contex
         : [
             // A skipped motion paid for nothing and took no time worth printing.
             step.status === "skipped" || step.ms === null ? null : formatStepDuration(step.ms),
-            usd !== null && usd > 0 ? formatUsdPrecise(usd) : null,
           ]
             .filter((part): part is string => part !== null)
             .join(" · ");
@@ -731,9 +722,7 @@ function narrateGroup(
     status = interrupted ? "interrupted" : "running";
     meta = interrupted
       ? interruptedMeta(first.startedAt, context.stoppedAt)
-      : [`running ${formatStepDuration(Math.max(0, now.getTime() - first.startedAt.getTime()))}`, usd > 0 ? `${formatUsdPrecise(usd)} so far` : null]
-          .filter((part): part is string => part !== null)
-          .join(" · ");
+      : `running ${formatStepDuration(Math.max(0, now.getTime() - first.startedAt.getTime()))}`;
   } else {
     const position = failedBatch ? batchPosition(failedBatch.detail) : null;
     const which = position?.index == null ? "a batch" : `batch ${formatCount(position.index)}${position.of === null ? "" : ` of ${formatCount(position.of)}`}`;
@@ -745,7 +734,7 @@ function narrateGroup(
       text = `Checked ${heldText} against your evidence${of === null ? "" : ` in ${count(of, "batch", "batches")}${keptClause(kept)}`}`;
       status = batches.length && batches.every((step) => step.status === "skipped") ? "skipped" : "done";
     }
-    meta = [formatStepDuration(Math.max(0, last - first.startedAt.getTime())), usd > 0 ? formatUsdPrecise(usd) : null].filter((part): part is string => part !== null).join(" · ");
+    meta = formatStepDuration(Math.max(0, last - first.startedAt.getTime()));
   }
   const batchContext: NarrativeContext = { ...context, batchFailed: failed };
   const narratedBatches: NarratedBatch[] = batches.map((step) => ({ line: narrateStep(step, now, batchContext), retries: [] }));
@@ -901,13 +890,10 @@ export function cvBuildTotals(steps: readonly CvJournalStep[], now: Date = new D
   return { motions: steps.length, ms, usd, running, reservedUsd };
 }
 
-/** The disclosure's first line: what the build cost and how long it took. */
+/** The disclosure's first line: how long the build took. */
 export function cvBuildTotalsLine(totals: CvBuildTotals): string {
   if (!totals.motions) return "No motions recorded for this build.";
-  const reserved = totals.reservedUsd !== null && totals.reservedUsd > 0 && !totals.running ? ` of ${formatUsdPrecise(totals.reservedUsd)} reserved` : "";
-  return `${count(totals.motions, "motion")} in ${formatStepDuration(totals.ms)}${
-    totals.usd > 0 ? `, costing ${formatUsdPrecise(totals.usd)}${reserved}` : ", with no recorded model spend"
-  }${totals.running ? " so far" : ""}.`;
+  return `${count(totals.motions, "motion")} in ${formatStepDuration(totals.ms)}${totals.running ? " so far" : ""}.`;
 }
 
 /** Typical durations by motion, in milliseconds, for motions with enough runs to say. */
@@ -1029,7 +1015,7 @@ export function cvBuildRowLabel(step: Pick<CvJournalStep, "motion" | "detail" | 
   const batch = position.index === null ? "" : ` batch ${formatCount(position.index)}${position.of === null ? "" : ` of ${formatCount(position.of)}`}`;
   switch (step.motion) {
     case "load_inputs": return "reading your Library";
-    case "admit_budget": return "reserving budget";
+    case "admit_budget": return "preparing the next stage";
     case "rubric": return "reading the role";
     case "plan_evidence": return "matching your evidence";
     case "gap_quiz": return "preparing questions";

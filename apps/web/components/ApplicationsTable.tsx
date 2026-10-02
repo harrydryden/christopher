@@ -19,14 +19,13 @@ import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { SettingsForm } from "@/components/SettingsForm";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { manageRoleCv, setRoleStage, updateApplication } from "@/app/actions/applications";
-import { quoteCvBuild, requestCv } from "@/app/actions/cv";
+import { requestCv } from "@/app/actions/cv";
 import { historyLine, type NextStepNote } from "@/lib/application-dates";
 import { relativeTime } from "@/lib/format";
 import type { PipelineCvQuote, PipelineRow } from "@/lib/queries/applications";
 
 /**
- * What a build would cost, per posting id. The page streams it: the table renders as soon as its
- * rows are read, and the prices, which take three or four more reads, arrive behind it.
+ * Credit availability per posting. The page streams it after the table's rows are read.
  */
 export type PipelineCvQuotes = Record<string, PipelineCvQuote>;
 type QuoteSource = PipelineCvQuotes | Promise<PipelineCvQuotes>;
@@ -213,44 +212,15 @@ function StatusPanel({ row }: { row: PipelineRow }) {
   );
 }
 
-/** The build form, or the sentence that says why it cannot be pressed, once the price is in. */
+/** The build form, or the sentence that says why it cannot be pressed, once credits are checked. */
 function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: PipelineRow; jobId: string; quotes: QuoteSource; unverified: boolean; buildLabel: string }) {
   const [description, setDescription] = useState("");
-  const [checked, setChecked] = useState<{ description: string; quote: PipelineCvQuote } | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [quoteError, setQuoteError] = useState("");
-  const quoteRequest = useRef(0);
-  const replacement = description.trim();
-  const hasReplacement = !!replacement;
-  const checkedSame = hasReplacement && checked?.description === replacement;
-  // An unconfirmed account is never priced, so it never waits on the stream.
+  // An unconfirmed account cannot build, so it never waits on the credit read.
   const quote = unverified ? undefined : (isThenable(quotes) ? use(quotes) : quotes)[jobId];
-  const shown = hasReplacement ? (checkedSame ? checked!.quote : null) : quote;
-  // Why the build cannot be asked for, in the order the person would meet it: the account is not
-  // confirmed yet, or its budget will not admit this build. Both are the action's own refusals,
-  // said at the control rather than after it.
+  // The same one-credit price applies whether the stored or pasted advert is used.
   const blocked = unverified ? UNVERIFIED : null;
   const blockedId = `cv-blocked-${row.key.replace(/\s+/g, "-")}`;
-  async function checkEstimate() {
-    const snapshot = description.trim();
-    if (!snapshot) return;
-    const request = ++quoteRequest.current;
-    setChecking(true);
-    setQuoteError("");
-    try {
-      const result = await quoteCvBuild(jobId, snapshot);
-      if (request !== quoteRequest.current) return;
-      if (result.ok) setChecked({ description: snapshot, quote: { line: result.line, refusal: result.refusal } });
-      else setQuoteError(result.error);
-    } catch {
-      if (request === quoteRequest.current) setQuoteError("Could not check this estimate. Try again.");
-    } finally {
-      if (request === quoteRequest.current) setChecking(false);
-    }
-  }
   return blocked ? (
-    // The wall and the budget are both discovered here rather than after the redirect: the
-    // control says what it would cost, and says why it cannot be pressed when it cannot.
     <div className="flex flex-col gap-3">
       <p id={blockedId} className="text-13 text-muted">{blocked}</p>
       <div>
@@ -259,8 +229,8 @@ function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: P
     </div>
   ) : (
     <SettingsForm action={requestCv} submitLabel={buildLabel}
-      submitDisabled={!shown || !!shown.refusal || checking}
-      submitDescribedBy={shown?.refusal ? blockedId : undefined}>
+      submitDisabled={!quote || !!quote.refusal}
+      submitDescribedBy={quote?.refusal ? blockedId : undefined}>
       <input type="hidden" name="jobId" value={jobId} />
       <label className="grid gap-1.5">
         <span className={labelClass}>Paste a replacement description</span>
@@ -269,30 +239,14 @@ function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: P
           rows={3}
           maxLength={60000}
           value={description}
-          onChange={(event) => {
-            const next = event.target.value;
-            setDescription(next);
-            if (next.trim() !== checked?.description) {
-              ++quoteRequest.current;
-              setChecking(false);
-              setChecked(null);
-              setQuoteError("");
-            }
-          }}
+          onChange={(event) => setDescription(event.target.value)}
           placeholder="Optional. Leave empty to use the stored description."
           className={`resize-y ${inputClass}`}
         />
       </label>
-      {hasReplacement && <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" onClick={() => void checkEstimate()} disabled={checking}>
-          {checking ? "Checking estimate…" : checkedSame ? "Check estimate again" : "Check pasted advert estimate"}
-        </Button>
-        {!checkedSame && !checking && <span className="text-12 text-muted">Check the price of this exact text before building.</span>}
-      </div>}
-      {shown && <p className="text-12 text-muted">{hasReplacement ? "Pasted advert estimate: " : "Stored advert estimate: "}{shown.line}</p>}
-      {shown?.refusal && <p id={blockedId} className="text-13 text-warn">{shown.refusal}{!hasReplacement ? " A shorter pasted advert may fit." : ""}</p>}
-      {quoteError && <p role="alert" className="text-13 text-danger">{quoteError}</p>}
-      {!shown && !hasReplacement && <p role="status" className="text-13 text-warn">Could not price this build. Reload and try again.</p>}
+      {quote && <p className="text-12 text-muted">{quote.line}</p>}
+      {quote?.refusal && <p id={blockedId} className="text-13 text-warn">{quote.refusal} <Link prefetch={false} href="/account#top-ups" className="underline">Add CV credits</Link></p>}
+      {!quote && <p role="status" className="text-13 text-warn">Could not check your CV credits. Reload and try again.</p>}
     </SettingsForm>
   );
 }
@@ -345,9 +299,8 @@ function CvPanel({
         <p className="text-14 text-muted">No CV for this role yet.</p>
       )}
       {row.jobId ? (
-        // The price streams in behind the table; until it lands the control waits under the mark
-        // rather than offering a build whose refusal is still being read.
-        <Suspense fallback={<span className="inline-block text-muted"><Monogram size={16} searching title="Pricing the build" /></span>}>
+        // Availability streams in behind the table; until it lands the control waits under the mark.
+        <Suspense fallback={<span className="inline-block text-muted"><Monogram size={16} searching title="Checking CV credits" /></span>}>
           <CvBuildControl row={row} jobId={row.jobId} quotes={quotes} unverified={unverified} buildLabel={buildLabel} />
         </Suspense>
       ) : (
@@ -392,7 +345,7 @@ export function ApplicationsTable({
   /** The row a `?job=` link asks for: opened, with its CV section taking focus. */
   openKey?: string;
   /**
-   * What a build would cost, per posting id, priced on the server for the rows on this page. A
+   * Credit availability per posting id, read on the server for the rows on this page. A
    * promise when the page streams it: only an open row's CV section waits for it.
    */
   quotes?: QuoteSource;

@@ -207,17 +207,17 @@ describe("the narrative over the rows the worker writes", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("names each budget stage the worker admits", () => {
+  it("names each prepared stage without showing provider costs", () => {
     const build = workerBuild();
-    const reservations = rendered(narrateBuild(build.filter((step) => step.motion === "admit_budget"), s(1_000))).filter((line) => line.startsWith("Reserved"));
+    const reservations = rendered(narrateBuild(build.filter((step) => step.motion === "admit_budget"), s(1_000))).filter((line) => line.startsWith("Prepared"));
     expect(reservations.map((line) => line.replace(/ \(.*\)$/, ""))).toEqual([
-      "Reserved US$0.12 of your AI budget for extracting the requirements",
-      "Reserved US$0.20 of your AI budget for matching your evidence",
-      "Reserved US$1.10 of your AI budget for writing",
-      "Reserved US$0.60 of your AI budget for checking",
-      "Reserved US$0.40 of your AI budget for checking",
-      "Reserved US$0.90 of your AI budget for the improvement pass",
-      "Reserved US$0.30 of your AI budget for checking the revision",
+      "Prepared for extracting the requirements",
+      "Prepared for matching your evidence",
+      "Prepared for writing",
+      "Prepared for checking",
+      "Prepared for checking",
+      "Prepared for the improvement pass",
+      "Prepared for checking the revision",
     ]);
   });
 

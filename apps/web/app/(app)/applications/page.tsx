@@ -10,7 +10,6 @@ import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { nextStep } from "@/lib/application-dates";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
-import { cvQuoteLine } from "@/lib/cv-quote";
 import {
   applicationStaleHint,
   listPipeline,
@@ -37,15 +36,14 @@ const EMPTY: Record<string, { title: string; description?: string }> = {
   all: { title: "Nothing in progress", description: "Shortlist a role from Roles to start." },
 };
 
-/** Each row's price as the sentence the CV section shows, and the refusal when the budget will not admit it. */
+/** Each row's one-credit offer and any refusal, streamed into its CV section. */
 async function pricedQuotes(userId: string, rows: Parameters<typeof pipelineCvQuotes>[1]): Promise<PipelineCvQuotes> {
-  // The price is advice beside the button; the build action applies the budget itself. A pricing
-  // read that fails leaves the buttons unpriced rather than failing an open row after the fact.
+  // The build action reserves the credit atomically; this read shows the current balance.
   const quotes = await pipelineCvQuotes(userId, rows).catch((error: unknown) => {
-    console.error(JSON.stringify({ event: "cv_quotes_failed", message: error instanceof Error ? error.message : String(error) }));
+    console.error(JSON.stringify({ event: "cv_credit_read_failed", message: error instanceof Error ? error.message : String(error) }));
     return {} as Awaited<ReturnType<typeof pipelineCvQuotes>>;
   });
-  return Object.fromEntries(Object.entries(quotes).map(([jobId, quote]) => [jobId, { line: cvQuoteLine(quote), refusal: quote.refusal }]));
+  return quotes;
 }
 
 export default async function ApplicationsPage({
@@ -67,12 +65,7 @@ export default async function ApplicationsPage({
     listPipeline(user.id, { filter, page, company: company ?? undefined, stage, focus, now }),
     getCvWorkStatus(user.id),
   ]);
-  // What a build would cost, for the rows on this page, so the price is beside the button rather
-  // than in the build log of a CV that has already been paid for. The figures are turned into
-  // their sentences here: the table is a client component and the pricing is a database read.
-  // The read is not awaited: the table renders at once and the prices stream in behind it, into
-  // the CV section of an open row, which is the only place they are shown. An account that has
-  // still to confirm its address cannot build anything, so nothing is priced.
+  // The fixed credit cost and available balance stream into an open row's CV section.
   const unverified = needsEmailConfirmation(user);
   const quotes = unverified ? {} : pricedQuotes(user.id, result.rows);
   // The two lines a row can carry under its stage, worked out here so the table shows the words

@@ -41,12 +41,20 @@ function role(id: string, title: string): RoleRowVM {
     department: null, employmentType: null, salaryText: null, status: "active", workflowStatus: "auto-matched",
     stage: "matched", applicationStatus: null, liveForText: "Live for 3 days", liveForBasis: "posted", seeded: false,
     fitScore: 72, scoreState: null, scoreStateText: null, fitVerdict: null, fitRationale: null, keywordTerms: [],
-    addedByYou: false, decision: null,
+    addedByYou: false, manual: false, decision: null,
   };
 }
 const COMPANIES: RoleCompaniesVM = { "company-1": { iconSrc: null, domain: "meridian.example", homepageUrl: "https://meridian.example" } };
 const FIRST = role("11111111-1111-4111-8111-111111111111", "Head of Operations");
 const SECOND = role("22222222-2222-4222-8222-222222222222", "Operations Manager");
+
+it("shows a saved PDF role without inventing a company page or vacancy link", async () => {
+  const pdf = { ...FIRST, manual: true, url: null, companyId: FIRST.id, workflowStatus: "user-shortlisted" as const, stage: "shortlisted" as const };
+  await act(async () => root.render(<RolesTable rows={[pdf]} companies={{}} initiallyExpandedId={pdf.id} emptyState={null} />));
+  expect(container.textContent).toContain("Added from PDF");
+  expect(container.querySelector(`a[href="/companies/${pdf.id}"]`)).toBeNull();
+  expect(container.textContent).not.toContain("View vacancy");
+});
 
 /** A server answer the test hands over when it chooses, so the page can be read in between. */
 function deferred() {

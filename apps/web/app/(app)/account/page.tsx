@@ -12,7 +12,8 @@ import { emailConfigured } from "@/lib/email";
 import { googleConfigured } from "@/lib/google";
 import { MIN_PASSWORD_LENGTH } from "@ava/core";
 import { getBillingSummary } from "@/lib/billing/service";
-import { openBillingPortal, startCreditCheckout, startPlanCheckout } from "@/app/actions/billing";
+import { addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout } from "@/app/actions/billing";
+import { getCompanyCapacityQuote } from "@/lib/billing/company-capacity";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,10 @@ const NOTICES: Record<string, string> = {
   "billing:unknown_pack": "That credit pack is unavailable. Choose one of the packs below.",
   "billing:checkout_failed": "Checkout could not start. Please try again.",
   "billing:no_customer": "No billing account is linked to this plan yet.",
+  "billing:manage_existing": "Use Manage plan to change an existing paid subscription.",
+  "billing:capacity_added": "Ten more company places were added to your plan.",
+  "billing:capacity_quote_expired": "That capacity quote expired. Review the current price below and confirm again.",
+  "billing:capacity_failed": "Company capacity could not be changed. Review your payment method or try again.",
 };
 
 export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string; verify?: string; billing?: string }> }) {
@@ -41,7 +46,11 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   // while that account really is held back.
   const key = sp.reset ? "reset" : sp.verify ? `verify:${sp.verify}` : sp.billing ? `billing:${sp.billing}` : null;
   const notice = key && (key !== "verify:required" || needsEmailConfirmation(user)) ? NOTICES[key] : null;
-  const [providers, billing] = await Promise.all([linkedProviders(user.id), getBillingSummary(user.id)]);
+  const [providers, billing, capacityQuote] = await Promise.all([
+    linkedProviders(user.id),
+    getBillingSummary(user.id),
+    getCompanyCapacityQuote(user.id).catch(() => null),
+  ]);
   const labelClassName = "flex flex-col gap-1.5 text-14";
 
   return (
@@ -49,7 +58,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       <PageHeader title="Account" />
       {notice && <p role="status" className="border-2 border-ok px-3 py-2 text-14 text-ok">{notice}</p>}
 
-      <BillingOverview billing={billing} actions={{ openBillingPortal, startCreditCheckout, startPlanCheckout }} />
+      <BillingOverview billing={billing} capacityQuote={capacityQuote} actions={{ addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout }} />
 
       <Card title="Profile">
         <SettingsForm action={updateProfile}>

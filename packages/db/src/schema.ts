@@ -88,7 +88,7 @@ export const BILLING_PLANS = ["free", "search", "intensive"] as const;
 export const BILLING_STATUSES = ["active", "past_due", "cancelled"] as const;
 export const CREDIT_GRANT_SOURCES = ["welcome", "monthly", "topup", "admin"] as const;
 export const CREDIT_RESERVATION_STATUSES = ["reserved", "consumed", "released"] as const;
-export const CREDIT_LEDGER_KINDS = ["grant", "reserve", "release", "consume", "transfer"] as const;
+export const CREDIT_LEDGER_KINDS = ["grant", "reserve", "release", "consume", "transfer", "revoke"] as const;
 
 // ---------------------------------------------------------------------------
 // Accounts and sessions
@@ -205,6 +205,8 @@ export const billingAccounts = pgTable(
     currentPeriodEnd: ts("current_period_end"),
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
     graceEndsAt: ts("grace_ends_at"),
+    /** Newest Stripe event allowed to change plan state; older deliveries are ignored. */
+    stripeEventCreatedAt: bigint("stripe_event_created_at", { mode: "number" }).notNull().default(0),
     createdAt: tsNow("created_at"),
     updatedAt: tsNow("updated_at"),
   },

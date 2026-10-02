@@ -32,6 +32,15 @@ export interface BillingActions {
   startPlanCheckout: (formData: FormData) => Promise<void>;
   startCreditCheckout: (formData: FormData) => Promise<void>;
   openBillingPortal: () => Promise<void>;
+  addCompanyCapacity: (formData: FormData) => Promise<void>;
+}
+
+export interface CompanyCapacityQuoteView {
+  dueTodayPence: number;
+  currency: string;
+  nextMonthlyGbp: number;
+  newCapacity: number;
+  token: string;
 }
 
 const PLANS = [
@@ -70,7 +79,7 @@ export function PlanReadout({ billing, mobile = false }: { billing: BillingSumma
 }
 
 /** The account is the only persistent home for pricing, usage and billing actions. */
-export function BillingOverview({ billing, actions }: { billing: BillingSummaryView; actions?: BillingActions }) {
+export function BillingOverview({ billing, actions, capacityQuote }: { billing: BillingSummaryView; actions?: BillingActions; capacityQuote?: CompanyCapacityQuoteView | null }) {
   const label = planName(billing.plan);
   const renewal = dateLabel(billing.renewalAt);
   const nextGrant = dateLabel(billing.cv.nextGrantAt);
@@ -78,7 +87,7 @@ export function BillingOverview({ billing, actions }: { billing: BillingSummaryV
     <Card title="Plan and credits" actions={<div className="flex flex-wrap items-center gap-2">
       <Badge tone="green">{label}</Badge>
       {actions && billing.plan !== "free" && <form action={actions.openBillingPortal}>
-        <Button type="submit" size="sm">Manage plan, capacity and payment</Button>
+        <Button type="submit" size="sm">Manage plan and payment</Button>
       </form>}
     </div>}>
       {billing.paymentNeedsAttention && <p role="alert" className="mb-4 border-2 border-warn p-3 text-13 text-warn">
@@ -101,7 +110,14 @@ export function BillingOverview({ billing, actions }: { billing: BillingSummaryV
             {billing.companies.included} included
             {billing.companies.paidBlocks > 0 && <> · {billing.companies.paidBlocks * 10} extra slots</>}
           </p>
-          {billing.plan === "search" && <p className="mt-1 text-12 text-muted">Add 10 slots for £1/month, up to 150 active companies. Manage capacity above.</p>}
+          {billing.plan === "search" && <p className="mt-1 text-12 text-muted">Add 10 slots for £1/month, up to 150 active companies.</p>}
+          {billing.plan === "search" && actions && capacityQuote && <form action={actions.addCompanyCapacity} className="mt-3 border-t border-line-faint pt-3">
+            <input type="hidden" name="quote" value={capacityQuote.token} />
+            <p className="mb-2 text-12">
+              Add 10 places: <strong>{new Intl.NumberFormat("en-GB", { style: "currency", currency: capacityQuote.currency.toUpperCase() }).format(capacityQuote.dueTodayPence / 100)} today</strong>, then £1/month extra. Your plan becomes £{capacityQuote.nextMonthlyGbp}/month with {capacityQuote.newCapacity} places.
+            </p>
+            <Button type="submit" size="sm" variant="secondary">Confirm 10 more places</Button>
+          </form>}
         </div>
       </div>
       {billing.plan !== "free" && typeof billing.monthlyPriceGbp === "number" &&
@@ -124,7 +140,7 @@ export function BillingOverview({ billing, actions }: { billing: BillingSummaryV
           </form>}
         </div>)}
       </div>
-      <p className="border-t border-line-faint p-4 text-12 text-muted">Search can add up to 50 more active companies in blocks of 10 for £1/month per block. Prices include VAT. {billing.plan !== "free" && "Change or cancel your plan using Manage plan, capacity and payment above."}</p>
+      <p className="border-t border-line-faint p-4 text-12 text-muted">Search can add up to 50 more active companies in blocks of 10 for £1/month per block. Prices include VAT. {billing.plan !== "free" && "Pause the companies you do not want to keep before lowering your plan; if you remain over its allowance, the newest follows pause automatically. Change or cancel using Manage plan and payment above."}</p>
     </Card>
 
     <Card title="CV top-ups" className="scroll-mt-4">

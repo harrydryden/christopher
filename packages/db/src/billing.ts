@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import {
   billingAccounts,
@@ -11,6 +11,7 @@ import {
   type BillingStatus,
   type CreditGrantSource,
 } from "./schema";
+import { setSubscriptionStatus } from "./subscriptions";
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type BillingWriter = Db | Transaction;
@@ -79,12 +80,18 @@ export class BillingLimitError extends Error {
   }
 }
 
+/** A root Drizzle database owns transactions; an existing transaction exposes no pool client. */
+function isRootDatabase(writer: BillingWriter): writer is Db {
+  return "$client" in writer;
+}
+
 async function lockBilling(writer: BillingWriter, userId: string): Promise<void> {
   await writer.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`billing:${userId}`}, 0))`);
 }
 
 /** Idempotently gives every account its Free entitlement and three lifetime welcome credits. */
 export async function ensureFreeEntitlement(writer: BillingWriter, userId: string): Promise<void> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => ensureFreeEntitlement(tx, userId));
   await lockBilling(writer, userId);
   await writer.insert(billingAccounts).values({ userId }).onConflictDoNothing();
   const externalRef = `welcome:${userId}`;
@@ -112,7 +119,6 @@ function effectivePlan(account: typeof billingAccounts.$inferSelect, now: Date):
 }
 
 export async function getBillingSummary(database: BillingWriter, userId: string, now = new Date()): Promise<BillingSummary> {
-  await ensureFreeEntitlement(database, userId);
   const [account] = await database.select().from(billingAccounts).where(eq(billingAccounts.userId, userId)).limit(1);
   const rows = await database.execute<{
     monthly: number;
@@ -129,29 +135,49 @@ export async function getBillingSummary(database: BillingWriter, userId: string,
       (select count(*)::int from company_subscriptions s where s.user_id = ${userId}::uuid and s.status = 'active') as active_companies
     from credit_grants g where g.user_id = ${userId}::uuid`);
   const balances = rows.rows[0] ?? { monthly: 0, welcome: 0, purchased: 0, reserved: 0, active_companies: 0 };
-  const plan = effectivePlan(account!, now);
+  const stored = account ?? {
+    userId,
+    plan: "free" as const,
+    status: "active" as const,
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    companyBlocks: 0,
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+    graceEndsAt: null,
+    stripeEventCreatedAt: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const plan = effectivePlan(stored, now);
   const definition = PLAN_CATALOG[plan];
-  const paidBlocks = plan === "free" ? 0 : Math.max(0, account!.companyBlocks);
+  const maximumBlocks = Math.max(0, Math.floor((definition.maxCompanies - definition.includedCompanies) / COMPANY_BLOCK_SIZE));
+  const paidBlocks = plan === "free" ? 0 : Math.min(maximumBlocks, Math.max(0, stored.companyBlocks));
   const capacity = Math.min(definition.maxCompanies, definition.includedCompanies + paidBlocks * COMPANY_BLOCK_SIZE);
   const available = Number(balances.monthly) + Number(balances.welcome) + Number(balances.purchased);
-  const active = Number(balances.active_companies);
+  let active = Number(balances.active_companies);
+  if (stored.status === "past_due" && stored.graceEndsAt && stored.graceEndsAt <= now && active > capacity) {
+    await reconcileCompanyCapacity(database, userId, capacity);
+    active = capacity;
+  }
   return {
     plan,
     planLabel: definition.label,
-    status: account!.status,
+    status: stored.status,
     monthlyPriceGbp: definition.monthlyGbp + paidBlocks * COMPANY_BLOCK_PRICE_GBP,
-    renewalAt: account!.currentPeriodEnd,
-    cancelAtPeriodEnd: account!.cancelAtPeriodEnd,
-    paymentNeedsAttention: account!.status === "past_due",
-    graceEndsAt: account!.graceEndsAt,
-    stripeCustomerId: account!.stripeCustomerId,
+    renewalAt: stored.currentPeriodEnd,
+    cancelAtPeriodEnd: stored.cancelAtPeriodEnd,
+    paymentNeedsAttention: stored.status === "past_due",
+    graceEndsAt: stored.graceEndsAt,
+    stripeCustomerId: stored.stripeCustomerId,
     cv: {
       available,
       reserved: Number(balances.reserved),
       monthly: Number(balances.monthly),
       welcome: Number(balances.welcome),
       purchased: Number(balances.purchased),
-      nextGrantAt: plan === "free" ? null : account!.currentPeriodEnd,
+      nextGrantAt: plan === "free" ? null : stored.currentPeriodEnd,
     },
     companies: {
       active,
@@ -190,6 +216,7 @@ export async function assertCanActivateCompanies(database: BillingWriter, userId
 
 /** Reserve exactly one credit before a new AI-written CV is queued. Idempotent by draft. */
 export async function reserveCvCredit(writer: BillingWriter, userId: string, draftId: string, now = new Date()): Promise<void> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => reserveCvCredit(tx, userId, draftId, now));
   await ensureFreeEntitlement(writer, userId);
   const [existing] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, draftId)).limit(1).for("update");
   if (existing?.status === "reserved" || existing?.status === "consumed") return;
@@ -223,6 +250,7 @@ export async function reserveCvCredit(writer: BillingWriter, userId: string, dra
 }
 
 export async function consumeCvCredit(writer: BillingWriter, draftId: string, now = new Date()): Promise<boolean> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => consumeCvCredit(tx, draftId, now));
   const [reservation] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, draftId)).limit(1).for("update");
   if (!reservation || reservation.status !== "reserved") return false;
   await writer.update(creditReservations).set({ status: "consumed", settledAt: now }).where(eq(creditReservations.draftId, draftId));
@@ -238,6 +266,7 @@ export async function consumeCvCredit(writer: BillingWriter, draftId: string, no
 }
 
 export async function releaseCvCredit(writer: BillingWriter, draftId: string, reason = "Build did not complete", now = new Date()): Promise<boolean> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => releaseCvCredit(tx, draftId, reason, now));
   const [reservation] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, draftId)).limit(1).for("update");
   if (!reservation || reservation.status !== "reserved") return false;
   await writer.update(creditGrants).set({ remaining: sql`${creditGrants.remaining} + 1` }).where(eq(creditGrants.id, reservation.grantId));
@@ -256,6 +285,7 @@ export async function releaseCvCredit(writer: BillingWriter, draftId: string, re
 
 /** Move a held credit to an evidence-quiz continuation without charging twice. */
 export async function transferCvCredit(writer: BillingWriter, fromDraftId: string, toDraftId: string): Promise<boolean> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => transferCvCredit(tx, fromDraftId, toDraftId));
   const [reservation] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, fromDraftId)).limit(1).for("update");
   if (!reservation || reservation.status !== "reserved") return false;
   const [target] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, toDraftId)).limit(1).for("update");
@@ -277,6 +307,7 @@ export async function grantCvCredits(
   writer: BillingWriter,
   input: { userId: string; source: CreditGrantSource; units: number; externalRef: string; expiresAt?: Date | null; note?: string },
 ): Promise<string> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => grantCvCredits(tx, input));
   if (!Number.isInteger(input.units) || input.units <= 0) throw new Error("Credit grant units must be a positive integer.");
   await ensureFreeEntitlement(writer, input.userId);
   const [created] = await writer.insert(creditGrants).values({
@@ -310,11 +341,61 @@ export async function updateBillingAccount(
     "plan" | "status" | "stripeCustomerId" | "stripeSubscriptionId" | "companyBlocks" |
     "currentPeriodStart" | "currentPeriodEnd" | "cancelAtPeriodEnd" | "graceEndsAt">>,
 ): Promise<void> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => updateBillingAccount(tx, userId, values));
   await ensureFreeEntitlement(writer, userId);
   await writer.update(billingAccounts).set({ ...values, updatedAt: new Date() }).where(eq(billingAccounts.userId, userId));
 }
 
+/** Apply Stripe state only when it is at least as new as the last delivery already accepted. */
+export async function updateBillingAccountFromStripe(
+  writer: BillingWriter,
+  userId: string,
+  eventCreatedAt: number,
+  values: Partial<Pick<typeof billingAccounts.$inferInsert,
+    "plan" | "status" | "stripeCustomerId" | "stripeSubscriptionId" | "companyBlocks" |
+    "currentPeriodStart" | "currentPeriodEnd" | "cancelAtPeriodEnd" | "graceEndsAt">>,
+): Promise<boolean> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => updateBillingAccountFromStripe(tx, userId, eventCreatedAt, values));
+  await ensureFreeEntitlement(writer, userId);
+  const rows = await writer.update(billingAccounts).set({ ...values, stripeEventCreatedAt: eventCreatedAt, updatedAt: new Date() })
+    .where(and(eq(billingAccounts.userId, userId), lte(billingAccounts.stripeEventCreatedAt, eventCreatedAt)))
+    .returning({ userId: billingAccounts.userId });
+  return rows.length > 0;
+}
+
+/** Pause newest follows first so the longest-held companies stay active after capacity shrinks. */
+export async function reconcileCompanyCapacity(writer: BillingWriter, userId: string, capacity: number): Promise<string[]> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => reconcileCompanyCapacity(tx, userId, capacity));
+  const rows = await writer.select({ companyId: companySubscriptions.companyId }).from(companySubscriptions)
+    .where(and(eq(companySubscriptions.userId, userId), eq(companySubscriptions.status, "active")))
+    .orderBy(asc(companySubscriptions.addedAt), asc(companySubscriptions.id))
+    .for("update");
+  const paused = rows.slice(Math.max(0, capacity)).map(row => row.companyId);
+  for (const companyId of paused) await setSubscriptionStatus(writer, userId, companyId, "paused");
+  return paused;
+}
+
+/** Revoke only unspent top-up credits after a full refund or dispute. */
+export async function revokeCvGrant(writer: BillingWriter, externalRef: string, note: string): Promise<number> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => revokeCvGrant(tx, externalRef, note));
+  const [grant] = await writer.select().from(creditGrants).where(and(
+    eq(creditGrants.source, "topup"), eq(creditGrants.externalRef, externalRef),
+  )).limit(1).for("update");
+  if (!grant || grant.remaining <= 0) return 0;
+  await writer.update(creditGrants).set({ remaining: 0 }).where(eq(creditGrants.id, grant.id));
+  await writer.insert(creditLedger).values({
+    userId: grant.userId,
+    grantId: grant.id,
+    kind: "revoke",
+    delta: -grant.remaining,
+    idempotencyKey: `revoke:${externalRef}`,
+    note: note.slice(0, 500),
+  }).onConflictDoNothing();
+  return grant.remaining;
+}
+
 export async function recordBillingEvent(writer: BillingWriter, eventId: string, type: string): Promise<boolean> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => recordBillingEvent(tx, eventId, type));
   const [created] = await writer.insert(billingEvents).values({ eventId, type }).onConflictDoNothing().returning({ eventId: billingEvents.eventId });
   return !!created;
 }

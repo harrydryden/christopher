@@ -12,7 +12,8 @@
  *   AVA_DISABLE_BROWSER=1 pnpm test cv-e2e
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { consumeCvCredit, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@ava/db";
+import { randomUUID } from "node:crypto";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
@@ -676,37 +677,25 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(fake.events.filter((event) => event.startsWith("abort:"))).toHaveLength(0);
     expect((await aiCalls()).every((row) => row.ok)).toBe(true);
   });
-  /**
-   * The price is answered before the button is pressed, so a build the month cannot afford is
-   * refused where it was asked for rather than on a CV page after the redirect. The worker's
-   * admission is still the authority; this is the same sentence, reached earlier.
-   */
-  it("refuses a build the account's budget cannot admit, before a draft, a task or an application exists", async () => {
+  it("refuses a build with no CV credit before a draft, task or application exists", async () => {
     const save = new FormData();
     save.set("library", JSON.stringify(libraryFixture()));
     save.set("version", "0");
     expect(await saveCvLibrary({ ok: true }, save)).toEqual({ ok: true });
     const { job } = await visibleRole();
 
-    // A budget with almost nothing left: most of it spent, and a live hold on the rest.
-    await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 4 });
-    await database.insert(schema.aiCalls).values({
-      userId: user.id, callSite: "CV", model: CV_MODEL, costUsd: 2.5,
-      at: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)),
-    });
-    await database.insert(schema.aiReservations).values({
-      userId: user.id, callSite: "CV", amount: 0.5, expiresAt: new Date(Date.now() + 600_000),
-    });
+    // Use the three welcome credits through the real ledger before making the request.
+    for (let index = 0; index < 3; index++) {
+      const draftId = randomUUID();
+      await reserveCvCredit(database, user.id, draftId);
+      await consumeCvCredit(database, draftId);
+    }
 
     const request = new FormData();
     request.set("jobId", job.id);
     const refused = await requestCv({ ok: true }, request);
     expect(refused.ok).toBe(false);
-    expect((refused as { error: string }).error).toContain("of AI budget");
-    expect((refused as { error: string }).error).toContain(
-      "your budget of $4 has $1.00 left this month after $0.50 held by calls in flight",
-    );
-    expect((refused as { error: string }).error).toContain("Raise it on Settings, or ask an administrator.");
+    expect((refused as { error: string }).error).toBe("You have no CV credits available. Add credits in Account to build this CV.");
 
     // Nothing was created for a build that was never admitted.
     expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
@@ -715,11 +704,8 @@ describe("the CV pipeline end to end, against a scripted model", () => {
       await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv")),
     ).toHaveLength(0);
 
-    // Raise the budget and the same request is admitted, which is what the refusal promised.
-    await database
-      .update(schema.userSettings)
-      .set({ value: 100 })
-      .where(and(eq(schema.userSettings.userId, user.id), eq(schema.userSettings.key, "aiBudgetUsd")));
+    // Add one credit and the same request is admitted, which is what the refusal promised.
+    await grantCvCredits(database, { userId: user.id, source: "admin", units: 1, externalRef: `e2e:${user.id}` });
     const again = new FormData();
     again.set("jobId", job.id);
     await expect(requestCv({ ok: true }, again)).rejects.toThrow("redirect:/cv/");

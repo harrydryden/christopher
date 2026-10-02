@@ -42,6 +42,7 @@ export { createCvShare, findLiveCvShareByHash, recordCvShareView, listCvShares, 
 export {
   PLAN_CATALOG, CV_TOPUPS, COMPANY_BLOCK_SIZE, COMPANY_BLOCK_PRICE_GBP, TECHNICAL_COMPANY_LIMIT, WELCOME_CV_CREDITS,
   BillingLimitError, ensureFreeEntitlement, getBillingSummary, getCompanyEntitlement, assertCanActivateCompanies,
-  reserveCvCredit, consumeCvCredit, releaseCvCredit, transferCvCredit, grantCvCredits, updateBillingAccount, recordBillingEvent,
+  reserveCvCredit, consumeCvCredit, releaseCvCredit, transferCvCredit, grantCvCredits, revokeCvGrant,
+  updateBillingAccount, updateBillingAccountFromStripe, reconcileCompanyCapacity, recordBillingEvent,
   type BillingSummary, type BillingWriter, type CvTopupKey,
 } from "./billing";

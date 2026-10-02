@@ -16,6 +16,7 @@ import {
   grantCvCredits,
   releaseCvCredit,
   reserveCvCredit,
+  revokeCvGrant,
   transferCvCredit,
   updateBillingAccount,
 } from "./billing";
@@ -57,7 +58,8 @@ describe("CV credits", () => {
   it("keeps purchased credits and transfers a quiz hold without charging twice", async () => {
     const user = await account();
     try {
-      await grantCvCredits(db, { userId: user.id, source: "topup", units: 5, externalRef: `checkout:${user.id}` });
+      const checkout = `checkout:${user.id}`;
+      await grantCvCredits(db, { userId: user.id, source: "topup", units: 5, externalRef: checkout });
       expect((await getBillingSummary(db, user.id)).cv).toMatchObject({ available: 8, welcome: 3, purchased: 5 });
       const parent = randomUUID(), continuation = randomUUID();
       await db.transaction(async tx => {
@@ -66,6 +68,9 @@ describe("CV credits", () => {
         expect(await consumeCvCredit(tx, continuation)).toBe(true);
       });
       expect((await getBillingSummary(db, user.id)).cv).toMatchObject({ available: 7, reserved: 0 });
+      expect(await revokeCvGrant(db, checkout, "refunded")).toBe(5);
+      expect(await revokeCvGrant(db, checkout, "duplicate refund")).toBe(0);
+      expect((await getBillingSummary(db, user.id)).cv).toMatchObject({ available: 2, purchased: 0 });
     } finally {
       await user.cleanup();
     }
@@ -89,6 +94,11 @@ describe("company capacity", () => {
       expect((await getBillingSummary(db, user.id)).companies).toMatchObject({ active: 25, included: 100, capacity: 110 });
       await expect(assertCanActivateCompanies(db, user.id, 85)).resolves.toMatchObject({ capacity: 110 });
       await expect(assertCanActivateCompanies(db, user.id, 86)).rejects.toMatchObject({ code: "company_capacity" });
+      await db.update(companySubscriptions).set({ status: "active" }).where(eq(companySubscriptions.companyId, companyRows[25]!.id));
+      await db.insert(companySubscriptions).values({ userId: user.id, companyId: companyRows[26]!.id, status: "active" });
+      await updateBillingAccount(db, user.id, { status: "past_due", graceEndsAt: new Date("2026-01-01T00:00:00Z") });
+      expect((await getBillingSummary(db, user.id, new Date("2026-01-08T00:00:00Z"))).companies)
+        .toMatchObject({ active: 25, capacity: 25 });
     } finally {
       await user.cleanup();
     }

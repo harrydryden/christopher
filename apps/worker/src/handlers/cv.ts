@@ -126,6 +126,7 @@ function writingMotion(attempt: number): "write" | "rewrite" {
 /** A sentence from the comparison or a thrown error, as the tail of "Kept the original: …". */
 function keptBecause(sentence: string): string {
   const trimmed = sentence.trim().replace(/\.$/, "");
+  if (/^[A-Z]{2}/.test(trimmed)) return trimmed;
   return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 }
 

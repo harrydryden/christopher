@@ -5,10 +5,14 @@ import {
   CV_TOPUPS,
   PLAN_CATALOG,
   grantCvCredits,
+  reconcileCompanyCapacity,
   recordBillingEvent,
+  revokeCvGrant,
   updateBillingAccount,
+  updateBillingAccountFromStripe,
   type BillingPlan,
   type BillingStatus,
+  type BillingWriter,
   type CvTopupKey,
 } from "@ava/db";
 import { billingAccounts } from "@ava/db/schema";
@@ -33,16 +37,35 @@ function subscriptionShape(subscription: Stripe.Subscription) {
   return {
     plan,
     status,
-    companyBlocks: Math.max(0, blockItem?.quantity ?? 0),
+    companyBlocks: plan === "search" ? Math.min(5, Math.max(0, blockItem?.quantity ?? 0)) : 0,
     periodStart: dateOf(base?.current_period_start),
     periodEnd: dateOf(base?.current_period_end),
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
   };
 }
 
-async function accountUserId(customerId: string | null, subscriptionId: string | null): Promise<string | null> {
+/** Keep the metered add-on compatible with the plan even after a Portal plan change. */
+async function normaliseCompanyBlocks(subscription: Stripe.Subscription): Promise<Stripe.Subscription> {
+  const shape = subscriptionShape(subscription);
+  const blockItem = subscription.items.data.find(item => item.price.id === companyBlockPriceId());
+  if (!blockItem) return subscription;
+  if (shape.plan === "intensive") {
+    await stripeClient().subscriptionItems.del(blockItem.id, { proration_behavior: "always_invoice" });
+    return stripeClient().subscriptions.retrieve(subscription.id);
+  }
+  if (shape.plan === "search" && (blockItem.quantity ?? 0) > 5) {
+    await stripeClient().subscriptionItems.update(blockItem.id, {
+      quantity: 5,
+      proration_behavior: "always_invoice",
+    });
+    return stripeClient().subscriptions.retrieve(subscription.id);
+  }
+  return subscription;
+}
+
+async function accountUserId(database: BillingWriter, customerId: string | null, subscriptionId: string | null): Promise<string | null> {
   if (!customerId && !subscriptionId) return null;
-  const [row] = await db().select({ userId: billingAccounts.userId }).from(billingAccounts).where(
+  const [row] = await database.select({ userId: billingAccounts.userId }).from(billingAccounts).where(
     customerId && subscriptionId
       ? and(eq(billingAccounts.stripeCustomerId, customerId), eq(billingAccounts.stripeSubscriptionId, subscriptionId))
       : customerId
@@ -71,14 +94,28 @@ export async function POST(request: Request) {
   }
 
   let subscription: Stripe.Subscription | null = null;
+  let refundedCheckoutId: string | null = null;
   if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     subscription = await retrieveSubscription(event.data.object.subscription);
   } else if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
     const details = event.data.object.parent?.subscription_details;
     subscription = await retrieveSubscription(details?.subscription ?? null);
   } else if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
-    subscription = event.data.object;
+    // Stripe does not guarantee webhook order. Reconcile the current object instead of trusting
+    // the event's older snapshot; `stripe_event_created_at` is a second guard against stale writes.
+    subscription = await retrieveSubscription(event.data.object.id);
+  } else if (event.type === "charge.refunded" && event.data.object.amount_refunded >= event.data.object.amount) {
+    const paymentIntent = idOf(event.data.object.payment_intent);
+    if (paymentIntent) refundedCheckoutId = (await stripeClient().checkout.sessions.list({ payment_intent: paymentIntent, limit: 1 })).data[0]?.id ?? null;
+  } else if (event.type === "charge.dispute.created") {
+    const charge = typeof event.data.object.charge === "string"
+      ? await stripeClient().charges.retrieve(event.data.object.charge)
+      : event.data.object.charge;
+    const paymentIntent = idOf(charge.payment_intent);
+    if (paymentIntent) refundedCheckoutId = (await stripeClient().checkout.sessions.list({ payment_intent: paymentIntent, limit: 1 })).data[0]?.id ?? null;
   }
+
+  if (subscription && subscription.status !== "canceled") subscription = await normaliseCompanyBlocks(subscription);
 
   await db().transaction(async tx => {
     if (!(await recordBillingEvent(tx, event.id, event.type))) return;
@@ -91,6 +128,8 @@ export async function POST(request: Request) {
       if (session.metadata?.purchase === "cv_topup" && session.payment_status === "paid") {
         const pack = session.metadata.pack as CvTopupKey;
         if (!(pack in CV_TOPUPS)) return;
+        const expected = CV_TOPUPS[pack].priceGbp * 100;
+        if (session.currency !== "gbp" || session.amount_total !== expected) return;
         await grantCvCredits(tx, {
           userId,
           source: "topup",
@@ -104,7 +143,7 @@ export async function POST(request: Request) {
       if (session.metadata?.purchase === "plan" && subscription) {
         const shape = subscriptionShape(subscription);
         if (!shape.plan) return;
-        await updateBillingAccount(tx, userId, {
+        await updateBillingAccountFromStripe(tx, userId, event.created, {
           plan: shape.plan,
           status: shape.status,
           stripeCustomerId: customerId,
@@ -115,17 +154,19 @@ export async function POST(request: Request) {
           cancelAtPeriodEnd: shape.cancelAtPeriodEnd,
           graceEndsAt: null,
         });
-        if (shape.periodStart && shape.periodEnd) await grantMonthlyCredits(tx, userId, shape.plan, subscription.id, shape.periodStart, shape.periodEnd);
       }
       return;
     }
 
     if (subscription && (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted")) {
       const customerId = idOf(subscription.customer);
-      const userId = subscription.metadata.userId || await accountUserId(customerId, subscription.id);
+      const userId = subscription.metadata.userId || await accountUserId(tx, customerId, subscription.id);
       if (!userId) return;
       const shape = subscriptionShape(subscription);
-      await updateBillingAccount(tx, userId, {
+      const [current] = shape.status === "past_due"
+        ? await tx.select({ graceEndsAt: billingAccounts.graceEndsAt }).from(billingAccounts).where(eq(billingAccounts.userId, userId)).limit(1)
+        : [];
+      const accepted = await updateBillingAccountFromStripe(tx, userId, event.created, {
         plan: shape.plan ?? "free",
         status: shape.status,
         stripeCustomerId: customerId,
@@ -134,28 +175,40 @@ export async function POST(request: Request) {
         currentPeriodStart: shape.periodStart,
         currentPeriodEnd: shape.periodEnd,
         cancelAtPeriodEnd: shape.cancelAtPeriodEnd,
-        graceEndsAt: shape.status === "past_due" ? new Date(Date.now() + 7 * 86_400_000) : null,
+        graceEndsAt: shape.status === "past_due" ? current?.graceEndsAt ?? new Date(event.created * 1000 + 7 * 86_400_000) : null,
       });
+      if (accepted && (shape.status === "cancelled" || shape.plan)) {
+        const graceExpired = shape.status === "past_due" && !!current?.graceEndsAt && current.graceEndsAt <= new Date(event.created * 1000);
+        const capacity = shape.status === "cancelled" || graceExpired ? PLAN_CATALOG.free.includedCompanies
+          : Math.min(PLAN_CATALOG[shape.plan!].maxCompanies, PLAN_CATALOG[shape.plan!].includedCompanies + shape.companyBlocks * 10);
+        await reconcileCompanyCapacity(tx, userId, capacity);
+      }
       return;
     }
 
     if ((event.type === "invoice.paid" || event.type === "invoice.payment_failed") && subscription) {
       const invoice = event.data.object;
       const customerId = idOf(invoice.customer);
-      const userId = invoice.parent?.subscription_details?.metadata?.userId || subscription.metadata.userId || await accountUserId(customerId, subscription.id);
+      const userId = invoice.parent?.subscription_details?.metadata?.userId || subscription.metadata.userId || await accountUserId(tx, customerId, subscription.id);
       if (!userId) return;
       const shape = subscriptionShape(subscription);
       if (event.type === "invoice.payment_failed") {
-        await updateBillingAccount(tx, userId, {
+        if (shape.status === "active") return; // A later recovery already restored the subscription.
+        const [current] = await tx.select({ graceEndsAt: billingAccounts.graceEndsAt }).from(billingAccounts).where(eq(billingAccounts.userId, userId)).limit(1);
+        const graceEndsAt = current?.graceEndsAt ?? new Date(event.created * 1000 + 7 * 86_400_000);
+        const accepted = await updateBillingAccountFromStripe(tx, userId, event.created, {
           status: "past_due",
-          graceEndsAt: new Date(Date.now() + 7 * 86_400_000),
+          graceEndsAt,
         });
+        if (accepted && graceEndsAt <= new Date(event.created * 1000)) {
+          await reconcileCompanyCapacity(tx, userId, PLAN_CATALOG.free.includedCompanies);
+        }
         return;
       }
-      if (!shape.plan) return;
-      await updateBillingAccount(tx, userId, {
+      if (!shape.plan || shape.status !== "active") return;
+      const accepted = await updateBillingAccountFromStripe(tx, userId, event.created, {
         plan: shape.plan,
-        status: "active",
+        status: shape.status,
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscription.id,
         companyBlocks: shape.companyBlocks,
@@ -164,7 +217,10 @@ export async function POST(request: Request) {
         cancelAtPeriodEnd: shape.cancelAtPeriodEnd,
         graceEndsAt: null,
       });
-      if (shape.periodStart && shape.periodEnd) await grantMonthlyCredits(tx, userId, shape.plan, subscription.id, shape.periodStart, shape.periodEnd);
+      if (accepted && shape.periodStart && shape.periodEnd) await grantMonthlyCredits(tx, userId, shape.plan, subscription.id, shape.periodStart, shape.periodEnd);
+    }
+    if (refundedCheckoutId && (event.type === "charge.refunded" || event.type === "charge.dispute.created")) {
+      await revokeCvGrant(tx, refundedCheckoutId, event.type === "charge.refunded" ? "CV top-up refunded" : "CV top-up payment disputed");
     }
   });
 

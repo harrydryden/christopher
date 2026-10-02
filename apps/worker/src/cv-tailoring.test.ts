@@ -17,7 +17,7 @@ import { TaskQueue } from "./queue";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:55439/ava_final_worker_review";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 const USAGE = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 const rubric: CvRubric = { caveats: [], requirements: [
   { id: "lead", label: "Team leadership", quote: "Lead a team", importance: "essential", category: "experience" },
@@ -413,9 +413,9 @@ for (const [refused, stage] of [[3, "improve"], [4, "reaudit"]] as const) {
     // Nothing is left running and nothing reads as failed over a ready CV.
     expect(steps.filter(step => step.status === "running" || step.status === "failed").map(step => step.motion)).toEqual([]);
     const admit = steps.filter(step => step.motion === "admit_budget").at(-1)!;
-    expect(admit).toMatchObject({ status: "skipped", detail: { stage, reason: expect.stringMatching(/^this build's /) } });
+    expect(admit).toMatchObject({ status: "skipped", detail: { stage, reason: expect.stringMatching(/^CV generation is unavailable/) } });
     const adopt = steps.find(step => step.motion === "adopt_revision")!;
-    expect(adopt).toMatchObject({ status: "skipped", detail: { reason: expect.stringMatching(/^this build's /) } });
+    expect(adopt).toMatchObject({ status: "skipped", detail: { reason: expect.stringMatching(/^CV generation is unavailable/) } });
     expect(steps.at(-1)!.motion).toBe("adopt_revision");
     expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(stage === "improve" ? 0 : 1);
   });

@@ -419,8 +419,8 @@ it("refuses a build this account cannot afford before spending anything, then ad
   await handleGenerateCv(task, deps);
   const refused = await draftAfter(draft.id);
   expect(refused.status).toBe("failed");
-  expect(refused.error).toContain("your budget of $0.25 has $0.05 left this month");
-  expect(refused.error).toContain("Raise it on Settings");
+  expect(refused.error).toBe("CV generation is unavailable right now. No CV credit will be used. Please try again later.");
+  expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", action: "raise_budget", motion: "admit_budget" });
   expect(build).not.toHaveBeenCalled();
   // Nothing was spent and no capacity was left held on the way to the refusal.
   expect(await client.db.select().from(schema.aiCalls)).toHaveLength(2);
@@ -458,7 +458,7 @@ it("admits a second build's stages beside the first while the month can afford t
   const refused = await draftAfter(second!.id);
   expect(refused.status).toBe("failed");
   expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", action: "raise_budget", motion: "admit_budget" });
-  expect(refused.error).toMatch(/^This build's writing needs about \$0\.\d\d of AI budget; your budget of \$0\.9 has \$0\.\d\d left this month after \$0\.\d\d held by calls in flight/);
+  expect(refused.error).toBe("CV generation is unavailable right now. No CV credit will be used. Please try again later.");
   const admitted = await client.db.execute<{ stage: string; status: string }>(sql`select detail->>'stage' as stage, status from cv_build_steps where draft_id = ${second!.id} and motion = 'admit_budget' order by seq`);
   expect(admitted.rows).toEqual([{ stage: "rubric", status: "done" }, { stage: "write", status: "failed" }]);
   releaseFirst?.();
@@ -468,7 +468,7 @@ it("admits a second build's stages beside the first while the month can afford t
   expect((await client.db.execute<{ n: string }>(sql`select count(*)::text as n from ai_reservations`)).rows[0]!.n).toBe("0");
 });
 
-it("names the deployment's own cap when that is what refused a build", async () => {
+it("keeps operator budget details out of the customer-facing error when the deployment cap refuses a build", async () => {
   const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();
   // The account has plenty; the operator's optional daily cap for the whole deployment does not.
@@ -477,9 +477,8 @@ it("names the deployment's own cap when that is what refused a build", async () 
   await handleGenerateCv(task, deps);
   const refused = await draftAfter(draft.id);
   expect(refused.status).toBe("failed");
-  expect(refused.error).toContain("the deployment's daily AI cap of $0.01");
-  expect(refused.error).toContain("worker's environment");
-  expect(refused.error).not.toContain("your budget");
+  expect(refused.error).toBe("CV generation is unavailable right now. No CV credit will be used. Please try again later.");
+  expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", action: "raise_budget", motion: "admit_budget" });
   expect(build).not.toHaveBeenCalled();
   expect(await client.db.select().from(schema.aiCalls)).toHaveLength(0);
 });
@@ -494,7 +493,7 @@ it("stops counting an account's earlier calls once its spend has been reset", as
   ]);
   deps.userSettings = accountBudget(2);
   await handleGenerateCv(task, deps);
-  expect((await draftAfter(draft.id)).error).toContain("your budget of $2 has $0.00 left this month");
+  expect((await draftAfter(draft.id)).error).toBe("CV generation is unavailable right now. No CV credit will be used. Please try again later.");
 
   // The reset marker moves the window, so only the $0.10 recorded after it still counts.
   await requeue(draft.id);

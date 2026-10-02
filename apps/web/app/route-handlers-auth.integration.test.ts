@@ -65,6 +65,7 @@ const ROUTES: Record<string, Access> = {
   // Signed cookie only, by design: it logs a navigation's timing and reads and writes no account's data.
   "api/performance/route.ts": "session",
   "api/scan-status/route.ts": "session",
+  "api/webhooks/stripe/route.ts": { public: "Stripe's raw-body signature is the credential; Checkout cannot hold an AVA session cookie." },
   "api/work-status/route.ts": "session",
   "auth/google/callback/route.ts": { public: "Completes Google sign-in; the signed state cookie and Google's answer are the credential." },
   "auth/google/route.ts": { public: "Starts Google sign-in, before there is any session." },

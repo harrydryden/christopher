@@ -35,11 +35,38 @@ describe("plan and credit readout", () => {
       startPlanCheckout: async (_form: FormData) => {},
       startCreditCheckout: async (_form: FormData) => {},
       openBillingPortal: async () => {},
+      addCompanyCapacity: async (_form: FormData) => {},
     };
     const html = renderToStaticMarkup(<BillingOverview billing={free} actions={actions} />);
     expect(html).toContain('name="plan" value="search"');
     expect(html).toContain('name="plan" value="intensive"');
     for (const pack of ["cv5", "cv10", "cv20"]) expect(html).toContain(`name="pack" value="${pack}"`);
+  });
+
+  it("shows the signed company-capacity confirmation with its exact proration", () => {
+    const paid: BillingSummaryView = {
+      ...free,
+      plan: "search",
+      monthlyPriceGbp: 29,
+      companies: { active: 99, included: 100, paidBlocks: 0, capacity: 100, technicalMax: 200 },
+    };
+    const actions = {
+      startPlanCheckout: async (_form: FormData) => {},
+      startCreditCheckout: async (_form: FormData) => {},
+      openBillingPortal: async () => {},
+      addCompanyCapacity: async (_form: FormData) => {},
+    };
+    const html = renderToStaticMarkup(<BillingOverview billing={paid} actions={actions} capacityQuote={{
+      dueTodayPence: 40,
+      currency: "gbp",
+      nextMonthlyGbp: 30,
+      newCapacity: 110,
+      token: "signed-quote",
+    }} />);
+    expect(html).toContain("£0.40 today");
+    expect(html).toContain("£30/month");
+    expect(html).toContain("110 places");
+    expect(html).toContain('name="quote" value="signed-quote"');
   });
 
   it("shows extra monitoring and a payment notice only when relevant", () => {

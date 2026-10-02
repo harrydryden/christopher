@@ -3,11 +3,14 @@
 import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { CV_TOPUPS, type CvTopupKey } from "@ava/db";
+import { billingAccounts } from "@ava/db/schema";
+import { eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBillingSummary } from "@/lib/billing/service";
 import { planPriceId, stripeClient, stripeConfigured, topupPriceId } from "@/lib/billing/stripe";
 import { emailLinkOrigin } from "@/lib/origin";
+import { applyCompanyCapacityQuote } from "@/lib/billing/company-capacity";
 
 const safeReturn = (value: FormDataEntryValue | null): string => {
   const path = typeof value === "string" ? value : "";
@@ -26,6 +29,9 @@ export async function startPlanCheckout(form: FormData): Promise<void> {
   const price = planPriceId(plan);
   if (!price) redirect("/account?billing=setup_required#plan-and-credits");
   const summary = await getBillingSummary(user.id);
+  const [account] = await db().select({ subscriptionId: billingAccounts.stripeSubscriptionId })
+    .from(billingAccounts).where(eq(billingAccounts.userId, user.id)).limit(1);
+  if (account?.subscriptionId) redirect("/account?billing=manage_existing#plan-and-credits");
   const origin = await checkoutOrigin();
   const returnTo = safeReturn(form.get("returnTo"));
   const session = await stripeClient().checkout.sessions.create({
@@ -38,7 +44,7 @@ export async function startPlanCheckout(form: FormData): Promise<void> {
     allow_promotion_codes: true,
     success_url: `${origin}/account?billing=plan_started&session_id={CHECKOUT_SESSION_ID}#plan-and-credits`,
     cancel_url: `${origin}${returnTo.includes("?") ? `${returnTo}&` : `${returnTo}?`}billing=cancelled`,
-  }, { idempotencyKey: `plan:${user.id}:${plan}:${randomUUID()}` });
+  }, { idempotencyKey: `plan:${user.id}:${plan}:${Math.floor(Date.now() / 300_000)}` });
   if (!session.url) redirect("/account?billing=checkout_failed#plan-and-credits");
   redirect(session.url);
 }
@@ -77,4 +83,16 @@ export async function openBillingPortal(): Promise<void> {
     return_url: `${origin}/account#plan-and-credits`,
   });
   redirect(session.url);
+}
+
+/** Apply the exact, signed proration shown on Account. No Follow action calls this. */
+export async function addCompanyCapacity(form: FormData): Promise<void> {
+  const user = await requireUser();
+  const result = await applyCompanyCapacityQuote(user.id, String(form.get("quote") ?? "")).catch(error => {
+    console.error(JSON.stringify({ event: "company_capacity_purchase_failed", errorType: error instanceof Error ? error.name : typeof error }));
+    return "changed" as const;
+  });
+  if (result === "expired") redirect("/account?billing=capacity_quote_expired#plan-and-credits");
+  if (result === "changed") redirect("/account?billing=capacity_failed#plan-and-credits");
+  redirect("/account?billing=capacity_added#plan-and-credits");
 }

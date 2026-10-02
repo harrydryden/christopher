@@ -29,11 +29,14 @@ secret as `STRIPE_WEBHOOK_SECRET`.
 - `customer.subscription.created`
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
+- `charge.refunded`
+- `charge.dispute.created`
 
-Enable plan changes, cancellation, payment-method updates and subscription-item quantity changes
-in Stripe Customer Portal. The company-block price may be added only to Search, with a maximum
-quantity of five. Intensive already reaches the 200-company technical ceiling.
+Enable plan changes, cancellation and payment-method updates in Stripe Customer Portal. Do not
+enable customer-controlled quantity changes: AVA previews and signs each company-capacity change
+itself, limits the company-block price to Search and caps it at five blocks. Intensive already
+reaches the 200-company technical ceiling.
 
-Run migration `0055_billing_credits` before enabling Checkout. Test a plan purchase, each top-up,
+Run database migrations through `0057_credit_revocations` before enabling Checkout. Test a plan purchase, each top-up,
 webhook retries, a failed renewal and a portal cancellation in Stripe test mode before copying the
 catalogue to live mode.

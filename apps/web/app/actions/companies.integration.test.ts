@@ -143,6 +143,21 @@ it("leaves the shared company and the other follower alone when one account stop
   expect(job.companyId).toBe(company.id);
 });
 
+it("keeps a private imported role when its owner unfollows the logo's company", async () => {
+  const company = await followedCompany();
+  const [manual] = await database.insert(schema.jobs).values({ companyId: company.id,
+    externalKey: `manual:${crypto.randomUUID()}`, title: "Private Service Lead", normalizedTitle: "private service lead",
+    companyLabel: "Acme employer", manualOwnerId: first.id, manualFingerprint: crypto.randomUUID(),
+    inputKind: "pdf", origin: "manual", shared: false,
+  }).returning({ id: schema.jobs.id });
+  await database.insert(schema.userJobs).values({ userId: first.id, jobId: manual!.id, inTable: true,
+    keywordMatched: true, seeded: true, addedByUrl: true });
+  await expect(unfollowCompany(company.id)).rejects.toThrow("redirect:/companies");
+  expect(await database.select().from(schema.companySubscriptions)).toHaveLength(0);
+  expect((await database.select().from(schema.userJobs).where(eq(schema.userJobs.userId, first.id))).map(view => view.jobId)).toEqual([manual!.id]);
+  expect((await database.select().from(schema.jobs).where(eq(schema.jobs.id, manual!.id)))[0]?.manualOwnerId).toBe(first.id);
+});
+
 /** The account that added the company follows it; `second` does not until it says so. */
 async function followedCompany() {
   await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("redirect:/companies?added=1");

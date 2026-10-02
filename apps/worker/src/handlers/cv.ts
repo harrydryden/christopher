@@ -471,7 +471,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             if (failure) callFailures.set(usage.stage, failure);
             // Every call is charged to the step that made it, whether it succeeded, failed or was
             // cancelled part-way: what it consumed is on the step however the step ends.
-            callSteps.get(usage.stage)?.addCost(usage);
+            const stepStage = usage.stage.endsWith("_retry") ? usage.stage.slice(0, -6) : usage.stage;
+            callSteps.get(stepStage)?.addCost(usage);
           }
           // `failure` is the same event named; `ai_calls` keeps the text it always kept. With the
           // stage's hold, the record and the hold's reduction land in one transaction, and a record
@@ -489,7 +490,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         // A call that returned nothing because this build was told to stop is that interruption,
         // not a model failure: it never got an answer to be disappointed by.
         if (interrupted) throw interrupted;
-        const failure = callFailures.get(stageName) ?? callFailures.get(`${stageName}_retry`);
+        const failure = callFailures.get(`${stageName}_retry`) ?? callFailures.get(stageName);
         const kind: CvFailureKind = failure?.kind ?? "output_invalid";
         throw new CvBuildStop(kind, callFailureMessage(kind, doing, failure?.status, note, failure?.stall), {
           ...(generationError ? { cause: generationError.slice(0, 500) } : {}),
@@ -504,7 +505,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       const rubricStage: CvStage<{ description: string }, CvRubric> = {
         name: "rubric", admission: "rubric", motion: "rubric",
         key: input => input,
-        estimate: () => estimateCvStage("rubric", sizes, models),
+        // A malformed answer can use one corrected call within the same stage hold.
+        estimate: () => 2 * estimateCvStage("rubric", sizes, models),
         run: (input, stageCtx) => journal.run("rubric", {}, async step => {
           callSteps.set("rubric", step);
           const result = requireResult(await ai.analyseCvJob(input.description, ref("rubric", "cv-rubric", stageCtx.signal, step.id)), "rubric", RUBRIC_CALL);
@@ -567,7 +569,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           // name, the writing preferences, an archived block) reuses the plan. `validate` still
           // checks a reused plan against the Library itself.
           key: input => ({ rubric: input.rubric, evidence: canonicalEvidence(input.library) }),
-          estimate: () => estimateCvStage("plan", sizes, models),
+          estimate: () => 2 * estimateCvStage("plan", sizes, models),
           run: (input, stageCtx) => journal.run("plan_evidence", {}, async step => {
             callSteps.set("planning", step);
             const result = requireResult(await ai.planCvTailoring({ library: input.library, rubric: input.rubric },

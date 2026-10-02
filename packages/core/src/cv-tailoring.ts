@@ -105,7 +105,15 @@ export function validateCvTailoringPlan(
     if ((item.status === "missing" || item.status === "unknown") && item.evidence.length)
       throw new Error(`${item.requirementId} cites evidence despite having no supported match.`);
     const evidence = item.evidence.map(reference => {
-      const source = sourceById.get(reference.sourceId);
+      let source = sourceById.get(reference.sourceId);
+      // The canonical input also names an entry as a whole for the auditor. A planner may
+      // copy that ID instead of a row ID. Resolve it only when the quote identifies exactly
+      // one eligible row; the entry heading, dates and unconfirmed text are never evidence.
+      if (!source && reference.sourceId.startsWith("entry:") && !reference.sourceId.includes(":row:") && !reference.sourceId.includes(":skill:")) {
+        const entryId = reference.sourceId.slice("entry:".length);
+        const matches = sources.filter(candidate => candidate.entryId === entryId && quoteExists(reference.quote, candidate.text));
+        if (matches.length === 1) source = matches[0];
+      }
       if (!source) throw new Error(`Unknown tailoring evidence source: ${reference.sourceId}`);
       if (!quoteExists(reference.quote, source.text)) throw new Error(`Tailoring evidence quote is not present in ${reference.sourceId}.`);
       return { sourceId: source.id, quote: reference.quote.trim().replace(/\s+/g, " ") };

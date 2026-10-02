@@ -4,7 +4,7 @@
  * waiting for the worker at once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createDb, grantCvCredits, releaseCvCredit, reserveCvCredit, schema, subscribeToCompany, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { CV_THEMES, DEFAULT_CV_THEME } from "@ava/core/cv";
@@ -109,14 +109,14 @@ const draftRow = async (id: string) =>
   (await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id)))[0]!;
 const buildTasks = () => database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
 
-it("quotes the exact pasted advert for an owned role without creating a build", async () => {
+it("validates a pasted advert without changing the one-credit cost or creating a build", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   const [role] = await visibleRoles(1);
   const short = await quoteCvBuild(role!.job.id, "Lead a team.");
   const long = await quoteCvBuild(role!.job.id, "Lead a team. ".repeat(3_000));
   expect(short.ok).toBe(true);
   expect(long.ok).toBe(true);
-  if (short.ok && long.ok) expect(long.line).not.toBe(short.line);
+  if (short.ok && long.ok) expect(long.line).toBe(short.line);
   expect(await quoteCvBuild(role!.job.id, "x".repeat(60_001))).toEqual({ ok: false, error: "Keep the job description under 60,000 characters." });
   expect(await quoteCvBuild(crypto.randomUUID(), "Lead a team.")).toEqual({ ok: false, error: "Role not found." });
   expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
@@ -152,6 +152,23 @@ it("retries a Direct Edit as an assessment of the wording as typed, with the rub
   const [task] = await buildTasks();
   expect(task!.payload).toMatchObject({ draftId: draft.id, mode: "assess", userId: expect.any(String) });
   expect((await draftRow(draft.id)).buildCheckpoint).toEqual({ sourceRubric: rubric });
+  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id))).toHaveLength(0);
+});
+
+it("reserves a returned credit again when the user retries a failed AI-written build", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const draft = await failedDraft();
+  await database.transaction(async tx => {
+    await reserveCvCredit(tx, user.id, draft.id, new Date("2026-09-01T00:00:00Z"));
+    await releaseCvCredit(tx, draft.id, "Initial build failed");
+  });
+  for (let index = 0; index < 3; index++)
+    await database.transaction(tx => reserveCvCredit(tx, user.id, crypto.randomUUID()));
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toMatchObject({ ok: false, recovery: { href: "/account#top-ups" } });
+  expect((await draftRow(draft.id)).status).toBe("failed");
+  await grantCvCredits(database, { userId: user.id, source: "topup", units: 1, externalRef: "retry-pack" });
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  expect((await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("reserved");
 });
 
 it("keeps the parent's rubric in a Direct Edit's checkpoint, where a later retry can find it", async () => {
@@ -291,6 +308,7 @@ const outcome = async (pending: Promise<unknown>) => {
 it("refuses an account's fourth build in flight in a sentence, and writes nothing for it", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   await setBudget(200);
+  await grantCvCredits(database, { userId: user.id, source: "admin", units: 1, externalRef: "capacity-test" });
   const roles = await visibleRoles(MAX_CV_BUILDS_IN_FLIGHT + 1);
   for (const role of roles.slice(0, MAX_CV_BUILDS_IN_FLIGHT))
     expect(await outcome(requestCv({ ok: true }, generate(role.job.id)))).toMatch(/^redirect:\/cv\//);
@@ -343,20 +361,15 @@ it("holds a retry and a saved edit to the same cap, and counts only this account
   expect((await draftRow(failed.id)).status).toBe("failed");
 });
 
-it("refuses at the button a build the builds already queued leave no room for", async () => {
+it("uses a fixed credit price even when the internal budget estimate is high", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   const roles = await visibleRoles(3);
-  // The default $25 fits two whole builds of this size, not three: the first two hold nothing yet
-  // (the worker has not admitted them), but they will, and the third is refused before it exists.
+  // All three welcome credits can start builds. Internal model estimates are not customer prices.
   expect(await outcome(requestCv({ ok: true }, generate(roles[0]!.job.id)))).toMatch(/^redirect:\/cv\//);
   expect(await outcome(requestCv({ ok: true }, generate(roles[1]!.job.id)))).toMatch(/^redirect:\/cv\//);
-  const refused = await requestCv({ ok: true }, generate(roles[2]!.job.id));
-  expect(refused).toMatchObject({ ok: false });
-  expect((refused as { error: string }).error).toMatch(/^This build needs about \$\d+\.\d\d of AI budget; your budget of \$25 has \$\d+\.\d\d left this month after \$\d+\.\d\d held/);
-  expect(await database.select().from(schema.cvDrafts)).toHaveLength(2);
-  // Once one of them is no longer waiting, the room it would have taken is the worker's to account.
-  await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.jobId, roles[0]!.job.id));
   expect(await outcome(requestCv({ ok: true }, generate(roles[2]!.job.id)))).toMatch(/^redirect:\/cv\//);
+  expect(await database.select().from(schema.cvDrafts)).toHaveLength(3);
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(3);
 });
 
 it("lets exactly one of two simultaneous requests take the last place", async () => {

@@ -78,6 +78,49 @@ it("takes each swiped card off at once, lets the next be decided while the first
   expect(text()).toContain("Globex added to tracked companies.");
 });
 
+it("keeps a follow at capacity on screen while checking, then offers Account without marking it accepted", async () => {
+  const following = deferred();
+  actions.acceptSuggestion.mockReturnValue(following.promise);
+  act(() => root.render(<SuggestionDeck cards={CARDS} empty={<p>No companies</p>} remainingCompanySlots={0} />));
+  act(() => button("Follow ⟶").click());
+  expect(top()).toBe("Acme");
+  expect(container.querySelector("[data-leaving]")).toBeNull();
+  expect(button("Follow ⟶").disabled).toBe(true);
+  await act(async () => {
+    following.resolve({ ok: false, error: "Free includes 25 active companies.", recovery: { href: "/account#plan-and-credits", label: "Manage company capacity" } });
+    await following.promise;
+  });
+  expect(top()).toBe("Acme");
+  expect(text()).toContain("3 to review");
+  expect(container.querySelector('a[href="/account#plan-and-credits"]')).not.toBeNull();
+  actions.rejectSuggestion.mockResolvedValue({ ok: true });
+  await act(async () => button("⟵ Dismiss").click());
+  expect(top()).toBe("Globex");
+});
+
+it("uses the last optimistic company space only once across quick consecutive follows", async () => {
+  const first = deferred();
+  const second = deferred();
+  actions.acceptSuggestion.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  act(() => root.render(<SuggestionDeck cards={CARDS} empty={<p>No companies</p>} remainingCompanySlots={1} />));
+  act(() => button("Follow ⟶").click());
+  expect(top()).toBe("Globex");
+  act(() => button("Follow ⟶").click());
+  expect(top()).toBe("Globex");
+  await act(async () => { first.resolve({ ok: true }); await first.promise; });
+  await act(async () => { second.resolve({ ok: false, error: "No company spaces left." }); await second.promise; });
+  expect(top()).toBe("Globex");
+  expect(text()).toContain("2 to review");
+});
+
+it("can accept an already-followed suggestion at capacity after the server confirms no extra slot is needed", async () => {
+  actions.acceptSuggestion.mockResolvedValue({ ok: true, message: "Acme is already in your companies." });
+  act(() => root.render(<SuggestionDeck cards={CARDS} empty={<p>No companies</p>} remainingCompanySlots={0} />));
+  await act(async () => button("Follow ⟶").click());
+  expect(top()).toBe("Globex");
+  expect(text()).toContain("Acme is already in your companies.");
+});
+
 it("sends a decided card off the edge as a picture while the next card is already live", async () => {
   vi.useFakeTimers();
   try {

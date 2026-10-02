@@ -12,13 +12,15 @@ export function fail(error: string, recovery?: { href: string; label: string }):
 /** Only deliberate, user-facing errors may be shown verbatim. */
 export class UserFacingError extends Error {
   readonly userFacing = true as const;
-  constructor(message: string) {
+  readonly recovery?: { href: string; label: string };
+  constructor(message: string, recovery?: { href: string; label: string }) {
     super(message);
     this.name = "UserFacingError";
+    this.recovery = recovery;
   }
 }
 
-export function isUserFacingError(error: unknown): error is UserFacingError {
+export function isUserFacingError(error: unknown): error is UserFacingError & { recovery?: { href: string; label: string } } {
   return error instanceof UserFacingError || (typeof error === "object" && error !== null && (error as { userFacing?: unknown }).userFacing === true);
 }
 
@@ -42,7 +44,7 @@ function isNavigationSignal(error: unknown): boolean {
 export function actionError(error: unknown, fallback: string, event = "action_failed"): ActionResult {
   if (isNavigationSignal(error)) throw error;
   if (error instanceof Error && (error.message === "Unauthorised" || error.message === "Forbidden")) throw error;
-  if (isUserFacingError(error)) return fail(error.message);
+  if (isUserFacingError(error)) return fail(error.message, error.recovery);
   const name = error instanceof Error ? error.name.slice(0, 64) : typeof error;
   const message = error instanceof Error ? error.message : String(error);
   console.error(JSON.stringify({ event, errorType: name, fingerprint: fingerprint(message) }));

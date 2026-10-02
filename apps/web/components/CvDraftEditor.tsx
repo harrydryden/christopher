@@ -8,8 +8,6 @@ import { cvDisplaySections } from "@ava/core/cv-helpers";
 import type { CvTheme } from "@ava/core/cv-theme-values";
 import type { CvContent } from "@ava/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
-import { formatUsd } from "@/lib/format";
-import type { CvEditCosts } from "@/lib/cv-quote";
 import { CvWorkspacePanel } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
 import { Button } from "./Button";
@@ -68,7 +66,6 @@ export function CvDraftEditor({
   share,
   commentCounts = {},
   buildLog,
-  costs,
   blocked = null,
 }: {
   id: string;
@@ -87,8 +84,6 @@ export function CvDraftEditor({
   commentCounts?: Record<string, number>;
   /** The motions this revision was built from, kept at the foot of the Content tab. */
   buildLog?: ReactNode;
-  /** What each of the two saves is expected to cost, from `cvEditCosts` on the server. */
-  costs?: CvEditCosts;
   /** Why these actions are unavailable — an unverified account — or null when they are not. */
   blocked?: string | null;
 }) {
@@ -203,21 +198,18 @@ export function CvDraftEditor({
           )}
         </SettingsForm>
       </fieldset>
-      {/* What the two actions differ by, where they are chosen: what each keeps, what each
-          re-runs, and what each is expected to cost. */}
+      {/* Direct edits are free. A fresh AI rewrite uses one CV credit. */}
       <dl className="mt-2 space-y-1 text-12 text-muted">
         <div>
           <dt className="inline font-semibold text-fg">Save Direct Edits</dt>
           <dd className="inline">
-            {" · keeps your wording, re-checks it"}
-            {costs && ` · about ${formatUsd(costs.assessmentUsd)}`}
+            {" · keeps your wording, re-checks it · free"}
           </dd>
         </div>
         <div>
           <dt className="inline font-semibold text-fg">Rebuild from Library</dt>
           <dd className="inline">
-            {" · plans and rewrites from the latest Library; includes one improvement pass if useful"}
-            {costs && ` · about ${formatUsd(costs.allUsd)}`}
+            {" · plans and rewrites from the latest Library; includes one improvement pass if useful · 1 CV credit"}
           </dd>
         </div>
       </dl>

@@ -39,16 +39,14 @@ import {
   APPLICATION_STATUSES,
   CLOSED_ROLE_STAGES,
   ROLE_STAGES,
-  aiBudgetRefusalMessage,
   applicationStage,
   type RoleStage,
 } from "@ava/core";
 import { DUE_WITHIN_DAYS, todayDay } from "@/lib/application-dates";
 import { companyIcon } from "@/lib/company-icon";
-import { cvBuildQuote, cvEditCosts, type CvBuildQuote } from "@/lib/cv-quote";
+import { cvCreditOffer } from "@/lib/cv-credit";
 import { db } from "@/lib/db";
 import { ifMigrated } from "@/lib/schema-skew";
-import { getSettingsFor } from "@/lib/settings";
 import { pageNumber } from "@/components/Pagination";
 
 export const PIPELINE_FILTERS = ["active", "closed", "all"] as const;
@@ -137,13 +135,12 @@ export interface PipelineCompany {
 }
 
 /**
- * A quote as the row shows it: already sentences. The table is a client component, and the
- * pricing it quotes is read from the database, so what crosses that line is the words.
+ * The fixed credit cost and availability shown beside a CV build.
  */
 export interface PipelineCvQuote {
-  /** "about $3.10 of your $18.40 left this month". */
+  /** One credit per completed CV, with the current balance. */
   line: string;
-  /** The budget's refusal, which disables the control, or null when the estimate fits. */
+  /** The credit refusal, which disables the control, or null when a credit is available. */
   refusal: string | null;
 }
 
@@ -695,49 +692,16 @@ export function applicationStaleHint(row: Pick<PipelineRow, "stage" | "updatedAt
 }
 
 /**
- * What a CV build would cost for each role on the page, before the button is pressed.
- *
- * The account's side of the sum — its Library, its spend, its holds, its limit — is the same for
- * every row, so it is read once through `cvBuildQuote` and only the description varies per role.
- * Fifty rows therefore cost one quote and one measurement query rather than fifty of each. Rows
- * with no posting behind them have nothing to build from and get no quote.
+ * Each row shares the same one-credit cost and account balance. A pasted description has no effect
+ * on the credit cost; validation of that description remains in the build action.
  */
 export async function pipelineCvQuotes(
   userId: string,
   rows: Array<Pick<PipelineRow, "jobId">>,
-  now: Date = new Date(),
-): Promise<Record<string, CvBuildQuote>> {
+  _now: Date = new Date(),
+): Promise<Record<string, PipelineCvQuote>> {
   const jobIds = [...new Set(rows.flatMap((row) => (row.jobId ? [row.jobId] : [])))];
   if (!jobIds.length) return {};
-  const [settings, account, sizes] = await Promise.all([
-    getSettingsFor(userId),
-    cvBuildQuote(userId, jobIds[0]!, now),
-    db()
-      .select({ jobId: jobs.id, bytes: sql<number>`octet_length(coalesce(${jobs.descriptionText}, ''))::int` })
-      .from(userJobs)
-      .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-      .where(and(eq(userJobs.userId, userId), inArray(jobs.id, jobIds))),
-  ]);
-  const bytes = new Map(sizes.map((row) => [row.jobId, Number(row.bytes)]));
-  const quotes: Record<string, CvBuildQuote> = {};
-  for (const jobId of jobIds) {
-    const estimateUsd = cvEditCosts(settings.cvModel, {
-      libraryBytes: account.libraryBytes,
-      descriptionBytes: bytes.get(jobId) ?? 0,
-    }).allUsd;
-    const fits = account.spentUsd + account.heldUsd + estimateUsd <= account.limitUsd;
-    quotes[jobId] = {
-      ...account,
-      estimateUsd,
-      refusal: fits
-        ? null
-        : aiBudgetRefusalMessage("This build", estimateUsd, {
-            limit: "account",
-            limitUsd: account.limitUsd,
-            spent: account.spentUsd,
-            held: account.heldUsd,
-          }),
-    };
-  }
-  return quotes;
+  const offer = await cvCreditOffer(userId);
+  return Object.fromEntries(jobIds.map(jobId => [jobId, offer]));
 }

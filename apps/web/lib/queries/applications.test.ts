@@ -304,7 +304,7 @@ it("filters to one company, by its id for a posting and by its name for a record
   expect(await pipelineCompany(crypto.randomUUID())).toBeNull();
 });
 
-it("prices a build for every role on the page, and refuses the ones the budget will not admit", async () => {
+it("shows the same credit cost for every role and refuses builds when credits are exhausted", async () => {
   const { job: cheap } = await role("Head of Delivery");
   await shortlist(cheap.id);
   const { job: dear } = await role("Operations Lead");
@@ -318,18 +318,15 @@ it("prices a build for every role on the page, and refuses the ones the budget w
   const rows = (await listPipeline(user.id, { filter: "all" })).rows;
   const quotes = await pipelineCvQuotes(user.id, rows);
   expect(Object.keys(quotes).sort()).toEqual([cheap.id, dear.id].sort());
-  // One Library, measured once; the description is what makes one role dearer than another.
-  expect(quotes[cheap.id]!.libraryBytes).toBe(quotes[dear.id]!.libraryBytes);
-  expect(quotes[dear.id]!.estimateUsd).toBeGreaterThan(quotes[cheap.id]!.estimateUsd);
+  expect(quotes[cheap.id]!.line).toBe(quotes[dear.id]!.line);
+  expect(quotes[cheap.id]!.line).toContain("Uses 1 CV credit");
   expect(quotes[cheap.id]!.refusal).toBeNull();
-  expect(quotes[cheap.id]!.leftUsd).toBe(quotes[cheap.id]!.limitUsd);
 
-  // A budget with cents left refuses both, in the worker's own words.
-  await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 0.01 });
+  await database.update(schema.creditGrants).set({ remaining: 0 }).where(eq(schema.creditGrants.userId, user.id));
   const broke = await pipelineCvQuotes(user.id, rows);
-  expect(broke[cheap.id]!.refusal).toMatch(/^This build needs about \$\d+\.\d\d of AI budget; your budget of \$0\.01 has \$0\.01 left this month/);
+  expect(broke[cheap.id]!.refusal).toContain("no CV credits available");
   expect(broke[dear.id]!.refusal).not.toBeNull();
-  // Nothing to price is no query at all.
+  // A row with no posting has no build action.
   expect(await pipelineCvQuotes(user.id, [{ jobId: null }])).toEqual({});
 });
 

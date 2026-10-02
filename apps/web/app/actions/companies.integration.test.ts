@@ -25,7 +25,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { revalidatePath } from "next/cache";
-import { addCompanies, archiveCompany, followCompany, importPosting, pasteDiscoveryUrl, refreshCompany, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
+import { addCompanies, addCompaniesInline, archiveCompany, followCompany, importPosting, pasteDiscoveryUrl, pauseCompany, refreshCompany, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
 import { companyApplicationCount, companyScanTiming, listCompanies, searchCatalogue } from "@/lib/queries/companies";
 import { parseCompanySort } from "@/lib/company-sort";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
@@ -111,7 +111,7 @@ it("follows a company already in the catalogue instead of adding or scanning a s
 it("refuses to follow a company until this account has chosen its keywords and locations", async () => {
   // Existing accounts that never saved a gate are in exactly this position: one save frees them.
   await database.delete(schema.userSettings).where(eq(schema.userSettings.userId, first.id));
-  await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("Choose your keywords and locations first, so the first scan runs against your filters.");
+  expect(await addCompaniesInline(urls("https://acme.example"))).toMatchObject({ ok: false, error: "Choose your keywords and locations first, so the first scan runs against your filters." });
   expect(await database.select().from(schema.companies)).toHaveLength(0);
   expect(await database.select().from(schema.companySubscriptions)).toHaveLength(0);
   expect(await tasksOfType("discover")).toHaveLength(0);
@@ -379,9 +379,9 @@ it("refuses a submission of more than 25 companies, in a sentence on the page, a
   expect(await database.select().from(schema.tasks)).toHaveLength(0);
 });
 
-it("holds a member to 200 followed companies, counted under one lock, and leaves administrators unlimited", async () => {
+it("holds concurrent Free additions to 25 active companies and counts a resumed follow again", async () => {
   session = secondCookie;
-  await alreadyFollowing(second.id, 198);
+  await alreadyFollowing(second.id, 23);
   // Two at once from one account: one fills the allowance, the other is refused whole.
   const outcomes = await Promise.allSettled([
     addCompanies(urls("https://new-a.example\nhttps://new-b.example")),
@@ -390,26 +390,52 @@ it("holds a member to 200 followed companies, counted under one lock, and leaves
   const messages = outcomes.map(outcome => outcome.status === "rejected" ? String((outcome.reason as Error).message) : "resolved");
   expect(messages.filter(message => message.startsWith("redirect:/companies?added=2"))).toHaveLength(1);
   // The second is counted after the first commits, so it sees the allowance already full.
-  expect(messages.filter(message => message.includes("error=") && message.includes("up+to+200+companies%2C+and+you+follow+200"))).toHaveLength(1);
+  expect(messages.filter(message => message.includes("error=") && message.includes("Free+includes+25+active+companies"))).toHaveLength(1);
   const following = await database.select().from(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, second.id));
-  expect(following).toHaveLength(200);
-  expect(await database.select().from(schema.companies)).toHaveLength(200);
+  expect(following).toHaveLength(25);
+  expect(await database.select().from(schema.companies)).toHaveLength(25);
 
   // Following one already followed adds nothing to the count, so it is not refused.
   await expect(addCompanies(urls("https://held1.example"))).rejects.toThrow("redirect:/companies?added=0");
-  // An archived follow is outside the allowance, and bringing it back counts like a new one.
+  // Paused and archived follows are outside the allowance; either needs a slot to resume.
   const [held] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "held0.example"));
-  await archiveCompany(held!.id);
+  await pauseCompany(held!.id);
   await expect(addCompanies(urls("https://new-e.example"))).rejects.toThrow("redirect:/companies?added=1");
-  await expect(resumeCompany(held!.id)).rejects.toThrow("redirect:/companies?error=");
+  expect(await resumeCompany(held!.id)).toMatchObject({ ok: false, error: expect.stringContaining("Free includes 25"), recovery: { href: "/account#plan-and-credits" } });
+  const [paused] = await database.select().from(schema.companySubscriptions).where(eq(schema.companySubscriptions.companyId, held!.id));
+  expect(paused!.status).toBe("paused");
+  await archiveCompany(held!.id);
+  expect(await resumeCompany(held!.id)).toMatchObject({ ok: false, error: expect.stringContaining("Free includes 25") });
   const [archived] = await database.select().from(schema.companySubscriptions)
     .where(eq(schema.companySubscriptions.companyId, held!.id));
   expect(archived!.status).toBe("archived");
 
-  // The administrator is not limited.
+});
+
+it("keeps the 200-company technical ceiling for Intensive and administrator accounts", async () => {
   session = firstCookie;
+  await database.insert(schema.billingAccounts).values({ userId: first.id, plan: "intensive" }).onConflictDoUpdate({ target: schema.billingAccounts.userId, set: { plan: "intensive" } });
   await alreadyFollowing(first.id, 200, "admin");
-  await expect(addCompanies(urls("https://admin-more.example"))).rejects.toThrow("redirect:/companies?added=1");
+  const result = await addCompaniesInline(urls("https://admin-more.example"));
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("at most 200 active companies") });
+  expect(await database.select().from(schema.companies)).toHaveLength(200);
+});
+
+it("requires paid capacity in advance and refuses a whole batch without buying company blocks", async () => {
+  session = secondCookie;
+  await database.insert(schema.billingAccounts).values({ userId: second.id, plan: "search" }).onConflictDoUpdate({ target: schema.billingAccounts.userId, set: { plan: "search" } });
+  await alreadyFollowing(second.id, 100);
+  const batch = urls("https://extra-a.example\nhttps://extra-b.example");
+  expect(await addCompaniesInline(batch)).toMatchObject({ ok: false, error: expect.stringContaining("space for 100"), recovery: { href: "/account#plan-and-credits" } });
+  expect(await database.select().from(schema.companies)).toHaveLength(100);
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  expect((await database.select().from(schema.billingAccounts).where(eq(schema.billingAccounts.userId, second.id)))[0]!.companyBlocks).toBe(0);
+
+  // A confirmed Account purchase is represented by an already-granted block.
+  await database.update(schema.billingAccounts).set({ companyBlocks: 1 }).where(eq(schema.billingAccounts.userId, second.id));
+  expect(await addCompaniesInline(batch)).toMatchObject({ ok: true, redirectTo: "/companies?added=2" });
+  expect((await database.select().from(schema.billingAccounts).where(eq(schema.billingAccounts.userId, second.id)))[0]!.companyBlocks).toBe(1);
+  expect(await database.select().from(schema.companySubscriptions)).toHaveLength(102);
 });
 
 it("records who added a company, admits five followed companies inline and queues the rest", async () => {
@@ -507,8 +533,8 @@ it("follows a catalogue company once, admits its stored roles, and holds a membe
 
   // A member at the allowance is refused in a sentence, and nothing is written.
   await database.delete(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, second.id));
-  await alreadyFollowing(second.id, 200);
-  expect(await followCompany(company.id)).toEqual({ ok: false, error: expect.stringContaining("up to 200 companies, and you follow 200") });
+  await alreadyFollowing(second.id, 25);
+  expect(await followCompany(company.id)).toMatchObject({ ok: false, error: expect.stringContaining("Free includes 25"), recovery: { href: "/account#plan-and-credits" } });
   expect(await database.select().from(schema.companySubscriptions)
     .where(and(eq(schema.companySubscriptions.userId, second.id), eq(schema.companySubscriptions.companyId, company.id)))).toHaveLength(0);
 });

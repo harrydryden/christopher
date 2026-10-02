@@ -30,7 +30,6 @@ import { CV_REVIEW_BATCH_SIZE, PROMPTS } from "../../../packages/ai/src/prompt-r
 import type { CvBuildStageName } from "@ava/core";
 import { db } from "@/lib/db";
 import { ifMigrated } from "@/lib/schema-skew";
-import { formatUsd } from "@/lib/format";
 import { getSettingsFor } from "@/lib/settings";
 
 /** What one build is expected to cost, against what this account has left this month. */
@@ -322,16 +321,6 @@ export async function cvBuildQuote(
     libraryBytes: size.libraryBytes,
     hasLibrary: !!library,
   };
-}
-
-/** The price beside the button: "about $3.10 of your $18.40 left this month". */
-export function cvQuoteLine(quote: CvBuildQuote): string {
-  return `about ${formatUsd(quote.estimateUsd)} of your ${formatUsd(quote.leftUsd)} left this month`;
-}
-
-/** The same price inside a button's own label, where the sentence has to be short: "about $3.10 of $18.40 left". */
-export function cvQuoteButtonLine(quote: CvBuildQuote): string {
-  return `about ${formatUsd(quote.estimateUsd)} of ${formatUsd(quote.leftUsd)} left`;
 }
 
 /** What each of the editor's two actions is expected to cost for one saved revision. */

@@ -9,7 +9,7 @@ import {
   reviewFixture,
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createDb, reserveCvCredit, schema, subscribeToCompany, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@ava/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@ava/core";
@@ -622,6 +622,7 @@ describe("priority workflows", () => {
       buildCheckpoint: { rubric, rubricAt: new Date().toISOString(), tailoringEnabled: true },
       gapQuiz: { version: 1, status: "awaiting_answers", libraryVersion: 1, questions: [{ id: "q1", requirementId: requirement.id, requirement: requirement.label, prompt: "What market did you launch, and what changed?", suggestedDestination: { kind: "employment", employmentId: "job:1" } }] },
     }).returning();
+    await database.transaction(tx => reserveCvCredit(tx, user.id, parent!.id));
     const form = new FormData();
     form.set("decision", "confirm");
     form.set("answer:q1", "Launched a new route to market with product and sales.");
@@ -636,6 +637,7 @@ describe("priority workflows", () => {
     const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent!.id));
     expect(storedParent).toMatchObject({ archivedAt: expect.any(Date), gapQuiz: { status: "answered", continuationDraftId: child!.id } });
     expect(child).toMatchObject({ status: "queued", libraryVersion: 2, buildCheckpoint: { tailoringEnabled: true, quizCompleted: true, rubric } });
+    expect(await database.select().from(schema.creditReservations)).toMatchObject([{ draftId: child!.id, status: "reserved" }]);
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${child!.id}`))).toHaveLength(1);
     // A replay returns the same continuation and does not write another Library version or task.
     expect(await answerCvGapQuiz(parent!.id, { ok: true }, form)).toEqual({ ok: true, message: `cv-gap-destination:/cv/${child!.id}` });

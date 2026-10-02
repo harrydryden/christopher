@@ -201,16 +201,30 @@ it("rolls back acceptance if queuing careers setup fails", async () => {
     expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
   } finally { failure.mockRestore(); }
 });
-it("holds a member who already follows 200 companies to that when accepting a recommendation", async () => {
+it("keeps a suggestion pending when its Free account has no company spaces left", async () => {
   const member = await ensureTestUser(database, "full@example.com", "member");
   auth.requireUser.mockImplementation(async () => member);
   await database.insert(schema.userSettings).values({ userId: member.id, key: "gate", value: { includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
-  const held = await database.insert(schema.companies).values(Array.from({ length: 200 }, (_, n) => ({ name: `Held ${n}`, domain: `held${n}.example`, homepageUrl: `https://held${n}.example` }))).returning({ id: schema.companies.id });
+  const held = await database.insert(schema.companies).values(Array.from({ length: 25 }, (_, n) => ({ name: `Held ${n}`, domain: `held${n}.example`, homepageUrl: `https://held${n}.example` }))).returning({ id: schema.companies.id });
   await database.insert(schema.companySubscriptions).values(held.map(row => ({ userId: member.id, companyId: row.id })));
   const [row] = await database.insert(schema.companySuggestions).values({ userId: member.id, name: "Acme", domain: "acme.example", homepageUrl: "https://acme.example" }).returning();
-  expect(await acceptSuggestion(row!.id)).toEqual({ ok: false, error: expect.stringContaining("up to 200 companies") });
+  expect(await acceptSuggestion(row!.id)).toMatchObject({ ok: false, error: expect.stringContaining("Free includes 25"), recovery: { href: "/account#plan-and-credits" } });
   expect(await database.select().from(schema.companies).where(eq(schema.companies.domain, "acme.example"))).toHaveLength(0);
   expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
+});
+it("admits only one of two simultaneous suggestions into the last company space", async () => {
+  const member = await ensureTestUser(database, "last-space@example.com", "member");
+  auth.requireUser.mockImplementation(async () => member);
+  await database.insert(schema.userSettings).values({ userId: member.id, key: "gate", value: { includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
+  const held = await database.insert(schema.companies).values(Array.from({ length: 24 }, (_, n) => ({ name: `Held ${n}`, domain: `held${n}.example`, homepageUrl: `https://held${n}.example` }))).returning({ id: schema.companies.id });
+  await database.insert(schema.companySubscriptions).values(held.map(row => ({ userId: member.id, companyId: row.id })));
+  const suggestions = await database.insert(schema.companySuggestions).values(["acme", "globex"].map(name => ({ userId: member.id, name, domain: `${name}.example`, homepageUrl: `https://${name}.example` }))).returning();
+  const outcomes = await Promise.all(suggestions.map(row => acceptSuggestion(row.id)));
+  expect(outcomes.filter(result => result.ok)).toHaveLength(1);
+  expect(outcomes.filter(result => !result.ok)).toHaveLength(1);
+  expect(await database.select().from(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, member.id))).toHaveLength(25);
+  const states = await database.select({ status: schema.companySuggestions.status }).from(schema.companySuggestions).where(eq(schema.companySuggestions.userId, member.id));
+  expect(states.map(row => row.status).sort()).toEqual(["accepted", "pending"]);
 });
 it("refuses a discovery source on an address the worker will never fetch", async () => {
   expect(await saveDiscoverySource(form({ name: "Intranet", kind: "website", intervalDays: "7", url: "http://127.0.0.1/news" })))

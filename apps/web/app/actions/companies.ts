@@ -17,7 +17,7 @@ import { enqueue } from "@/lib/enqueue";
 import { requireChosenGate } from "@/lib/queries/setup";
 import { getSettingsFor } from "@/lib/settings";
 import { actionError, fail, isUserFacingError, UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
-import { assertFollowCapacity } from "@/lib/follow-limits";
+import { assertFollowCapacity, lockCompanyFollows } from "@/lib/follow-limits";
 import { refuseOn, revalidate } from "@/lib/action-helpers";
 
 const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
@@ -83,7 +83,7 @@ function addReturnPath(value: FormDataEntryValue | null): AddReturnPath {
   return ADD_RETURN_PATHS.find(path => path === value) ?? "/companies";
 }
 
-export async function addCompanies(formData: FormData): Promise<void> {
+async function addCompanyHomepages(formData: FormData): Promise<string> {
   const returnTo = addReturnPath(formData.get("returnTo"));
   const user = await requireVerifiedUser();
   // Filters first: a company's first scan is never run against a gate nobody chose. The form says
@@ -94,7 +94,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
   // Every new company is discovered and then scanned daily for everyone who follows it, so one
   // paste adds a bounded amount of shared work (design: a paste is not a bulk import).
   if (lines.length > MAX_COMPANIES_PER_SUBMISSION) {
-    refuseOn(returnTo, `Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`);
+    throw new UserFacingError(`Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`);
   }
 
   const candidates: Array<{ name: string; homepageUrl: string; domain: string; input: string; index: number }> = [];
@@ -132,7 +132,6 @@ export async function addCompanies(formData: FormData): Promise<void> {
   let added = 0;
   let followed = 0;
   const admit: string[] = [];
-  let refusal: string | null = null;
   await db().transaction(async tx => {
     await assertFollowCapacity(tx, user, { domains: candidates.map(candidate => candidate.domain) });
     for (let offset = 0; offset < candidates.length; offset += 100) {
@@ -160,11 +159,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
     for (const [index, companyId] of admit.entries()) {
       await admitExistingRoles(user.id, companyId, tx as unknown as ReturnType<typeof db>, { queue: index >= INLINE_ADMISSIONS });
     }
-  }).catch((error: unknown) => {
-    if (!isUserFacingError(error)) throw error;
-    refusal = error.message;
   });
-  if (refusal) refuseOn(returnTo, refusal);
 
   revalidate("/companies", "/suggestions", "/");
   const params = new URLSearchParams({ added: String(added) });
@@ -174,7 +169,23 @@ export async function addCompanies(formData: FormData): Promise<void> {
     params.set("results", JSON.stringify(outcomes.sort((a, b) => a.index - b.index)
       .map(({ input, result }) => [input.slice(0, 100), result])));
   }
-  redirect(`${returnTo}?${params.toString()}`);
+  return `${returnTo}?${params.toString()}`;
+}
+
+/** Legacy form endpoint; the inline form below keeps a refused batch available for correction. */
+export async function addCompanies(formData: FormData): Promise<void> {
+  let destination: string;
+  try { destination = await addCompanyHomepages(formData); }
+  catch (error) {
+    if (!isUserFacingError(error)) throw error;
+    refuseOn(addReturnPath(formData.get("returnTo")), error.message);
+  }
+  redirect(destination!);
+}
+
+export async function addCompaniesInline(formData: FormData): Promise<ActionResult & { redirectTo?: string }> {
+  try { return { ok: true, redirectTo: await addCompanyHomepages(formData) }; }
+  catch (error) { return actionError(error, "Could not add these companies. Your homepages have been kept.", "add_companies_failed"); }
 }
 
 /**
@@ -206,43 +217,35 @@ export async function followCompany(companyId: string): Promise<ActionResult> {
 }
 
 /** Not exported: a "use server" export is a public endpoint, and nothing calls this one directly. */
-async function setCompanyStatus(companyId: string, status: "active" | "paused" | "archived"): Promise<void> {
+async function setCompanyStatus(companyId: string, status: "active" | "paused" | "archived"): Promise<ActionResult> {
   const user = await requireUser();
   const id = zUuid().parse(companyId);
   const nextStatus = CompanyStatusSchema.parse(status);
-  let refusal: string | null = null;
-  await db().transaction(async tx => {
-    // Bringing back an archived follow counts against the account's limit like a new one.
-    if (nextStatus !== "archived") {
-      const [current] = await tx.select({ status: companySubscriptions.status }).from(companySubscriptions)
-        .where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id))).limit(1);
-      if (current?.status === "archived") {
-        try {
-          await assertFollowCapacity(tx, user, { companyIds: [id] });
-        } catch (error) {
-          if (!isUserFacingError(error)) throw error;
-          refusal = error.message;
-          return;
-        }
-      }
-    }
-    const changed = await setSubscriptionStatus(tx, user.id, id, nextStatus);
-    if (!changed) throw new UserFacingError("You do not follow this company.");
-  });
-  if (refusal) refuseOn("/companies", refusal);
-  revalidate("/companies", `/companies/${id}`);
+  try {
+    await db().transaction(async tx => {
+      await lockCompanyFollows(tx, user.id);
+      await requireFollowed(user.id, id, { writer: tx });
+      // Both paused and archived follows need a monitoring slot when they become active again.
+      if (nextStatus === "active") await assertFollowCapacity(tx, user, { companyIds: [id] });
+      await setSubscriptionStatus(tx, user.id, id, nextStatus);
+    });
+  } catch (error) { return actionError(error, "Could not update this company.", "company_status_failed"); }
+  revalidate("/companies", `/companies/${id}`, "/suggestions", "/account");
+  return { ok: true };
 }
 
 export async function pauseCompany(companyId: string): Promise<void> {
-  await setCompanyStatus(companyId, "paused");
+  const result = await setCompanyStatus(companyId, "paused");
+  if (!result.ok) refuseOn("/companies", result.error);
 }
 
-export async function resumeCompany(companyId: string): Promise<void> {
-  await setCompanyStatus(companyId, "active");
+export async function resumeCompany(companyId: string): Promise<ActionResult> {
+  return setCompanyStatus(companyId, "active");
 }
 
 export async function archiveCompany(companyId: string): Promise<void> {
-  await setCompanyStatus(companyId, "archived");
+  const result = await setCompanyStatus(companyId, "archived");
+  if (!result.ok) refuseOn("/companies", result.error);
 }
 
 /** Refresh uses existing sources first; discovery is recovery, not a separate routine action. */

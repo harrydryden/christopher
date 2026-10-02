@@ -68,6 +68,9 @@ export default async function SignupPage({
       <p className="mb-3 text-13 text-muted">
         Your companies, filters, decisions, evidence library and CVs are yours alone. Careers pages are discovered and scanned once for everyone.
       </p>
+      <p className="mb-3 border border-line-muted bg-raised p-3 text-13">
+        Start on Free: monitor up to 25 active companies and build your first 3 tailored CVs. You can choose a plan or buy more CV credits later in Account.
+      </p>
       {!open && <p className="mb-3 border-2 border-warn px-3 py-2 text-13 text-warn" role="status">{CLOSED_NOTICE}</p>}
       {googleConfigured() && (
         <>

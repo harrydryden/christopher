@@ -85,7 +85,7 @@ type DetailState =
   | { state: "error"; error: string };
 
 /**
- * The build offered where the role was shortlisted, priced before it is pressed (3.5).
+ * The build offered where the role was shortlisted, with its credit cost beside the action.
  *
  * The quote rides in on the panel's own round trip, so this costs no extra request. A budget that
  * will not take the build says so here instead of on a CV page after the redirect, an account with
@@ -100,7 +100,7 @@ function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsV
         Save your Library first. <Link prefetch={false} href="/library" className="underline">Open Library</Link>
       </p>
     );
-  if (details.cvQuote.refusal) return <p className="text-12 text-warn" role="status">{details.cvQuote.refusal}</p>;
+  if (details.cvQuote.refusal) return <p className="text-12 text-warn" role="status">{details.cvQuote.refusal} <Link prefetch={false} href="/account#top-ups" className="underline">Add CV credits</Link></p>;
   const label = `Build a CV for this role · ${details.cvQuote.line}`;
   if (details.cvBlocked)
     return (
@@ -255,7 +255,7 @@ interface RoleRowProps {
  * stable references, so a keystroke, a `j`/`k` press or a selection renders only the rows it changes.
  */
 const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, busy, expanded, detail, boxed, descriptionOpen, hideCompany, archived, groupBusy, boxPending, archivingThis, archivingAny, actions }: RoleRowProps) {
-  // The build replaces the link only once its price is in hand: a panel that is still
+  // The build replaces the link only once its credit availability is in hand: a panel that is still
   // loading, or that could not load, keeps the link rather than offering nothing.
   const buildHere = row.stage === "shortlisted" && detail?.state === "ready";
   return (

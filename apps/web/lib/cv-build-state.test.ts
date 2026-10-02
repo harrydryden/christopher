@@ -69,7 +69,7 @@ it("calls a build stopped when nothing is working on it, whatever the draft stil
 
   // The draft's own error, when it has one, is the sentence the person should read.
   const explained = cvBuildState(draft({ error: "Your monthly AI budget is spent." }), null, now);
-  expect(explained.message).toBe("Your monthly AI budget is spent.");
+  expect(explained.message).toBe("CV generation is unavailable right now. No CV credit was used. Please try again later.");
 
   // A task that reported itself done without publishing the draft is stopped too.
   expect(cvBuildState(draft(), task({ status: "done" }), now).phase).toBe("stopped");
@@ -239,8 +239,8 @@ it("names the failure, its heading and the person's way forward on a failed draf
   );
   expect(state.phase).toBe("failed");
   expect(state.tone).toBe("red");
-  expect(state.title).toBe("Not enough AI budget");
-  expect(state.message).toBe("This build needs $3.06 and $1.20 is left of your $50.00 budget this month.");
+  expect(state.title).toBe("CV generation unavailable");
+  expect(state.message).toBe("CV generation is unavailable right now. No CV credit was used. Please try again later.");
   expect(state.action).toBe("raise_budget");
 
   // Attempts spent on something the system was resolving: the heading says so, and the way out is
@@ -257,7 +257,7 @@ it("names the failure, its heading and the person's way forward on a failed draf
   expect(exhausted.title).toBe("Gave up after 3 attempts: The model provider is overloaded");
   expect(exhausted.action).toBe("retry");
   expect(exhausted.resumeNote).toBe(
-    "A retry resumes from the requirements already extracted and the wording already written, so it does not pay for that again.",
+    "A retry resumes from the requirements already extracted and the wording already written, so it does not repeat that work.",
   );
 
   // A draft that failed before any of this existed still reads, and still offers the retry.
@@ -270,10 +270,10 @@ it("names the failure, its heading and the person's way forward on a failed draf
 
 it("offers each failure the page that fixes it, and the retry only where it would work", () => {
   expect(failureWayForward("raise_budget", { canRetry: true })).toEqual({
-    links: [{ label: "Raise the AI budget", href: "/settings" }],
-    note: null,
+    links: [],
+    note: "No CV credit was used. Please try again later.",
     retry: true,
-    retryNote: "When you have done that, retry generation.",
+    retryNote: null,
   });
   expect(failureWayForward("shorten_or_raise_pages", { canRetry: true }).links).toEqual([
     { label: "Shorten the Library", href: "/library" },

@@ -10,7 +10,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
-import { aiBudgetWindowStart } from "@ava/core";
 import { and, eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
@@ -155,7 +154,7 @@ async function detailsFor(jobId: string) {
 }
 
 describe("what the review panel loads on expand", () => {
-  it("prices the build beside the shortlist it was made from", async () => {
+  it("shows the credit cost beside the shortlist it was made from", async () => {
     const job = await role();
     await saveLibrary();
 
@@ -163,13 +162,12 @@ describe("what the review panel loads on expand", () => {
     expect(details.description).toBe(DESCRIPTION);
     expect(details.keywordTerms).toEqual(["operations"]);
     expect(details.cvQuote).not.toBeNull();
-    // "Build a CV for this role · about $3.10 of $18.40 left"
-    expect(details.cvQuote!.line).toMatch(/^about .{0,3}\$\d+\.\d\d of .{0,3}\$\d+\.\d\d left$/);
+    expect(details.cvQuote!.line).toBe("Uses 1 CV credit · 3 credits available");
     expect(details.cvQuote!.refusal).toBeNull();
     expect(details.cvBlocked).toBeNull();
   });
 
-  it("sends an account with nothing to write from to its Library instead of a price", async () => {
+  it("sends an account with nothing to write from to its Library", async () => {
     const job = await role();
     expect(await database.select().from(schema.cvLibraries)).toHaveLength(0);
     expect((await detailsFor(job.id)).cvQuote).toBeNull();
@@ -191,17 +189,14 @@ describe("what the review panel loads on expand", () => {
     expect((await detailsFor(applying.id)).cvQuote).toBeNull();
   });
 
-  it("refuses at the button, in the words the worker would refuse with", async () => {
+  it("refuses at the button when no CV credits remain", async () => {
     const job = await role();
     await saveLibrary();
-    await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 4 });
-    await database.insert(schema.aiCalls).values({
-      userId: user.id, callSite: "CV", model: "test", costUsd: 3.9, at: aiBudgetWindowStart(new Date(), null),
-    });
+    await detailsFor(job.id);
+    await database.update(schema.creditGrants).set({ remaining: 0 }).where(eq(schema.creditGrants.userId, user.id));
 
     const details = await detailsFor(job.id);
-    expect(details.cvQuote!.refusal).toContain("needs about");
-    expect(details.cvQuote!.refusal).toContain("left this month");
+    expect(details.cvQuote!.refusal).toContain("no CV credits available");
   });
 
   it("holds the build back until the address is confirmed", async () => {

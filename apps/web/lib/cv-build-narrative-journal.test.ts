@@ -151,19 +151,19 @@ describe("the journal's wording, motion by motion", () => {
     expect(narrateStep(step("adopt_revision", "failed"), now).tone).toBe("gray");
   });
 
-  it("reserves the budget stage by stage, with what other calls hold", () => {
+  it("names each prepared stage without provider costs", () => {
     expect(text(step("admit_budget", "done", { stage: "write", expectedUsd: 1.2, leftUsd: 14, limitUsd: 18.4, heldUsd: 0.4 }))).toBe(
-      "Reserved US$1.20 of your AI budget for writing (US$14.00 left of US$18.40 this month, US$0.40 held by other calls in flight)",
+      "Prepared for writing",
     );
     expect(text(step("admit_budget", "done", { stage: "improve", expectedUsd: 0.9, leftUsd: 12 }))).toBe(
-      "Reserved US$0.90 of your AI budget for the improvement pass (US$12.00 left this month)",
+      "Prepared for the improvement pass",
     );
-    expect(text(step("admit_budget", "done", { stage: "plan", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for matching your evidence");
-    expect(text(step("admit_budget", "done", { stage: "audit", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for checking");
-    expect(text(step("admit_budget", "done", { stage: "reaudit", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for checking the revision");
-    expect(text(step("admit_budget", "done", { stage: "rubric", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for extracting the requirements");
+    expect(text(step("admit_budget", "done", { stage: "plan", expectedUsd: 0.2 }))).toBe("Prepared for matching your evidence");
+    expect(text(step("admit_budget", "done", { stage: "audit", expectedUsd: 0.2 }))).toBe("Prepared for checking");
+    expect(text(step("admit_budget", "done", { stage: "reaudit", expectedUsd: 0.2 }))).toBe("Prepared for checking the revision");
+    expect(text(step("admit_budget", "done", { stage: "rubric", expectedUsd: 0.2 }))).toBe("Prepared for extracting the requirements");
     expect(text(step("admit_budget", "done", { stage: "tailored_completion", expectedUsd: 0.5 }))).toBe(
-      "Reserved US$0.50 of your AI budget for tailored completion",
+      "Prepared for tailored completion",
     );
   });
 
@@ -213,7 +213,7 @@ describe("the narrative's shape", () => {
     const items = narrateBuild(steps, s(181));
     expect(lines(items)).toEqual([
       "✓ Measured 2 pages against a limit of 2 · fits · 2.0 s",
-      "… Checking requirements and claims against your evidence — 3 of 5 batches done · running 1 min 20 s · US$0.31 so far",
+      "… Checking requirements and claims against your evidence — 3 of 5 batches done · running 1 min 20 s",
     ]);
     const group = items[1]!.kind === "group" ? items[1]!.group : null;
     expect(group!.batches.map((b) => b.line.text)).toEqual([
@@ -227,7 +227,7 @@ describe("the narrative's shape", () => {
 
     // All closed: the row sums what the batches held and times the pass by the clock.
     const closed = steps.map((value) => (value.status === "running" ? { ...value, status: "done" as const, finishedAt: s(170), ms: 60_000 } : value));
-    expect(lines(narrateBuild(closed, s(200)))[1]).toBe("✓ Checked 15 requirements and 10 claims against your evidence in 5 batches · 1 min 9 s · US$0.31");
+    expect(lines(narrateBuild(closed, s(200)))[1]).toBe("✓ Checked 15 requirements and 10 claims against your evidence in 5 batches · 1 min 9 s");
   });
 
   it("keeps the failed and the cancelled batch in view, and hangs a re-check under its batch", () => {
@@ -342,7 +342,7 @@ describe("a build cut off part-way", () => {
     expect(cut.tone).toBe("gray");
     expect(text(step("assemble", "skipped", { pass: "revision", cancelled: true }))).toBe("Stopped scoring: the build was interrupted");
     expect(text(step("admit_budget", "skipped", { stage: "reaudit", cancelled: true }, { title: "Reserving this build's share of your AI budget" }))).toBe(
-      "Interrupted while reserving this build's share of your AI budget",
+      "Stopped preparing the next CV stage",
     );
     // What the worker records when there was nothing to improve still says so.
     expect(text(step("improve_content", "skipped", { opportunities: 0, skipped: true }))).toBe("No further supported priority evidence needed adding");
@@ -393,9 +393,9 @@ describe("never red over a CV that is ready", () => {
     );
     expect(tones).not.toContain("red");
     expect(lines(items).slice(4)).toEqual([
-      "– Could not reserve this build's share of your AI budget; kept the original · 2.0 s",
+      "– Could not prepare this CV stage; kept the original · 2.0 s",
       "✓ Rewrote with 2 improvements · 2.0 s",
-      "✓ Reserved US$0.30 of your AI budget for checking the revision · 2.0 s",
+      "✓ Prepared for checking the revision · 2.0 s",
       "– Could not finish checking the revision against your evidence: batch 1 of 1 failed; kept the original · 2.0 s",
       "– Could not score the CV; kept the original · 2.0 s",
       "✓ Kept the original CV because the revision did not pass every improvement check · 2.0 s",
@@ -455,7 +455,7 @@ describe("an audit resumed from its checkpoint", () => {
 describe("a status this interface has never heard of", () => {
   it("reads as a skipped motion: grey, no figures, never a blank glyph or a red failure", () => {
     const odd = narrateStep(step("check_plan", "paused" as CvJournalStep["status"], { usd: 0.4 }, { title: "Checking the writer kept every role" }), now);
-    expect(odd).toMatchObject({ glyph: "–", tone: "gray", status: "skipped", text: "Skipped checking the writer kept every role", meta: "US$0.40" });
+    expect(odd).toMatchObject({ glyph: "–", tone: "gray", status: "skipped", text: "Skipped checking the writer kept every role", meta: "" });
   });
 });
 
@@ -477,7 +477,7 @@ describe("what a build came to", () => {
     // The publishing attempt's reservation covers only its own stages, not the first attempt's
     // spend, so it is not set beside a total that includes both.
     expect(totals.reservedUsd).toBeNull();
-    expect(cvBuildTotalsLine(totals)).toBe("5 motions in 5 min 21 s, costing US$2.50.");
+    expect(cvBuildTotalsLine(totals)).toBe("5 motions in 5 min 21 s.");
   });
 
   it("sets the reservation beside the spend only when both cover the same work", () => {
@@ -487,21 +487,21 @@ describe("what a build came to", () => {
       step("rubric", "done", { usd: 0.08 }, { startedAt: s(1), finishedAt: s(20) }),
       step("publish", "done", { reservedUsd: 0.3, spentUsd: 0.08 }, { startedAt: s(20), finishedAt: s(21) }),
     ];
-    expect(cvBuildTotalsLine(cvBuildTotals(single, s(30)))).toBe("3 motions in 21 s, costing US$0.08 of US$0.30 reserved.");
+    expect(cvBuildTotalsLine(cvBuildTotals(single, s(30)))).toBe("3 motions in 21 s.");
     // The improvement after publication spends outside the publishing reservation.
     const improved = [
       ...single,
       step("admit_budget", "done", { stage: "improve", expectedUsd: 1 }, { startedAt: s(22), finishedAt: s(23) }),
       step("improve_content", "done", { usd: 2.42 }, { startedAt: s(23), finishedAt: s(60) }),
     ];
-    expect(cvBuildTotalsLine(cvBuildTotals(improved, s(70)))).toBe("5 motions in 1 min, costing US$2.50.");
+    expect(cvBuildTotalsLine(cvBuildTotals(improved, s(70)))).toBe("5 motions in 1 min.");
   });
 
   it("is provisional only while something is working on it", () => {
     nextSeq = 0;
     const steps = [step("rubric", "done", { usd: 0.3 }, { startedAt: s(0), finishedAt: s(50), ms: 50_000 }), step("write", "running", {}, { startedAt: s(60) })];
-    expect(cvBuildTotalsLine(cvBuildTotals(steps, s(120), { live: true }))).toBe("2 motions in 2 min, costing US$0.30 so far.");
-    expect(cvBuildTotalsLine(cvBuildTotals(steps, s(120)))).toBe("2 motions in 1 min, costing US$0.30.");
+    expect(cvBuildTotalsLine(cvBuildTotals(steps, s(120), { live: true }))).toBe("2 motions in 2 min so far.");
+    expect(cvBuildTotalsLine(cvBuildTotals(steps, s(120)))).toBe("2 motions in 1 min.");
   });
 });
 
@@ -527,7 +527,7 @@ describe("honest progress", () => {
       step("assess_batch", "running", { index: 2, of: 2 }, { startedAt: s(101) }),
     ];
     expect(currentMotionLine(checking, s(180), {}, medians)).toBe(
-      "Checking requirements and claims against your evidence — 1 of 2 batches done · running 1 min 20 s · US$0.20 so far",
+      "Checking requirements and claims against your evidence — 1 of 2 batches done · running 1 min 20 s",
     );
     // Nothing open: the last thing that closed.
     expect(currentMotionLine([step("rubric", "done", { requirements: 4 })], now)).toBe("Extracted 4 requirements");

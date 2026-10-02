@@ -22,11 +22,10 @@ import type { CompanySubscription } from "@ava/db/schema";
 
 type MenuAction = "refresh" | "rediscover" | "pause" | "resume" | "archive" | "unfollow";
 
-const ACTIONS: Record<MenuAction, (companyId: string) => Promise<void>> = {
+const ACTIONS: Record<Exclude<MenuAction, "resume">, (companyId: string) => Promise<void>> = {
   refresh: refreshCompany,
   rediscover: rediscoverCompany,
   pause: pauseCompany,
-  resume: resumeCompany,
   archive: archiveCompany,
   unfollow: unfollowCompany,
 };
@@ -59,13 +58,18 @@ export function CompanyManageMenu({
   blockedReason?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [recovery, setRecovery] = useState<{ href: string; label: string } | null>(null);
   const call = useActionCall<MenuAction>();
   const pending = call.pending;
 
   function run(action: MenuAction, confirmMessage?: string) {
-    // The action revalidates the company pages, so its own response carries the fresh page; a
-    // refusal comes back as the redirect it has always been, so nothing is caught here.
-    call.run(action, () => ACTIONS[action](companyId), { confirm: confirmMessage });
+    call.run(action, async () => {
+      setRecovery(null);
+      if (action === "resume") {
+        const result = await resumeCompany(companyId);
+        if (!result.ok) { call.setError(result.error); setRecovery(result.recovery ?? null); }
+      } else await ACTIONS[action](companyId);
+    }, { confirm: confirmMessage });
   }
 
   return (
@@ -102,8 +106,10 @@ export function CompanyManageMenu({
             </Button>
           </div>
           <p className="text-12 text-muted">
-            Pause stops the daily scan; Hide takes it off your list and keeps everything; Stop following removes its roles from your table.
+            Pause stops monitoring and frees a company space; Hide takes it off your list and keeps everything; Stop following removes its roles from your table.
           </p>
+          {call.error && <p role="alert" className="text-12 text-danger">{call.error}</p>}
+          {recovery && <a href={recovery.href} className="inline-flex min-h-11 items-center text-12 underline">{recovery.label}</a>}
         </div>
       )}
     </details>

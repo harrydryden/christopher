@@ -314,16 +314,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const openWidth = (await main.boundingBox()).width;
 
     // The two saves differ by more than their labels: what each keeps, what each re-runs, and
-    // what each is expected to cost, stated under the buttons that choose between them.
+    // their fixed credit cost, stated under the buttons that choose between them.
     const actions = await page.locator("dl").filter({ hasText: "Rebuild from Library" }).innerText();
-    const priced = (line) => Number(/about .{0,3}\$(\d+\.\d\d)/.exec(line)[1]);
     const [direct, rebuild] = actions.split("\n");
-    assert.match(direct, /^Save Direct Edits · keeps your wording, re-checks it · about .{0,3}\$\d+\.\d\d$/);
-    assert.match(rebuild, /^Rebuild from Library · plans and rewrites from the latest Library; includes one improvement pass if useful · about .{0,3}\$\d+\.\d\d$/);
-    assert.ok(
-      priced(direct) < priced(rebuild),
-      `keeping the wording must cost less than writing it again: ${actions}`,
-    );
+    assert.equal(direct, "Save Direct Edits · keeps your wording, re-checks it · free");
+    assert.equal(rebuild, "Rebuild from Library · plans and rewrites from the latest Library; includes one improvement pass if useful · 1 CV credit");
 
     // The wording option sits with the words it remembers, on the Content tab, and is still
     // called by its own four words rather than its hint.
@@ -703,7 +698,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       .waitFor();
     const narrated = await narrative.innerText();
     assert.match(narrated, /Read your Library \(version 1: 2 roles, 1 qualification, 1 skill block\) and the role \(42 characters\)/);
-    assert.match(narrated, /Reserved .{0,3}\$3\.06 of your AI budget \(.{0,3}\$18\.40 left this month\)/);
+    assert.match(narrated, /Prepared the next CV stage/);
+    assert.doesNotMatch(narrated, /\$|AI budget/i);
     assert.match(narrated, /52 s/);
     // The open motion counts from its own start, not from the build's.
     const elapsed = /Writing the CV · running (\d+) s/.exec(narrated);
@@ -767,19 +763,19 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       .getByRole("textbox", { name: "Profile", exact: true })
       .waitFor({ timeout: 60_000 });
     assert.equal(droppedRefresh, true);
-    // The narrative outlives the build: collapsed on the Content tab, with what it cost.
+    // The narrative outlives the build: collapsed on the Content tab, with its elapsed time.
     await page.getByRole("button", { name: "Show build log", exact: true }).click();
     const log = await page.getByRole("list", { name: "Build narrative", exact: true }).innerText();
     assert.match(log, /Saved as version \d{2}-[A-Z][a-z]{2}-V\d+/);
     assert.match(log, /Extracted 12 requirements/);
     assert.match(
       await page.getByText(/8 motions in /).last().innerText(),
-      /8 motions in .+costing .{0,3}\$0\.28\./,
+      /8 motions in .+\./,
     );
-    // What the build cost is beside the revision's name, not only inside the collapsed log.
+    // The elapsed build total is beside the revision's name, without exposing internal AI cost.
     assert.match(
       await page.locator("p").filter({ hasText: /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · / }).first().innerText(),
-      /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · 8 motions in .+costing .{0,3}\$0\.28\.$/,
+      /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · 8 motions in .+\.$/,
     );
 
     // A build that stopped on something only the person can fix: what it was, and the way forward.
@@ -803,21 +799,18 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     });
     await motion(failedId, 2, "preparing", "admit_budget", "Reserving this build's share of your AI budget", "failed", 59, 200, {}, budgetFailure);
     await page.goto(`${baseUrl}/cv/${failedId}`);
-    await page.getByRole("heading", { name: "Not enough AI budget", exact: true }).waitFor();
-    const failureNotice = page.getByRole("alert").filter({ hasText: "Not enough AI budget" });
+    await page.getByRole("heading", { name: "CV generation unavailable", exact: true }).waitFor();
+    const failureNotice = page.getByRole("alert").filter({ hasText: "CV generation unavailable" });
     const noticeText = await failureNotice.innerText();
-    assert.match(noticeText, /\$1\.20 is left of your \$50\.00 AI budget this month/);
-    assert.match(noticeText, /When you have done that, retry generation\./);
-    assert.equal(
-      await failureNotice.getByRole("link", { name: "Raise the AI budget", exact: true }).getAttribute("href"),
-      "/settings",
-    );
+    assert.match(noticeText, /CV generation is unavailable right now\. No CV credit was used\. Please try again later\./);
+    assert.doesNotMatch(noticeText, /\$|AI budget/i);
+    assert.equal(await failureNotice.getByRole("link").count(), 0);
     // The retry is offered because this draft is failed and unfinalised, which is what the action needs.
     assert.equal(await failureNotice.getByRole("button", { name: "Retry generation", exact: true }).count(), 1);
     await page.getByRole("button", { name: "Show build log", exact: true }).click();
     assert.match(
       await page.getByRole("list", { name: "Build narrative", exact: true }).innerText(),
-      /Could not reserve this build's share of your AI budget/,
+      /Could not prepare this CV stage/,
     );
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),

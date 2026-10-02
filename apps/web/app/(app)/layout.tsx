@@ -9,6 +9,8 @@ import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { resendVerification } from "@/app/actions/account";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
+import { PlanReadout } from "@/components/BillingOverview";
+import { getBillingSummary } from "@/lib/billing/service";
 // The banner and every control it disables say one sentence, from one place.
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { NavLink } from "@/components/NavLink";
@@ -39,11 +41,16 @@ async function ScanBanner({ userId }: { userId: string }) {
   return <ScanStatusBanner initial={status} />;
 }
 
+async function BillingReadout({ pending, mobile = false }: { pending: ReturnType<typeof getBillingSummary>; mobile?: boolean }) {
+  return <PlanReadout billing={await pending} mobile={mobile} />;
+}
+
 export default async function AppLayout({ children }: { children: ReactNode }) {
   // Middleware only checks the cookie's signature; a revoked session is refused here.
   const current = await getCurrentUser();
   if (!current) redirect("/login?error=signed_out");
   const { user } = current;
+  const billing = getBillingSummary(user.id);
 
   return (
     <WorkspaceShell><NavigationMetrics />
@@ -61,7 +68,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         </div>
       )}
       <div className="flex flex-1 flex-col md:flex-row">
-        <WorkspaceMenu>
+        <WorkspaceMenu mobilePlan={<Suspense fallback={null}><BillingReadout pending={billing} mobile /></Suspense>}>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
             {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (
               <Suspense key={item.href} fallback={<NavLink href={item.href}>{item.label}</NavLink>}>
@@ -74,6 +81,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="mt-auto space-y-2 px-2 pt-4 text-13">
+            <div className="hidden md:block"><Suspense fallback={null}><BillingReadout pending={billing} /></Suspense></div>
             <Link prefetch={false} href="/account" className="flex min-h-11 items-center truncate text-brand-ink-muted no-underline hover:text-brand-ink hover:underline" title={user.email}>
               {user.name || user.email}
               {user.role === "admin" && <span className="ml-1 text-11 text-brand-ink-muted">admin</span>}

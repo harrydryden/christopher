@@ -5,7 +5,7 @@ import { assertCvFinalisable } from "@ava/core/cv-review";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput } from "@ava/db";
+import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit } from "@ava/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type AppSettings, type CvContent, type CvWritingPreferences } from "@ava/core";
@@ -15,7 +15,7 @@ import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
-import { cvBuildQuote, cvQuoteLine } from "@/lib/cv-quote";
+import { cvCreditOffer } from "@/lib/cv-credit";
 import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -268,6 +268,9 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
         },
       }).returning({ id: cvDrafts.id });
       if (!continuation) throw new Error("Continuation draft was not created.");
+      // The evidence quiz continues the same paid build. Move its held credit to the child that
+      // will publish; a repeated quiz submission returns the existing child above.
+      await transferCvCredit(tx, draft.id, continuation.id);
       const completedAt = new Date().toISOString();
       await tx.update(cvDrafts).set({
         archivedAt: new Date(),
@@ -342,7 +345,7 @@ export async function manageCvs(_prev: ActionResult, form: FormData): Promise<Ac
   return ok();
 }
 
-/** Price the exact pasted advert before a person can request this build. No draft is written. */
+/** Validate a pasted advert and report the fixed CV credit cost. No draft is written. */
 export async function quoteCvBuild(jobId: string, description: string): Promise<
   { ok: true; line: string; refusal: string | null } | { ok: false; error: string }
 > {
@@ -350,16 +353,16 @@ export async function quoteCvBuild(jobId: string, description: string): Promise<
   try {
     const id = zUuid().parse(jobId);
     const text = description.trim();
-    if (!text) return { ok: false, error: "Paste an advert before checking its price." };
+    if (!text) return { ok: false, error: "Paste an advert before checking this build." };
     if (text.length > 60_000) return { ok: false, error: "Keep the job description under 60,000 characters." };
     const [role] = await db().select({ id: jobs.id }).from(userJobs).innerJoin(jobs, eq(jobs.id, userJobs.jobId))
       .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id))).limit(1);
     if (!role) throw new UserFacingError("Role not found.");
-    const quote = await cvBuildQuote(user.id, id, new Date(), { description: text });
-    return { ok: true, line: cvQuoteLine(quote), refusal: quote.refusal };
+    const offer = await cvCreditOffer(user.id);
+    return { ok: true, ...offer };
   } catch (error) {
-    const result = actionError(error, "Could not check this estimate. Try again.");
-    return { ok: false, error: result.ok ? "Could not check this estimate. Try again." : result.error };
+    const result = actionError(error, "Could not check your CV credits. Try again.");
+    return { ok: false, error: result.ok ? "Could not check your CV credits. Try again." : result.error };
   }
 }
 
@@ -419,14 +422,6 @@ export async function requestCv(
     } catch (error) {
       throw new UserFacingError(error instanceof Error ? error.message : "This library cannot be fitted onto a CV.");
     }
-    // What this build will cost, answered here rather than on a CV page after the redirect. The
-    // worker's admission is still the authority — it holds the capacity inside the budget lock and
-    // knows the operator's caps — but a build this account plainly cannot afford is refused before
-    // a draft, a task and an application row exist for it.
-    // Priced against the description the build will actually be written from: a pasted one when
-    // there is one, which can be far longer than the stored snippet it replaces.
-    const quote = await cvBuildQuote(user.id, id, new Date(), { description: supplied || undefined });
-    if (quote.refusal) return fail(quote.refusal);
     draftId = await db().transaction(async (tx) => {
       // The account's lock comes before the role's, in every transaction that queues a build.
       await lockCvBuildCapacity(tx, user.id);
@@ -482,6 +477,7 @@ export async function requestCv(
           buildCheckpoint: { tailoringEnabled: true },
         })
         .returning();
+      await reserveCvCredit(tx, user.id, draft!.id);
       await enqueue("generate_cv", { draftId: draft!.id }, tx);
       // Building a CV for a role is the moment applying starts, so the role gets its application
       // row here — status `applying`, no CV reference and no PDF, because nothing has been
@@ -502,6 +498,8 @@ export async function requestCv(
       return draft!.id;
     });
   } catch (error) {
+    if (error instanceof BillingLimitError && error.code === "cv_credits_exhausted")
+      return fail(error.message, { href: "/account#top-ups", label: "Add CV credits" });
     return actionError(error, "Could not queue the CV. Please try again.");
   }
   revalidate("/library", "/applications", "/cv");
@@ -603,6 +601,7 @@ export async function saveCvDraft(
             },
           })
           .returning();
+        await reserveCvCredit(tx, user.id, fitting!.id);
         await enqueue("generate_cv", { draftId: fitting!.id, ...rubric, improvements, mode: "improve" }, tx);
         return fitting!.id;
       }
@@ -628,6 +627,8 @@ export async function saveCvDraft(
       return saved!.id;
     });
   } catch (error) {
+    if (error instanceof BillingLimitError && error.code === "cv_credits_exhausted")
+      return fail(error.message, { href: "/account#top-ups", label: "Add CV credits" });
     if (error instanceof z.ZodError) return fail(cvContentIssues(error));
     return actionError(error, "Could not save the draft. Please try again.");
   }
@@ -699,6 +700,11 @@ export async function assessCvDraft(
           "Choose an unfinished saved draft that is not already being processed.",
         );
       await assertCvBuildCapacity(tx, user.id);
+      // A terminal failure returned the original credit. A person asking to retry an AI-written
+      // build reserves one again, while a Direct Edit assessment remains free. Automatic worker
+      // retries never pass through this action and keep their original reservation.
+      if (draft.buildCheckpoint?.tailoringEnabled || draft.buildCheckpoint?.mode === "improve")
+        await reserveCvCredit(tx, user.id, draft.id);
       // Both the failures whose way forward is a page limit or a Library, and every draft that
       // stopped before it wrote anything: none of them can succeed against the snapshot they hold.
       const stale =
@@ -753,6 +759,8 @@ export async function assessCvDraft(
         throw new UserFacingError("The previous task is still finishing. Retry shortly.");
     });
   } catch (error) {
+    if (error instanceof BillingLimitError && error.code === "cv_credits_exhausted")
+      return fail(error.message, { href: "/account#top-ups", label: "Add CV credits" });
     return actionError(error, "Could not queue the assessment. Please try again.");
   }
   revalidatePath(`/cv/${id}`);

@@ -24,7 +24,7 @@ import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan,
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
+import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, releaseCvCredit, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
 import {
   CvContentSchema,
@@ -32,7 +32,6 @@ import {
   CvLibrarySchema,
   CV_BUILD_MOTIONS,
   CV_BUILD_STAGES,
-  aiBudgetRefusalMessage,
   assessmentTally,
   cvMaxPages,
   cvRelevanceTerms,
@@ -63,7 +62,6 @@ import { budgetLimits, recordAiUsage, tryReserveAi, type AiBudgetLimits, type Ai
 import { backoffMs, type TaskRunContext } from "../queue";
 import { CvJournal, type CvJournalLoss, type CvOpenStep } from "./cv-journal";
 import {
-  CV_STAGE_LABELS,
   CvStageRunner,
   cvAuditBatches,
   estimateCvStage,
@@ -99,7 +97,7 @@ export const CV_BUSY_MESSAGE = "Another worker is still finishing this build";
 
 /** What the person is told when the budget stopped holding capacity for a build still running. */
 export const CV_HOLD_LOST_MESSAGE =
-  "This build's share of your AI budget was released while it was running, so it stopped rather than spend more.";
+  "This CV build stopped before completion. No CV credit will be used.";
 
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
   "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt" | "buildCheckpoint" | "failure" | "gapQuiz">>;
@@ -128,6 +126,7 @@ function writingMotion(attempt: number): "write" | "rewrite" {
 /** A sentence from the comparison or a thrown error, as the tail of "Kept the original: …". */
 function keptBecause(sentence: string): string {
   const trimmed = sentence.trim().replace(/\.$/, "");
+  if (/^[A-Z]{2}/.test(trimmed)) return trimmed;
   return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 }
 
@@ -202,6 +201,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         if (patch.status === "ready") return completeCv(tx, draftId, { ...patch, status: "ready" });
         const updated = await tx.update(schema.cvDrafts).set(patch)
           .where(eq(schema.cvDrafts.id, draftId)).returning({ id: schema.cvDrafts.id });
+        if (updated.length && patch.status === "failed") await releaseCvCredit(tx, draftId, "CV build failed");
         return updated.length > 0;
       });
       if (!exists) throw new CvDeletedError();
@@ -218,7 +218,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       if (closed) log.info("closed the steps an interrupted improvement left open", { draftId, closed });
       return { skipped: true };
     }
-    if (!draft || draft.status === "awaiting_evidence" || draft.archivedAt) return { skipped: true };
+    if (!draft || draft.archivedAt) {
+      await releaseCvCredit(deps.db, draftId, "CV build cancelled");
+      return { skipped: true };
+    }
+    if (draft.status === "awaiting_evidence") return { skipped: true };
     // A payload naming another account is not this draft's task: nothing is read or written for it.
     if (payloadUserId && payloadUserId !== draft.userId) {
       log.warn("CV task names a different account from its draft; ignored", { draftId, taskId: task.id });
@@ -230,6 +234,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         await locked.assertOwnership?.(tx as unknown as Db);
         await tx.update(schema.cvDrafts).set({ status: "failed", error: message, buildStage: null, progressAt: deps.now() })
           .where(eq(schema.cvDrafts.id, draftId));
+        await releaseCvCredit(tx, draftId, "Email confirmation required");
         await failOpenCvBuildSteps(tx as unknown as Db, draftId, message);
       });
       return { draftId, skipped: true, reason: "email confirmation required" };
@@ -397,7 +402,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
               leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });
             const refusal = new CvBuildStop("budget_exhausted",
-              aiBudgetRefusalMessage(`This build's ${CV_STAGE_LABELS[stageName]}`, expected, admitted.refused), { motion: "admit_budget" });
+              "CV generation is unavailable right now. No CV credit will be used. Please try again later.", { motion: "admit_budget" });
             // After publication a refusal only means the optional work is not done: the step
             // closes as skipped here, because nothing downstream fails it or ever will.
             if (published) await journal.close(step, "skipped", { reason: keptBecause(refusal.message) });

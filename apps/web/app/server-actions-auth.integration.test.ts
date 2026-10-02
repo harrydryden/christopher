@@ -102,8 +102,11 @@ const GATES: Record<string, Record<string, Gate>> = {
     removeCatalogueSource: "admin", removeCatalogueCompany: "admin",
   },
   "actions/applications.ts": { setRoleStage: "user", recordApplication: "user", updateApplication: "user", manageRoleCv: "user" },
+  "actions/billing.ts": {
+    addCompanyCapacity: "user", openBillingPortal: "user", startCreditCheckout: "user", startPlanCheckout: "user",
+  },
   "actions/companies.ts": {
-    addCompanies: "verified", pauseCompany: "user", resumeCompany: "user", archiveCompany: "user",
+    addCompanies: "verified", addCompaniesInline: "verified", pauseCompany: "user", resumeCompany: "user", archiveCompany: "user",
     refreshCompany: "verified", rescanCompany: "verified", rediscoverCompany: "verified", saveCompanyNotes: "user",
     importPosting: "verified", suggestCompanyName: "user", refreshCompanyLogo: "verified", disableSource: "admin",
     enableSource: "admin", markSourceConfirmed: "verified", useDiscoveryCandidate: "verified", pasteDiscoveryUrl: "verified",

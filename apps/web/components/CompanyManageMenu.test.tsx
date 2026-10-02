@@ -23,9 +23,20 @@ let root: Root;
 let container: HTMLElement;
 beforeEach(() => {
   for (const action of Object.values(actions)) action.mockReset().mockResolvedValue(undefined);
+  actions.resumeCompany.mockResolvedValue({ ok: true });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("keeps a capacity refusal in the open menu with an Account recovery link", async () => {
+  actions.resumeCompany.mockResolvedValue({ ok: false, error: "Free includes 25 active companies.", recovery: { href: "/account#plan-and-credits", label: "Manage company capacity" } });
+  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="paused" />));
+  await open();
+  await act(async () => button("Resume scanning").click());
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Free includes 25");
+  expect(container.querySelector('a[href="/account#plan-and-credits"]')?.textContent).toBe("Manage company capacity");
+  expect(button("Resume scanning").disabled).toBe(false);
 });
 afterEach(() => {
   act(() => root.unmount());

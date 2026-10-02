@@ -22,6 +22,8 @@ import { getWorkerStatus } from "@/lib/queries/health";
 import { nextScanSentence } from "./scan-line";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { RefusalNotice } from "@/components/RefusalNotice";
+import { CompanyCapacityReadout } from "@/components/CompanyCapacityReadout";
+import { getCompanyEntitlement } from "@/lib/billing/service";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +54,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const order = parseCompanySort(sp.sort, sp.dir);
   // The count, the page and the rest in one wave: a page past the end is re-read at the last one.
-  const [{ rows, total, page }, work, system, gateChosen] = await Promise.all([listCompanyPage(user.id, pageNumber(sp.page), "", order), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id)]);
+  const [{ rows, total, page }, work, system, gateChosen, companyEntitlement] = await Promise.all([listCompanyPage(user.id, pageNumber(sp.page), "", order), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id), getCompanyEntitlement(user.id)]);
   const workerState = rows.some(row => row.activityState === "running") ? (await getWorkerStatus()).state : null;
   const now = new Date();
   const unverified = needsEmailConfirmation(user);
@@ -67,6 +69,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
           <Link id="add" prefetch={false} href="/suggestions" className={buttonLinkClass("secondary")}>Follow a company</Link>
         </>}
       />
+
+      <CompanyCapacityReadout {...companyEntitlement} />
 
       <RefusalNotice sentence={sp.error} className="mb-4" />
 

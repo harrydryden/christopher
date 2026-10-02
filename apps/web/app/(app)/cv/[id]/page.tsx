@@ -3,7 +3,6 @@ import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { dailyCvVersions, getCvMotionMedians, getOwnCvDraft, readCvProgress } from "@/lib/queries/cv";
 import { cvBuildState } from "@/lib/cv-build-state";
 import { cvProgressReading } from "@/lib/cv-progress";
-import { cvDraftSize, cvEditCosts } from "@/lib/cv-quote";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvGapQuiz } from "@/components/CvLazyWidgets";
@@ -341,9 +340,6 @@ export default async function CvDraftPage({
             id={id}
             content={content}
             theme={resolveCvTheme(content.theme)}
-            // What each of the two saves is expected to cost, measured on this revision's own
-            // evidence and advert with the estimator the worker admits builds against.
-            costs={cvEditCosts(draft.model, cvDraftSize(draft))}
             blocked={blocked}
             commentCounts={commentCounts}
             // A link is of a finished, assessed revision (the action refuses anything else), so the

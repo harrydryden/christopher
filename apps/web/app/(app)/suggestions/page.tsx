@@ -8,7 +8,9 @@ import { DiscoverySources } from "@/components/DiscoverySources";
 import { notWorkingSources } from "@/lib/discovery-ux";
 import { DiscoverySourceForm } from "@/components/DiscoverySourceForm";
 import { findMoreSuggestions } from "@/app/actions/suggestions";
-import { addCompanies } from "@/app/actions/companies";
+import { AddCompanyHomepages } from "@/components/AddCompanyHomepages";
+import { CompanyCapacityReadout } from "@/components/CompanyCapacityReadout";
+import { getCompanyEntitlement } from "@/lib/billing/service";
 import { AddedNotice } from "@/components/AddedNotice";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
@@ -79,7 +81,7 @@ function bulkResults(raw?: string): Array<[string, string]> {
  * not in it yet can be added from here. Following and adding both wait on a confirmed address and
  * a chosen gate, said beside the controls; the actions refuse on the same rules.
  */
-function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matches: CatalogueMatch[]; domain: string | null; blockedReason: string | null }) {
+function CatalogueBox({ userId, q, matches, domain, blockedReason }: { userId: string; q: string; matches: CatalogueMatch[]; domain: string | null; blockedReason: string | null }) {
   const listed = domain !== null && matches.some(match => match.domain === domain);
   return <section aria-label="Follow a company" className="mb-6 border-2 border-line bg-raised p-4">
     <SearchForm action="/suggestions" className="flex flex-wrap items-end gap-3">
@@ -101,25 +103,12 @@ function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matche
             : <FollowCompanyButton companyId={match.id} companyName={match.name} label={match.followStatus === "archived" ? "Follow again" : "Follow"} disabled={!!blockedReason}/>}
         </li>)}
       </ul>}
-      {domain && !listed && <form action={addCompanies} className="flex flex-wrap items-center justify-between gap-3 border-t border-line-faint py-2">
-        <input type="hidden" name="urls" value={q}/>
-        <input type="hidden" name="returnTo" value="/suggestions"/>
-        <span className="text-14"><span className="font-semibold">{domain}</span> <span className="text-muted">is not in the catalogue yet.</span></span>
-        <Button type="submit" variant="primary" size="sm" className="min-h-11" disabled={!!blockedReason}>Add {domain}</Button>
-      </form>}
+      {domain && !listed && <AddCompanyHomepages userId={userId} homepage={q} domain={domain} blockedReason={blockedReason} />}
       {!matches.length && !domain && <p className="text-14 text-muted">No match for “{q}”. Paste its homepage to add it.</p>}
     </div>}
     <details className="mt-4 border-t border-line-faint pt-4">
       <summary className="min-h-11 cursor-pointer font-semibold underline">Add several company homepages</summary>
-      <form action={addCompanies} className="mt-3 grid gap-3">
-        <input type="hidden" name="returnTo" value="/suggestions" />
-        <input type="hidden" name="bulk" value="1" />
-        <label className="grid gap-1.5"><span className={labelClass}>Company homepages, one per line</span>
-          <textarea name="urls" required rows={5} maxLength={6000} placeholder={"https://acme.com\nhttps://example.org"} className={`resize-y ${inputClass}`} />
-        </label>
-        <p className="text-12 text-muted">Up to 25 homepages. Each is checked; existing companies are followed, and skipped addresses are reported below.</p>
-        <div><Button type="submit" variant="primary" disabled={!!blockedReason}>Add company homepages</Button></div>
-      </form>
+      <AddCompanyHomepages userId={userId} blockedReason={blockedReason} />
     </details>
   </section>;
 }
@@ -139,7 +128,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
   const q = (params.q ?? "").slice(0, 200);
   const domain = view === "review" ? domainFromQuery(q) : null;
   // One wave for everything but the history page, which waits only for the count that clamps it.
-  const [reviewCount, historyTotal, gateChosen, pending, matches, sourceCount, settings, active] = await Promise.all([
+  const [reviewCount, historyTotal, gateChosen, pending, matches, sourceCount, settings, active, companyEntitlement] = await Promise.all([
     suggestionCount(user.id), view === "history" ? suggestionCount(user.id, true, q) : Promise.resolve(0), hasChosenGate(user.id),
     view === "review" ? listPendingSuggestions(user.id, 1, "", DECK_CARDS) : Promise.resolve([]),
     view === "review" && q.trim() ? searchCatalogue(user.id, domain ?? q) : Promise.resolve([]),
@@ -150,6 +139,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
         or exists (select 1 from discovery_sources s where s.user_id = ${user.id} and s.id::text = ${tasks.payload}->>'sourceId')
         or exists (select 1 from discovery_candidates c where c.user_id = ${user.id} and c.id::text = ${tasks.payload}->>'candidateId'))`,
     )),
+    getCompanyEntitlement(user.id),
   ]);
   const page = Math.min(pageNumber(params.page), Math.max(1, Math.ceil(historyTotal / 50)));
   const resolved = view === "history" ? await listResolvedSuggestions(user.id, 50, page, q) : [];
@@ -191,7 +181,8 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
       <Pagination page={page} total={historyTotal} path="/suggestions" params={{ view, q }}/>
       {resolved.length ? <div className="space-y-4">{resolved.map(row => <div key={row.suggestion.id}><SuggestionCard row={row}/>{row.suggestion.resolvedAt && <p className="mt-1 text-12 text-muted">{row.suggestion.status === "expired" ? "Expired" : "Reviewed"} {relativeTime(row.suggestion.resolvedAt, now)}</p>}</div>)}</div> : <EmptyState title={q ? "No matching history" : "No review history yet"} description={q ? "Try another name." : "Companies you follow or dismiss appear here."}/>}
     </> : <>
-      <CatalogueBox q={q} matches={matches} domain={domain} blockedReason={blockedReason}/>
+      <CompanyCapacityReadout {...companyEntitlement} />
+      <CatalogueBox userId={user.id} q={q} matches={matches} domain={domain} blockedReason={blockedReason}/>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="ds-pixel text-12">Companies to review</h2>
         {/* Occasional, so a text control rather than a second button beside the deck's own. */}
@@ -202,6 +193,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
         total={reviewCount}
         empty={empty}
         disabledReason={blockedReason ?? undefined}
+        remainingCompanySlots={companyEntitlement.remaining}
       />
     </>}
   </div>;

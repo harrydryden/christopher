@@ -28,8 +28,8 @@ type Direction = "left" | "right";
  * `cards` is the first few pending suggestions, not all of them; `total` is how many are pending,
  * for the count. Each decision's own response re-renders the page, which refills the deck.
  */
-export function SuggestionDeck({ cards, total = cards.length, empty, disabledReason }: {
-  cards: DeckCard[]; total?: number; empty: ReactNode; disabledReason?: string;
+export function SuggestionDeck({ cards, total = cards.length, empty, disabledReason, remainingCompanySlots }: {
+  cards: DeckCard[]; total?: number; empty: ReactNode; disabledReason?: string; remainingCompanySlots?: number;
 }) {
   const root = useRef<HTMLElement>(null);
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
@@ -37,11 +37,15 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
   // never waits for the last one.
   const [inFlight, setInFlight] = useState<ReadonlySet<string>>(() => new Set());
   const inFlightRef = useRef(new Set<string>());
+  // Until the server removes a followed card, its optimistic activation uses one of the slots
+  // in this render. A second quick swipe must not fly away as if another slot were available.
+  const optimisticFollows = useRef(new Set<string>());
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [entered, setEntered] = useState(true);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState<{ href: string; label: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const start = useRef<{ x: number; pointerId: number } | null>(null);
@@ -98,16 +102,22 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
     inFlightRef.current.add(card.id);
     setInFlight((previous) => new Set(previous).add(card.id));
     setError(null);
+    setRecovery(null);
     setNotice(null);
-    // Gone now: the next card is on top and can be decided while this one is saved.
-    setGone((previous) => new Set(previous).add(card.id));
-    if (!reducedMotionRef.current) {
+    const outstandingFollows = cards.filter(item => optimisticFollows.current.has(item.id)).length;
+    const optimistic = direction === "left" || remainingCompanySlots === undefined || remainingCompanySlots > outstandingFollows;
+    if (direction === "right" && optimistic) optimisticFollows.current.add(card.id);
+    // At capacity, keep the card in place until the authoritative check answers. It may already
+    // be followed, in which case accepting the suggestion still succeeds without another slot.
+    if (optimistic) setGone((previous) => new Set(previous).add(card.id));
+    if (optimistic && !reducedMotionRef.current) {
       setLeaving({ card, from: dxRef.current, to: direction === "right" ? window.innerWidth : -window.innerWidth, flying: false });
     }
     setDx(0);
     const typed = reason.trim();
     setReason("");
     const refused = (sentence: string) => {
+      optimisticFollows.current.delete(card.id);
       setGone((previous) => { const kept = new Set(previous); kept.delete(card.id); return kept; });
       setLeaving((now) => (now?.card.id === card.id ? null : now));
       setError(sentence);
@@ -126,7 +136,8 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
           if (!typed) form.set("quick", "1");
           result = await rejectSuggestion(card.id, form);
         }
-        if (!result.ok) { refused(result.error); return; }
+        if (!result.ok) { refused(result.error); setRecovery(result.recovery ?? null); return; }
+        if (!optimistic) setGone((previous) => new Set(previous).add(card.id));
         setNotice(result.message ?? (direction === "right" ? `${card.name} followed.` : `${card.name} dismissed.`));
       } catch {
         refused("Could not save. Try again.");
@@ -135,7 +146,7 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
         setInFlight((previous) => { const left = new Set(previous); left.delete(card.id); return left; });
       }
     });
-  }, [visible, disabled, reason]);
+  }, [visible, disabled, reason, cards, remainingCompanySlots]);
 
   const decideRef = useRef(decide);
   decideRef.current = decide;
@@ -193,6 +204,7 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
     return (
       <div className="space-y-3">
         {error && <p role="alert" className="text-14 text-danger">{error}</p>}
+        {recovery && <a href={recovery.href} className="inline-flex min-h-11 items-center text-13 underline">{recovery.label}</a>}
         {notice && <p role="status" className="border-2 border-ok px-3 py-2 text-14 text-ok">{notice}</p>}
         {/* Every card on hand was decided faster than the answers came back: the next ones
             arrive with them, so this is a wait, not an empty deck. */}
@@ -263,6 +275,7 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
       </div>
       {disabledReason && <p role="status" className="text-12 text-warn">{disabledReason}</p>}
       {error && <p role="alert" className="text-14 text-danger">{error}</p>}
+      {recovery && <a href={recovery.href} className="inline-flex min-h-11 items-center text-13 underline">{recovery.label}</a>}
       {notice && <p role="status" className="text-14 text-ok">{notice}</p>}
 
       <details className="border-t border-line-muted pt-3">

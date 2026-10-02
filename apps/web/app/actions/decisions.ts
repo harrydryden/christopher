@@ -3,14 +3,14 @@
 import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { decisions, tagVocabulary, userJobs } from "@ava/db/schema";
+import { cvLibraries, decisions, tagVocabulary, userJobs } from "@ava/db/schema";
 import { accountCanScore, lockAccountScoreInput } from "@ava/db";
 import { evaluateLocation } from "@ava/core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
-import { cvBuildQuote, cvQuoteButtonLine } from "@/lib/cv-quote";
+import { cvCreditOffer } from "@/lib/cv-credit";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { fetchArchiveNotes, fetchRoleDetails, locationReasonText, type CvQuoteVM, type RoleDetailsVM } from "@/lib/queries/jobs";
 import { getSettingsFor } from "@/lib/settings";
@@ -24,16 +24,16 @@ export type RoleDetailsResult = { ok: true; details: RoleDetailsVM } | { ok: fal
 const ROLE_DETAILS_FAILED = "Could not load this role. Please try again.";
 
 /**
- * What building a CV for this role would cost this account, for the panel's own button.
+ * A build's credit cost and availability, for the panel's own button.
  *
  * Only a shortlisted role with no CV yet is offered a build in the panel, so only that role pays
- * for the quote; everything else is a link to the application it already has. An account with no
- * Library gets no price, because its next step is the Library rather than the budget.
+ * for the read; everything else is a link to the application it already has. An account with no
+ * Library is sent there first.
  */
 async function panelCvQuote(userId: string, row: { stage: string; job: { id: string } }): Promise<CvQuoteVM | null> {
   if (row.stage !== "shortlisted") return null;
-  const quote = await cvBuildQuote(userId, row.job.id);
-  return quote.hasLibrary ? { line: cvQuoteButtonLine(quote), refusal: quote.refusal } : null;
+  const [library] = await db().select({ id: cvLibraries.id }).from(cvLibraries).where(eq(cvLibraries.userId, userId)).limit(1);
+  return library ? cvCreditOffer(userId) : null;
 }
 
 /**

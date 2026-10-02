@@ -47,7 +47,7 @@ function role(n: number): RoleRowVM {
     department: null, employmentType: null, salaryText: null, status: "active", workflowStatus: "auto-matched",
     stage: "matched", applicationStatus: null, liveForText: "3 days", liveForBasis: "posted", seeded: false,
     fitScore: 50 + (n % 40), scoreState: "scored", scoreStateText: null, fitVerdict: "possible", fitRationale: "Operations in Manchester.",
-    keywordTerms: ["operations"], addedByYou: false, decision: null,
+    keywordTerms: ["operations"], addedByYou: false, manual: false, decision: null,
   };
 }
 const ROWS = Array.from({ length: 50 }, (_, n) => role(n));

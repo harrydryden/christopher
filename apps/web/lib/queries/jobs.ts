@@ -1,6 +1,6 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@ava/db";
 import { defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
-import { getTableColumns, and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { getTableColumns, and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
 import { cache } from "react";
@@ -34,7 +34,7 @@ export type RoleJob = Job & Pick<UserJob, "keywordMatched" | "keywordTerms" | "e
 export interface RoleRow {
   job: RoleJob;
   company: RoleCompany;
-  sourceType: SourceType;
+  sourceType: SourceType | null;
   decision: RoleDecision | null;
   /** Where this role has got to for this account, read at the database (packages/db `roleStageSql`). */
   stage: RoleStage;
@@ -68,12 +68,12 @@ const viewColumns = {
 function roleRowSelection(latest: LatestApplication, userId: string) {
   return {
     company: {
-      id: companies.id,
-      name: companies.name,
-      faviconUrl: companies.faviconUrl,
-      logoFetchedAt: companies.logoFetchedAt,
-      homepageUrl: companies.homepageUrl,
-      domain: companies.domain,
+      id: sql<string>`coalesce(${companies.id}, ${jobs.id})`,
+      name: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')`,
+      faviconUrl: sql<string | null>`${companies.faviconUrl}`,
+      logoFetchedAt: sql<Date | null>`${companies.logoFetchedAt}`,
+      homepageUrl: sql<string>`coalesce(${companies.homepageUrl}, '')`,
+      domain: sql<string>`coalesce(${companies.domain}, '')`,
     },
     sourceType: careerSources.type,
     decision: {
@@ -96,8 +96,8 @@ function baseRolesSelect(userId: string, summary = false, cursor: SQL<RoleCursor
     .select({ ...roleRowSelection(latest, userId), job: { ...getTableColumns(jobs), ...viewColumns, descriptionText: summary ? sql<string | null>`null` : jobs.descriptionText }, cursor })
     .from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-    .innerJoin(companies, eq(jobs.companyId, companies.id))
-    .innerJoin(careerSources, eq(jobs.sourceId, careerSources.id))
+    .leftJoin(companies, eq(jobs.companyId, companies.id))
+    .leftJoin(careerSources, eq(jobs.sourceId, careerSources.id))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
     .leftJoin(latest, eq(latest.jobId, jobs.id));
 }
@@ -105,8 +105,12 @@ function baseRolesSelect(userId: string, summary = false, cursor: SQL<RoleCursor
 /** Fetch the large description payload only for the current page. */
 export async function fetchRoleDetails(userId: string, ids: string[]): Promise<RoleRow[]> {
   if (!ids.length) return [];
-  const rows = await baseRolesSelect(userId).where(and(eq(userJobs.userId, userId), inArray(jobs.id, ids))).limit(ids.length);
-  return rows;
+  const rows = await baseRolesSelect(userId).where(and(eq(userJobs.userId, userId),
+    or(isNull(jobs.manualOwnerId), eq(jobs.manualOwnerId, userId)), inArray(jobs.id, ids))).limit(ids.length);
+  return rows.map(row => ({ ...row, company: row.company ?? {
+    id: row.job.id, name: row.job.companyLabel ?? "Unknown employer", faviconUrl: null,
+    logoFetchedAt: null, homepageUrl: "", domain: "",
+  } }));
 }
 
 /**
@@ -363,7 +367,8 @@ export interface RoleRowVM {
   companyId: string;
   companyName: string;
   title: string;
-  url: string;
+  url: string | null;
+  manual: boolean;
   location: string | null;
   locations: string[];
   remote: boolean;
@@ -414,7 +419,7 @@ export function buildRoleCompanies(rows: readonly Pick<RoleRow, "company">[]): R
   const companies: RoleCompaniesVM = {};
   for (const { company } of rows) {
     if (companies[company.id]) continue;
-    const icon = companyIcon(company);
+    const icon = company.domain ? companyIcon(company) : { src: null, domain: "" };
     companies[company.id] = { iconSrc: icon.src, domain: icon.domain, homepageUrl: company.homepageUrl };
   }
   return companies;
@@ -435,6 +440,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     companyName: row.company.name,
     title: row.job.title,
     url: row.job.url,
+    manual: row.job.origin === "manual",
     location: row.job.location,
     locations: row.job.locations,
     remote: !!row.job.remote,
@@ -454,7 +460,8 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     fitVerdict: row.job.fitVerdict,
     fitRationale: row.job.fitRationale,
     keywordTerms: row.job.keywordTerms,
-    addedByYou: row.job.origin === "user" && !!viewerId && row.job.addedBy === viewerId,
+    addedByYou: !!viewerId && ((row.job.origin === "user" && row.job.addedBy === viewerId) ||
+      (row.job.origin === "manual" && row.job.manualOwnerId === viewerId)),
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now), createdTitle: row.decision.createdAt.toISOString() }
       : null,
@@ -517,6 +524,7 @@ function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, no
   const cutoff = sinceCutoff(filters, now);
   const conditions = and(
     eq(userJobs.userId, userId),
+    or(isNull(jobs.manualOwnerId), eq(jobs.manualOwnerId, userId)),
     viewCondition(archived, filters.decision),
     statuses ? inArray(status, statuses) : undefined,
     // On the posting's own column, so the count needs no join to `companies` for it.
@@ -532,7 +540,7 @@ function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, no
   );
   const sorts = {
     status: sql`case ${status} when 'new' then 0 when 'active' then 1 else 2 end`,
-    fit: userJobs.fitScore, company: companies.name, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
+    fit: userJobs.fitScore, company: sql`coalesce(${companies.name}, ${jobs.companyLabel}, '')`, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
     decided: decisions.createdAt,
     liveFor: sql`greatest(0, floor(extract(epoch from (case when ${jobs.status} = 'closed' then coalesce(${jobs.closedAt}, ${now}) else ${now} end - (${liveStart}))) / 86400))`,
   };
@@ -616,12 +624,15 @@ export async function fetchRoleRows(userId: string, filters: RolesFilters, archi
   const narrow = db().select({ jobId: userJobs.jobId }).from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)));
-  const keysOfPage = (sortsByCompany ? narrow.innerJoin(companies, eq(jobs.companyId, companies.id)) : narrow)
+  const keysOfPage = (sortsByCompany ? narrow.leftJoin(companies, eq(jobs.companyId, companies.id)) : narrow)
     .where(where).orderBy(...order).limit(limit).offset(offset);
   const rows = await baseRolesSelect(userId, true, cursor)
     .where(and(sql`${jobs.id} in (select page_keys.job_id from (${keysOfPage}) page_keys)`, where))
     .orderBy(...order).limit(limit);
-  return rows;
+  return rows.map(row => ({ ...row, company: row.company ?? {
+    id: row.job.id, name: row.job.companyLabel ?? "Unknown employer", faviconUrl: null,
+    logoFetchedAt: null, homepageUrl: "", domain: "",
+  } }));
 }
 
 /**

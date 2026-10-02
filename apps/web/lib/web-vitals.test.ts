@@ -10,6 +10,9 @@ describe('vitalRoute', () => {
   it('turns every id-shaped segment into :id and drops the query and fragment', () => {
     expect(vitalRoute(`/companies/${crypto.randomUUID()}`)).toBe('/companies/:id');
     expect(vitalRoute(`/cv/${crypto.randomUUID()}?tab=log#top`)).toBe('/cv/:id');
+    expect(vitalRoute('/roles/add')).toBe('/roles/add');
+    expect(vitalRoute(`/roles/add/${crypto.randomUUID()}`)).toBe('/roles/add/:id');
+    expect(vitalRoute(`/roles/${crypto.randomUUID()}`)).toBe('/roles/:id');
     expect(vitalRoute('/share/AbCdEfGhIjKlMnOpQrStUvWx')).toBe('/share/:id');
     expect(vitalRoute('/?view=auto-matched')).toBe('/');
     expect(vitalRoute('/forgot-password')).toBe('/forgot-password');

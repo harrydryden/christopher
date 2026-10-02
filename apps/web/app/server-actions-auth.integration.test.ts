@@ -139,6 +139,9 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/library-import.ts": {
     importLibraryDocument: "verified", acceptLibraryImport: "user", dismissLibraryImport: "user", retryLibraryImport: "verified",
   },
+  "actions/role-import.ts": {
+    startRoleImport: "verified", retryRoleImport: "verified", saveImportedRole: "verified",
+  },
   "actions/settings.ts": {
     saveGate: "user", saveMatchFields: "user", saveTableSettings: "user",
     saveSuggestionSettings: "user", saveRegistrationSettings: "admin", saveSchedule: "admin", saveAiSettings: "admin",

@@ -63,7 +63,7 @@ export async function retryLocationCheck(jobId: string): Promise<void> {
       resolution: jobs.locationResolution, revision: jobs.locationRevision,
       label: jobs.locationLabel, externalKey: jobs.externalKey, url: jobs.url, title: jobs.title,
     }).from(jobs).where(eq(jobs.id, id)).for("update");
-    if (!job) throw new UserFacingError("This role is no longer available for a location check.");
+    if (!job || !job.sourceId || !job.companyId || !job.url) throw new UserFacingError("This role is no longer available for a location check.");
     const [scope] = await tx.select({ companyStatus: companies.status, followStatus: companySubscriptions.status, sourceCompanyId: careerSources.companyId, sourceStatus: careerSources.status, sourceType: careerSources.type })
       .from(companies)
       .innerJoin(companySubscriptions, and(eq(companySubscriptions.companyId, companies.id), eq(companySubscriptions.userId, user.id)))

@@ -92,6 +92,8 @@ export interface TaskPayloads {
    * the id of the row, so an upload never travels through the queue.
    */
   import_library_document: { userId: string; importId: string };
+  /** Read a private role link or PDF into an account-owned confirmation draft. */
+  import_role_description: { userId: string; importId: string };
   /**
    * One pass of the one-off backfill that re-encodes stored company logos as small WebP images,
    * as a capture now stores them. A pass takes a bounded batch in company order after
@@ -122,7 +124,7 @@ export const GATE_REEVALUATION_VERSION = 2;
  * the lane cannot disagree about which types count.
  */
 export const INTERACTIVE_TASK_TYPES = [
-  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "import_library_document",
+  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "import_library_document", "import_role_description",
 ] as const satisfies readonly TaskType[];
 
 /** The shared daily scan and its fan-out: the scan lane's own work. */
@@ -168,6 +170,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   // the import, not the account: two documents brought in the same minute are two extractions, and
   // re-reading one that failed is the same piece of work rather than a second one.
   import_library_document: { priority: 1, dedupe: (p) => `import_library_document:${p.importId}` },
+  import_role_description: { priority: 1, dedupe: (p) => `import_role_description:${p.importId}` },
   collect_score_batch: { priority: 4, dedupe: () => "collect_score_batch" },
   poll_score_batch: { priority: 4, dedupe: (p) => `poll_score_batch:${p.batchId}` },
   // Housekeeping nobody is waiting for: behind everything else, and one walk at a time — a second
@@ -252,6 +255,7 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   review_library: 4 * 60_000,
   // A conversion or a page fetch, then one model call over a document of up to 40,000 characters.
   import_library_document: 4 * 60_000,
+  import_role_description: 4 * 60_000,
   // One high-effort call of up to 8,000 streamed tokens with up to five web searches: a minute to
   // begin, two or more to write, and the searches between. Two minutes failed it mid-answer, so
   // the call was paid for and made again.

@@ -8,6 +8,7 @@ import { handleScanCompany } from "./scan";
 import { handleFetchDescription } from "./description";
 import { handleFetchLocations } from "./locations";
 import { handleImportPosting } from "./import-posting";
+import { handleImportRoleDescription } from "./import-role-description";
 import { handleProfileCompany, handleSuggestCompanies } from "./companies";
 import {
   handleReevaluateGate,
@@ -36,6 +37,7 @@ export const handlers: HandlerMap = {
   fetch_description: handleFetchDescription,
   fetch_locations: handleFetchLocations,
   import_posting: handleImportPosting,
+  import_role_description: handleImportRoleDescription,
   score_job: handleScoreJob,
   admit_scores: handleAdmitScores,
   tag_reason: handleTagReason,

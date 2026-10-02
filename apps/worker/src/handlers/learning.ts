@@ -92,13 +92,15 @@ export interface PreparedScore {
 async function scoreInputs(db: WorkerDeps["db"], userId: string,
   job: typeof schema.jobs.$inferSelect, view: typeof schema.userJobs.$inferSelect,
   settings: Awaited<ReturnType<WorkerDeps["userSettings"]>>) {
-  const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
+  const [company] = job.companyId
+    ? await db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1)
+    : [];
   const profile = await latestProfileFor(db, userId);
   const digest = await buildDigest(db, userId);
   const library = await latestCvLibrary(db, userId, { content: schema.cvLibraries.content });
   const role = {
     title: job.title,
-    company: company?.name ?? "",
+    company: company?.name ?? job.companyLabel ?? "",
     ...scoreLocationInput(job),
     department: job.department ?? undefined,
     employmentType: job.employmentType ?? undefined,
@@ -139,7 +141,9 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   }
   const [view] = await deps.db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
   if (!view) return { done: { skipped: "role is not in this account's table" } };
-  if (!job.shared && job.addedBy !== userId && !view.addedByUrl)
+  if (job.origin === "manual" && job.manualOwnerId !== userId)
+    return { done: { skipped: "manual role belongs to another account" } };
+  if (!job.shared && job.addedBy !== userId && job.manualOwnerId !== userId && !view.addedByUrl)
     return { done: { skipped: "role is no longer shared with this account" } };
   const settings = await loadUserSettings(deps.db, userId);
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
@@ -207,11 +211,14 @@ export async function checkScorePublication(deps: WorkerDeps, db: WorkerDeps["db
     .where(eq(schema.jobs.id, jobId)).limit(1);
   if (!jobRef) return false;
   // Company deletion locks the company before cascading to its jobs. Match that order.
-  const [company] = await db.select({ id: schema.companies.id }).from(schema.companies)
-    .where(eq(schema.companies.id, jobRef.companyId)).for("share").limit(1);
-  if (!company) return false;
+  if (jobRef.companyId) {
+    const [company] = await db.select({ id: schema.companies.id }).from(schema.companies)
+      .where(eq(schema.companies.id, jobRef.companyId)).for("share").limit(1);
+    if (!company) return false;
+  }
   const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).for("share").limit(1);
-  if (!job || job.companyId !== jobRef.companyId) return false;
+  if (!job || job.companyId !== jobRef.companyId ||
+      (job.origin === "manual" && job.manualOwnerId !== userId)) return false;
   const [view] = await db.select().from(schema.userJobs)
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).for("update").limit(1);
   if (!view) return false;

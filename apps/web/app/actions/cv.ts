@@ -388,11 +388,12 @@ export async function requestCv(
     }
     // The role must be one this account can see.
     const [row] = await db()
-      .select({ job: jobs, company: companies.name })
+      .select({ job: jobs, company: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')` })
       .from(userJobs)
       .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-      .innerJoin(companies, eq(jobs.companyId, companies.id))
-      .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id)));
+      .leftJoin(companies, eq(jobs.companyId, companies.id))
+      .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id),
+        sql`(${jobs.manualOwnerId} is null or ${jobs.manualOwnerId} = ${user.id}::uuid)`));
     if (!row) return fail("Role not found.");
     const supplied = String(form.get("description") ?? "").trim();
     if (
@@ -466,7 +467,7 @@ export async function requestCv(
           companyName: row.company,
           jobDescription: description,
           jobSource: {
-            kind: supplied ? "user_supplied" : "company_snapshot",
+            kind: supplied || row.job.origin === "manual" ? "user_supplied" : "company_snapshot",
             url: row.job.url,
             capturedAt: new Date().toISOString(),
             method: supplied

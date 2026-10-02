@@ -805,7 +805,8 @@ export async function resolveSubjects(refs: Array<SubjectRef | null>): Promise<S
     cvIds && sql`select 'cv:' || d.id::text as key, 'CV: ' || d.company_name || ' · ' || d.job_title as label from cv_drafts d where d.id in (${cvIds})`,
     userIds && sql`select 'user:' || u.id::text as key, u.email as label from users u where u.id in (${userIds})`,
     sourceIds && sql`select 'source:' || s.id::text as key, c.name || ' (' || s.type || ')' as label from career_sources s join companies c on c.id = s.company_id where s.id in (${sourceIds})`,
-    jobIds && sql`select 'job:' || j.id::text as key, c.name || ' · ' || j.title as label from jobs j join companies c on c.id = j.company_id where j.id in (${jobIds})`,
+    jobIds && sql`select 'job:' || j.id::text as key, coalesce(c.name, j.company_label, 'Unknown employer') || ' · ' || j.title as label
+      from jobs j left join companies c on c.id = j.company_id where j.id in (${jobIds})`,
   ].filter((branch): branch is NonNullable<typeof branch> => !!branch);
   if (!branches.length) return names;
   const result = await db().execute(sql.join(branches, sql` union all `));

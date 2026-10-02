@@ -22,6 +22,8 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
   const { jobId } = task.payload as unknown as Payload;
   const [job] = await deps.db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).limit(1);
   if (!job) return { skipped: "job not found" };
+  if (!job.sourceId || !job.companyId || !job.url) return { skipped: "manual role has no source to fetch" };
+  const companyId = job.companyId;
   const [source] = await deps.db.select().from(schema.careerSources).where(eq(schema.careerSources.id, job.sourceId)).limit(1);
   if (!source) return { skipped: "source not found" };
 
@@ -74,7 +76,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
     // re-evaluates that account's views, so taking the share locks after writing views here could
     // leave each waiting on the other.
     const followers = await tx.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
-      .where(and(eq(schema.companySubscriptions.companyId, job.companyId), ne(schema.companySubscriptions.status, "archived")));
+      .where(and(eq(schema.companySubscriptions.companyId, companyId), ne(schema.companySubscriptions.status, "archived")));
     const allSettings = await loadUserSettingsMany(db, followers.map(f => f.userId), { lockGates: true });
     // A location task may have resolved this posting while its description request was in flight.
     // Lock and use the current job after the gate locks, so late text cannot put its new view away.
@@ -106,7 +108,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
     }
     await tx.insert(schema.jobEvents).values({ jobId: job.id, type: "description_fetched", payload: { chars: trimmed.length } });
     await refreshFollowers(deps, db, deps.now(), { ...current, ...extra, descriptionText: trimmed }, settings, changed);
-    if (current.locationResolution === "pending" && current.locationLabel && eligible.some(userId => {
+    if (current.sourceId && current.url && current.locationResolution === "pending" && current.locationLabel && eligible.some(userId => {
       const gate = settings.get(userId)!.gate;
       if (!gate.locationTerms.length) return false;
       const verdict = gateCompiler()(gate).evaluate({ title: current.title, department: current.department,

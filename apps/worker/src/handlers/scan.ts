@@ -834,7 +834,8 @@ async function scanSource(
     })
     .from(schema.jobs)
     .where(and(eq(schema.jobs.companyId, company.id), eq(schema.jobs.origin, "user")));
-  const userByUrl = new Map(userRows.map((row) => [normalisePostingUrl(row.url), row]));
+  const userByUrl = new Map<string, (typeof userRows)[number]>();
+  for (const row of userRows) if (row.url) userByUrl.set(normalisePostingUrl(row.url), row);
   // (source, external_key) is unique. A scanned row already holding the key the listing gives this
   // posting means the two are not the same row after all, so both are left as they are.
   const keyOwner = new Map(sourceRows.map((row) => [row.externalKey, row.id]));
@@ -967,7 +968,7 @@ async function scanSource(
       .returning({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title, department: schema.jobs.department, location: schema.jobs.location, locations: schema.jobs.locations, locationResolution: schema.jobs.locationResolution, locationRevision: schema.jobs.locationRevision, remote: schema.jobs.remote, descriptionText: schema.jobs.descriptionText });
     newCount += created.length;
     if (created.length) await deps.db.insert(schema.jobEvents).values(created.map(row => ({ jobId: row.id, type: "discovered" as const, payload: { method: fetchMethod, seeded: isFirstScan } })));
-    for (const row of created) admit(row, isFirstScan);
+    for (const row of created) if (row.url) admit({ ...row, url: row.url }, isFirstScan);
   }
   // An adopted role is new to every follower but whoever pasted it, so each follower without a
   // view of it meets it now, exactly as they would a new posting, rather than a day later.

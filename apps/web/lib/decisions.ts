@@ -107,9 +107,10 @@ export async function restoreDismissedApplications(tx: Tx, userId: string, jobId
  * decision row each, one `decided` event each, and the same tasks — and all or nothing: a role that
  * is not this account's writes nothing at all, and is refused with `notFound`.
  */
-export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists."): Promise<Array<{ jobId: string; id: string }>> {
-  await lockAccountScoreInput(tx as unknown as Db, userId, "exclusive");
-  const canScore = await accountCanScore(tx as unknown as Db, userId);
+export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], decision: "apply" | "skip" | null, reason: string, notFound = "A selected role no longer exists.", options: { queueFollowUps?: boolean } = {}): Promise<Array<{ jobId: string; id: string }>> {
+  const queueFollowUps = options.queueFollowUps !== false;
+  if (queueFollowUps) await lockAccountScoreInput(tx as unknown as Db, userId, "exclusive");
+  const canScore = queueFollowUps && await accountCanScore(tx as unknown as Db, userId);
   const ids = [...new Set(jobIds)].sort();
   const now = new Date();
 
@@ -155,7 +156,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
 
   const inserted = await tx.execute<{ id: string; job_id: string }>(sql`
     insert into decisions (user_id, job_id, decision, reason, job_title, company_name, job_location, job_department, description_snippet, fit_score_at_decision)
-    select ${userId}::uuid, j.id, ${decision}, ${reason}, j.title, coalesce(c.name, ''),
+    select ${userId}::uuid, j.id, ${decision}, ${reason}, j.title, coalesce(c.name, j.company_label, ''),
            case j.location_resolution
              when 'pending' then case
                when j.location_fetched_at is null or coalesce(loc.names, nullif(j.location, '')) is null then 'Locations awaiting verification'
@@ -187,7 +188,7 @@ export async function recordDecisions(tx: Tx, userId: string, jobIds: string[], 
     from user_jobs v
     where v.user_id = ${userId}::uuid and v.job_id in (${idList(ids)})`);
 
-  if (decision === "apply") await requestScores(tx as unknown as Db, ids.map(jobId => ({ userId, jobId })), now, { priority: 1 });
+  if (decision === "apply" && queueFollowUps) await requestScores(tx as unknown as Db, ids.map(jobId => ({ userId, jobId })), now, { priority: 1 });
   if (decision === "skip") await withdrawLiveApplications(tx, userId, ids);
   if (canScore) {
     if (reason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);

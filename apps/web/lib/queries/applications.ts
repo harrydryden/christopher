@@ -254,13 +254,14 @@ function roleIndex(userId: string, company?: PipelineCompany) {
     })
     .from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-    .innerJoin(companies, eq(jobs.companyId, companies.id))
+    .leftJoin(companies, eq(jobs.companyId, companies.id))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
     .leftJoin(latest, eq(latest.jobId, jobs.id))
     .leftJoin(applications, eq(applications.id, latest.id))
     .leftJoin(currentCv, eq(currentCv.jobId, jobs.id))
     .where(and(
       eq(userJobs.userId, userId),
+      or(isNull(jobs.manualOwnerId), eq(jobs.manualOwnerId, userId)),
       company ? eq(companies.id, company.id) : undefined,
       ne(stage, "matched"),
       or(ne(stage, "dismissed"), isNotNull(latest.id), sql`exists (select 1 from ${cvDrafts} pursued where pursued.user_id = ${userId} and pursued.job_id = ${jobs.id})`),
@@ -394,7 +395,7 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
       jobTitle: jobs.title,
       jobUrl: jobs.url,
       companyId: companies.id,
-      companyName: companies.name,
+      companyName: sql<string>`coalesce(${companies.name}, ${jobs.companyLabel}, 'Unknown employer')`,
       faviconUrl: companies.faviconUrl,
       companyDomain: companies.domain,
       logoFetchedAt: companies.logoFetchedAt,
@@ -422,7 +423,7 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
     })
     .from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-    .innerJoin(companies, eq(jobs.companyId, companies.id))
+    .leftJoin(companies, eq(jobs.companyId, companies.id))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
     .leftJoin(latest, eq(latest.jobId, jobs.id))
     // The application row the subquery chose, for the fields the table and its row expansion need
@@ -434,6 +435,7 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
     // dismissed after applying) or a CV, archived or not.
     .where(and(
       eq(userJobs.userId, userId),
+      or(isNull(jobs.manualOwnerId), eq(jobs.manualOwnerId, userId)),
       only.jobId ? eq(jobs.id, only.jobId) : undefined,
       only.jobIds ? inArray(jobs.id, only.jobIds) : undefined,
       ne(stage, "matched"),
@@ -462,7 +464,7 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
       jobId: row.jobId,
       companyId: row.companyId,
       companyName: row.companyName,
-      companyIcon: companyIcon({ id: row.companyId, faviconUrl: row.faviconUrl, domain: row.companyDomain, logoFetchedAt: row.logoFetchedAt }),
+      companyIcon: row.companyId ? companyIcon({ id: row.companyId, faviconUrl: row.faviconUrl, domain: row.companyDomain ?? "", logoFetchedAt: row.logoFetchedAt }) : null,
       jobTitle: row.jobTitle,
       jobUrl: row.jobUrl,
       stage: row.stage as RoleStage,

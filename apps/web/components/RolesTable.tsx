@@ -275,20 +275,21 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
           </label>
         </TD>
         {!hideCompany && <TD className={styles.roleCompany}>
-          <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
+          {row.manual ? <span className="flex items-center gap-1.5">{row.companyName}</span> : <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
             {/* The same icon the company page shows: the captured logo when there is one,
                 and the browser's own chain behind it. A bare <img> here is why Hims had a
                 logo on its company page and a blank square on its roles. */}
             <CompanyFavicon src={company.iconSrc} domain={company.domain} size={14} />
             <span className="max-w-[12rem] truncate">{row.companyName}</span>
-          </Link>
+          </Link>}
         </TD>}
         <TD id={`role-row-${row.id}`} className={`${styles.roleTitle} max-w-[22rem]`}>
           <span className="flex flex-wrap items-center gap-2">
             <button type="button" disabled={boxPending} onClick={() => actions.toggleExpanded(row.id)} aria-expanded={expanded} className="text-left font-semibold text-fg hover:underline">
               {row.title}
             </button>
-            {row.addedByYou && <Badge tone="neutral">Added by you</Badge>}
+            {row.addedByYou && !row.manual && <Badge tone="neutral">Added by you</Badge>}
+            {row.manual && <Badge tone="neutral">{row.url ? "Added from link" : "Added from PDF"}</Badge>}
             {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
             {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
           </span>
@@ -311,8 +312,9 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
         </TD>
         <TD className={`${styles.roleFit} whitespace-nowrap`}>
           <span className="block md:hidden text-muted">Fit: </span>
-          {/* A missing or previous score carries its current update status. */}
-          <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
+          {row.manual && row.fitScore === null
+            ? <span className="text-muted">Not scored</span>
+            : <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />}
         </TD>
         <TD className={`${styles.roleAction} text-right`}>
           {row.workflowStatus === "user-shortlisted" ? <Link prefetch={false} href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
@@ -337,7 +339,10 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 <p className="text-14 font-semibold text-fg">{row.title}</p>
                 <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
                 {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
-                <div>
+                {row.manual ? <div>
+                  <h3 className="ds-label mb-1">Added by you</h3>
+                  <p className="text-13 text-muted">You added this role from a {row.url ? "link" : "PDF"}. It was not selected by your role filters.</p>
+                </div> : <div>
                   <h3 className="ds-label mb-1">Why it matched</h3>
                   {row.keywordTerms.length > 0 && (
                     <div className="mb-1 flex flex-wrap gap-1.5">
@@ -345,8 +350,8 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                     </div>
                   )}
                   {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
-                </div>
-                {(row.fitScore !== null || row.scoreStateText) && (
+                </div>}
+                {(row.fitScore !== null || (!row.manual && row.scoreStateText)) && (
                   <div>
                     <h3 className="ds-label mb-1">Fit</h3>
                     <div className="flex flex-wrap items-center gap-2">
@@ -355,7 +360,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                       {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
                     </div>
                     {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
-                    {(row.scoreState === "failed" || row.scoreState === "requested" || row.scoreState === "queued") && !archived && <RetryScore jobId={row.id} scoreState={row.scoreState} />}
+                    {(row.scoreState === "failed" || row.scoreState === "requested" || row.scoreState === "queued") && !archived && !row.manual && <RetryScore jobId={row.id} scoreState={row.scoreState} />}
                   </div>
                 )}
                 <div>
@@ -378,7 +383,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                       )}
                     </>
                   ) : (
-                    <p className="text-13 text-muted">No description stored. Open the vacancy.</p>
+                    <p className="text-13 text-muted">No description stored.{row.url ? " Open the vacancy." : ""}</p>
                   ))}
                 </div>
                 {detail?.state === "ready" && detail.details.archiveNotes.map((note, i) => <p key={i} className="text-12 text-muted">{note}</p>)}
@@ -387,7 +392,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
                 <div className="flex flex-wrap items-center gap-4 text-12">
                   {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
-                  <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
+                  {row.url && <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>}
                   {company.homepageUrl && <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Website ↗</a>}
                 </div>
               </div>
@@ -429,10 +434,11 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
   );
 });
 
-export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir, historyScope }: {
+export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir, historyScope, initiallyExpandedId }: {
   hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode;
   /** Account id; recent Undo survives the keyed table's filters and pages within this browser tab. */
   historyScope?: string;
+  initiallyExpandedId?: string;
   /** The rows' companies, once each (`buildRoleCompanies` over the same rows). */
   companies: RoleCompaniesVM;
   /** One href per sortable column, built by the server with the filters in hand. */
@@ -619,7 +625,7 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   // The cursor starts on the first row rather than nowhere, so the first `a` or `s` acts on
   // something and the shortcuts under the table are about a row the reader can see.
   const [highlightIndex, setHighlightIndex] = useState(keyboard && inputRows.length > 0 ? 0 : -1);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(initiallyExpandedId ?? null);
   const [details, setDetails] = useState<Record<string, DetailState>>({});
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
@@ -668,6 +674,12 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       }
     });
   }
+
+  useEffect(() => {
+    if (initiallyExpandedId) loadDetails(initiallyExpandedId);
+    // The initial id belongs to this table's lifetime; later toggles load their own details.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initiallyExpandedId]);
 
   function toggleExpanded(jobId: string) {
     const next = expandedId === jobId ? null : jobId;
@@ -862,7 +874,7 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
           if (row) { e.preventDefault(); toggleSelected(row.id); }
           break;
         case "o":
-          if (row) window.open(row.url, "_blank", "noopener,noreferrer");
+          if (row?.url) window.open(row.url, "_blank", "noopener,noreferrer");
           break;
         case "a":
           // R-6.1: shortlisting asks for a line rather than taking the decision silently. Enter on

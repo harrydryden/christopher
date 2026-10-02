@@ -120,9 +120,9 @@ function scriptedClient(options: ScriptOptions = {}) {
   return { client, calls, authorInputs };
 }
 
-async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }, jobDescription = "Lead a team. Deliver transformation.") {
+async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buildCheckpoint"] = { tailoringEnabled: true }, jobDescription = "Lead a team. Deliver transformation.", jobId?: string) {
   const [draft] = await db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme",
-    jobDescription, libraryVersion: 1, librarySnapshot: library,
+    jobId, jobDescription, libraryVersion: 1, librarySnapshot: library,
     model: "claude-sonnet-5", buildCheckpoint: checkpoint }).returning();
   const payload = { draftId: draft!.id, userId };
   await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
@@ -142,6 +142,32 @@ it("pauses before authoring and a duplicate delivery spends no more AI", async (
   const [task] = await db.select().from(schema.tasks);
   await handleGenerateCv(task!, deps);
   expect(scripted.calls).toEqual(["rubric", "planner"]);
+});
+
+it("a private manual role without company or source follows the quiz and continuation path", async () => {
+  const scripted = scriptedClient({ plan: gapPlan }); deps.aiClient = scripted.client;
+  const fingerprint = crypto.randomUUID();
+  const [job] = await db.insert(schema.jobs).values({
+    externalKey: `manual:${fingerprint}`, title: "Operations Director", normalizedTitle: "operations director",
+    companyLabel: "Acme", manualOwnerId: userId, manualFingerprint: fingerprint,
+    inputKind: "pdf", shared: false, origin: "manual", descriptionText: "Lead a team. Deliver transformation.",
+    descriptionSource: "direct",
+  }).returning();
+  await db.insert(schema.userJobs).values({ userId, jobId: job!.id, inTable: true });
+  const draft = await makeDraft({ tailoringEnabled: true }, "Lead a team. Deliver transformation.", job!.id);
+  await queue().drain();
+  const paused = await draftAfter(draft.id);
+  expect(paused).toMatchObject({ jobId: job!.id, status: "awaiting_evidence", gapQuiz: { status: "awaiting_answers" } });
+  expect(scripted.calls).toEqual(["rubric", "planner"]);
+
+  await db.update(schema.cvDrafts).set({ status: "queued", gapQuiz: { ...paused.gapQuiz!, status: "skipped", completedAt: new Date().toISOString() },
+    buildCheckpoint: { ...paused.buildCheckpoint!, quizCompleted: true } }).where(eq(schema.cvDrafts.id, draft.id));
+  await enqueueTask(db, "generate_cv", { draftId: draft.id, userId }, { dedupeKey: `generate_cv:${draft.id}:quiz-complete` });
+  await queue().drain();
+  const continued = await draftAfter(draft.id);
+  expect(continued.status).toBe("ready");
+  expect(scripted.calls.filter(call => call === "planner")).toHaveLength(1);
+  expect(scripted.calls).toContain("author");
 });
 
 it("a completed quiz reuses its semantic plan, skips another pause and passes provenance to the author", async () => {

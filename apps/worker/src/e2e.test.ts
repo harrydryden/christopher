@@ -1480,7 +1480,9 @@ describe("HTML extraction completion", () => {
     const withBrowser = { ...modelDeps, browser: { render } as unknown as WorkerDeps["browser"] };
     expect(await _scanSourceForTests(withBrowser, company, source, await deps.settings(), null))
       .toMatchObject({ status: "partial", postingsFound: 1 });
-    const [renderedScan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(render).toHaveBeenCalledTimes(1);
+    const [renderedScan] = await db.select().from(schema.scans)
+      .where(and(eq(schema.scans.sourceId, source.id), eq(schema.scans.fetchMethod, "browser"))).limit(1);
     expect(renderedScan!.error).toContain("final browser capture still has an expansion control");
   });
   it("marks a known visible model omission partial and preserves the omitted role", async () => {

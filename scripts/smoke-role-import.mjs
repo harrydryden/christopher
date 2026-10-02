@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
 import { disposableAdmin, startWeb } from "./lib/web.mjs";
 
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
@@ -59,6 +60,9 @@ try {
   await page.reload();
   await page.getByRole("heading", { name: "Confirm role details" }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "review fits a phone width");
+  await page.screenshot({ path: "/tmp/role-import-review-375.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: "/tmp/role-import-review-desktop.png", fullPage: true });
   await page.getByRole("textbox", { name: "Job title" }).fill("Operations Director");
   await page.getByRole("button", { name: "Save to Shortlisted" }).click();
   await page.waitForURL(/\/roles\/[0-9a-f-]{36}$/);
@@ -69,7 +73,10 @@ try {
 
   await page.goto(`${baseUrl}/roles/add`);
   await page.getByRole("radio", { name: "Upload PDF" }).check();
-  await page.getByLabel("Job description PDF").setInputFiles({ name: "role.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n") });
+  const pdfPath = process.env.SMOKE_ROLE_PDF;
+  const pdf = pdfPath ? { name: "role.pdf", mimeType: "application/pdf", buffer: await readFile(pdfPath) }
+    : { name: "role.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n") };
+  await page.getByLabel("Job description PDF").setInputFiles(pdf);
   await page.getByRole("button", { name: "Continue to review" }).click();
   const pdfId = await importId(page);
   await readyImport(account.userId, pdfId);
@@ -77,8 +84,13 @@ try {
   await page.getByRole("heading", { name: "Confirm role details" }).waitFor();
   await page.getByRole("button", { name: "Save to Shortlisted" }).click();
   await page.waitForURL(/\/roles\/[0-9a-f-]{36}$/);
-  assert.match(await page.locator("main").innerText(), /Added from PDF/);
+  assert.match(await page.locator("main").innerText(), /Added from PDF/i);
   assert.doesNotMatch(await page.locator("main").innerText(), /View vacancy/);
+  await page.getByText("Save your Library first.").waitFor();
+  await page.screenshot({ path: "/tmp/role-import-saved-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "saved role fits a phone width");
+  await page.screenshot({ path: "/tmp/role-import-saved-375.png", fullPage: true });
   assert.deepEqual(errors, []);
   console.log("Role import browser smoke passed (worker extraction simulated by ready fixture).");
 } finally {

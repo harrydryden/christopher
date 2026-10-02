@@ -574,12 +574,13 @@ export interface UserAddedRole {
  */
 export async function ungatedUserPostings(userId: string, companyId: string): Promise<UserAddedRole[]> {
   return db()
-    .select({ jobId: jobs.id, title: jobs.title, url: jobs.url, keywordMatched: userJobs.keywordMatched, locationOk: userJobs.locationOk, excluded: userJobs.excluded })
+    .select({ jobId: jobs.id, title: jobs.title, url: sql<string>`${jobs.url}`, keywordMatched: userJobs.keywordMatched, locationOk: userJobs.locationOk, excluded: userJobs.excluded })
     .from(jobs)
     .innerJoin(userJobs, and(eq(userJobs.jobId, jobs.id), eq(userJobs.userId, userId)))
     .where(and(
       eq(jobs.companyId, companyId),
       eq(jobs.origin, "user"),
+      sql`${jobs.url} is not null`,
       eq(jobs.addedBy, userId),
       eq(jobs.status, "open"),
       or(eq(userJobs.keywordMatched, false), eq(userJobs.locationOk, false), eq(userJobs.excluded, true)),

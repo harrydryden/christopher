@@ -64,7 +64,10 @@ COPY --from=build --chown=pwuser:pwuser /app/apps/worker/dist ./apps/worker/dist
 # Not root: Chromium renders untrusted careers pages with its sandbox off (a container rarely
 # allows the user namespaces it needs), and this process holds the database URL and the API key.
 USER pwuser
-EXPOSE 8080
 WORKDIR /app/apps/worker
+# Exercise the shipped bundle with its runtime dependencies. This catches package-private font
+# imports that work from TypeScript source but fail after bundling PDFKit into dist/index.mjs.
+RUN node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs --verify-pdf
+EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "--enable-source-maps", "--import", "./dist/otel.mjs", "dist/index.mjs"]

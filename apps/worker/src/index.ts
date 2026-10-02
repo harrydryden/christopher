@@ -19,6 +19,8 @@ import { startScheduler } from "./scheduler";
 import { TaskWakeup } from "./task-wakeup";
 import { vitals } from "./vitals";
 import { stopOtel, traceHandlers } from "./otel";
+import { renderCvPdf } from "@ava/core/cv-pdf";
+import { DEFAULT_CV_THEME } from "@ava/core/cv-theme-values";
 
 async function main() {
   const env = readEnv();
@@ -171,7 +173,19 @@ async function reviveRateLimitedSources(db: Db): Promise<void> {
   if (revived.rows.length) log.info("returned rate-limited sources to the daily run", { sources: revived.rows.length });
 }
 
-main().catch((err) => {
+async function verifyPdfBundle() {
+  for (const font of ["AVA", "Arial"] as const) {
+    const pdf = await renderCvPdf({
+      name: "PDF bundle check", contact: "London", summary: "Operations leader",
+      sections: [{ entryId: "role", kind: "experience", heading: "Director · Example", bullets: ["Led operations."] }],
+      gaps: [], theme: { ...DEFAULT_CV_THEME, font },
+    });
+    if (!pdf.subarray(0, 5).equals(Buffer.from("%PDF-"))) throw new Error(`${font} did not render a PDF`);
+  }
+  console.log("worker PDF bundle check passed (AVA and Arial)");
+}
+
+(process.argv.includes("--verify-pdf") ? verifyPdfBundle() : main()).catch((err) => {
   log.error("worker failed to start", err);
   process.exit(1);
 });

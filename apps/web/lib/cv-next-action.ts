@@ -8,7 +8,7 @@ export function cvNextAction(input: {
   finaliseReason: string | null;
   improving: boolean;
   libraryChanged: boolean;
-}): { title: string; detail: string; target: "content" | "evaluation" | "download"; action: string } {
+}): { title: string; detail: string; target: "content" | "evaluation" | "review" | "download"; action: string } {
   if (input.status === "queued" || input.status === "generating")
     return { title: "Building your CV", detail: "The build is in progress. When it finishes, review the wording and evidence in Evaluation.", target: "content", action: "View build progress" };
   if (input.status === "awaiting_evidence")
@@ -20,7 +20,7 @@ export function cvNextAction(input: {
   if (!input.hasContent || !input.assessmentCurrent)
     return { title: "Fit and assess this revision", detail: "Check this revision before finalising.", target: "evaluation", action: "Open assessment" };
   if (input.factualConcerns > 0)
-    return { title: "Check the flagged claims", detail: `Evaluation found ${input.factualConcerns} factual ${input.factualConcerns === 1 ? "concern" : "concerns"}. Correct the wording, save Direct Edits, then reassess.`, target: "evaluation", action: "Review flagged claims" };
+    return { title: "Review the flagged items", detail: `Evaluation found ${input.factualConcerns} factual ${input.factualConcerns === 1 ? "concern" : "concerns"}. Review each item, dismiss it if you have nothing further to add, or choose to finalise anyway.`, target: "review", action: "Review flagged items" };
   if (input.finaliseReason)
     return { title: "Finish the remaining check", detail: input.finaliseReason, target: "evaluation", action: "Open Evaluation" };
   if (input.improving)

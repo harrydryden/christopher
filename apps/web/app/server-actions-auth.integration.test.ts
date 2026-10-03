@@ -116,7 +116,7 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
     saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", assessCvDraft: "verified",
-    finaliseCvDraft: "user", rescoreLibrary: "verified", quoteCvBuild: "verified",
+    dismissCvReviewItem: "user", finaliseCvDraft: "user", rescoreLibrary: "verified", quoteCvBuild: "verified",
   },
   "actions/decisions.ts": {
     roleDetails: "user", decide: "user", decideWithUndoToken: "user", undoDecisionIfCurrent: "user",

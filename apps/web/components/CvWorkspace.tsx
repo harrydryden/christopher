@@ -83,8 +83,12 @@ export function CvWorkspace({
   const [open, setOpen] = useState(true);
   const [selected, setSelected] = useState<CvTab>("content");
   const [focusRequest, setFocusRequest] = useState<{ id: string }>();
+  function selectTab(tab: CvTab) {
+    setSelected(tab);
+    try { window.sessionStorage.setItem(`cv-workspace-tab:${window.location.pathname}`, tab); } catch { /* Storage may be unavailable. */ }
+  }
   function openContent(id: string) {
-    setSelected("content");
+    selectTab("content");
     setFocusRequest({ id });
   }
   useEffect(() => {
@@ -95,11 +99,18 @@ export function CvWorkspace({
       } catch {
         return;
       }
-      if (id === "cv-panel-evaluation" || id === "cv-panel-appearance") {
-        setSelected(id === "cv-panel-evaluation" ? "evaluation" : "appearance");
+      if (id === "cv-panel-evaluation" || id === "cv-panel-appearance" || id === "cv-guided-review") {
+        selectTab(id === "cv-panel-appearance" ? "appearance" : "evaluation");
         setFocusRequest({ id });
       } else if (id === "cv-panel-content" || id.startsWith("cv-content-"))
         openContent(id);
+      else if (!id) {
+        // Server-action revalidation can drop the fragment. Keep this draft's active tab on reload.
+        try {
+          const saved = window.sessionStorage.getItem(`cv-workspace-tab:${window.location.pathname}`);
+          if (saved === "content" || saved === "evaluation" || saved === "appearance") setSelected(saved);
+        } catch { /* A blocked storage API should not block the workspace. */ }
+      }
     }
     followFragment();
     window.addEventListener("hashchange", followFragment);
@@ -134,7 +145,7 @@ export function CvWorkspace({
                 aria-controls={`cv-panel-${tab}`}
                 aria-selected={selected === tab}
                 tabIndex={selected === tab ? 0 : -1}
-                onClick={() => setSelected(tab)}
+                onClick={() => selectTab(tab)}
                 onKeyDown={(event) => {
                   const next =
                     event.key === "Home"
@@ -148,7 +159,7 @@ export function CvWorkspace({
                             : null;
                   if (next === null) return;
                   event.preventDefault();
-                  setSelected(tabs[next]![0]);
+                  selectTab(tabs[next]![0]);
                   event.currentTarget.parentElement
                     ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
                     [next]?.focus();

@@ -12,6 +12,7 @@
  */
 import type { CvLibrary, CvContent, LibraryEntryReview } from "@ava/core";
 import type { CvAssessment, CvJobSource } from "@ava/core/cv-assessment";
+import type { CvReviewDecision } from "@ava/core/cv-review";
 import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@ava/core";
 import { APPLICATION_STATUSES, type ApplicationStatus } from "@ava/core/role-workflow";
@@ -1019,6 +1020,8 @@ export const cvDrafts = pgTable("cv_drafts", {
   jobDescription: text("job_description").notNull(),
   jobSource: jsonb("job_source").$type<CvJobSource>(),
   assessment: jsonb("assessment").$type<CvAssessment>(),
+  /** User decisions about the findings on this exact assessment, never a change to its verdict. */
+  reviewDecision: jsonb("review_decision").$type<CvReviewDecision>(),
   finalisedAt: ts("finalised_at"),
   libraryVersion: integer("library_version").notNull(),
   librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>().notNull(),

@@ -302,6 +302,24 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
           `${error.message}\n${await page.locator("body").innerText()}`,
         );
       });
+    // Skill edits use the same normalisation for the preview and saved revision. Clearing the
+    // last skill omits its section instead of sending the empty array that used to reject PDFs.
+    await page.getByRole("button", { name: "Add skill section", exact: true }).click();
+    await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).fill("SQL");
+    await page.getByRole("button", { name: "Show PDF preview", exact: true }).click();
+    const previewWithSkill = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
+    await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
+    const skillResponse = await previewWithSkill;
+    assert.equal(skillResponse.status(), 200);
+    assert.deepEqual(skillResponse.request().postDataJSON().sections.at(-1).skillItems, ["SQL"]);
+    await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).fill("");
+    const previewWithoutSkill = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
+    await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
+    const emptyResponse = await previewWithoutSkill;
+    assert.equal(emptyResponse.status(), 200);
+    assert.equal(emptyResponse.request().postDataJSON().sections.length, content.sections.length);
+    await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
+    await page.getByRole("button", { name: "Hide PDF preview", exact: true }).click();
     // The page is server-rendered with the stored summary and refreshes itself every ten seconds.
     // A fill that lands while React is hydrating or re-rendering the controlled textarea loses
     // its select-all and prepends instead of replacing, so the value is checked and the fill
@@ -392,17 +410,14 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       await page.locator("table em").first().textContent(),
       content.summary,
     );
-    assert.equal(
-      await page
-        .getByRole("button", { name: "Finalise this CV", exact: true })
-        .count(),
-      0,
-    );
-    // Why it is not offered, in the words `assertCvFinalisable` would have thrown.
-    assert.match(
-      await page.getByText(/^Finalise is not available yet:/).innerText(),
-      /Finalise is not available yet: Resolve the flagged factual claims, then reassess before finalising\./,
-    );
+    assert.equal(await page.getByRole("button", { name: "Finalise this CV", exact: true }).isDisabled(), true);
+    const override = page.getByRole("button", { name: "Skip review and finalise anyway", exact: true });
+    assert.equal(await override.count(), 1);
+    await page.locator('input[name="reviewed"]').check();
+    await override.click();
+    await page.getByText(/You have unsaved CV edits/).waitFor();
+    assert.equal((await pool.query("select finalised_at from cv_drafts where id = $1", [readyId])).rows[0].finalised_at, null);
+    await page.locator('input[name="reviewed"]').uncheck();
     await page
       .getByRole("button", { name: "Uncertain 1", exact: true })
       .click();
@@ -421,7 +436,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "true",
     );
     await page
-      .getByRole("link", { name: "Edit Director · Example", exact: true })
+      .getByRole("table").getByRole("link", { name: "Edit Director · Example", exact: true })
       .click();
     assert.equal(
       await page
@@ -498,6 +513,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "Edited profile retained through panel changes.",
     );
     assert.equal(await page.locator("form form").count(), 0);
+    await page.getByRole("button", { name: "Add skill section", exact: true }).click();
+    await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).fill("SQL");
     const submitted = await page
       .locator("form[id^=cv-edit]")
       .evaluate((form) => Object.fromEntries(new FormData(form)));
@@ -507,6 +524,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     );
     assert.equal(JSON.parse(submitted.theme).primary, "#ffcc00");
     assert.equal(submitted.rememberWording, undefined);
+    // Save an added section with the default wording preference enabled: matching sections by
+    // array position used to crash here when the new section had no predecessor.
+    await page.getByRole("checkbox", { name: "Remember wording corrections", exact: true }).check();
     await mkdir("tmp/cv-review-tabs", { recursive: true });
     await page.getByRole("tab", { name: "Evaluation", exact: true }).click();
     await page.screenshot({
@@ -630,6 +650,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(child.parent_id, readyId);
     assert.equal(child.status, "queued");
     assert.equal(child.content.summary, submitted.summary);
+    assert.deepEqual(child.content.sections.at(-1).skillItems, ["SQL"]);
+    assert.match(child.content.sections.at(-1).entryId, /^manual-skill-/);
+    assert.equal(child.content.sections.at(-1).bulletSources, undefined);
     assert.equal(
       child.content.theme.primary,
       JSON.parse(submitted.theme).primary,
@@ -962,9 +985,54 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(gone.status, 200);
     assert.ok((await gone.text()).includes("This link has expired or was withdrawn."));
 
+    // A user can dismiss a finding or skip the review. Both decisions persist and keep the
+    // original score and flags; neither path should strand the final PDF behind the old gate.
+    for (const mode of ["dismiss", "skip"]) {
+      const reviewId = randomUUID();
+      tableIds.push(reviewId);
+      await pool.query(`insert into cv_drafts
+        (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, content, assessment)
+        values ($1, $2, 'Review test', 'Example', $3, 1, $4, 'test', 'ready', $5, $6)`,
+        [reviewId, userId, description, JSON.stringify(library), JSON.stringify(content), JSON.stringify(assessment)]);
+      await page.goto(`${baseUrl}/cv/${reviewId}`);
+      await page.getByRole("link", { name: "Review flagged items", exact: true }).click();
+      await page.locator("#cv-guided-review").waitFor();
+      await page.getByRole("tab", { name: "Content", exact: true }).click();
+      await page.getByRole("link", { name: "Review flagged items", exact: true }).click();
+      await page.locator("#cv-guided-review").waitFor();
+      if (mode === "dismiss") {
+        await page.screenshot({ path: "/tmp/cv-guided-review-desktop.png", fullPage: true });
+        await page.setViewportSize({ width: 375, height: 812 });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "guided review fits a phone width");
+        await page.screenshot({ path: "/tmp/cv-guided-review-mobile.png", fullPage: true });
+        await page.setViewportSize({ width: 1440, height: 1000 });
+      }
+      if (mode === "dismiss") {
+        await page.getByRole("button", { name: "Nothing further to add", exact: true }).click();
+        await page.getByRole("button", { name: "Nothing further to add · saved", exact: true }).waitFor().catch(async error => {
+          throw new Error(`Dismissal did not update: ${error.message}\n${await page.locator("main").innerText()}`);
+        });
+        const persisted = (await pool.query("select review_decision from cv_drafts where id = $1", [reviewId])).rows[0].review_decision;
+        assert.ok(persisted.dismissedRowIds.length > 0, "dismissal is persisted before reload");
+        await page.reload();
+        await page.getByRole("button", { name: "Nothing further to add · saved", exact: true }).waitFor().catch(async error => {
+          throw new Error(`Dismissal reload at ${page.url()}: ${error.message}\n${await page.locator("main").innerText()}`);
+        });
+      }
+      await page.locator('input[name="reviewed"]').check();
+      await page.getByRole("button", { name: mode === "skip" ? "Skip review and finalise anyway" : "Finalise this CV", exact: true }).click();
+      await page.getByText("Finalised. Download this saved revision or create a new revision to make changes.", { exact: true }).waitFor();
+      const savedReview = (await pool.query("select finalised_at, review_decision, assessment from cv_drafts where id = $1", [reviewId])).rows[0];
+      assert.ok(savedReview.finalised_at);
+      assert.equal(savedReview.review_decision.skipped, mode === "skip");
+      assert.deepEqual(savedReview.assessment, assessment);
+      const downloaded = await context.request.get(`${baseUrl}/api/cv/${reviewId}/pdf`);
+      assert.equal(downloaded.status(), 200);
+      assert.equal((await downloaded.body()).subarray(0, 5).toString(), "%PDF-");
+    }
     assert.deepEqual(errors, []);
     console.log(
-      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, what the two saves cost, why finalising is unavailable, a failed build's way forward, the Library's ready-to-build line, Confirm all, its unsaved-changes bar and guard, and the applications table's stage, CV cell and archive/restore/delete, and a share link read without a session with a note left on it",
+      "  CV browser flow passed: tabs, evaluation, skill editing and preview, saved edits, responsive layout, progress, quiz, dismissal persistence, finalisation override and PDF download, unsaved-edit protection, applications and sharing",
     );
   } finally {
     await browser?.close();

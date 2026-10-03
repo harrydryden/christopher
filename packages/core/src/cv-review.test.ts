@@ -139,6 +139,17 @@ it("denies score credit and finalisation for unsupported claims", () => {
       assessment,
     }),
   ).toThrow("flagged factual");
+  const dismissed = {
+    inputHash: assessment.inputHash,
+    assessedAt: assessment.assessedAt,
+    dismissedRowIds: [`claim:${value.claims[0]!.claimId}`],
+    skipped: false,
+  };
+  expect(() => assertCvFinalisable({ content, jobDescription: description, librarySnapshot: library, assessment, reviewDecision: dismissed })).not.toThrow();
+  expect(() => assertCvFinalisable({ content, jobDescription: description, librarySnapshot: library, assessment, reviewDecision: { ...dismissed, assessedAt: "old" } })).toThrow("flagged factual");
+  expect(() => assertCvFinalisable({ content, jobDescription: description, librarySnapshot: library, assessment, reviewDecision: { ...dismissed, dismissedRowIds: [], skipped: true } })).not.toThrow();
+  expect(assessment.score).toBe(0);
+  expect(assessment.review.claims[0]!.status).toBe("unsupported");
 });
 it("invalidates stale assessments for wording, theme, evidence or description changes", () => {
   const assessment = assess();

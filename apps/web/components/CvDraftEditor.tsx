@@ -1,5 +1,6 @@
 "use client";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
+import { cvReviewSections, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
@@ -98,6 +99,8 @@ export function CvDraftEditor({
       (section.skillItems ?? section.bullets).join("\n"),
     ),
   );
+  const [removedSkillIds, setRemovedSkillIds] = useState<string[]>([]);
+  const [addedSkills, setAddedSkills] = useState<AddedSkillSection[]>([]);
   const [preview, setPreview] = useState<{
     url: string;
     fingerprint: string;
@@ -110,12 +113,7 @@ export function CvDraftEditor({
     ...content,
     theme,
     summary,
-    sections: content.sections.map((section, i) => ({
-      ...section,
-      [section.skillItems ? "skillItems" : "bullets"]: rows[i]!.split("\n")
-        .map((row) => row.trim())
-        .filter(Boolean),
-    })),
+    sections: cvReviewSections(content, rows, removedSkillIds, addedSkills),
   };
   const fingerprint = JSON.stringify(candidate);
   // What was saved, as the same string: it changes only with the revision, so it is worked out once
@@ -144,7 +142,14 @@ export function CvDraftEditor({
     }
     const parsed = CvContentSchema.safeParse(candidate);
     if (!parsed.success) {
-      setError(parsed.error.issues.map((issue) => issue.message).join(" "));
+      setError(parsed.error.issues.map((issue) => {
+        const [field, index, item] = issue.path;
+        if (field === "sections" && typeof index === "number" && item === "bullets" && issue.code === "too_small")
+          return `Section ${index + 1} needs at least one bullet.`;
+        if (field === "sections" && typeof index === "number" && item === "skillItems" && issue.code === "too_small")
+          return `Skill section ${index + 1} needs at least one skill.`;
+        return issue.message;
+      }).join(" "));
       return;
     }
     controller.current?.abort();
@@ -185,7 +190,7 @@ export function CvDraftEditor({
     <>
       {/* A disabled fieldset disables every control inside it, which is how the unverified wall
           reaches a submit button this component does not own. */}
-      <fieldset disabled={!!blocked} className="min-w-0">
+      <fieldset disabled={!!blocked} className="min-w-0" data-cv-editor-dirty={dirty ? "true" : "false"}>
         <SettingsForm
           id={formId}
           action={saveCvDraft.bind(null, id)}
@@ -196,6 +201,8 @@ export function CvDraftEditor({
           {theme && (
             <input type="hidden" name="theme" value={JSON.stringify(theme)} />
           )}
+          <input type="hidden" name="removedSkills" value={JSON.stringify(removedSkillIds)} />
+          <input type="hidden" name="addedSkills" value={JSON.stringify(addedSkills)} />
         </SettingsForm>
       </fieldset>
       {/* Direct edits are free. A fresh AI rewrite uses one CV credit. */}
@@ -290,46 +297,37 @@ export function CvDraftEditor({
             Changed profile and bullet wording is kept as saved phrasing for the next CV. It adds no
             facts to your Library.
           </p>
-          {cvDisplaySections(content).map(({ section, index }) => (
-            <label key={section.entryId} className="block text-14">
-              <span className="font-semibold">
-                {section.kind === "skill" ? "Skill" : section.heading}
-              </span>
-              {section.kind === "skill" && (
-                <span className="ml-2 text-12 text-muted">
-                  {section.heading}
-                </span>
-              )}
-              {!!section.industryDescriptions?.length && (
-                <span className="block text-12 text-muted">
-                  {section.industryDescriptions.join(" · ")}
-                </span>
-              )}
-              <CommentCount n={commentCounts[cvSectionBlockId(section.entryId)] ?? 0} />
-              <textarea
-                form={formId}
-                id={cvSectionBlockId(section.entryId)}
-                name={
-                  section.skillItems ? `skills-${index}` : `section-${index}`
-                }
-                value={rows[index]}
-                onChange={(event) =>
-                  setRows((previous) =>
-                    previous.map((row, i) =>
-                      i === index ? event.target.value : row,
-                    ),
-                  )
-                }
-                rows={
-                  section.skillItems
-                    ? 4
-                    : Math.max(3, section.bullets.length * 2)
-                }
-                className={input}
-              />
-
-            </label>
-          ))}
+          {cvDisplaySections(content).filter(({ section }) => !removedSkillIds.includes(section.entryId)).map(({ section, index }) => {
+            const blockId = cvSectionBlockId(section.entryId);
+            const skill = section.kind === "skill";
+            const items = rows[index]!.split("\n");
+            return <div key={section.entryId} className="space-y-2 text-14">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor={blockId} className="font-semibold">{skill ? `Skills · ${section.heading}` : section.heading}</label>
+                {skill && <button type="button" className={buttonClass("secondary")} onClick={() => setRemovedSkillIds((previous) => [...previous, section.entryId])}>Remove skill section</button>}
+              </div>
+              {!!section.industryDescriptions?.length && <span className="block text-12 text-muted">{section.industryDescriptions.join(" · ")}</span>}
+              <CommentCount n={commentCounts[blockId] ?? 0} />
+              {skill ? <>
+                <input form={formId} type="hidden" name={section.skillItems ? `skills-${index}` : `section-${index}`} value={rows[index]} />
+                {items.map((item, itemIndex) => <div key={itemIndex} className="flex items-center gap-2">
+                  <input id={itemIndex === 0 ? blockId : undefined} aria-label={`Skill ${itemIndex + 1} in ${section.heading}`} value={item} maxLength={80} onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? row.split("\n").map((value, j) => j === itemIndex ? event.target.value : value).join("\n") : row))} className={input} />
+                  <button type="button" className={buttonClass("secondary")} aria-label={`Remove skill ${itemIndex + 1} from ${section.heading}`} onClick={() => setRows((previous) => previous.map((row, i) => i === index ? row.split("\n").filter((_, j) => j !== itemIndex).join("\n") : row))}>Remove</button>
+                </div>)}
+                <button type="button" className={buttonClass("secondary")} onClick={() => setRows((previous) => previous.map((row, i) => i === index ? `${row}\n` : row))}>Add skill</button>
+              </> : <textarea form={formId} id={blockId} name={`section-${index}`} value={rows[index]} onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? event.target.value : row))} rows={Math.max(3, section.bullets.length * 2)} className={input} />}
+            </div>;
+          })}
+          {addedSkills.map((section, sectionIndex) => <div key={section.entryId} className="space-y-2 border border-line-muted p-3 text-14">
+            <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">New skill section</span><button type="button" className={buttonClass("secondary")} onClick={() => setAddedSkills((previous) => previous.filter((item) => item.entryId !== section.entryId))}>Remove skill section</button></div>
+            <label className="block"><span className={labelClass}>Section heading</span><input value={section.heading} maxLength={250} onChange={(event) => setAddedSkills((previous) => previous.map((item, i) => i === sectionIndex ? { ...item, heading: event.target.value } : item))} className={input} /></label>
+            {section.items.map((item, itemIndex) => <div key={itemIndex} className="flex items-center gap-2">
+              <input aria-label={`Skill ${itemIndex + 1} in new section`} value={item} maxLength={80} onChange={(event) => setAddedSkills((previous) => previous.map((entry, i) => i === sectionIndex ? { ...entry, items: entry.items.map((value, j) => j === itemIndex ? event.target.value : value) } : entry))} className={input} />
+              <button type="button" className={buttonClass("secondary")} aria-label={`Remove skill ${itemIndex + 1} from new section`} onClick={() => setAddedSkills((previous) => previous.map((entry, i) => i === sectionIndex ? { ...entry, items: entry.items.filter((_, j) => j !== itemIndex) } : entry))}>Remove</button>
+            </div>)}
+            <button type="button" className={buttonClass("secondary")} onClick={() => setAddedSkills((previous) => previous.map((entry, i) => i === sectionIndex ? { ...entry, items: [...entry.items, ""] } : entry))}>Add skill</button>
+          </div>)}
+          <button type="button" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} className={buttonClass("secondary")} onClick={() => setAddedSkills((previous) => [...previous, { entryId: `manual-skill-${crypto.randomUUID()}`, heading: "Skills", items: [""] }])}>Add skill section</button>
         </section>
         <section className="space-y-3 border border-line-muted p-4">
           <CvDisclosure label="PDF preview">

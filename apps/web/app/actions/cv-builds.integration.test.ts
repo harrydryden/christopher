@@ -34,7 +34,7 @@ vi.mock("@/lib/cv-pdf", async (actual) => {
   };
 });
 
-import { assessCvDraft, finaliseCvDraft, quoteCvBuild, requestCv, saveCvDraft } from "./cv";
+import { assessCvDraft, dismissCvReviewItem, finaliseCvDraft, quoteCvBuild, requestCv, saveCvDraft } from "./cv";
 import { createCvAssessment } from "@ava/core/cv-review";
 import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
 import { reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
@@ -442,6 +442,44 @@ it("checks the PDF lays out before finalising, without holding the draft's row w
   expect(await finaliseCvDraft(draft.id, { ok: true }, reviewed())).toEqual({ ok: true });
   expect(probed).toBe(true);
   expect((await draftRow(draft.id)).finalisedAt).not.toBeNull();
+});
+
+it("records a dismissal against the current assessment and retains the factual finding", async () => {
+  const draft = await finalisableDraft();
+  const assessment = structuredClone(draft.assessment!);
+  const claim = assessment.review.claims[0]!;
+  claim.status = "unsupported";
+  claim.reason = "The Library does not establish this claim.";
+  await database.update(schema.cvDrafts).set({ assessment }).where(eq(schema.cvDrafts.id, draft.id));
+  const rowId = `claim:${claim.claimId}`;
+  expect((await dismissCvReviewItem(draft.id, rowId, assessment.inputHash, "stale")).ok).toBe(false);
+  expect((await draftRow(draft.id)).reviewDecision).toBeNull();
+  expect(await dismissCvReviewItem(draft.id, rowId, assessment.inputHash, assessment.assessedAt)).toEqual({ ok: true });
+  expect((await draftRow(draft.id)).reviewDecision).toMatchObject({ inputHash: assessment.inputHash, dismissedRowIds: [rowId], skipped: false });
+  const form = reviewed();
+  form.set("assessmentHash", assessment.inputHash);
+  form.set("assessedAt", assessment.assessedAt);
+  expect(await finaliseCvDraft(draft.id, { ok: true }, form)).toEqual({ ok: true });
+  const saved = await draftRow(draft.id);
+  expect(saved.finalisedAt).not.toBeNull();
+  expect(saved.assessment?.review.claims[0]?.status).toBe("unsupported");
+});
+
+it("allows an explicit finalise-anyway decision and keeps it for later download checks", async () => {
+  const draft = await finalisableDraft();
+  const assessment = structuredClone(draft.assessment!);
+  assessment.review.claims[0]!.status = "unsupported";
+  assessment.review.claims[0]!.reason = "Further evidence is needed.";
+  await database.update(schema.cvDrafts).set({ assessment }).where(eq(schema.cvDrafts.id, draft.id));
+  const form = reviewed();
+  form.set("assessmentHash", assessment.inputHash);
+  form.set("assessedAt", assessment.assessedAt);
+  expect((await finaliseCvDraft(draft.id, { ok: true }, form)).ok).toBe(false);
+  form.set("skipReview", "on");
+  expect(await finaliseCvDraft(draft.id, { ok: true }, form)).toEqual({ ok: true });
+  const saved = await draftRow(draft.id);
+  expect(saved.reviewDecision).toMatchObject({ skipped: true, inputHash: assessment.inputHash });
+  expect(saved.assessment?.review.claims[0]?.status).toBe("unsupported");
 });
 
 it("refuses to finalise a revision that was assessed again while its PDF was being checked", async () => {

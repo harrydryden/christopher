@@ -20,7 +20,7 @@ import { getOwnCvSharing } from "@/lib/queries/cv-shares";
 import { openCommentCounts } from "@/lib/cv-share";
 import { cvNextAction } from "@/lib/cv-next-action";
 import { CvNextAction } from "@/components/CvNextAction";
-import { assertCvFinalisable, cvAssessmentCurrent } from "@ava/core/cv-review";
+import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent } from "@ava/core/cv-review";
 import { resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
 import type { CvAssessment } from "@ava/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
@@ -55,6 +55,7 @@ function finaliseObstacle(draft: {
   jobDescription: string;
   librarySnapshot: CvLibrary;
   assessment: CvAssessment | null;
+  reviewDecision?: import("@ava/core/cv-review").CvReviewDecision | null;
 }): string | null {
   if (!draft.content) return null;
   try {
@@ -154,6 +155,7 @@ export default async function CvDraftPage({
       <CvAssessmentPanel
         id={id}
         assessment={draft.assessment}
+        reviewDecision={draft.reviewDecision}
         current={current}
         finalised={!!draft.finalisedAt}
         busy={busy}
@@ -223,7 +225,9 @@ export default async function CvDraftPage({
         finalised: !!draft.finalisedAt,
         hasContent: !!content,
         assessmentCurrent: current,
-        factualConcerns: draft.assessment?.review.claims.filter(claim => claim.status !== "supported").length ?? 0,
+        factualConcerns: draft.assessment?.review.claims.filter(claim => claim.status !== "supported" &&
+          !(cvReviewDecisionCurrent(draft.reviewDecision, draft.assessment) &&
+            (draft.reviewDecision?.skipped || draft.reviewDecision?.dismissedRowIds.includes(`claim:${claim.claimId}`)))).length ?? 0,
         finaliseReason,
         improving: draft.status === "ready" && reading.live,
         libraryChanged: !!drift,

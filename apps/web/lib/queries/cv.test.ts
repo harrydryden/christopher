@@ -290,7 +290,7 @@ it("moves the account's CV version once per motion, not once per batch", async (
 it("reads a draft for its PDF with what the check and the filename need, and only for its owner", async () => {
   const draft = await seedDraft({ status: "ready", buildCheckpoint: { rubricAt: new Date().toISOString(), attempt: 1 }, failure });
   const read = await getOwnCvDraftForPdf(user.id, draft.id);
-  expect(Object.keys(read!).sort()).toEqual(["assessment", "companyName", "content", "finalisedAt", "id", "jobDescription", "librarySnapshot", "status"]);
+  expect(Object.keys(read!).sort()).toEqual(["assessment", "companyName", "content", "finalisedAt", "id", "jobDescription", "librarySnapshot", "reviewDecision", "status"]);
   expect(read).toMatchObject({ id: draft.id, status: "ready", companyName: "Example", jobDescription: "Lead a team." });
   expect(await getOwnCvDraftForPdf(crypto.randomUUID(), draft.id)).toBeNull();
 });

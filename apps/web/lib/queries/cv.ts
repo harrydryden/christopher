@@ -126,6 +126,7 @@ const settledCvDraftColumns = {
   jobDescription: cvDrafts.jobDescription,
   jobSource: cvDrafts.jobSource,
   assessment: cvDrafts.assessment,
+  reviewDecision: cvDrafts.reviewDecision,
   finalisedAt: cvDrafts.finalisedAt,
   libraryVersion: cvDrafts.libraryVersion,
   librarySnapshot: cvDrafts.librarySnapshot,
@@ -167,6 +168,7 @@ export async function getOwnCvDraftForPdf(userId: string, id: string) {
       companyName: cvDrafts.companyName,
       finalisedAt: cvDrafts.finalisedAt,
       assessment: cvDrafts.assessment,
+      reviewDecision: cvDrafts.reviewDecision,
       jobDescription: cvDrafts.jobDescription,
       librarySnapshot: cvDrafts.librarySnapshot,
     })

@@ -400,6 +400,13 @@
       "when": 1792836000000,
       "tag": "0058_manual_role_company_branding",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792922400000,
+      "tag": "0059_cv_review_decision",
+      "breakpoints": true
     }
   ]
 }

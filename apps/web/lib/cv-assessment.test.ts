@@ -56,7 +56,7 @@ const content = materialiseCv(library, {
   sections: [{ entryId: "e", bullets: ["Owned a £10m budget"] }],
   gaps: [],
 });
-it("shows evidence questions and actual unsupported wording, with no finalisation control", async () => {
+it("shows evidence questions and actual unsupported wording with a guided finalise-anyway choice", async () => {
   const description = "Own a budget";
   const rubric = rubricFixture(description);
   const review = reviewFixture({
@@ -107,7 +107,10 @@ it("shows evidence questions and actual unsupported wording, with no finalisatio
   expect(html).toContain("Provide your actual budget ownership and scope.");
   expect(html).toContain("Owned a £10m budget");
   expect(html).not.toContain("claim: section:");
-  expect(html).not.toContain("Finalise this CV");
+  expect(html).toContain("Review flagged items");
+  expect(html).toContain("Nothing further to add");
+  expect(html).toContain("Skip review and finalise anyway");
+  expect(html).toContain("Finalise this CV");
   expect(html).not.toContain("Your input needed");
   expect(html).toContain("<em>Owned a £10m budget</em>");
   expect(html).toContain("Item");

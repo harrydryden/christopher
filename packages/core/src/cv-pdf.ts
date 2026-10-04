@@ -178,15 +178,20 @@ export async function renderCvPdfWithReport(
   }
   const groups = CV_GROUPS;
   const ordered = cvDisplaySections(content).map((item) => item.section);
+  const skillSubheading = (heading: string) => {
+    const label = clean(heading);
+    return /^(?:skill|skills)$/i.test(label) ? null : label;
+  };
   const measureSection = (section: CvContent["sections"][number]) => {
     // Education and Skills share a parent section, with a subsection for each. Qualifications carry
     // their own label in the bullet; retain headings only when they add information.
-    const showHeading = cvSectionHeading(section) !== null;
-    const sectionHeading =
-      section.kind === "skill" ? "Skills" : section.heading;
-    doc.font(face.bold).fontSize(10);
+    const sectionHeading = section.kind === "skill"
+      ? skillSubheading(section.heading)
+      : cvSectionHeading(section);
+    const showHeading = sectionHeading !== null;
+    doc.font(face.bold).fontSize(section.kind === "skill" ? 9 : 10);
     const headerHeight = showHeading
-      ? doc.heightOfString(clean(sectionHeading), { width, lineGap: 2.5 }) + 3
+      ? doc.heightOfString(sectionHeading, { width, lineGap: 2.5 }) + 4
       : 0;
     doc.font(face.regular);
     const bulletHeights = (section.skillItems ?? section.bullets).map(
@@ -262,9 +267,9 @@ export async function renderCvPdfWithReport(
           ? wholeHeight
           : minimumHeight,
       );
-      if (showHeading) {
-        text(sectionHeading, true);
-        doc.moveDown(0.25);
+      if (showHeading && sectionHeading) {
+        text(sectionHeading, true, section.kind === "skill" ? 9 : 10);
+        doc.moveDown(section.kind === "skill" ? 0.15 : 0.25);
       }
       if (industryRows.length) {
         let top = doc.y;
@@ -279,8 +284,8 @@ export async function renderCvPdfWithReport(
         for (const row of skillRows) {
           if (doc.y + row.height > doc.page.height - 55) {
             doc.addPage();
-            text("Skills (continued)", true);
-            doc.moveDown(0.3);
+            text(`${sectionHeading ?? "Skills"} (continued)`, true, 9);
+            doc.moveDown(0.15);
           }
           const top = doc.y;
           drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill, face.regular);
@@ -297,7 +302,7 @@ export async function renderCvPdfWithReport(
           });
           if (doc.y + height + 5 > doc.page.height - 55) {
             doc.addPage();
-            text(`${sectionHeading} (continued)`, true);
+            text(`${sectionHeading ?? "Skills"} (continued)`, true);
             doc.moveDown(0.3);
           } else room(height + 5);
           doc.font(face.regular).fontSize(10).fillColor(ink);

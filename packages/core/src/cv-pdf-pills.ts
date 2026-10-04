@@ -3,7 +3,7 @@ import { cvForeground } from "./cv-theme";
 
 export const PILL_STYLES = {
   industry: { fontSize: 8, paddingX: 8, paddingY: 4, gapX: 5, gapY: 4, radius: 7 },
-  skill: { fontSize: 9, paddingX: 10, paddingY: 6, gapX: 6, gapY: 6, radius: 11 },
+  skill: { fontSize: 8.5, paddingX: 8, paddingY: 3.5, gapX: 5, gapY: 4, radius: 8 },
 } as const;
 type PillStyle = (typeof PILL_STYLES)[keyof typeof PILL_STYLES];
 type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number;

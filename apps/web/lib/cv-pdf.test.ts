@@ -35,12 +35,12 @@ it("honours an explicit palette and disabled profile card", async () => {
   // The profile card is optional; legacy false skillPills flags cannot disable required skill pills.
   expect(rounded).toHaveBeenCalled();
 });
-it("removes repeated skill and qualification labels without losing distinct evidence", async () => {
+it("shows distinct skill headings and removes repeated qualification labels", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   await renderCvPdf(fixture);
   const labels = draw.mock.calls.map((call) => call[0]);
   expect(labels).not.toContain("Skill");
-  expect(labels).not.toContain("Internal evidence label");
+  expect(labels).toContain("Internal evidence label");
   expect(labels).not.toContain("BSc Economics · Example University");
   expect(labels).toContain("BSc Economics, Example University. Distinction.");
   expect(labels).toContain("Project qualification");
@@ -64,6 +64,46 @@ it("groups Education and Skills beneath one parent heading and retains legacy pi
   expect(labels.indexOf("EDUCATION AND SKILLS")).toBeLessThan(labels.indexOf("Skills"));
   expect(labels.indexOf("Skills")).toBeLessThan(labels.indexOf("Education"));
   expect(rounded.mock.calls.length).toBeGreaterThan(1);
+});
+it("fits three skill sections of ten readable pills within half a page", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
+  const groups = [
+    { heading: "Leadership and commercial", items: [
+      "Executive & board reporting", "Commercial leadership and RevOps", "Strategic planning",
+      "Budget ownership", "Cross-functional leadership", "Operating model design",
+      "Stakeholder management", "Sales forecasting", "Change management", "Team coaching",
+    ] },
+    { heading: "Data and insight", items: [
+      "Data modelling and metric design", "SQL", "Python", "Power BI dashboards",
+      "Customer segmentation", "Forecast modelling", "KPI architecture",
+      "Experiment design", "Data storytelling", "Performance analysis",
+    ] },
+    { heading: "Delivery and systems", items: [
+      "Programme delivery", "Process improvement", "CRM implementation",
+      "Salesforce administration", "Workflow automation", "Vendor management",
+      "Risk and issue management", "Service design", "Agile delivery", "Quality assurance",
+    ] },
+  ];
+  const sections = groups.map(({ heading, items }, group) => ({
+    entryId: `skills-${group}`, kind: "skill" as const, heading,
+    skillItems: items, bullets: [items[0]!],
+  }));
+  const report = await renderCvPdfWithReport({
+    ...fixture,
+    theme: { ...DEFAULT_CV_THEME, introPanel: false },
+    sections: [{ entryId: "generic", kind: "skill", heading: "Skills", skillItems: ["Planning"], bullets: ["Planning"] }, ...sections],
+  });
+  const labels = draw.mock.calls.map((call) => call[0]);
+  expect(report.pageCount).toBe(1);
+  expect(labels.filter((label) => label === "Skills")).toHaveLength(1);
+  for (const section of sections) expect(labels).toContain(section.heading);
+  const skillPills = rounded.mock.calls.filter((call) => call[2] !== undefined);
+  expect(skillPills).toHaveLength(31);
+  const parentHeading = draw.mock.calls.find((call) => call[0] === "EDUCATION AND SKILLS");
+  expect(parentHeading).toBeDefined();
+  const last = skillPills[skillPills.length - 1]!;
+  expect(Number(last[1]) + Number(last[3]) - Number(parentHeading![2])).toBeLessThan(420);
 });
 it("rejects downloads above the CV's own page limit while allowing a complete diagnostic preview", async () => {
   const long = { ...fixture, sections: Array.from({ length: 12 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
@@ -151,13 +191,13 @@ it("centres wrapped skill and industry text inside its pill bounds", async () =>
       number,
     ];
     expect(options).toMatchObject({ align: "center", baseline: "middle" });
-    const padding = i === 0 ? 8 : 10;
+    const padding = 8;
     expect(x).toBe(pillX! + padding);
     expect((options as { width: number }).width).toBeCloseTo(
       pillWidth! - padding * 2,
     );
     const measure = new PDFDocument();
-    measure.font("Helvetica").fontSize(i === 0 ? 8 : 9);
+    measure.font("Helvetica").fontSize(i === 0 ? 8 : 8.5);
     const textHeight = measure.heightOfString(long.trim(), {
       width: pillWidth! - padding * 2,
       lineGap: 1,

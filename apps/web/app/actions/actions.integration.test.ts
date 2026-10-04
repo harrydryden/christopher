@@ -616,6 +616,39 @@ describe("priority workflows", () => {
     expect(afterSkill!.content.entries[0]!.skillItems).toEqual(["Governance, risk and compliance", "Reporting", "SQL", "Python"]);
     expect(afterSkill!.content.entries[0]!.details).toBe("Scope and evidence");
   });
+  it("saves an explicitly split Library skill list and snapshots the six labels for a new CV", async () => {
+    const { job } = await fixture();
+    const combined = "Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support";
+    const labels = ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"];
+    const details = "Commercial planning across several products, with supporting context.\nThe original evidence remains intact.";
+    const original = {
+      name: "Test Candidate", contact: "London", profile: "Commercial leader", structuredExperience: true as const,
+      employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }],
+      entries: [
+        { id: "experience", kind: "experience" as const, status: "active" as const, employmentId: "job", heading: "Director · Acme", details: "Led commercial planning.", confirmedResponsibilities: ["Led commercial planning."] },
+        { id: "skills", kind: "skill" as const, status: "active" as const, heading: "Commercial", details, skillItems: [combined] },
+      ],
+    };
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: original });
+    const form = new FormData();
+    form.set("version", "1");
+    form.set("editedSkillIds", JSON.stringify(["skills"]));
+    form.set("library", JSON.stringify({ ...original, entries: original.entries.map(entry => entry.id === "skills" ? { ...entry, skillItems: labels } : entry) }));
+    expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
+    const [saved] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 2));
+    expect(saved!.content.entries[1]!.skillItems).toEqual(labels);
+    expect(saved!.content.entries[1]!.details).toBe(details);
+    const generate = new FormData();
+    generate.set("jobId", job.id);
+    generate.set("description", "Lead a commercial team, develop the annual operating plan and work with finance and customer leaders.");
+    await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
+    const [draft] = await database.select().from(schema.cvDrafts);
+    expect(draft!.libraryVersion).toBe(2);
+    expect(draft!.librarySnapshot.entries.find(entry => entry.id === "skills")?.skillItems).toEqual(labels);
+    expect(draft!.librarySnapshot.entries.find(entry => entry.id === "skills")?.details).toBe(details);
+    const [historical] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 1));
+    expect(historical!.content.entries[1]!.skillItems).toEqual([combined]);
+  });
   it("does not queue a CV from unconfirmed experience", async () => {
     const { job } = await fixture();
     await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: { name: "Test Candidate", contact: "London", profile: "", entries: [{ id: "one", kind: "experience", status: "active", heading: "Director · Acme", details: "An unconfirmed proposal" }] } });

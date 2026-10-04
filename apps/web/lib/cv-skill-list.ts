@@ -20,6 +20,14 @@ export function parseCvSkillList(value: string, preserved: readonly string[] = [
   });
 }
 
+/** Split one stored combined label only after the person asks; all other labels stay verbatim. */
+export function splitCvLibrarySkillItem(items: readonly string[], index: number): string[] | null {
+  const value = items[index];
+  if (value === undefined) return null;
+  const parts = parseCvSkillList(value);
+  return parts.length > 1 ? [...items.slice(0, index), ...parts, ...items.slice(index + 1)] : null;
+}
+
 /** Identify skill fields whose raw text differs from the opened Library, independent of Details. */
 export function editedCvSkillEntryIds(value: CvLibrary, baseline: CvLibrary): string[] {
   return value.entries.flatMap((entry) => {

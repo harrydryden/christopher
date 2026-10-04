@@ -178,18 +178,15 @@ export async function renderCvPdfWithReport(
   }
   const groups = CV_GROUPS;
   const ordered = cvDisplaySections(content).map((item) => item.section);
-  const skillLabelWidth = 116;
-  const skillColumnGap = 14;
-  const skillPillLeft = 44 + skillLabelWidth + skillColumnGap;
-  const skillPillWidth = width - skillLabelWidth - skillColumnGap;
+  const skillHeadingGap = 4;
   const pageBodyHeight = doc.page.height - 55 - 44;
   const measureSkillLabel = (value: string) => {
     doc.font(face.bold).fontSize(9);
-    return doc.heightOfString(clean(value), { width: skillLabelWidth, lineGap: 2.5 });
+    return doc.heightOfString(clean(value), { width, lineGap: 2.5 });
   };
   const drawSkillLabel = (value: string, top: number) => {
     doc.font(face.bold).fontSize(9).fillColor(ink)
-      .text(clean(value), 44, top, { width: skillLabelWidth, lineGap: 2.5 });
+      .text(clean(value), 44, top, { width, lineGap: 2.5 });
     doc.x = 44;
     doc.y = top;
   };
@@ -224,7 +221,7 @@ export async function renderCvPdfWithReport(
         ? measurePillRows(
             doc,
             cvSectionTexts(section),
-            skillPillWidth,
+            width,
             PILL_STYLES.skill,
             face.regular,
           )
@@ -232,7 +229,7 @@ export async function renderCvPdfWithReport(
     const skillLabelHeight = section.kind === "skill" ? measureSkillLabel(sectionHeading!) : 0;
     const firstHeight = skillRows[0]?.height ?? bulletHeights[0] ?? 0;
     const minimumHeight = section.kind === "skill"
-      ? Math.max(skillLabelHeight, firstHeight) + 8
+      ? skillLabelHeight + skillHeadingGap + firstHeight + 8
       : headerHeight + industryHeight + firstHeight + 4;
     const contentHeight = skillRows.length
       ? skillRows.reduce(
@@ -250,7 +247,7 @@ export async function renderCvPdfWithReport(
       skillRows,
       minimumHeight,
       wholeHeight: section.kind === "skill"
-        ? Math.max(skillLabelHeight, skillContentHeight) + 8
+        ? skillLabelHeight + skillHeadingGap + skillContentHeight + 8
         : headerHeight + industryHeight + contentHeight + 6,
     };
   };
@@ -287,24 +284,20 @@ export async function renderCvPdfWithReport(
       room(keepWhole ? wholeHeight : minimumHeight);
       if (section.kind === "skill") {
         let top = doc.y;
-        let labelTop = top;
-        let labelHeight = measureSkillLabel(sectionHeading!);
-        drawSkillLabel(sectionHeading!, top);
+        top += measureSkillLabel(sectionHeading!) + skillHeadingGap;
+        drawSkillLabel(sectionHeading!, doc.y);
         for (const row of skillRows) {
           if (top + row.height > doc.page.height - 55) {
             doc.addPage();
-            top = doc.y;
-            labelTop = top;
             const continued = `${sectionHeading} (continued)`;
-            labelHeight = measureSkillLabel(continued);
-            drawSkillLabel(continued, top);
+            top = doc.y + measureSkillLabel(continued) + skillHeadingGap;
+            drawSkillLabel(continued, doc.y);
           }
-          drawPillRow(doc, row, skillPillLeft, top, theme.pill, PILL_STYLES.skill, face.regular);
+          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill, face.regular);
           top += row.height + PILL_STYLES.skill.gapY;
         }
         doc.x = 44;
-        doc.y = Math.max(top - (skillRows.length ? PILL_STYLES.skill.gapY : 0),
-          labelTop + labelHeight) + 8;
+        doc.y = top - (skillRows.length ? PILL_STYLES.skill.gapY : 0) + 8;
         continue;
       }
       if (showHeading && sectionHeading) {

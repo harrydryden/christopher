@@ -151,6 +151,43 @@ it("fits three skill sections of ten readable pills within half a page", async (
   const last = skillPills[skillPills.length - 1]!;
   expect(Number(last[1]) + Number(last[3]) - Number(parentHeading![2])).toBeLessThan(420);
 });
+it.each(["AVA", "Arial"] as const)("keeps the reported 18 skills compact and uniform in %s", async (font) => {
+  const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const groups = [
+    { heading: "Operations", items: ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"] },
+    { heading: "Commercial", items: ["Commercial Strategy", "Expansion Strategy", "RevOps", "P&L Ownership", "Financial Modelling", "Investor Relations"] },
+    { heading: "Technology tooling", items: ["SQL", "BI Tools", "CRM Platforms", "Sales Automation", "Agile Systems", "Advanced AI Coding"] },
+  ];
+  const result = await renderCvPdfWithReport({ ...fixture, theme: { ...DEFAULT_CV_THEME, font, introPanel: false },
+    sections: groups.map(({ heading, items }, index) => ({ entryId: `s-${index}`, kind: "skill", heading, skillItems: items, bullets: [items[0]!] })) });
+  expect(result.pageCount).toBe(1);
+  expect(rounded.mock.calls).toHaveLength(18);
+  const heights = rounded.mock.calls.map(call => Number(call[3]));
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(0.01);
+  for (const [groupIndex, group] of groups.entries()) {
+    const calls = rounded.mock.calls.slice(groupIndex * 6, groupIndex * 6 + 6);
+    const rows = new Map<number, number>();
+    for (const call of calls) rows.set(Number(call[1]), (rows.get(Number(call[1])) ?? 0) + 1);
+    expect([...rows.values()].every(count => count > 1)).toBe(true);
+    for (const item of group.items) expect(draw.mock.calls.filter(call => call[0] === item)).toHaveLength(1);
+  }
+  const top = Number(draw.mock.calls.find(call => call[0] === "Operations")![2]);
+  const last = rounded.mock.calls.at(-1)!;
+  expect(Number(last[1]) + Number(last[3]) - top).toBeLessThan(200);
+});
+it("fits four sections of ten normal skills within half a page", async () => {
+  const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const items = ["Financial planning", "Operations strategy", "Customer success", "SQL", "BI Tools", "CRM Platforms", "Sales Automation", "Risk management", "Team leadership", "Board reporting"];
+  const result = await renderCvPdfWithReport({ ...fixture, theme: { ...DEFAULT_CV_THEME, introPanel: false }, sections:
+    ["Operations", "Commercial", "Technology", "Governance"].map((heading, index) => ({entryId: `s-${index}`, kind: "skill", heading, skillItems: items, bullets: [items[0]!] })) });
+  expect(result.pageCount).toBe(1);
+  expect(rounded.mock.calls).toHaveLength(40);
+  const top = Number(draw.mock.calls.find(call => call[0] === "Operations")![2]);
+  const last = rounded.mock.calls.at(-1)!;
+  expect(Number(last[1]) + Number(last[3]) - top).toBeLessThan(420);
+});
 it("rejects downloads above the CV's own page limit while allowing a complete diagnostic preview", async () => {
   const long = { ...fixture, sections: Array.from({ length: 12 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
       bullets: Array.from({ length: 6 }, () =>
@@ -237,7 +274,7 @@ it("centres wrapped skill and industry text inside its pill bounds", async () =>
       number,
     ];
     expect(options).toMatchObject({ align: "center", baseline: "middle" });
-    const padding = 8;
+    const padding = i === 0 ? 8 : 6;
     expect(x).toBe(pillX! + padding);
     expect((options as { width: number }).width).toBeCloseTo(
       pillWidth! - padding * 2,

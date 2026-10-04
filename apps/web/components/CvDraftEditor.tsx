@@ -4,7 +4,7 @@ import { cvReviewSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue,
 import { useFormStatus } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
-import { CV_LIMITS, cvSectionTexts } from "@ava/core/cv-format";
+import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@ava/core/cv-format";
 import { cvDisplaySections } from "@ava/core/cv-helpers";
 import type { CvTheme } from "@ava/core/cv-theme-values";
 import type { CvContent } from "@ava/core/cv";
@@ -49,10 +49,10 @@ export function RebuildButton({ form, disabled = false }: { form?: string; disab
 const input = `mt-1 ${inputClass}`;
 
 function SkillCharacterCount({ value, id }: { value: string; id: string }) {
-  const count = value.length;
-  return <span id={id} className={`text-12 ${count > CV_LIMITS.skillCharacters ? "text-danger" : count >= 120 ? "text-warn" : "text-muted"}`}
-    role={count > CV_LIMITS.skillCharacters ? "alert" : undefined}>
-    {count}/{CV_LIMITS.skillCharacters} characters{count > CV_LIMITS.skillCharacters ? " · Too long" : count >= 120 ? " · Approaching limit" : ""}
+  const { count, approaching, tooLong } = cvSkillCharacterState(value);
+  return <span id={id} className={`text-12 ${tooLong ? "text-danger" : approaching ? "text-warn" : "text-muted"}`}
+    role={tooLong ? "alert" : undefined}>
+    {count}/{CV_LIMITS.skillCharacters} characters{tooLong ? " · Too long" : approaching ? " · Approaching limit" : ""}
   </span>;
 }
 

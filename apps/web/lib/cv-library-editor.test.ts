@@ -419,6 +419,40 @@ it("counts pasted skills live, flags long labels, and normalises on submit witho
   }
 });
 
+it("preserves a canonical comma skill through focus, blur and unrelated Library edits", async () => {
+  const library: CvLibrary = { name: "Test", contact: "", profile: "Original bio", entries: [
+    { id: "skills", kind: "skill", heading: "Compliance", details: "Original scope", skillItems: ["Governance, risk and compliance", "Reporting"] },
+  ] };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  vi.mocked(saveCvLibrary).mockResolvedValue({ ok: false, error: "Test save" });
+  try {
+    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 })));
+    const skills = container.querySelector<HTMLTextAreaElement>('[aria-label="Individual skills: Compliance"]')!;
+    expect(container.textContent).toContain("2/20 individual skills");
+    await act(async () => { skills.focus(); skills.blur(); });
+    expect(skills.value).toBe("Governance, risk and compliance\nReporting");
+    const bio = container.querySelector<HTMLTextAreaElement>('#library-panel-intro textarea')!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bio, "New bio");
+    await act(async () => bio.dispatchEvent(new Event("input", { bubbles: true })));
+    const details = [...container.querySelectorAll<HTMLTextAreaElement>('#library-panel-education textarea')].find(item => item !== skills)!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(details, "New scope, with a comma.");
+    await act(async () => details.dispatchEvent(new Event("input", { bubbles: true })));
+    await act(async () => container.querySelector<HTMLFormElement>("form")!.requestSubmit());
+    const sent = vi.mocked(saveCvLibrary).mock.calls.at(-1)?.[1] as FormData;
+    expect(JSON.parse(String(sent.get("editedSkillIds")))).toEqual([]);
+    const saved = JSON.parse(String(sent.get("library"))) as CvLibrary;
+    expect(saved.entries[0]?.skillItems).toEqual(["Governance, risk and compliance", "Reporting"]);
+    expect(saved.entries[0]?.details).toBe("New scope, with a comma.");
+    expect(saved.profile).toBe("New bio");
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    vi.mocked(saveCvLibrary).mockReset();
+  }
+});
+
 it("keeps the exact unsaved draft after a conflicting reload and lets the person choose their wording", async () => {
   const base: CvLibrary = { name: "Rowan", contact: "", profile: "First bio", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],

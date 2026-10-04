@@ -1,5 +1,5 @@
 import type { CvContent } from "@ava/core/cv";
-import { CV_LIMITS, cvSectionTexts } from "@ava/core/cv-format";
+import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@ava/core/cv-format";
 
 export type AddedSkillSection = { entryId: string; heading: string; items: string[] };
 
@@ -9,8 +9,8 @@ export function cvReviewSkillLimitIssue(sections: CvContent["sections"]): string
 }
 
 export function cvReviewSkillCharacterIssue(sections: CvContent["sections"]): string | null {
-  const over = sections.find((section) => section.kind === "skill" && cvSectionTexts(section)
-    .some(item => item.length > CV_LIMITS.skillCharacters));
+  const over = sections.find((section) => section.kind === "skill" && (section.skillItems ?? cvSectionTexts(section))
+    .some(item => cvSkillCharacterState(item).tooLong));
   return over ? `${over.heading} has a skill longer than ${CV_LIMITS.skillCharacters} characters. Shorten it before saving or previewing.` : null;
 }
 

@@ -597,6 +597,25 @@ describe("priority workflows", () => {
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
     expect(await database.select().from(schema.cvLibraries)).toHaveLength(2);
   });
+  it("preserves canonical comma skills for old callers and parses only explicitly edited skills", async () => {
+    const original = { name: "Test Candidate", contact: "London", profile: "Original bio", entries: [
+      { id: "skills", kind: "skill" as const, status: "active" as const, heading: "Compliance", details: "Scope and evidence", skillItems: ["Governance, risk and compliance", "Reporting"] },
+    ] };
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: original });
+    const form = new FormData();
+    form.set("version", "1");
+    form.set("library", JSON.stringify({ ...original, profile: "New bio" }));
+    expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
+    const [afterBio] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 2));
+    expect(afterBio!.content.entries[0]!.skillItems).toEqual(["Governance, risk and compliance", "Reporting"]);
+    form.set("version", "2");
+    form.set("editedSkillIds", JSON.stringify(["skills"]));
+    form.set("library", JSON.stringify({ ...afterBio!.content, entries: afterBio!.content.entries.map(entry => entry.id === "skills" ? { ...entry, skillItems: ["Governance, risk and compliance", "Reporting", "SQL; Python"] } : entry) }));
+    expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
+    const [afterSkill] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 3));
+    expect(afterSkill!.content.entries[0]!.skillItems).toEqual(["Governance, risk and compliance", "Reporting", "SQL", "Python"]);
+    expect(afterSkill!.content.entries[0]!.details).toBe("Scope and evidence");
+  });
   it("does not queue a CV from unconfirmed experience", async () => {
     const { job } = await fixture();
     await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: { name: "Test Candidate", contact: "London", profile: "", entries: [{ id: "one", kind: "experience", status: "active", heading: "Director · Acme", details: "An unconfirmed proposal" }] } });

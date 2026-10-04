@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvLibrarySchema } from "@ava/core/cv";
-import { normaliseSubmittedLibrarySkills, parseCvSkillList } from "./cv-skill-list";
+import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList } from "./cv-skill-list";
 
 it("parses the six named skills without splitting ampersands and removes bullet markers and repeats", () => {
   const input = "• Financial Planning & Analysis, P&L Management; Unit Economics\n- Product Operations, Customer Success, Customer Support\n* financial planning & analysis";
@@ -23,7 +23,7 @@ it("normalises labels for save and preserves supporting details and other eviden
       { id: "experience", kind: "experience", heading: "Role", details: "Worked with customers, improved outcomes." },
     ],
   };
-  const normalised = normaliseSubmittedLibrarySkills(raw) as typeof raw;
+  const normalised = normaliseSubmittedLibrarySkills(raw, ["skills"]) as typeof raw;
   expect(normalised.entries[0]?.skillItems).toHaveLength(7);
   expect(normalised.entries[0]?.skillItems?.[6]).toBe(longLabel);
   expect(normalised.entries[0]?.details).toBe(details);
@@ -32,3 +32,20 @@ it("normalises labels for save and preserves supporting details and other eviden
   expect(normalised.entries[3]?.details).toBe(raw.entries[3]?.details);
   expect(CvLibrarySchema.safeParse(normalised).success).toBe(true);
 });
+
+it("keeps canonical comma labels and indices when another Library field or skill label changes", () => {
+  const original = CvLibrarySchema.parse({ name: "Example", contact: "", profile: "Original bio", entries: [
+    { id: "skills", kind: "skill", heading: "Compliance", details: "Scope", skillItems: ["Governance, risk and compliance", "Reporting"] },
+    { id: "archived", kind: "skill", status: "inactive", heading: "Old", details: "Past scope", skillItems: ["Old A; Old B"] },
+  ] });
+  const bioEdited = { ...original, profile: "New bio" };
+  expect(editedCvSkillEntryIds(bioEdited, original)).toEqual([]);
+  expect(normaliseSubmittedLibrarySkills(bioEdited, [], original)).toBe(bioEdited);
+  const skillEdited = { ...original, entries: original.entries.map(item => item.id === "skills" ? { ...item, skillItems: ["Governance, risk and compliance", "Reporting", "SQL; Python"] } : item) };
+  expect(editedCvSkillEntryIds(skillEdited, original)).toEqual(["skills"]);
+  const normalised = normaliseSubmittedLibrarySkills(skillEdited, ["skills"], original) as CvLibrarySchemaType;
+  expect(normalised.entries[0]?.skillItems).toEqual(["Governance, risk and compliance", "Reporting", "SQL", "Python"]);
+  expect(normalised.entries[1]?.skillItems).toEqual(["Old A; Old B"]);
+});
+
+type CvLibrarySchemaType = ReturnType<typeof CvLibrarySchema.parse>;

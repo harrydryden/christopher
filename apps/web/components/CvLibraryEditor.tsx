@@ -16,8 +16,8 @@ import { RowScoreButton } from "./RowScoreButton";
 import { EvidenceGuide } from "./EvidenceGuide";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
-import { CV_LIMITS } from "@ava/core/cv-format";
-import { normaliseSubmittedLibrarySkills, parseCvSkillList } from "@/lib/cv-skill-list";
+import { CV_LIMITS, cvSkillCharacterState } from "@ava/core/cv-format";
+import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList } from "@/lib/cv-skill-list";
 
 const input = inputClass;
 const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]] as const;
@@ -91,10 +91,14 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const serialised = useMemo(() => JSON.stringify(value), [value]);
   const baselineJson = useMemo(() => JSON.stringify(baseline), [baseline]);
   const dirty = serialised !== baselineJson;
+  const editedSkillIds = editedCvSkillEntryIds(value, baseline);
+  const parsedSkillItems = (entry: CvLibrary["entries"][number]) => parseCvSkillList(
+    (entry.skillItems ?? []).join("\n"), baseline.entries.find(item => item.id === entry.id)?.skillItems ?? [],
+  );
   const invalidSkills = value.entries.some(entry => {
     if (entry.kind !== "skill" || !isActiveEvidence(entry)) return false;
-    const items = parseCvSkillList((entry.skillItems ?? []).join("\n"));
-    return items.length > 20 || items.some(item => item.length > CV_LIMITS.skillCharacters);
+    const items = parsedSkillItems(entry);
+    return items.length > 20 || items.some(item => cvSkillCharacterState(item).tooLong);
   });
   const unresolved = recovery?.conflicts.filter(conflict => !recovery.choices[conflict.key]).length ?? 0;
   const recoveryPending = !!recovery && (unresolved > 0 || !recovery.valid);
@@ -363,7 +367,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const bar = dirty || unreviewed || rescoring || !!notice || !!refused || !!recovery;
   return <form action={action} onSubmit={event => {
     if (recoveryPending || invalidSkills) { event.preventDefault(); return; }
-    const normalised = normaliseSubmittedLibrarySkills(value) as CvLibrary;
+    const normalised = normaliseSubmittedLibrarySkills(value, editedSkillIds, baseline) as CvLibrary;
     // The hidden JSON field must reflect the normalised labels in this very submit event, even
     // when Save is clicked before the textarea has blurred.
     flushSync(() => setValue(normalised));
@@ -424,7 +428,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     <p className={`text-14 ${readiness.ready ? "text-ok" : "text-warn"}`} role="status">{readiness.line}</p>
     {/* How well evidenced the whole history is, and how many jobs are holding it back. */}
     {evidence.line && <p className="text-14" role="status">{evidence.line}</p>}
-    <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} />
+    <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} /><input type="hidden" name="editedSkillIds" value={JSON.stringify(editedSkillIds)} />
     <div role="tablist" aria-label="Library sections" className="flex flex-wrap gap-x-2 border-b border-line-muted">
       {libraryTabs.map(([id, label]) => <button
         key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
@@ -574,18 +578,17 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       <label className="grid gap-1.5"><span className={labelClass}>Type</span><select aria-label={`Evidence ${i + 1} type`} className={selectClass} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, skillItems: e.target.value === "skill" ? x.skillItems : undefined, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
       <label className="grid gap-1.5"><span className={labelClass}>Evidence label</span><input required placeholder="e.g. AI governance programme" className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
       {entry.kind === "skill" && (() => {
-        const parsed = parseCvSkillList((entry.skillItems ?? []).join("\n"));
-        return <label className="grid gap-1.5"><span className={labelClass}>Individual skills</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => ({ ...current, entries: current.entries.map(item => {
-          if (item.id !== entry.id) return item;
-          const skillItems = parseCvSkillList((item.skillItems ?? []).join("\n"));
-          return { ...item, skillItems: skillItems.length ? skillItems : undefined };
-        }) }))} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
+        const parsed = parsedSkillItems(entry);
+        return <label className="grid gap-1.5"><span className={labelClass}>Individual skills</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => {
+          if (!editedCvSkillEntryIds(current, baseline).includes(entry.id)) return current;
+          return normaliseSubmittedLibrarySkills(current, [entry.id], baseline) as CvLibrary;
+        })} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
           <span className="block text-12 text-muted">These are compact CV skill pills, up to {CV_LIMITS.skillCharacters} characters each. Separate them with commas, semicolons or new lines. Use Details below for supporting context.</span>
           <span className={`block text-12 ${parsed.length > 20 ? "text-danger" : "text-muted"}`} aria-live="polite">{parsed.length}/20 individual skills</span>
-          {parsed.length > 0 && <span className="block text-12 text-muted">{parsed.map((item, index) => <span key={`${index}-${item}`} className="block">{item} — {item.length}/{CV_LIMITS.skillCharacters} characters</span>)}</span>}
-          {parsed.map((item, index) => item.length > CV_LIMITS.skillCharacters
-            ? <span key={`error-${index}`} className="block text-12 text-danger" role="alert">Skill {index + 1} is {item.length} characters; the limit is {CV_LIMITS.skillCharacters}. Move supporting detail to Details.</span>
-            : item.length >= 120
+          {parsed.length > 0 && <span className="block text-12 text-muted">{parsed.map((item, index) => <span key={`${index}-${item}`} className="block">{item} — {cvSkillCharacterState(item).count}/{CV_LIMITS.skillCharacters} characters</span>)}</span>}
+          {parsed.map((item, index) => cvSkillCharacterState(item).tooLong
+            ? <span key={`error-${index}`} className="block text-12 text-danger" role="alert">Skill {index + 1} is {cvSkillCharacterState(item).count} characters; the limit is {CV_LIMITS.skillCharacters}. Move supporting detail to Details.</span>
+            : cvSkillCharacterState(item).approaching
               ? <span key={`warning-${index}`} className="block text-12 text-warn" role="status">Skill {index + 1} is approaching {CV_LIMITS.skillCharacters} characters.</span>
               : null)}
           {parsed.length > 20 && <span className="block text-12 text-danger" role="alert">Keep up to 20 individual skills in this Library block.</span>}

@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { createCvWritingBudget, cvBudgetViolations } from './cv-budget';
 import { buildFittedCv, CV_FIT_PROBLEM_CHARACTERS, cvFitCorrection, selectCvToFit, type CvFitEvent } from './cv-fit';
-import { CvContentSchema, CvPlanSchema, CvStoredPlanSchema, DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
+import { CvContentSchema, CvPlanSchema, CvStoredPlanSchema, DEFAULT_CV_THEME, cvSectionTexts, materialiseCv, type CvLibrary, type CvPlan } from './cv';
 import type { CvRubric } from './cv-assessment';
 import type { CvTailoringPlan } from './cv-tailoring';
 import { renderCvPdfWithReport } from './cv-pdf';
@@ -151,6 +151,18 @@ it('removes unrelated legacy skill pills even when they share one bullet', async
   {entryId:'skills',bullets:['SQL · Python · Excel']},
  ],gaps:[]}, 'SQL reporting', budget);
  expect(fitted.content.sections[0]!.bullets).toEqual(['SQL']);
+});
+it('limits legacy bullets to ten rendered skill pills across the section', async () => {
+ const labels = Array.from({length:12},(_,index)=>`Tool ${index}`);
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',entries:[
+  {id:'skills',kind:'skill',heading:'Tools',details:labels.join(' · ')},
+ ]};
+ const target = labels.join(' ');
+ const fitted = await selectCvToFit(source, {summary:'Analyst',sections:[
+  {entryId:'skills',bullets:[labels.join(' · ')]},
+ ],gaps:[]}, target, createCvWritingBudget(source, target));
+ expect(cvSectionTexts(fitted.content.sections[0]!)).toHaveLength(10);
+ expect(fitted.content.sections[0]!.bullets).toEqual([labels.slice(0,10).join(' · ')]);
 });
 it('repairs a model using structured labels for a legacy prose skill block without relaxing source validation', async () => {
  const source: CvLibrary = { name:'Example',contact:'',profile:'Analyst',entries:[{id:'legacy',kind:'skill',heading:'Data tools',details:'SQL and Python'}] };

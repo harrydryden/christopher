@@ -202,12 +202,18 @@ export async function selectCvToFit(
     }
     if (!entry.skillItems) {
       const before = [...section.bullets];
-      const selected = section.bullets.map((bullet, index) => {
+      const selectedParts = section.bullets.map((bullet, index) => {
         const parts = bullet.split(" · ");
         const cited = sourceRequirements(section.bulletSources?.[index], semantic).size > 0;
-        const relevant = parts.filter(part => cvRelevance(part, target) > 0 || (semantic && cited && parts.length === 1));
-        return relevant.join(" · ");
+        return parts.filter(part => cvRelevance(part, target) > 0 || (semantic && cited && parts.length === 1));
       });
+      const ranked = selectedParts.flatMap((parts, bulletIndex) => parts.map((part, partIndex) => ({
+        bulletIndex, partIndex, score: cvRelevance(part, target),
+      })));
+      const chosen = new Set(ranked.sort((a, b) => b.score - a.score || a.bulletIndex - b.bulletIndex || a.partIndex - b.partIndex)
+        .slice(0, CV_LIMITS.skillsPerSection).map(({ bulletIndex, partIndex }) => `${bulletIndex}:${partIndex}`));
+      const selected = selectedParts.map((parts, bulletIndex) => parts
+        .filter((_, partIndex) => chosen.has(`${bulletIndex}:${partIndex}`)).join(" · "));
       section.bullets = selected.filter(Boolean);
       if (section.bulletSources) section.bulletSources = section.bulletSources.filter((_, index) => !!selected[index]);
       if (section.bullets.length !== before.length || selected.some((bullet, index) => bullet !== before[index]))

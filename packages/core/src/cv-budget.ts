@@ -4,7 +4,7 @@ import { CV_LIMITS } from "./cv-format";
 import { cvMaxPages } from "./cv-theme";
 import { cvTailoringCoverage, cvTailoringRequirementWeights, type CvTailoringPlan } from "./cv-tailoring";
 
-export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number };
+export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number; relevantSkillItems?: string[] };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
 /** What a CV is fitted against: plain text, every word counting once, or words weighted by requirement. */
 export type CvRelevanceTarget = string | ReadonlyMap<string, number>;
@@ -40,6 +40,23 @@ function semanticEntryRelevance(entryId: string, semantic?: CvSemanticTarget): n
   return [...requirements].reduce((sum, id) => sum + (weights.get(id) ?? 0), 0);
 }
 
+/** The planner has already judged whether each cited source supports a requirement. A skill
+ * label is eligible only when its own source is cited; citing a different skill in the same
+ * library block does not make the entire list relevant. Older builds without a planner use
+ * an explicit description match, with no inference from the block heading. */
+export function relevantCvSkillItems(entry: CvLibrary["entries"][number], target: CvRelevanceTarget, semantic?: CvSemanticTarget): string[] {
+  if (entry.kind !== "skill" || !entry.skillItems) return [];
+  const coverage = semantic ? cvTailoringCoverage(semantic.plan) : undefined;
+  return entry.skillItems.filter((item, index) => coverage
+    ? (coverage.get(`entry:${entry.id}:skill:${index}`)?.size ?? 0) > 0
+    : cvRelevance(item, target) > 0);
+}
+
+function relevantSkillBlock(entry: CvLibrary["entries"][number], target: CvRelevanceTarget, semantic?: CvSemanticTarget): boolean {
+  if (entry.skillItems) return relevantCvSkillItems(entry, target, semantic).length > 0;
+  return semantic ? semanticEntryRelevance(entry.id, semantic) > 0 : cvRelevance(entry.details, target) > 0;
+}
+
 /** Allocate a conservative writing envelope; actual PDF measurement remains authoritative. */
 export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTarget, scale = 1, semantic?: CvSemanticTarget): CvWritingBudget {
   const roles = library.entries.filter(entry => entry.kind === 'experience').sort((a, b) => {
@@ -55,7 +72,8 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
     ? semanticEntryRelevance(entry.id, semantic)
     : cvRelevance([entry.heading, entry.details, ...(entry.skillItems ?? [])].join(' '), target);
   const byRelevance = (a: CvLibrary["entries"][number], b: CvLibrary["entries"][number]) => entryRelevance(b) - entryRelevance(a);
-  const skills = library.entries.filter(entry => entry.kind === 'skill').sort(byRelevance).slice(0, Math.min(2, 20 - roles.length - education.length));
+  const skills = library.entries.filter(entry => entry.kind === 'skill' && relevantSkillBlock(entry, target, semantic))
+    .sort(byRelevance).slice(0, Math.min(2, 20 - roles.length - education.length));
   // The allocations were calibrated on a two-page CV. The user's page limit scales the body;
   // the profile only shrinks for a one-page CV, because it sits in the fixed masthead.
   const pages = cvMaxPages(library.theme) / 2;
@@ -80,7 +98,9 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
       maxBullets: Math.max(1, Math.min(bulletCap, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
   });
   blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10, maxBullets: 6, maxCharacters: Math.round(150 * scale), maxBulletCharacters: Math.round(150 * scale), maxSkills: 0 })));
-  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: entry.skillItems ? Math.max(2, Math.round(5 * pages * scale)) : 0 })));
+  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale),
+    maxSkills: entry.skillItems ? Math.min(CV_LIMITS.skillsPerSection, Math.max(2, Math.round(5 * pages * scale))) : 0,
+    ...(entry.skillItems ? { relevantSkillItems: relevantCvSkillItems(entry, target, semantic) } : {}) })));
   blocks.push(...interests.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 0, maxBullets: 2, maxCharacters: Math.round(120 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: 0 })));
   return { summaryCharacters, totalCharacters, blocks };
 }

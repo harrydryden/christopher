@@ -411,9 +411,9 @@ The CV builder's entries, generated from the registry (a test fails when this ta
 | Prompt | Stage | Version | Model | Effort | Max tokens | Cache layout |
 |---|---|---|---|---|---|---|
 | `cv.rubric` | `rubric` | `d873010fc6` | account's CV model | high | 12,000 | system 5m · tail uncached |
-| `cv.planning` | `planning` | `94844fba54` | account's CV model | high | 16,000 | system 5m · tail uncached |
-| `cv.author` | `author` | `4a097230db` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
-| `cv.improvement` | `improvement` | `4a097230db` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
+| `cv.planning` | `planning` | `421faed8a4` | account's CV model | high | 16,000 | system 5m · tail uncached |
+| `cv.author` | `author` | `b4619c04bf` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
+| `cv.improvement` | `improvement` | `b4619c04bf` | account's CV model | high | 32,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
 | `cv.review` | `review` | `6245b51f5e` | account's CV model | high | 24,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
 | `cv.review_candidate` | `review_candidate` | `6245b51f5e` | account's CV model | high | 24,000 | system uncached · stable 1 5m · stable 2 5m · tail uncached |
 <!-- cv-call-sites:end -->

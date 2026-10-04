@@ -1,7 +1,9 @@
 import { expect, it, vi } from 'vitest';
 import { createCvWritingBudget, cvBudgetViolations } from './cv-budget';
 import { buildFittedCv, CV_FIT_PROBLEM_CHARACTERS, cvFitCorrection, selectCvToFit, type CvFitEvent } from './cv-fit';
-import { DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
+import { CvContentSchema, CvPlanSchema, CvStoredPlanSchema, DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
+import type { CvRubric } from './cv-assessment';
+import type { CvTailoringPlan } from './cv-tailoring';
 import { renderCvPdfWithReport } from './cv-pdf';
 // Every render the fitter asks for, counted, so a test can say how many it took.
 const renders = vi.hoisted(() => ({ count: 0 }));
@@ -59,7 +61,7 @@ it('gives the writer budgets before its first attempt and avoids unnecessary mod
  expect(motions).toEqual(["write", "write", "check_plan", "measure", "measure", "shorten"]);
  expect(write).toHaveBeenCalledTimes(1);
  expect(write.mock.calls[0]![0].maxPages).toBe(2);
- expect(write.mock.calls[0]![0].writingBudget.blocks).toHaveLength(8);
+ expect(write.mock.calls[0]![0].writingBudget.blocks).toHaveLength(7);
  expect((await renderCvPdfWithReport(fitted)).pageCount).toBeLessThanOrEqual(2);
  expect(fitted.fitNotes!.length).toBeGreaterThan(0);
 });
@@ -80,7 +82,7 @@ it('reports each motion of writing and fitting with the figures behind it',async
  const shorten = events[5] as Extract<CvFitEvent,{motion:'shorten'}>;
  expect(shorten.removed).toBeGreaterThan(0);
  expect(shorten.changes.length).toBeLessThanOrEqual(6);
- expect(shorten.changes[0]).toContain('prioritised');
+ expect(shorten.changes.some(change => change.includes('prioritised'))).toBe(true);
 });
 it('never silently drops employment or education to satisfy the page count',async()=>{
  const events: CvFitEvent[] = [];
@@ -100,8 +102,43 @@ it('ranks structured skill labels including AI and R, and enforces their allocat
  const budget=createCvWritingBudget(source,'AI and R');
  expect(budget.blocks[0]!.entryId).toBe('s3');
  const fitted=await selectCvToFit(source,{summary:'Analyst',sections:[{entryId:'s3',bullets:['Tools'],skillItems:source.entries[2]!.skillItems}],gaps:[]},'AI and R',budget);
- expect(fitted.content.sections[0]!.skillItems).toHaveLength(budget.blocks[0]!.maxSkills);
- expect(fitted.content.sections[0]!.skillItems).toEqual(expect.arrayContaining(['AI','R']));
+ expect(budget.blocks[0]!.relevantSkillItems).toEqual(['AI','R']);
+ expect(fitted.content.sections[0]!.skillItems).toEqual(['AI','R']);
+});
+it('selects individual skills by confirmed requirement evidence, including semantic equivalents', async () => {
+ const source: CvLibrary = { name:'Example',contact:'',profile:'Developer',entries:[
+  {id:'front',kind:'skill',heading:'Web tools',details:'JavaScript and Python',skillItems:['JavaScript','Python']},
+  {id:'office',kind:'skill',heading:'Office tools',details:'Excel',skillItems:['Excel']},
+ ]};
+ const rubric: CvRubric = { caveats:[],requirements:[{id:'r1',label:'JS',quote:'Build interfaces with JS',importance:'essential',category:'skills'}] };
+ const tailoring: CvTailoringPlan = { requirements:[{requirementId:'r1',status:'demonstrated',evidence:[{sourceId:'entry:front:skill:0',quote:'JavaScript'}],reason:'Equivalent name.'}],gapQuestions:[] };
+ const semantic = { plan:tailoring, rubric };
+ const budget = createCvWritingBudget(source, 'Build interfaces with JS', 1, semantic);
+ expect(budget.blocks.map(block => block.entryId)).toEqual(['front']);
+ expect(budget.blocks[0]!.relevantSkillItems).toEqual(['JavaScript']);
+ const fitted = await selectCvToFit(source, {summary:'Developer',sections:[
+  {entryId:'front',bullets:['JavaScript'],skillItems:['JavaScript','Python']},
+  {entryId:'office',bullets:['Excel'],skillItems:['Excel']},
+ ],gaps:[]}, 'Build interfaces with JS', budget, semantic);
+ expect(fitted.content.sections.map(section => section.entryId)).toEqual(['front']);
+ expect(fitted.content.sections[0]!.skillItems).toEqual(['JavaScript']);
+});
+it('caps new skill sections at ten while accepting older saved CVs with larger lists', () => {
+ const skills = Array.from({length:11},(_,index)=>`Tool ${index}`);
+ const section = {entryId:'skills',kind:'skill' as const,heading:'Skills',bullets:['Tool 0'],skillItems:skills};
+ expect(CvPlanSchema.safeParse({summary:'Developer',sections:[section],gaps:[]}).success).toBe(false);
+ expect(CvStoredPlanSchema.safeParse({summary:'Developer',sections:[section],gaps:[]}).success).toBe(true);
+ expect(CvContentSchema.safeParse({name:'Example',contact:'',summary:'Developer',sections:[section],gaps:[]}).success).toBe(true);
+});
+it('removes unrelated legacy skill pills even when they share one bullet', async () => {
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',entries:[
+  {id:'skills',kind:'skill',heading:'Tools',details:'SQL · Python · Excel'},
+ ]};
+ const budget = createCvWritingBudget(source, 'SQL reporting');
+ const fitted = await selectCvToFit(source, {summary:'Analyst',sections:[
+  {entryId:'skills',bullets:['SQL · Python · Excel']},
+ ],gaps:[]}, 'SQL reporting', budget);
+ expect(fitted.content.sections[0]!.bullets).toEqual(['SQL']);
 });
 it('repairs a model using structured labels for a legacy prose skill block without relaxing source validation', async () => {
  const source: CvLibrary = { name:'Example',contact:'',profile:'Analyst',entries:[{id:'legacy',kind:'skill',heading:'Data tools',details:'SQL and Python'}] };
@@ -128,7 +165,7 @@ it('bounds retries when the writer repeatedly ignores the legacy skill format', 
  expect(write).toHaveBeenCalledTimes(3);
 });
 it('scales the writing budget with the page limit held in the library theme', () => {
- const target='Financial planning budgets reporting';
+ const target='Financial planning budgets reporting SQL';
  const pages=(maxPages:number)=>({...library,theme:{...DEFAULT_CV_THEME,maxPages}});
  const one=createCvWritingBudget(pages(1),target), two=createCvWritingBudget(pages(2),target), three=createCvWritingBudget(pages(3),target);
  expect(three.totalCharacters).toBeGreaterThan(two.totalCharacters);

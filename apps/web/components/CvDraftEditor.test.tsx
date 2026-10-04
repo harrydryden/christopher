@@ -188,7 +188,8 @@ it("asks which skills to take from a Library section larger than ten", () => {
   act(() => { picker.value = "large"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
   expect(container.textContent).toContain("Choose up to 10 skills from Large");
   expect(container.querySelector<HTMLInputElement>('[name="addedSkills"]')?.value).toBe("[]");
-  for (const index of [2, 11]) act(() => container.querySelector<HTMLInputElement>(`[aria-label="Select skill ${index + 1} from Large"]`)!.click());
+  for (const index of [2, 11]) act(() => container.querySelector<HTMLInputElement>(`[aria-label="Select skill ${index + 1}: Skill ${index + 1} from Large"]`)!.click());
+  expect(container.querySelector('[aria-label="Select skill 3: Skill 3 from Large"]')).not.toBeNull();
   act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Add selected Library section")!.click());
   const added = JSON.parse(container.querySelector<HTMLInputElement>('[name="addedSkills"]')!.value);
   expect(added[0]).toMatchObject({ heading: "Large", items: ["Skill 3", "Skill 12"] });

@@ -300,7 +300,9 @@ export function failureWayForward(
   const done = { retry: canRetry, retryNote: canRetry ? "When you have done that, retry generation." : null };
   switch (action) {
     case "raise_budget":
-      return { links: [], note: "No CV credit was used. Please try again later.", retry: canRetry, retryNote: null };
+      // The failure message already explains the credit and when to retry. Repeating it in the
+      // way-forward panel made the failed CV show the same advice twice.
+      return { links: [], note: null, retry: canRetry, retryNote: null };
     case "fix_library":
       return { links: [{ label: "Open the Library", href: "/library" }], note: null, ...done };
     case "shorten_or_raise_pages":

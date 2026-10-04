@@ -242,6 +242,9 @@ it("names the failure, its heading and the person's way forward on a failed draf
   expect(state.title).toBe("CV generation unavailable");
   expect(state.message).toBe("CV generation is unavailable right now. No CV credit was used. Please try again later.");
   expect(state.action).toBe("raise_budget");
+  const wayForward = failureWayForward(state.action, { canRetry: true });
+  expect(wayForward.note).toBeNull();
+  expect([state.message, wayForward.note].filter(Boolean).join(" ").match(/No CV credit was used/g)).toHaveLength(1);
 
   // Attempts spent on something the system was resolving: the heading says so, and the way out is
   // the retry, which resumes from whatever the build already paid for.
@@ -271,7 +274,7 @@ it("names the failure, its heading and the person's way forward on a failed draf
 it("offers each failure the page that fixes it, and the retry only where it would work", () => {
   expect(failureWayForward("raise_budget", { canRetry: true })).toEqual({
     links: [],
-    note: "No CV credit was used. Please try again later.",
+    note: null,
     retry: true,
     retryNote: null,
   });

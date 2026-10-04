@@ -70,6 +70,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         details: "Led a team",
         confirmedResponsibilities: ["Led a team"],
       },
+      { id: "library-skills", kind: "skill", heading: "Commercial capabilities", details: "Forecasting and planning", skillItems: ["Forecasting", "Planning"] },
     ],
   };
   const description = "Lead a team and improve operations.";
@@ -305,19 +306,37 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     // Skill edits use the same normalisation for the preview and saved revision. Clearing the
     // last skill omits its section instead of sending the empty array that used to reject PDFs.
     await page.getByRole("button", { name: "Add skill section", exact: true }).click();
-    await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).fill("SQL");
+    const tenSkills = ["SQL", "Python", "Forecasting", "Commercial strategy", "Operations", "Leadership", "Analysis", "Planning", "Reporting", "Partnerships"];
+    for (const [index, skill] of tenSkills.entries()) {
+      if (index) await page.getByRole("button", { name: "Add skill", exact: true }).click();
+      await page.getByRole("textbox", { name: `Skill ${index + 1} in new section`, exact: true }).fill(skill);
+    }
+    assert.equal(await page.getByRole("button", { name: "Add skill", exact: true }).isDisabled(), true, "ten skills is enforced in the editor");
     await page.getByRole("button", { name: "Show PDF preview", exact: true }).click();
     const previewWithSkill = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const skillResponse = await previewWithSkill;
     assert.equal(skillResponse.status(), 200);
-    assert.deepEqual(skillResponse.request().postDataJSON().sections.at(-1).skillItems, ["SQL"]);
+    assert.deepEqual(skillResponse.request().postDataJSON().sections.at(-1).skillItems, tenSkills);
+    for (let index = 10; index > 1; index--) {
+      await page.getByRole("button", { name: `Remove skill ${index} from new section`, exact: true }).click();
+    }
+    assert.equal(await page.getByRole("button", { name: "Add skill", exact: true }).isDisabled(), false);
     await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).fill("");
     const previewWithoutSkill = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const emptyResponse = await previewWithoutSkill;
     assert.equal(emptyResponse.status(), 200);
     assert.equal(emptyResponse.request().postDataJSON().sections.length, content.sections.length);
+    await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
+    await page.getByLabel("Add section from Library", { exact: true }).selectOption("library-skills");
+    assert.equal(await page.getByRole("textbox", { name: "Section heading", exact: true }).inputValue(), "Commercial capabilities");
+    assert.equal(await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).inputValue(), "Forecasting");
+    const previewFromLibrary = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
+    await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
+    const libraryResponse = await previewFromLibrary;
+    assert.equal(libraryResponse.status(), 200);
+    assert.deepEqual(libraryResponse.request().postDataJSON().sections.at(-1).skillItems, ["Forecasting", "Planning"]);
     await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
     await page.getByRole("button", { name: "Hide PDF preview", exact: true }).click();
     // The page is server-rendered with the stored summary and refreshes itself every ten seconds.

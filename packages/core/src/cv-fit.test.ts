@@ -130,6 +130,18 @@ it('caps new skill sections at ten while accepting older saved CVs with larger l
  expect(CvStoredPlanSchema.safeParse({summary:'Developer',sections:[section],gaps:[]}).success).toBe(true);
  expect(CvContentSchema.safeParse({name:'Example',contact:'',summary:'Developer',sections:[section],gaps:[]}).success).toBe(true);
 });
+it('fits an older saved skill list to the ten-item generated limit', async () => {
+ const skills = Array.from({length:12},(_,index)=>`Tool ${index}`);
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Developer',theme:{...DEFAULT_CV_THEME,maxPages:5},entries:[
+  {id:'skills',kind:'skill',heading:'Tools',details:skills.join(', '),skillItems:skills},
+ ]};
+ const budget = createCvWritingBudget(source, skills.join(' '));
+ expect(budget.blocks[0]!.maxSkills).toBe(10);
+ const fitted = await selectCvToFit(source, {summary:'Developer',sections:[
+  {entryId:'skills',bullets:['Tools'],skillItems:skills},
+ ],gaps:[]}, skills.join(' '), budget);
+ expect(fitted.content.sections[0]!.skillItems).toHaveLength(10);
+});
 it('removes unrelated legacy skill pills even when they share one bullet', async () => {
  const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',entries:[
   {id:'skills',kind:'skill',heading:'Tools',details:'SQL · Python · Excel'},

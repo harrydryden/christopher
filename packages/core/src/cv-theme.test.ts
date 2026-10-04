@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CvLibrarySchema, CvPlanSchema, CvContentSchema, CvThemeSchema, DEFAULT_CV_THEME, cvForeground, cvMaxPages, materialiseCv, groupCvLibrary, resolveCvTheme, type CvLibrary } from './cv';
+import { CvLibrarySchema, CvPlanSchema, CvContentSchema, CvThemeSchema, DEFAULT_CV_THEME, cvForeground, cvMaxPages, cvSectionTexts, materialiseCv, groupCvLibrary, resolveCvTheme, type CvLibrary } from './cv';
 const library: CvLibrary = { name: 'Example', contact: '', profile: '', entries: [{ id: 'skills', kind: 'skill', heading: 'Technical skills', details: 'Used SQL for reporting and Python for analysis.', skillItems: ['SQL', 'Python'] }] };
 const plan = { summary: 'Analyst.', sections: [{ entryId: 'skills', bullets: ['Reporting and analysis.'], skillItems: ['SQL'] }], gaps: [] };
 describe('structured skills and theme snapshots', () => {
@@ -31,7 +31,9 @@ describe('structured skills and theme snapshots', () => {
       const authored = { summary: 'Analyst.', sections: [{ entryId: 'skills', bullets: ['Reporting'], skillItems: [label] }], gaps: [] };
       expect(CvLibrarySchema.safeParse(source).success).toBe(true);
       expect(CvPlanSchema.safeParse(authored).success).toBe(true);
-      expect(materialiseCv(source, authored).sections[0]?.skillItems).toEqual([label]);
+      const printed = materialiseCv(source, authored).sections[0]!;
+      expect(printed.skillItems).toEqual([label]);
+      expect(cvSectionTexts(printed)).toEqual([label]);
     }
     const over = 'S'.repeat(151);
     expect(CvLibrarySchema.safeParse({ ...library, entries: [{ ...library.entries[0], skillItems: [over] }] }).success).toBe(false);

@@ -1535,7 +1535,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
     .mockResolvedValue({
       requirements: [
         { requirementId: "r1", status: "demonstrated", evidence: [{ sourceId: "entry:role:row:0", quote: "Led operations" }], reason: "The role evidence directly supports this." },
-        { requirementId: "r2", status: "demonstrated", evidence: [{ sourceId: "entry:skills:row:0", quote: "SQL" }], reason: "The skills evidence directly supports this." },
+        { requirementId: "r2", status: "demonstrated", evidence: [{ sourceId: "entry:skills:skill:0", quote: "SQL" }], reason: "The individual skill directly supports this." },
       ],
       gapQuestions: [],
     });

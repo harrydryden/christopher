@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, cvMaxPages, CvContentSchema, CV_GROUPS, type CvContent, type CvFont } from "./cv";
 import { LIBERATION_SANS_BOLD, LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
 
-import { cleanCvText, measurePillRows, drawPillRow, PILL_STYLES } from "./cv-pdf-pills";
+import { cleanCvText, measurePillRows, drawPillRow, darkerPillColour, PILL_STYLES } from "./cv-pdf-pills";
 
 export class CvLayoutError extends Error {}
 export function assertCvPageLimit(pageCount: number, maxPages: number): void {
@@ -178,19 +178,9 @@ export async function renderCvPdfWithReport(
   }
   const groups = CV_GROUPS;
   const ordered = cvDisplaySections(content).map((item) => item.section);
-  const skillHeadingGap = 3;
   const skillSectionGap = 6;
   const pageBodyHeight = doc.page.height - 55 - 44;
-  const measureSkillLabel = (value: string) => {
-    doc.font(face.bold).fontSize(9);
-    return doc.heightOfString(clean(value), { width, lineGap: 2.5 });
-  };
-  const drawSkillLabel = (value: string, top: number) => {
-    doc.font(face.bold).fontSize(9).fillColor(ink)
-      .text(clean(value), 44, top, { width, lineGap: 2.5 });
-    doc.x = 44;
-    doc.y = top;
-  };
+  const skillHeadingColour = darkerPillColour(theme.pill);
   const measureSection = (section: CvContent["sections"][number]) => {
     // Education and Skills share a parent section, with a subsection for each. Qualifications carry
     // their own label in the bullet; retain headings only when they add information.
@@ -225,12 +215,15 @@ export async function renderCvPdfWithReport(
             width,
             PILL_STYLES.skill,
             face.regular,
+            { label: sectionHeading!, font: face.bold },
           )
         : [];
-    const skillLabelHeight = section.kind === "skill" ? measureSkillLabel(sectionHeading!) : 0;
+    const firstSkillRowIndex = skillRows.findIndex(row => row.pills.some(pill => !pill.heading));
+    const firstSkillHeight = firstSkillRowIndex < 0 ? 0 : skillRows.slice(0, firstSkillRowIndex + 1)
+      .reduce((sum, row) => sum + row.height, 0) + firstSkillRowIndex * PILL_STYLES.skill.gapY;
     const firstHeight = skillRows[0]?.height ?? bulletHeights[0] ?? 0;
     const minimumHeight = section.kind === "skill"
-      ? skillLabelHeight + skillHeadingGap + firstHeight + skillSectionGap
+      ? firstSkillHeight + skillSectionGap
       : headerHeight + industryHeight + firstHeight + 4;
     const contentHeight = skillRows.length
       ? skillRows.reduce(
@@ -248,7 +241,7 @@ export async function renderCvPdfWithReport(
       skillRows,
       minimumHeight,
       wholeHeight: section.kind === "skill"
-        ? skillLabelHeight + skillHeadingGap + skillContentHeight + skillSectionGap
+        ? skillContentHeight + skillSectionGap
         : headerHeight + industryHeight + contentHeight + 6,
     };
   };
@@ -285,20 +278,26 @@ export async function renderCvPdfWithReport(
       room(keepWhole ? wholeHeight : minimumHeight);
       if (section.kind === "skill") {
         let top = doc.y;
-        top += measureSkillLabel(sectionHeading!) + skillHeadingGap;
-        drawSkillLabel(sectionHeading!, doc.y);
-        for (const row of skillRows) {
+        let rows = skillRows;
+        let rowIndex = 0;
+        while (rowIndex < rows.length) {
+          const row = rows[rowIndex]!;
           if (top + row.height > doc.page.height - 55) {
             doc.addPage();
-            const continued = `${sectionHeading} (continued)`;
-            top = doc.y + measureSkillLabel(continued) + skillHeadingGap;
-            drawSkillLabel(continued, doc.y);
+            const remaining = rows.slice(rowIndex).flatMap(item => item.pills.filter(pill => !pill.heading).map(pill => pill.label));
+            rows = measurePillRows(doc, remaining, width, PILL_STYLES.skill, face.regular,
+              { label: `${sectionHeading} (continued)`, font: face.bold });
+            rowIndex = 0;
+            top = doc.y;
+            continue;
           }
-          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill, face.regular);
+          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill, face.regular,
+            { colour: skillHeadingColour, font: face.bold });
           top += row.height + PILL_STYLES.skill.gapY;
+          rowIndex++;
         }
         doc.x = 44;
-        doc.y = top - (skillRows.length ? PILL_STYLES.skill.gapY : 0) + skillSectionGap;
+        doc.y = top - (rows.length ? PILL_STYLES.skill.gapY : 0) + skillSectionGap;
         continue;
       }
       if (showHeading && sectionHeading) {

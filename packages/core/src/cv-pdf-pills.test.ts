@@ -1,11 +1,14 @@
 import PDFDocument from "pdfkit";
 import { expect, it, vi } from "vitest";
-import { LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
-import { drawPillRow, measurePillRows, PILL_STYLES } from "./cv-pdf-pills";
+import { LIBERATION_SANS_BOLD, LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
+import { darkerPillColour, drawPillRow, measurePillRows, PILL_STYLES } from "./cv-pdf-pills";
 
 const docFor = (font: "Helvetica" | "Arial") => {
   const doc = new PDFDocument();
-  if (font === "Arial") doc.registerFont("Arial", Buffer.from(LIBERATION_SANS_REGULAR.replace(/\s+/g, ""), "base64"));
+  if (font === "Arial") {
+    doc.registerFont("Arial", Buffer.from(LIBERATION_SANS_REGULAR.replace(/\s+/g, ""), "base64"));
+    doc.registerFont("Arial-Bold", Buffer.from(LIBERATION_SANS_BOLD.replace(/\s+/g, ""), "base64"));
+  }
   return doc;
 };
 
@@ -49,13 +52,53 @@ it.each(["Helvetica", "Arial"] as const)("keeps 150-character worded and unbroke
   doc.end();
 });
 
+it.each(["Helvetica", "Arial"] as const)("measures a bold section heading as the first same-height pill in %s", font => {
+  const doc = docFor(font);
+  const bold = font === "Arial" ? "Arial-Bold" : "Helvetica-Bold";
+  const rows = measurePillRows(doc, ["BI Tools", "SQL", "Power BI"], 507, PILL_STYLES.skill, font,
+    { label: "Operations", font: bold });
+  expect(rows[0]!.pills.map(pill => pill.label)).toEqual(["Operations", "BI Tools", "SQL", "Power BI"]);
+  expect(rows[0]!.pills.map(pill => pill.heading)).toEqual([true, false, false, false]);
+  expect(rows[0]!.pills.every(pill => pill.height === rows[0]!.height)).toBe(true);
+  const fill = vi.spyOn(doc, "fill");
+  const fonts = vi.spyOn(doc, "font");
+  const colour = "#e6e6e6";
+  const darker = darkerPillColour(colour);
+  expect(darker).toBe("#a6a6a6");
+  drawPillRow(doc, rows[0]!, 44, 100, colour, PILL_STYLES.skill, font, { colour: darker, font: bold });
+  expect(fill.mock.calls.map(call => call[0])).toEqual([darker, colour, colour, colour]);
+  expect(fonts.mock.calls.map(call => call[0])).toEqual([bold, font, font, font]);
+  doc.end();
+});
+
+it("keeps a wide heading pill and its first skill in measured consecutive rows", () => {
+  const doc = docFor("Helvetica");
+  const heading = "Long technology and systems transformation heading ".repeat(4);
+  const rows = measurePillRows(doc, ["SQL", "Power BI"], 220, PILL_STYLES.skill, "Helvetica",
+    { label: heading, font: "Helvetica-Bold" });
+  expect(rows[0]!.pills).toHaveLength(1);
+  expect(rows[0]!.pills[0]!.heading).toBe(true);
+  expect(rows[1]!.pills[0]!.label).toBe("SQL");
+  doc.end();
+});
+
+it("places a heading beside the first skill whenever both pills fit", () => {
+  const doc = docFor("Helvetica");
+  const rows = measurePillRows(doc, ["SQL", "Python", "Power BI", "Excel", "CRM", "Forecasting"], 160,
+    PILL_STYLES.skill, "Helvetica", { label: "Tools", font: "Helvetica-Bold" });
+  expect(rows.length).toBeGreaterThan(1);
+  expect(rows[0]!.pills[0]!.label).toBe("Tools");
+  expect(rows[0]!.pills[1]!.label).toBe("SQL");
+  doc.end();
+});
+
 it("draws every pill in a mixed-height row at the row height and centres each label", () => {
   const doc = docFor("Helvetica");
   const rounded = vi.spyOn(doc, "roundedRect");
   const text = vi.spyOn(doc, "text");
   const row = { height: 40, pills: [
-    { label: "SQL", x: 0, width: 50, height: 18, textHeight: 10, lineHeight: 12 },
-    { label: "Long label", x: 55, width: 120, height: 40, textHeight: 30, lineHeight: 12 },
+    { label: "SQL", x: 0, width: 50, height: 18, textHeight: 10, lineHeight: 12, heading: false },
+    { label: "Long label", x: 55, width: 120, height: 40, textHeight: 30, lineHeight: 12, heading: false },
   ] };
   drawPillRow(doc, row, 44, 100, "#eeeeee", PILL_STYLES.skill);
   expect(rounded.mock.calls.map(call => call[3])).toEqual([40, 40]);

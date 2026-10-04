@@ -6,24 +6,42 @@ export const PILL_STYLES = {
   skill: { fontSize: 8.5, paddingX: 6, paddingY: 3, gapX: 5, gapY: 4, radius: 8 },
 } as const;
 type PillStyle = (typeof PILL_STYLES)[keyof typeof PILL_STYLES];
-type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number };
+type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number; heading: boolean };
 export type PillRow = { pills: Pill[]; height: number };
+type HeadingPill = { label: string; font: string };
 import { cleanCvText } from "./cv-format";
 export { cleanCvText } from "./cv-format";
 
+/** Preserve the chosen pill hue while giving a section pill a visibly stronger fill. */
+export function darkerPillColour(colour: string): string {
+  return `#${[1, 3, 5].map(index => Math.round(Number.parseInt(colour.slice(index, index + 2), 16) * 0.72)
+    .toString(16).padStart(2, "0")).join("")}`;
+}
+
 /** Measurement and drawing share all font, wrapping and alignment options. */
-export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width: number, style: PillStyle, font = "Helvetica"): PillRow[] {
+export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width: number, style: PillStyle, font = "Helvetica", heading?: HeadingPill): PillRow[] {
   // PDFKit may wrap text measured to its exact width because drawing rounds glyph positions.
   // One point of breathing room keeps short labels on one line in either embedded font.
-  const pills = labels.map(value => {
+  const pills = [...(heading ? [{ value: heading.label, face: heading.font, isHeading: true }] : []),
+    ...labels.map(value => ({ value, face: font, isHeading: false }))].map(({ value, face, isHeading }) => {
     const label = cleanCvText(value);
-    doc.font(font).fontSize(style.fontSize);
+    doc.font(face).fontSize(style.fontSize);
     const pillWidth = Math.min(width, Math.ceil(doc.widthOfString(label) + style.paddingX * 2 + 1));
     const textWidth = pillWidth - style.paddingX * 2;
     const textHeight = doc.heightOfString(label, { width: textWidth, lineGap: 1, align: "center", baseline: "middle" });
     return { label, x: 0, width: pillWidth, height: Math.ceil(textHeight + style.paddingY * 2), textHeight,
-      lineHeight: doc.currentLineHeight(true) + 1 };
+      lineHeight: doc.currentLineHeight(true) + 1, heading: isHeading };
   });
+  if (style === PILL_STYLES.skill && heading) {
+    // Bold and regular faces differ slightly in ascent. Give every ordinary pill the same
+    // minimum height, even when a balanced row contains no heading pill.
+    const oneLine = [font, heading.font].map(face => {
+      doc.font(face).fontSize(style.fontSize);
+      return doc.heightOfString("Mg", { width: width - style.paddingX * 2, lineGap: 1, align: "center", baseline: "middle" });
+    });
+    const minimumHeight = Math.ceil(Math.max(...oneLine) + style.paddingY * 2);
+    for (const pill of pills) pill.height = Math.max(pill.height, minimumHeight);
+  }
   const rows: PillRow[] = [];
   const rowFor = (first: number, last: number): PillRow => {
     const items = pills.slice(first, last);
@@ -59,6 +77,8 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
       used += (end > first + 1 ? style.gapX : 0) + pill.width;
       if (used > width) break;
       rowHeight = Math.max(rowHeight, pill.height);
+      if (heading && first === 0 && end === 1 && pills.length > 1 &&
+          used + style.gapX + pills[1]!.width <= width) continue;
       const tail = best[end]!;
       const candidate: Layout = {
         height: rowHeight + (tail.count ? style.gapY + tail.height : 0),
@@ -84,11 +104,12 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
   }
   return rows;
 }
-export function drawPillRow(doc: PDFKit.PDFDocument, row: PillRow, left: number, top: number, colour: string, style: PillStyle, font = "Helvetica"): void {
+export function drawPillRow(doc: PDFKit.PDFDocument, row: PillRow, left: number, top: number, colour: string, style: PillStyle, font = "Helvetica", heading?: { colour: string; font: string }): void {
   for (const pill of row.pills) {
-    doc.roundedRect(left + pill.x, top, pill.width, row.height, style.radius).fill(colour);
+    const fill = pill.heading ? heading?.colour ?? darkerPillColour(colour) : colour;
+    doc.roundedRect(left + pill.x, top, pill.width, row.height, style.radius).fill(fill);
     // Reset the font even after a page break/continuation heading.
-    doc.font(font).fontSize(style.fontSize).fillColor(cvForeground(colour)).text(pill.label,
+    doc.font(pill.heading ? heading?.font ?? font : font).fontSize(style.fontSize).fillColor(cvForeground(fill)).text(pill.label,
       left + pill.x + style.paddingX, top + (row.height - pill.textHeight + pill.lineHeight) / 2,
       { width: pill.width - style.paddingX * 2, lineGap: 1, align: "center", baseline: "middle" });
   }

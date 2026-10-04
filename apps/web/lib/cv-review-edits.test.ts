@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@ava/core/cv";
-import { cvReviewSections, cvReviewSkillLimitIssue } from "./cv-review-edits";
+import { cvReviewSections, cvReviewSkillLimitIssue, cvReviewSkillCharacterIssue } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -67,4 +67,12 @@ it("counts legacy pills inside one bullet and preserves untouched source metadat
   expect(trimmed[1]?.bullets).toEqual(labels.slice(0, 6));
   expect(trimmed[1]?.bulletSources).toBeUndefined();
   expect(cvReviewSkillLimitIssue(trimmed)).toBeNull();
+});
+
+it("matches schema character validation without collapsing internal spaces", () => {
+  for (const label of ["  " + "x".repeat(150) + "  ", "x".repeat(75) + "  " + "y".repeat(74)]) {
+    const sections = [{ ...saved.sections[1]!, skillItems: [label] }];
+    const valid = CvContentSchema.safeParse({ ...saved, sections }).success;
+    expect(cvReviewSkillCharacterIssue(sections) === null).toBe(valid);
+  }
 });

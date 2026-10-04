@@ -22,6 +22,7 @@ import { cvNextAction } from "@/lib/cv-next-action";
 import { CvNextAction } from "@/components/CvNextAction";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent } from "@ava/core/cv-review";
 import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
+import { CV_LIMITS } from "@ava/core/cv-format";
 import type { CvAssessment } from "@ava/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
 import { cvEditFormId } from "@/lib/cv-content-links";
@@ -154,7 +155,7 @@ export default async function CvDraftPage({
   const librarySkillSections = draft.librarySnapshot.entries.flatMap((entry) => {
     if (entry.kind !== "skill" || !isActiveStoredEvidence(entry)) return [];
     const legacy = entry.details.split(/[,;\n]| · /).map((item) => item.trim())
-      .filter((item) => item.length > 0 && item.length <= 80);
+      .filter((item) => item.length > 0 && item.length <= CV_LIMITS.skillCharacters);
     const items = entry.skillItems?.length ? entry.skillItems : legacy;
     return items.length ? [{ id: entry.id, heading: entry.heading, items: [...new Set(items)] }] : [];
   });

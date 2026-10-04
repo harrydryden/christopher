@@ -8,6 +8,7 @@ import {
   libraryImportUrl,
   parseLibraryAdditions,
   proposalToLibraryAdditions,
+  StoredLibraryProposalSchema,
   validateLibraryProposal,
   type LibraryProposal,
 } from "./library-import";
@@ -65,6 +66,19 @@ function plan(over: Record<string, unknown> = {}) {
 const validated = () => validateLibraryProposal(DOCUMENT, plan()).proposal;
 
 describe("validateLibraryProposal", () => {
+  it("preserves an anchored 121-character skill and rejects labels over 150", () => {
+    const label = `Detailed capability ${'x'.repeat(101)}`;
+    expect(label).toHaveLength(121);
+    const document = `${DOCUMENT}\n${label}`;
+    const accepted = validateLibraryProposal(document, plan({ skills: [{ text: label }] }));
+    expect(accepted.proposal.skills[0]?.text).toBe(label);
+    expect(StoredLibraryProposalSchema.safeParse(accepted.proposal).success).toBe(true);
+    const over = `Detailed capability ${'x'.repeat(131)}`;
+    expect(over).toHaveLength(151);
+    const rejected = validateLibraryProposal(`${DOCUMENT}\n${over}`, plan({ skills: [{ text: over }] }));
+    expect(rejected.proposal.skills).toEqual([]);
+    expect(rejected.dropped).toBeGreaterThan(0);
+  });
   it("does not turn an explicitly ended role into a current job when the model says current", () => {
     const wrong = plan({ employment: [{ ...plan().employment[0], current: true }] });
     const { proposal } = validateLibraryProposal(DOCUMENT, wrong);

@@ -1,6 +1,6 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
-import { cvReviewSections, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { cvSectionTexts } from "@ava/core/cv-format";
 import { cvImprovementOwner } from "@ava/core/cv-assessment";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@ava/core/cv-review";
@@ -14,6 +14,7 @@ import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvW
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@ava/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
+import { normaliseSubmittedLibrarySkills } from "@/lib/cv-skill-list";
 import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
@@ -61,8 +62,8 @@ function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
       !Array.isArray(added) || !added.every((section) => section && typeof section.entryId === "string" && typeof section.heading === "string" && Array.isArray(section.items) && section.items.every((item: unknown) => typeof item === "string")))
     throw new UserFacingError("The skill edits could not be read. Refresh and try again.");
   content.sections = cvReviewSections(saved, rows, removed, added);
-  const skillLimitIssue = cvReviewSkillLimitIssue(content.sections);
-  if (skillLimitIssue) throw new UserFacingError(skillLimitIssue);
+  const skillIssue = cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
+  if (skillIssue) throw new UserFacingError(skillIssue);
   delete content.fitNotes;
   return CvContentSchema.parse(content);
 }
@@ -134,13 +135,26 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
     const raw = String(form.get("library") ?? "");
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
     submitted = JSON.parse(raw);
-    const parsed = CvLibrarySchema.parse(submitted);
-    const content = { ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME };
+    let editedSkillIds: unknown;
+    try { editedSkillIds = JSON.parse(String(form.get("editedSkillIds") ?? "[]")); }
+    catch { return fail("The edited skill fields could not be read. Reload the Library and try again."); }
+    if (!Array.isArray(editedSkillIds) || editedSkillIds.length > 100 ||
+        !editedSkillIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 100) ||
+        new Set(editedSkillIds).size !== editedSkillIds.length)
+      return fail("The edited skill fields could not be read. Reload the Library and try again.");
     // Saving is only ever the person's own act, and so is re-scoring: the save stores the version
     // and the page scores its rows from the person's own tags straight away; the full review is
     // what the Re-score button asks for (`rescoreLibrary`).
     await db().transaction(async (tx) => {
-      await writeCvLibraryVersion(tx, user.id, Number(form.get("version")), () => content, { review: false });
+      await writeCvLibraryVersion(tx, user.id, Number(form.get("version")), (current) => {
+        const entries = submitted && typeof submitted === "object" && "entries" in submitted ? submitted.entries : null;
+        if (editedSkillIds.length && (!Array.isArray(entries) || editedSkillIds.some(id => !entries.some(entry =>
+          entry && typeof entry === "object" && entry.id === id && entry.kind === "skill" && entry.status !== "inactive"))))
+          throw new UserFacingError("The edited skill fields could not be read. Reload the Library and try again.");
+        submitted = normaliseSubmittedLibrarySkills(submitted, editedSkillIds, current);
+        const parsed = CvLibrarySchema.parse(submitted);
+        return { ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME };
+      }, { review: false });
     });
   } catch (error) {
     if (error instanceof z.ZodError) return fail(cvLibraryIssues(error, submitted));

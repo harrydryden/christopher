@@ -1,11 +1,11 @@
 {
   "kind": "cv-replay",
-  "at": "2026-10-04T13:44:20.098Z",
-  "draftId": "cd9847ad-e2f0-4f0c-9ec3-7ef4cc42b152",
-  "promptSetVersion": "51d823cddc27",
+  "at": "2026-10-04T15:44:45.442Z",
+  "draftId": "c26ac074-6673-4be5-80d3-46b36482c890",
+  "promptSetVersion": "1a427aca0aab",
   "unverified": true,
   "source": "recording",
-  "recording": "docs/evaluations/recordings/cv-replay-skills-2026-10-04.jsonl",
+  "recording": "docs/evaluations/recordings/cv-replay-skill-length-2026-10-04.jsonl",
   "routes": {
     "cv.rubric": {
       "model": "cvModel",
@@ -54,7 +54,7 @@
       "costUsd": 0.2183
     }
   },
-  "wallMs": 172,
+  "wallMs": 258,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",

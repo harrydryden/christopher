@@ -16,6 +16,8 @@ import { RowScoreButton } from "./RowScoreButton";
 import { EvidenceGuide } from "./EvidenceGuide";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
+import { CV_LIMITS, cvSkillCharacterState } from "@ava/core/cv-format";
+import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList } from "@/lib/cv-skill-list";
 
 const input = inputClass;
 const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]] as const;
@@ -89,6 +91,15 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const serialised = useMemo(() => JSON.stringify(value), [value]);
   const baselineJson = useMemo(() => JSON.stringify(baseline), [baseline]);
   const dirty = serialised !== baselineJson;
+  const editedSkillIds = editedCvSkillEntryIds(value, baseline);
+  const parsedSkillItems = (entry: CvLibrary["entries"][number]) => parseCvSkillList(
+    (entry.skillItems ?? []).join("\n"), baseline.entries.find(item => item.id === entry.id)?.skillItems ?? [],
+  );
+  const invalidSkills = value.entries.some(entry => {
+    if (entry.kind !== "skill" || !isActiveEvidence(entry)) return false;
+    const items = parsedSkillItems(entry);
+    return items.length > 20 || items.some(item => cvSkillCharacterState(item).tooLong);
+  });
   const unresolved = recovery?.conflicts.filter(conflict => !recovery.choices[conflict.key]).length ?? 0;
   const recoveryPending = !!recovery && (unresolved > 0 || !recovery.valid);
   const readiness = useMemo(() => cvLibraryReadiness(value), [value]);
@@ -354,7 +365,15 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   // A refusal is shown only while there is still something to re-score; a later pass clears it.
   const refused = !rescoreState.ok && (unreviewed || rescoring) ? rescoreState.error : "";
   const bar = dirty || unreviewed || rescoring || !!notice || !!refused || !!recovery;
-  return <form action={action} onSubmit={event => { if (recoveryPending) { event.preventDefault(); return; } submitted.current = value; submittedVersion.current = version; }} className="min-w-0 space-y-4 pb-4">
+  return <form action={action} onSubmit={event => {
+    if (recoveryPending || invalidSkills) { event.preventDefault(); return; }
+    const normalised = normaliseSubmittedLibrarySkills(value, editedSkillIds, baseline) as CvLibrary;
+    // The hidden JSON field must reflect the normalised labels in this very submit event, even
+    // when Save is clicked before the textarea has blurred.
+    flushSync(() => setValue(normalised));
+    submitted.current = normalised;
+    submittedVersion.current = version;
+  }} className="min-w-0 space-y-4 pb-4">
     {/* Saving is only ever the person's own act, so the control that does it is pinned above the
         fold as soon as there is anything to save, and gone when there is not. Once a save has
         changed rows, the same place offers the re-score — never automatic, because it spends the
@@ -362,7 +381,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {bar && <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b-2 border-line bg-bg py-3">
       {dirty ? <>
         <span className="ds-pixel text-12" aria-live="polite">Unsaved changes</span>
-        <button disabled={pending || recoveryPending} className={buttonClass("primary")}>{pending ? "Saving…" : "Save library"}</button>
+        <button disabled={pending || recoveryPending || invalidSkills} className={buttonClass("primary")}>{pending ? "Saving…" : "Save library"}</button>
         <button type="button" disabled={pending} className={buttonClass("ghost")} onClick={discard}>Discard</button>
         {currentRefusal && !recovery && <span role="alert" className="text-14 text-danger">{state.error}</span>}
         {obsolete && <button type="button" className={buttonClass("secondary")} onClick={reloadAndKeep}>Reload and keep my text</button>}
@@ -409,7 +428,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     <p className={`text-14 ${readiness.ready ? "text-ok" : "text-warn"}`} role="status">{readiness.line}</p>
     {/* How well evidenced the whole history is, and how many jobs are holding it back. */}
     {evidence.line && <p className="text-14" role="status">{evidence.line}</p>}
-    <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} />
+    <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} /><input type="hidden" name="editedSkillIds" value={JSON.stringify(editedSkillIds)} />
     <div role="tablist" aria-label="Library sections" className="flex flex-wrap gap-x-2 border-b border-line-muted">
       {libraryTabs.map(([id, label]) => <button
         key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
@@ -558,10 +577,24 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       <legend className="px-1 text-14 font-semibold">Evidence {i + 1}</legend>
       <label className="grid gap-1.5"><span className={labelClass}>Type</span><select aria-label={`Evidence ${i + 1} type`} className={selectClass} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, skillItems: e.target.value === "skill" ? x.skillItems : undefined, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
       <label className="grid gap-1.5"><span className={labelClass}>Evidence label</span><input required placeholder="e.g. AI governance programme" className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
-      {entry.kind === "skill" && <label className="grid gap-1.5"><span className={labelClass}>Individual skills, one per line</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id ? { ...item, skillItems: item.skillItems?.map(skill => skill.trim()).filter(Boolean).length ? item.skillItems.map(skill => skill.trim()).filter(Boolean) : undefined } : item) }))} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
-        <span className="block text-12 text-muted">Up to 20. Leave blank to show the details as prose.</span>
-      </label>}
-      <label className="grid gap-1.5"><span className={labelClass}>Details</span><textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
+      {entry.kind === "skill" && (() => {
+        const parsed = parsedSkillItems(entry);
+        return <label className="grid gap-1.5"><span className={labelClass}>Individual skills</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => {
+          if (!editedCvSkillEntryIds(current, baseline).includes(entry.id)) return current;
+          return normaliseSubmittedLibrarySkills(current, [entry.id], baseline) as CvLibrary;
+        })} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
+          <span className="block text-12 text-muted">These are compact CV skill pills, up to {CV_LIMITS.skillCharacters} characters each. Separate them with commas, semicolons or new lines. Use Details below for supporting context.</span>
+          <span className={`block text-12 ${parsed.length > 20 ? "text-danger" : "text-muted"}`} aria-live="polite">{parsed.length}/20 individual skills</span>
+          {parsed.length > 0 && <span className="block text-12 text-muted">{parsed.map((item, index) => <span key={`${index}-${item}`} className="block">{item} — {cvSkillCharacterState(item).count}/{CV_LIMITS.skillCharacters} characters</span>)}</span>}
+          {parsed.map((item, index) => cvSkillCharacterState(item).tooLong
+            ? <span key={`error-${index}`} className="block text-12 text-danger" role="alert">Skill {index + 1} is {cvSkillCharacterState(item).count} characters; the limit is {CV_LIMITS.skillCharacters}. Move supporting detail to Details.</span>
+            : cvSkillCharacterState(item).approaching
+              ? <span key={`warning-${index}`} className="block text-12 text-warn" role="status">Skill {index + 1} is approaching {CV_LIMITS.skillCharacters} characters.</span>
+              : null)}
+          {parsed.length > 20 && <span className="block text-12 text-danger" role="alert">Keep up to 20 individual skills in this Library block.</span>}
+        </label>;
+      })()}
+      <label className="grid gap-1.5"><span className={labelClass}>Details</span><textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} />{entry.kind === "skill" && <span className="text-12 text-muted">Explain the scope of these skills. This supports matching and assessment; it is not printed beneath the skill pills. Put employer-specific examples and results in Experience.</span>}</label>
       <div className="flex gap-3">
       <button type="button" disabled={i === 0} className="text-14 underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i - 1], entries[i]] = [entries[i]!, entries[i - 1]!]; setValue({ ...value, entries }); }}>Move up</button>
       <button type="button" disabled={i === value.entries.length - 1} className="text-14 underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i], entries[i + 1]] = [entries[i + 1]!, entries[i]!]; setValue({ ...value, entries }); }}>Move down</button>

@@ -23,7 +23,7 @@ export {
   type CvEvidenceStatus, type EvidenceFacet,
 } from "./cv-helpers";
 
-const skillItemSchema = z.string().trim().min(1).max(80).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.");
+const skillItemSchema = z.string().trim().min(1).max(CV_LIMITS.skillCharacters).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.");
 const skillItemsSchema = (max: number) => z.array(skillItemSchema).min(1).max(max)
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
 const SkillItemsSchema = skillItemsSchema(20);

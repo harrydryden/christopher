@@ -153,7 +153,7 @@ export default async function CvDraftPage({
   // distinct labels only as comma- or line-separated details; keep those exact labels available.
   const librarySkillSections = draft.librarySnapshot.entries.flatMap((entry) => {
     if (entry.kind !== "skill" || !isActiveStoredEvidence(entry)) return [];
-    const legacy = entry.details.split(/[,;\n]/).map((item) => item.trim())
+    const legacy = entry.details.split(/[,;\n]| · /).map((item) => item.trim())
       .filter((item) => item.length > 0 && item.length <= 80);
     const items = entry.skillItems?.length ? entry.skillItems : legacy;
     return items.length ? [{ id: entry.id, heading: entry.heading, items: [...new Set(items)] }] : [];

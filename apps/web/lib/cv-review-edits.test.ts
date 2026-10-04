@@ -55,3 +55,16 @@ it("normalises an edited legacy skill section to ten individual skills and six m
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
   expect(cvReviewSkillLimitIssue(cvReviewSections(legacy, ["Built systems.", [...items, "Docker"].join("\n")], [], []))).toContain("more than 10 skills");
 });
+
+it("counts legacy pills inside one bullet and preserves untouched source metadata", () => {
+  const labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"];
+  const legacy = CvContentSchema.parse({ ...saved, sections: [saved.sections[0], { entryId: "legacy-pills", kind: "skill", heading: "Tools", bullets: [labels.join(" · ")], bulletSources: [["entry:legacy-pills"]] }] });
+  expect(cvReviewSkillLimitIssue(legacy.sections)).toContain("more than 10 skills");
+  const untouched = cvReviewSections(legacy, ["Built systems.", labels.join("\n")], [], []);
+  expect(untouched[1]).toEqual(legacy.sections[1]);
+  const trimmed = cvReviewSections(legacy, ["Built systems.", labels.slice(0, 10).join("\n")], [], []);
+  expect(trimmed[1]?.skillItems).toEqual(labels.slice(0, 10));
+  expect(trimmed[1]?.bullets).toEqual(labels.slice(0, 6));
+  expect(trimmed[1]?.bulletSources).toBeUndefined();
+  expect(cvReviewSkillLimitIssue(trimmed)).toBeNull();
+});

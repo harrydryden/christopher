@@ -1,10 +1,10 @@
 import type { CvContent } from "@ava/core/cv";
-import { CV_LIMITS } from "@ava/core/cv-format";
+import { CV_LIMITS, cvSectionTexts } from "@ava/core/cv-format";
 
 export type AddedSkillSection = { entryId: string; heading: string; items: string[] };
 
 export function cvReviewSkillLimitIssue(sections: CvContent["sections"]): string | null {
-  const over = sections.find((section) => section.kind === "skill" && (section.skillItems ?? section.bullets).length > CV_LIMITS.skillsPerSection);
+  const over = sections.find((section) => section.kind === "skill" && cvSectionTexts(section).length > CV_LIMITS.skillsPerSection);
   return over ? `${over.heading} has more than ${CV_LIMITS.skillsPerSection} skills. Remove some before saving or previewing.` : null;
 }
 
@@ -22,9 +22,9 @@ export function cvReviewSections(
     throw new Error("Only skill sections can be removed here.");
   const existing = saved.sections.flatMap((section, index) => {
     if (removed.has(section.entryId)) return [];
-    const edited = lines(rows[index] ?? (section.skillItems ?? section.bullets).join("\n"));
+    const before = section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets;
+    const edited = lines(rows[index] ?? before.join("\n"));
     if (section.kind === "skill" && edited.length === 0) return [];
-    const before = section.skillItems ?? section.bullets;
     const changed = JSON.stringify(edited) !== JSON.stringify(before);
     if (!changed) return [section];
     return [{

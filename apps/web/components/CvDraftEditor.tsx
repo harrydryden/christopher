@@ -4,7 +4,7 @@ import { cvReviewSections, cvReviewSkillLimitIssue, type AddedSkillSection } fro
 import { useFormStatus } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
-import { CV_LIMITS } from "@ava/core/cv-format";
+import { CV_LIMITS, cvSectionTexts } from "@ava/core/cv-format";
 import { cvDisplaySections } from "@ava/core/cv-helpers";
 import type { CvTheme } from "@ava/core/cv-theme-values";
 import type { CvContent } from "@ava/core/cv";
@@ -101,7 +101,7 @@ export function CvDraftEditor({
   const [theme, setTheme] = useState(baseTheme);
   const [rows, setRows] = useState(
     content.sections.map((section) =>
-      (section.skillItems ?? section.bullets).join("\n"),
+      (section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets).join("\n"),
     ),
   );
   const [removedSkillIds, setRemovedSkillIds] = useState<string[]>([]);

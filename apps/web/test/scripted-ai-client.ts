@@ -274,7 +274,7 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
     const prior = previous.get(block.entryId);
     if (entry.kind === "skill" && entry.skillItems?.length && block.maxSkills > 0) {
       // Exact stored labels only; the renderer prints these as pills instead of the bullets.
-      const chosen = rank(entry.skillItems.map((item) => item.text), target).slice(0, block.maxSkills);
+      const chosen = rank(block.relevantSkillItems ?? entry.skillItems.map((item) => item.text), target).slice(0, block.maxSkills);
       sections.push({
         entryId: block.entryId,
         skillItems: chosen,
@@ -492,12 +492,16 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
             const ask = planning.rubric.requirements.find(requirement => requirement.importance !== "responsibility" &&
               requirement.category !== "logistics" && !unmet.test(requirement.quote));
             const rows = planning.evidence.entries.flatMap(entry => entry.rows);
+            const skills = planning.evidence.entries.flatMap(entry => entry.skillItems ?? []);
             const destination = planning.destinations.employment[0]
               ? { kind: "employment" as const, employmentId: planning.destinations.employment[0].employmentId }
               : { kind: "evidence" as const, entryId: planning.destinations.evidence[0]!.entryId };
             return {
               requirements: planning.rubric.requirements.map(requirement => {
-                const row = unmet.test(requirement.quote) ? rows.find(item => unmet.test(item.text)) ?? rows[0] : rows[0];
+                const skill = requirement.category === "skills"
+                  ? skills.find(item => cvRelevance(item.text, `${requirement.label} ${requirement.quote}`) > 0)
+                  : undefined;
+                const row = unmet.test(requirement.quote) ? rows.find(item => unmet.test(item.text)) ?? rows[0] : skill ?? rows[0];
                 if (requirement === ask || !row) return {
                   requirementId: requirement.id, status: "missing" as const, evidence: [],
                   reason: "The scripted planner finds no evidence for this requirement.",

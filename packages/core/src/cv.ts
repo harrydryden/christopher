@@ -23,8 +23,11 @@ export {
   type CvEvidenceStatus, type EvidenceFacet,
 } from "./cv-helpers";
 
-const SkillItemsSchema = z.array(z.string().trim().min(1).max(80).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.")).min(1).max(20)
+const skillItemSchema = z.string().trim().min(1).max(80).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.");
+const skillItemsSchema = (max: number) => z.array(skillItemSchema).min(1).max(max)
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
+const SkillItemsSchema = skillItemsSchema(20);
+const GeneratedSkillItemsSchema = skillItemsSchema(CV_LIMITS.skillsPerSection);
 /**
  * A writer's citation: the id of the source row a bullet or the profile rests on. It used to be
  * `{sourceId, quote}`, with the row copied out in full; nothing but a substring check read the
@@ -178,16 +181,16 @@ export const CvLibrarySchema = z.object({
   }
 }).refine(l => new Set(l.entries.map(e => e.id)).size === l.entries.length, "Library entry IDs must be unique");
 export type CvLibrary = z.infer<typeof CvLibrarySchema>;
-const cvPlanSchema = <T extends SourceIdSchema>(sourceId: T) => z.object({
+const cvPlanSchema = <T extends SourceIdSchema>(sourceId: T, skillItems: typeof SkillItemsSchema | typeof GeneratedSkillItemsSchema) => z.object({
   summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
   summarySources: z.array(sourceId).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(sourceId).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(20),
+  sections: z.array(z.object({ entryId: z.string(), skillItems: skillItems.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(sourceId).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 /** The writer's answer. Citations are source ids (`summarySources`, one `bulletSources` item per bullet). */
-export const CvPlanSchema = cvPlanSchema(CvPlanSourceIdSchema);
+export const CvPlanSchema = cvPlanSchema(CvPlanSourceIdSchema, GeneratedSkillItemsSchema);
 /** A saved plan or checkpoint, whose citations may still be legacy `{sourceId, quote}` refs. */
-export const CvStoredPlanSchema = cvPlanSchema(CvStoredSourceIdSchema);
+export const CvStoredPlanSchema = cvPlanSchema(CvStoredSourceIdSchema, SkillItemsSchema);
 export type CvPlan = z.infer<typeof CvPlanSchema>;
 export const CvContentSchema = z.object({
   fitNotes: z.array(z.string().max(500)).max(50).optional(),
@@ -280,4 +283,3 @@ function combineEvidence(members: CvLibrary["entries"]): string {
 export function normaliseCvLibrary(raw: unknown): CvLibrary {
   return consolidateExperience(CvLibrarySchema.parse(raw));
 }
-

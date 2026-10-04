@@ -1,6 +1,7 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
-import { cvReviewSections, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvSectionTexts } from "@ava/core/cv-format";
 import { cvImprovementOwner } from "@ava/core/cv-assessment";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@ava/core/cv-review";
 import { z } from "zod";
@@ -53,13 +54,15 @@ function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
   const summary = String(form.get("summary") ?? "").trim();
   if (summary !== saved.summary) delete content.summarySources;
   content.summary = summary;
-  const rows = saved.sections.map((section, i) => String(form.get(`${section.skillItems ? "skills" : "section"}-${i}`) ?? (section.skillItems ?? section.bullets).join("\n")));
+  const rows = saved.sections.map((section, i) => String(form.get(`${section.skillItems ? "skills" : "section"}-${i}`) ?? (section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets).join("\n")));
   const removed = JSON.parse(String(form.get("removedSkills") ?? "[]")) as string[];
   const added = JSON.parse(String(form.get("addedSkills") ?? "[]")) as AddedSkillSection[];
   if (!Array.isArray(removed) || !removed.every((id) => typeof id === "string") ||
       !Array.isArray(added) || !added.every((section) => section && typeof section.entryId === "string" && typeof section.heading === "string" && Array.isArray(section.items) && section.items.every((item: unknown) => typeof item === "string")))
     throw new UserFacingError("The skill edits could not be read. Refresh and try again.");
   content.sections = cvReviewSections(saved, rows, removed, added);
+  const skillLimitIssue = cvReviewSkillLimitIssue(content.sections);
+  if (skillLimitIssue) throw new UserFacingError(skillLimitIssue);
   delete content.fitNotes;
   return CvContentSchema.parse(content);
 }

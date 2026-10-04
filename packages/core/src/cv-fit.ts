@@ -4,12 +4,14 @@ import {
   createCvWritingBudget,
   cvBudgetViolations,
   cvRelevance,
+  relevantCvSkillItems,
   type CvSemanticTarget,
   type CvWritingBudget,
 } from "./cv-budget";
 import { cvTailoringCoverage, cvTailoringRequirementWeights, validateCvPlanProvenance } from "./cv-tailoring";
 import { renderCvPdfWithReport, CvLayoutError } from "./cv-pdf";
 import { cvMaxPages } from "./cv-theme";
+import { CV_LIMITS } from "./cv-format";
 import type { CvBuildFailure, CvFailureKind } from "./cv-build";
 
 export type CvFitFeedback = {
@@ -186,6 +188,40 @@ export async function selectCvToFit(
   const changes: string[] = [];
   const semanticOverflows: string[] = [];
   const maxPages = cvMaxPages(library.theme);
+  // A saved plan can contain old, broad skill lists. Select against the current role before
+  // measuring, so an irrelevant label cannot survive merely because there is page space.
+  plan.sections = plan.sections.filter(section => {
+    const entry = library.entries.find(item => item.id === section.entryId);
+    if (entry?.kind !== "skill") return true;
+    if (entry.skillItems && section.skillItems) {
+      const relevant = new Set(relevantCvSkillItems(entry, target, semantic));
+      const before = section.skillItems.length;
+      section.skillItems = section.skillItems.filter(item => relevant.has(item));
+      if (section.skillItems.length !== before) changes.push(`${entry.heading}: omitted skills unrelated to this role.`);
+      return section.skillItems.length > 0;
+    }
+    if (!entry.skillItems) {
+      const before = [...section.bullets];
+      const selectedParts = section.bullets.map((bullet, index) => {
+        const parts = bullet.split(" · ");
+        const cited = sourceRequirements(section.bulletSources?.[index], semantic).size > 0;
+        return parts.filter(part => cvRelevance(part, target) > 0 || (semantic && cited && parts.length === 1));
+      });
+      const ranked = selectedParts.flatMap((parts, bulletIndex) => parts.map((part, partIndex) => ({
+        bulletIndex, partIndex, score: cvRelevance(part, target),
+      })));
+      const chosen = new Set(ranked.sort((a, b) => b.score - a.score || a.bulletIndex - b.bulletIndex || a.partIndex - b.partIndex)
+        .slice(0, CV_LIMITS.skillsPerSection).map(({ bulletIndex, partIndex }) => `${bulletIndex}:${partIndex}`));
+      const selected = selectedParts.map((parts, bulletIndex) => parts
+        .filter((_, partIndex) => chosen.has(`${bulletIndex}:${partIndex}`)).join(" · "));
+      section.bullets = selected.filter(Boolean);
+      if (section.bulletSources) section.bulletSources = section.bulletSources.filter((_, index) => !!selected[index]);
+      if (section.bullets.length !== before.length || selected.some((bullet, index) => bullet !== before[index]))
+        changes.push(`${entry.heading}: omitted skills unrelated to this role.`);
+      return section.bullets.length > 0;
+    }
+    return true; // Invalid representation is handled by the existing correction path.
+  });
   const essential = essentialIds(semantic);
   const essentialSections = new Map<string, Set<string>>();
   if (semantic) for (const section of plan.sections) {
@@ -218,9 +254,9 @@ export async function selectCvToFit(
       (block) => block.entryId === section.entryId,
     );
     if (
-      block?.kind === "skill" &&
+      (block?.kind === "skill" || library.entries.some(entry => entry.id === section.entryId && entry.kind === "skill")) &&
       section.skillItems &&
-      section.skillItems.length > block.maxSkills
+      section.skillItems.length > Math.min(block?.maxSkills ?? CV_LIMITS.skillsPerSection, CV_LIMITS.skillsPerSection)
     ) {
       const weights = semantic ? cvTailoringRequirementWeights(semantic.plan, semantic.rubric) : new Map<string, number>();
       const essential = essentialIds(semantic);
@@ -239,13 +275,15 @@ export async function selectCvToFit(
       const ranked = section.skillItems.map((text, index) => ({ index,
         score: semantic ? [...valueRequirements(section, index, semantic, library)].reduce((sum, id) => sum + (weights.get(id) ?? 0), 0) + 1 / (index + 1) : cvRelevance(text, target) + 1 / (index + 1),
       }));
+      const skillLimit = Math.min(block?.maxSkills ?? CV_LIMITS.skillsPerSection, CV_LIMITS.skillsPerSection);
+      if (protectedIndexes.size > skillLimit) semanticOverflows.push(`${section.entryId}: more distinct essential skills than the ${skillLimit}-item section limit permits.`);
+      const protectedRanked = ranked.filter(item => protectedIndexes.has(item.index)).sort((a, b) => b.score - a.score).slice(0, skillLimit);
       const selected = new Set(
-        [...ranked.filter(item => protectedIndexes.has(item.index)), ...ranked.filter(item => !protectedIndexes.has(item.index))
+        [...protectedRanked, ...ranked.filter(item => !protectedIndexes.has(item.index))
           .sort((a, b) => b.score - a.score)
-          .slice(0, Math.max(0, block.maxSkills - protectedIndexes.size))]
+          .slice(0, Math.max(0, skillLimit - protectedRanked.length))]
           .map((item) => item.index),
       );
-      if (selected.size > block.maxSkills) semanticOverflows.push(`${section.entryId}: consolidate skills without removing sole evidence for an essential requirement.`);
       section.skillItems = section.skillItems.filter((_, index) =>
         selected.has(index),
       );

@@ -1,11 +1,11 @@
 {
   "kind": "cv-replay",
-  "at": "2026-10-02T19:08:15.929Z",
-  "draftId": "43dd0117-5c14-4c83-9382-9b16906d95be",
-  "promptSetVersion": "9c7ae3186d99",
+  "at": "2026-10-04T13:44:20.098Z",
+  "draftId": "cd9847ad-e2f0-4f0c-9ec3-7ef4cc42b152",
+  "promptSetVersion": "51d823cddc27",
   "unverified": true,
   "source": "recording",
-  "recording": "docs/evaluations/recordings/cv-replay-recovery-2026-10-02.jsonl",
+  "recording": "docs/evaluations/recordings/cv-replay-skills-2026-10-04.jsonl",
   "routes": {
     "cv.rubric": {
       "model": "cvModel",
@@ -42,19 +42,19 @@
   "outcome": "published",
   "error": null,
   "misses": [],
-  "costUsd": 0.4676,
-  "calls": 4,
+  "costUsd": 0.3903,
+  "calls": 3,
   "byStage": {
     "author": {
       "calls": 1,
       "costUsd": 0.172
     },
     "review": {
-      "calls": 3,
-      "costUsd": 0.2956
+      "calls": 2,
+      "costUsd": 0.2183
     }
   },
-  "wallMs": 153,
+  "wallMs": 172,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",
@@ -84,8 +84,8 @@
       "coverageScore": 90,
       "factualSupport": {
         "score": 100,
-        "supported": 19,
-        "total": 19,
+        "supported": 15,
+        "total": 15,
         "unsupported": 0,
         "uncertain": 0
       },
@@ -125,9 +125,9 @@
         },
         "summaryFocus": {
           "kind": "heuristic_editorial_signal",
-          "score": 0,
+          "score": 33,
           "label": "Review",
-          "note": "The assessment anchors 0 of 3 supported priorities in the profile; review its emphasis."
+          "note": "The assessment anchors 1 of 3 supported priorities in the profile; review its emphasis."
         }
       }
     }

@@ -123,6 +123,35 @@ it('selects individual skills by confirmed requirement evidence, including seman
  expect(fitted.content.sections.map(section => section.entryId)).toEqual(['front']);
  expect(fitted.content.sections[0]!.skillItems).toEqual(['JavaScript']);
 });
+it('keeps six individually cited Library skills separate through materialising and fitting', async () => {
+ const skills = ['Operating model design', 'Process improvement', 'Programme delivery', 'Risk management', 'Resource planning', 'Service quality'];
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Operations leader',entries:[
+  {id:'operations',kind:'skill',heading:'Operations',details:'Applied operations methods',skillItems:skills},
+ ]};
+ const rubric: CvRubric = {caveats:[],requirements:skills.map((label,index)=>({
+  id:`r${index}`,label,quote:`Experience in ${label}`,importance:'essential' as const,category:'skills' as const,
+ }))};
+ const tailoring: CvTailoringPlan = {requirements:skills.map((label,index)=>({
+  requirementId:`r${index}`,status:'demonstrated' as const,
+  evidence:[{sourceId:`entry:operations:skill:${index}`,quote:label}],reason:'Exact skill.',
+ })),gapQuestions:[]};
+ const authored: CvPlan = {summary:'Operations leader',sections:[{
+  entryId:'operations',bullets:[skills[0]!],skillItems:[...skills],
+ }],gaps:[]};
+ const semantic = {plan:tailoring,rubric};
+ const budget = createCvWritingBudget(source, skills.join(' '), 1, semantic);
+ expect(budget.blocks[0]!.relevantSkillItems).toEqual(skills);
+ expect(budget.blocks[0]!.maxSkills).toBeGreaterThanOrEqual(6);
+ const materialised = materialiseCv(source, authored);
+ expect(materialised.sections[0]!.heading).toBe('Operations');
+ expect(cvSectionTexts(materialised.sections[0]!)).toEqual(skills);
+ const fitted = await selectCvToFit(source, authored, skills.join(' '), budget, semantic);
+ expect(fitted.content.sections[0]!.skillItems).toEqual(skills);
+ expect(cvSectionTexts(fitted.content.sections[0]!)).toEqual(skills);
+ expect(() => materialiseCv(source, {...authored,sections:[{
+  ...authored.sections[0]!,skillItems:[skills.join(', ')],
+ }]})).toThrow('not in the evidence');
+});
 it('budgets an exact 150-character relevant skill through every fitting retry', async () => {
  const label = `JavaScript ${'x'.repeat(139)}`;
  expect(label).toHaveLength(150);

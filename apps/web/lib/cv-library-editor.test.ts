@@ -384,6 +384,41 @@ it("does not let a landing evidence score change what the form will post", () =>
   expect(landed).not.toContain("Evaluating…");
 });
 
+it("counts pasted skills live, flags long labels, and normalises on submit without a blur", async () => {
+  const details = "Long supporting explanation, with commas.\nSecond paragraph stays exactly as written.";
+  const library: CvLibrary = { name: "Test", contact: "", profile: "", entries: [{ id: "skills", kind: "skill", heading: "Commercial", details }] };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  vi.mocked(saveCvLibrary).mockResolvedValue({ ok: false, error: "Test save" });
+  try {
+    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 })));
+    const textarea = container.querySelector<HTMLTextAreaElement>('[aria-label="Individual skills: Commercial"]')!;
+    const type = async (text: string) => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, text);
+      await act(async () => textarea.dispatchEvent(new Event("input", { bubbles: true })));
+    };
+    await type("Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support");
+    expect(container.textContent).toContain("6/20 individual skills");
+    await type("A".repeat(120));
+    expect(container.textContent).toContain("Skill 1 is approaching 150 characters.");
+    await type("A".repeat(151));
+    expect(container.textContent).toContain("Skill 1 is 151 characters; the limit is 150.");
+    expect([...container.querySelectorAll("button")].find(button => button.textContent === "Save library")?.disabled).toBe(true);
+    await type("Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support");
+    const form = container.querySelector<HTMLFormElement>("form")!;
+    await act(async () => form.requestSubmit());
+    const sent = vi.mocked(saveCvLibrary).mock.calls.at(-1)?.[1] as FormData;
+    const saved = JSON.parse(String(sent.get("library"))) as CvLibrary;
+    expect(saved.entries[0]?.skillItems).toEqual(["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"]);
+    expect(saved.entries[0]?.details).toBe(details);
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    vi.mocked(saveCvLibrary).mockReset();
+  }
+});
+
 it("keeps the exact unsaved draft after a conflicting reload and lets the person choose their wording", async () => {
   const base: CvLibrary = { name: "Rowan", contact: "", profile: "First bio", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],

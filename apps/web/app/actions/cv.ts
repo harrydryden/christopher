@@ -14,6 +14,7 @@ import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvW
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@ava/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
+import { normaliseSubmittedLibrarySkills } from "@/lib/cv-skill-list";
 import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
@@ -133,7 +134,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   try {
     const raw = String(form.get("library") ?? "");
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
-    submitted = JSON.parse(raw);
+    submitted = normaliseSubmittedLibrarySkills(JSON.parse(raw));
     const parsed = CvLibrarySchema.parse(submitted);
     const content = { ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME };
     // Saving is only ever the person's own act, and so is re-scoring: the save stores the version

@@ -67,7 +67,7 @@ it("groups Education and Skills beneath one parent heading and retains legacy pi
   expect(labels.indexOf("Internal evidence label")).toBeLessThan(labels.indexOf("Education"));
   expect(rounded.mock.calls.length).toBeGreaterThan(1);
 });
-it("places each skill heading on its own line above full-width wrapping pills", async () => {
+it("places each bold section pill first in its full-width skill group", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
   const headings = ["Operations and commercial leadership", "Technology, systems and data transformation across regional operating units with complex reporting obligations"];
@@ -83,20 +83,20 @@ it("places each skill heading on its own line above full-width wrapping pills", 
   expect(report.pageCount).toBe(1);
   const labelCalls = headings.map(heading => draw.mock.calls.find(call => call[0] === heading)!);
   expect(labelCalls.every(call => call)).toBe(true);
-  expect(labelCalls.map(call => Number(call[1]))).toEqual([44, 44]);
+  expect(labelCalls.map(call => Number(call[1]))).toEqual([50, 50]);
   const pageWidth = 595.28 - 88;
-  expect(labelCalls.map(call => (call[3] as { width: number }).width)).toEqual([pageWidth, pageWidth]);
+  expect(labelCalls.every(call => (call[3] as { width: number }).width <= pageWidth - 12)).toBe(true);
   const skillPills = rounded.mock.calls;
-  expect(skillPills).toHaveLength(20);
+  expect(skillPills).toHaveLength(22);
   expect(Number(skillPills[0]![0])).toBe(44);
-  expect(Number(skillPills[10]![0])).toBe(44);
+  expect(Number(skillPills[11]![0])).toBe(44);
   expect(skillPills.every(call => Number(call[0]) + Number(call[2]) <= 44 + pageWidth + 0.01)).toBe(true);
-  expect(Number(skillPills[0]![1])).toBeGreaterThan(Number(labelCalls[0]![2]));
-  expect(Number(skillPills[10]![1])).toBeGreaterThan(Number(labelCalls[1]![2]));
+  expect(Number(skillPills[0]![1])).toBeLessThan(Number(labelCalls[0]![2]));
+  expect(Number(skillPills[11]![1])).toBeLessThan(Number(labelCalls[1]![2]));
   expect(Number(labelCalls[1]![2])).toBeGreaterThan(Number(skillPills[9]![1]));
   expect(draw.mock.calls.map(call => call[0]).filter(label => label === "Skills")).toHaveLength(1);
 });
-it("repeats the full-width skill heading when an oversized block continues on another page", async () => {
+it("repeats the section pill when an oversized block continues on another page", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const heading = "Long technology and data transformation heading";
   const label = "W".repeat(145);
@@ -108,8 +108,11 @@ it("repeats the full-width skill heading when an oversized block continues on an
   expect(report.pageCount).toBeGreaterThan(1);
   const continued = draw.mock.calls.find(call => call[0] === `${heading} (continued)`);
   expect(continued).toBeDefined();
-  expect(Number(continued![1])).toBe(44);
-  expect((continued![3] as { width: number }).width).toBeCloseTo(595.28 - 88);
+  expect(Number(continued![1])).toBe(50);
+  expect((continued![3] as { width: number }).width).toBeLessThanOrEqual(595.28 - 100);
+  for (let index = 0; index < 20; index++) {
+    expect(draw.mock.calls.filter(call => call[0] === `${label} ${index + 1}`)).toHaveLength(1);
+  }
 });
 it("fits three skill sections of ten readable pills within half a page", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
@@ -145,11 +148,53 @@ it("fits three skill sections of ten readable pills within half a page", async (
   expect(labels.filter((label) => label === "Skills")).toHaveLength(2);
   for (const section of sections) expect(labels).toContain(section.heading);
   const skillPills = rounded.mock.calls.filter((call) => call[2] !== undefined);
-  expect(skillPills).toHaveLength(31);
+  expect(skillPills).toHaveLength(35);
   const parentHeading = draw.mock.calls.find((call) => call[0] === "EDUCATION AND SKILLS");
   expect(parentHeading).toBeDefined();
   const last = skillPills[skillPills.length - 1]!;
   expect(Number(last[1]) + Number(last[3]) - Number(parentHeading![2])).toBeLessThan(420);
+});
+it.each(["AVA", "Arial"] as const)("keeps the reported 18 skills compact and uniform in %s", async (font) => {
+  const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const groups = [
+    { heading: "Operations", items: ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"] },
+    { heading: "Commercial", items: ["Commercial Strategy", "Expansion Strategy", "RevOps", "P&L Ownership", "Financial Modelling", "Investor Relations"] },
+    { heading: "Technology tooling", items: ["SQL", "BI Tools", "CRM Platforms", "Sales Automation", "Agile Systems", "Advanced AI Coding"] },
+  ];
+  const result = await renderCvPdfWithReport({ ...fixture, theme: { ...DEFAULT_CV_THEME, font, introPanel: false },
+    sections: groups.map(({ heading, items }, index) => ({ entryId: `s-${index}`, kind: "skill", heading, skillItems: items, bullets: [items[0]!] })) });
+  expect(result.pageCount).toBe(1);
+  expect(rounded.mock.calls).toHaveLength(21);
+  const heights = rounded.mock.calls.map(call => Number(call[3]));
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(0.01);
+  for (const [groupIndex, group] of groups.entries()) {
+    const calls = rounded.mock.calls.slice(groupIndex * 7, groupIndex * 7 + 7);
+    for (let index = 1; index < calls.length; index++) {
+      const previous = calls[index - 1]!;
+      const current = calls[index]!;
+      if (Number(current[1]) !== Number(previous[1])) {
+        // A wrap is allowed only when the next pill would exceed the content width.
+        expect(Number(previous[0]) + Number(previous[2]) + 5 + Number(current[2])).toBeGreaterThan(595.28 - 44);
+      }
+    }
+    for (const item of group.items) expect(draw.mock.calls.filter(call => call[0] === item)).toHaveLength(1);
+  }
+  const top = Number(draw.mock.calls.find(call => call[0] === "Operations")![2]);
+  const last = rounded.mock.calls.at(-1)!;
+  expect(Number(last[1]) + Number(last[3]) - top).toBeLessThan(200);
+});
+it("fits four sections of ten normal skills within half a page", async () => {
+  const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const items = ["Financial planning", "Operations strategy", "Customer success", "SQL", "BI Tools", "CRM Platforms", "Sales Automation", "Risk management", "Team leadership", "Board reporting"];
+  const result = await renderCvPdfWithReport({ ...fixture, theme: { ...DEFAULT_CV_THEME, introPanel: false }, sections:
+    ["Operations", "Commercial", "Technology", "Governance"].map((heading, index) => ({entryId: `s-${index}`, kind: "skill", heading, skillItems: items, bullets: [items[0]!] })) });
+  expect(result.pageCount).toBe(1);
+  expect(rounded.mock.calls).toHaveLength(44);
+  const top = Number(draw.mock.calls.find(call => call[0] === "Operations")![2]);
+  const last = rounded.mock.calls.at(-1)!;
+  expect(Number(last[1]) + Number(last[3]) - top).toBeLessThan(420);
 });
 it("rejects downloads above the CV's own page limit while allowing a complete diagnostic preview", async () => {
   const long = { ...fixture, sections: Array.from({ length: 12 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
@@ -229,7 +274,7 @@ it("centres wrapped skill and industry text inside its pill bounds", async () =>
   expect(labels).toHaveLength(2);
   for (let i = 0; i < labels.length; i++) {
     const [, x, y, options] = labels[i]!;
-    const [pillX, pillY, pillWidth, pillHeight] = rounded.mock.calls[i]! as [
+    const [pillX, pillY, pillWidth, pillHeight] = rounded.mock.calls[i === 0 ? 0 : 2]! as [
       number,
       number,
       number,
@@ -237,7 +282,7 @@ it("centres wrapped skill and industry text inside its pill bounds", async () =>
       number,
     ];
     expect(options).toMatchObject({ align: "center", baseline: "middle" });
-    const padding = 8;
+    const padding = i === 0 ? 8 : 6;
     expect(x).toBe(pillX! + padding);
     expect((options as { width: number }).width).toBeCloseTo(
       pillWidth! - padding * 2,

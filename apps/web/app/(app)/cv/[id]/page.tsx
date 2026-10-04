@@ -21,7 +21,7 @@ import { openCommentCounts } from "@/lib/cv-share";
 import { cvNextAction } from "@/lib/cv-next-action";
 import { CvNextAction } from "@/components/CvNextAction";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent } from "@ava/core/cv-review";
-import { resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
+import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
 import type { CvAssessment } from "@ava/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
 import { cvEditFormId } from "@/lib/cv-content-links";
@@ -149,6 +149,15 @@ export default async function CvDraftPage({
   // What a reader said, where the reviewer's findings are read. Notes never change a rating; they
   // become their own rows, and a count beside the block they are about.
   const commentCounts = openCommentCounts(sharing.comments);
+  // The picker uses the evidence frozen with this revision. Older skill blocks sometimes stored
+  // distinct labels only as comma- or line-separated details; keep those exact labels available.
+  const librarySkillSections = draft.librarySnapshot.entries.flatMap((entry) => {
+    if (entry.kind !== "skill" || !isActiveStoredEvidence(entry)) return [];
+    const legacy = entry.details.split(/[,;\n]/).map((item) => item.trim())
+      .filter((item) => item.length > 0 && item.length <= 80);
+    const items = entry.skillItems?.length ? entry.skillItems : legacy;
+    return items.length ? [{ id: entry.id, heading: entry.heading, items: [...new Set(items)] }] : [];
+  });
   // The same panel whichever tab holds it: one set of props, written once.
   const assessment = (
     <>
@@ -344,6 +353,7 @@ export default async function CvDraftPage({
             id={id}
             content={content}
             theme={resolveCvTheme(content.theme)}
+            librarySkillSections={librarySkillSections}
             blocked={blocked}
             commentCounts={commentCounts}
             // A link is of a finished, assessed revision (the action refuses anything else), so the

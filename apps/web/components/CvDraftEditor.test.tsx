@@ -83,3 +83,24 @@ it("lets a reviewer add and remove a skill section without changing Library sect
   expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toBe("[]");
   expect(container.querySelector('[data-cv-editor-dirty="false"]')).not.toBeNull();
 });
+
+it("offers saved Library skills and visibly stops a section at ten", () => {
+  const skillContent = { ...content, sections: [{ entryId: "s-1", kind: "skill", heading: "Tools", bullets: ["A"], skillItems: ["A", "B", "C", "D", "E", "F", "G", "H", "I"] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={skillContent} theme={DEFAULT_CV_THEME} librarySkillSections={[{ id: "library-tools", heading: "Tools", items: ["J", "K"] }]} />));
+  expect(container.textContent).toContain("9/10 skills");
+  expect(container.textContent).toContain("snapshot saved with this CV");
+  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Library to Tools"]')!;
+  act(() => {
+    picker.value = "J";
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(container.textContent).toContain("10/10 skills");
+  expect(picker.disabled).toBe(true);
+  expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Add skill")?.disabled).toBe(true);
+  const sectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Library"]')!;
+  act(() => {
+    sectionPicker.value = "library-tools";
+    sectionPicker.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toContain('"items":["J","K"]');
+});

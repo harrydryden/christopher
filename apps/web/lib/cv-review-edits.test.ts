@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@ava/core/cv";
-import { cvReviewSections } from "./cv-review-edits";
+import { cvReviewSections, cvReviewSkillLimitIssue } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -42,4 +42,16 @@ it("accepts more than six skills without exceeding the bullet limit", () => {
   expect(sections[2]?.skillItems).toHaveLength(7);
   expect(sections[2]?.bullets).toHaveLength(6);
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
+});
+
+it("normalises an edited legacy skill section to ten individual skills and six mirrored bullets", () => {
+  const legacy = CvContentSchema.parse({ ...saved, sections: [saved.sections[0], { entryId: "legacy", kind: "skill", heading: "Tools", bullets: ["Python"], bulletSources: [["entry:legacy"]] }] });
+  const items = ["Python", "SQL", "Excel", "R", "Tableau", "Power BI", "Looker", "VBA", "Git", "Bash"];
+  const sections = cvReviewSections(legacy, ["Built systems.", items.join("\n")], [], []);
+  expect(sections[1]?.skillItems).toEqual(items);
+  expect(sections[1]?.bullets).toEqual(items.slice(0, 6));
+  expect(sections[1]?.bulletSources).toBeUndefined();
+  expect(cvReviewSkillLimitIssue(sections)).toBeNull();
+  expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
+  expect(cvReviewSkillLimitIssue(cvReviewSections(legacy, ["Built systems.", [...items, "Docker"].join("\n")], [], []))).toContain("more than 10 skills");
 });

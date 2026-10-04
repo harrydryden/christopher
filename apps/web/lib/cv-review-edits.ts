@@ -3,6 +3,11 @@ import { CV_LIMITS } from "@ava/core/cv-format";
 
 export type AddedSkillSection = { entryId: string; heading: string; items: string[] };
 
+export function cvReviewSkillLimitIssue(sections: CvContent["sections"]): string | null {
+  const over = sections.find((section) => section.kind === "skill" && (section.skillItems ?? section.bullets).length > CV_LIMITS.skillsPerSection);
+  return over ? `${over.heading} has more than ${CV_LIMITS.skillsPerSection} skills. Remove some before saving or previewing.` : null;
+}
+
 const lines = (value: string) => value.split("\n").map((line) => line.trim()).filter(Boolean);
 
 /** Build the exact sections that a review preview and a direct save will use. */
@@ -24,7 +29,7 @@ export function cvReviewSections(
     if (!changed) return [section];
     return [{
       ...section,
-      ...(section.skillItems ? { skillItems: edited, bullets: edited.slice(0, CV_LIMITS.bulletsPerSection) } : { bullets: edited }),
+      ...(section.kind === "skill" ? { skillItems: edited, bullets: edited.slice(0, CV_LIMITS.bulletsPerSection) } : { bullets: edited }),
       bulletSources: undefined,
     }];
   });

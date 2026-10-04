@@ -34,7 +34,7 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
   });
   if (style === PILL_STYLES.skill && heading) {
     // Bold and regular faces differ slightly in ascent. Give every ordinary pill the same
-    // minimum height, even when a balanced row contains no heading pill.
+    // minimum height, even when a row contains no heading pill.
     const oneLine = [font, heading.font].map(face => {
       doc.font(face).fontSize(style.fontSize);
       return doc.heightOfString("Mg", { width: width - style.paddingX * 2, lineGap: 1, align: "center", baseline: "middle" });
@@ -53,55 +53,15 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
       return placed;
     }), height };
   };
-  if (style !== PILL_STYLES.skill) {
-    let first = 0;
-    let used = 0;
-    for (let index = 0; index < pills.length; index++) {
-      const next = used ? used + style.gapX + pills[index]!.width : pills[index]!.width;
-      if (used && next > width) { rows.push(rowFor(first, index)); first = index; used = 0; }
-      used = used ? used + style.gapX + pills[index]!.width : pills[index]!.width;
-    }
-    if (first < pills.length) rows.push(rowFor(first, pills.length));
-    return rows;
+  // Fill each row in source order before wrapping the next pill.
+  let first = 0;
+  let used = 0;
+  for (let index = 0; index < pills.length; index++) {
+    const next = used ? used + style.gapX + pills[index]!.width : pills[index]!.width;
+    if (used && next > width) { rows.push(rowFor(first, index)); first = index; used = 0; }
+    used = used ? used + style.gapX + pills[index]!.width : pills[index]!.width;
   }
-  // Dynamic programming keeps the minimum rendered height and row count, then chooses the
-  // least ragged order-preserving breaks. A final singleton loses to a balanced split when both fit.
-  type Layout = { height: number; count: number; singleton: number; raggedness: number; end: number };
-  const best: Layout[] = Array(pills.length + 1);
-  best[pills.length] = { height: 0, count: 0, singleton: 0, raggedness: 0, end: pills.length };
-  for (let first = pills.length - 1; first >= 0; first--) {
-    let used = 0;
-    let rowHeight = 0;
-    for (let end = first + 1; end <= pills.length; end++) {
-      const pill = pills[end - 1]!;
-      used += (end > first + 1 ? style.gapX : 0) + pill.width;
-      if (used > width) break;
-      rowHeight = Math.max(rowHeight, pill.height);
-      if (heading && first === 0 && end === 1 && pills.length > 1 &&
-          used + style.gapX + pills[1]!.width <= width) continue;
-      const tail = best[end]!;
-      const candidate: Layout = {
-        height: rowHeight + (tail.count ? style.gapY + tail.height : 0),
-        count: 1 + tail.count,
-        singleton: tail.singleton + (end === pills.length && end - first === 1 && first > 0 ? 1 : 0),
-        raggedness: tail.raggedness + (width - used) ** 2,
-        end,
-      };
-      const current = best[first];
-      if (!current || candidate.height < current.height - 0.01 ||
-          (Math.abs(candidate.height - current.height) <= 0.01 &&
-            (candidate.count < current.count ||
-              (candidate.count === current.count &&
-                (candidate.singleton < current.singleton ||
-                  (candidate.singleton === current.singleton && candidate.raggedness < current.raggedness))))))
-        best[first] = candidate;
-    }
-  }
-  for (let first = 0; first < pills.length;) {
-    const end = best[first]!.end;
-    rows.push(rowFor(first, end));
-    first = end;
-  }
+  if (first < pills.length) rows.push(rowFor(first, pills.length));
   return rows;
 }
 export function drawPillRow(doc: PDFKit.PDFDocument, row: PillRow, left: number, top: number, colour: string, style: PillStyle, font = "Helvetica", heading?: { colour: string; font: string }): void {

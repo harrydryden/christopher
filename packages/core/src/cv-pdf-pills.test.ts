@@ -27,16 +27,15 @@ it.each(["Helvetica", "Arial"] as const)("measures eighteen ordinary skill label
   doc.end();
 });
 
-it("balances a five-plus-one skill wrap without changing industry packing", () => {
+it("fills skill and industry rows before wrapping", () => {
   const doc = docFor("Helvetica");
   const labels = ["Planning", "Reporting", "Analysis", "Delivery", "Forecasting", "Governance"];
   const widthForFive = (style: typeof PILL_STYLES.skill | typeof PILL_STYLES.industry) =>
     labels.slice(0, 5).reduce((sum, label) => sum + measurePillRows(doc, [label], 507, style)[0]!.pills[0]!.width, 0) + 4 * style.gapX;
-  const balanced = measurePillRows(doc, labels, widthForFive(PILL_STYLES.skill), PILL_STYLES.skill);
-  expect(balanced).toHaveLength(2);
-  expect(balanced.map(row => row.pills.length)).not.toEqual([5, 1]);
-  expect(balanced[1]!.pills.length).toBeGreaterThan(1);
-  expect(balanced.flatMap(row => row.pills.map(pill => pill.label))).toEqual(labels);
+  const packed = measurePillRows(doc, labels, widthForFive(PILL_STYLES.skill), PILL_STYLES.skill);
+  expect(packed).toHaveLength(2);
+  expect(packed.map(row => row.pills.length)).toEqual([5, 1]);
+  expect(packed.flatMap(row => row.pills.map(pill => pill.label))).toEqual(labels);
   const industries = measurePillRows(doc, labels, widthForFive(PILL_STYLES.industry), PILL_STYLES.industry);
   expect(industries.map(row => row.pills.length)).toEqual([5, 1]);
   doc.end();

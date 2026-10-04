@@ -170,9 +170,14 @@ it.each(["AVA", "Arial"] as const)("keeps the reported 18 skills compact and uni
   expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(0.01);
   for (const [groupIndex, group] of groups.entries()) {
     const calls = rounded.mock.calls.slice(groupIndex * 7, groupIndex * 7 + 7);
-    const rows = new Map<number, number>();
-    for (const call of calls) rows.set(Number(call[1]), (rows.get(Number(call[1])) ?? 0) + 1);
-    expect([...rows.values()].every(count => count > 1)).toBe(true);
+    for (let index = 1; index < calls.length; index++) {
+      const previous = calls[index - 1]!;
+      const current = calls[index]!;
+      if (Number(current[1]) !== Number(previous[1])) {
+        // A wrap is allowed only when the next pill would exceed the content width.
+        expect(Number(previous[0]) + Number(previous[2]) + 5 + Number(current[2])).toBeGreaterThan(595.28 - 44);
+      }
+    }
     for (const item of group.items) expect(draw.mock.calls.filter(call => call[0] === item)).toHaveLength(1);
   }
   const top = Number(draw.mock.calls.find(call => call[0] === "Operations")![2]);

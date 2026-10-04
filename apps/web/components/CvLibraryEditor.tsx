@@ -17,7 +17,7 @@ import { EvidenceGuide } from "./EvidenceGuide";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { CV_LIMITS, cvSkillCharacterState } from "@ava/core/cv-format";
-import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList } from "@/lib/cv-skill-list";
+import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList, splitCvLibrarySkillItem } from "@/lib/cv-skill-list";
 
 const input = inputClass;
 const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]] as const;
@@ -579,11 +579,12 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       <label className="grid gap-1.5"><span className={labelClass}>Evidence label</span><input required placeholder="e.g. AI governance programme" className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
       {entry.kind === "skill" && (() => {
         const parsed = parsedSkillItems(entry);
-        return <label className="grid gap-1.5"><span className={labelClass}>Individual skills</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => {
+        return <><label className="grid gap-1.5"><span className={labelClass}>Individual skills</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => {
           if (!editedCvSkillEntryIds(current, baseline).includes(entry.id)) return current;
           return normaliseSubmittedLibrarySkills(current, [entry.id], baseline) as CvLibrary;
         })} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
           <span className="block text-12 text-muted">These are compact CV skill pills, up to {CV_LIMITS.skillCharacters} characters each. Separate them with commas, semicolons or new lines. Use Details below for supporting context.</span>
+          <span className="block text-12 text-muted">New CV builds use the latest saved Library. Existing drafts keep their saved Library snapshot.</span>
           <span className={`block text-12 ${parsed.length > 20 ? "text-danger" : "text-muted"}`} aria-live="polite">{parsed.length}/20 individual skills</span>
           {parsed.length > 0 && <span className="block text-12 text-muted">{parsed.map((item, index) => <span key={`${index}-${item}`} className="block">{item} — {cvSkillCharacterState(item).count}/{CV_LIMITS.skillCharacters} characters</span>)}</span>}
           {parsed.map((item, index) => cvSkillCharacterState(item).tooLong
@@ -592,7 +593,22 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
               ? <span key={`warning-${index}`} className="block text-12 text-warn" role="status">Skill {index + 1} is approaching {CV_LIMITS.skillCharacters} characters.</span>
               : null)}
           {parsed.length > 20 && <span className="block text-12 text-danger" role="alert">Keep up to 20 individual skills in this Library block.</span>}
-        </label>;
+        </label>
+          {(entry.skillItems ?? []).map((item, itemIndex) => {
+            const split = splitCvLibrarySkillItem(entry.skillItems ?? [], itemIndex);
+            if (!split) return null;
+            const overLimit = split.length > 20;
+            return <div key={itemIndex} className="flex flex-wrap items-center gap-2 text-12">
+              <span>Skill {itemIndex + 1}: {item}</span>
+              <button type="button" className={buttonClass("secondary")} aria-label={`Split skill ${itemIndex + 1} in ${entry.heading} into separate skills`} disabled={overLimit} onClick={() => setValue(current => ({ ...current, entries: current.entries.map(candidate => {
+                if (candidate.id !== entry.id) return candidate;
+                const skillItems = splitCvLibrarySkillItem(candidate.skillItems ?? [], itemIndex);
+                return skillItems ? { ...candidate, skillItems } : candidate;
+              }) }))}>Split list into skills</button>
+              {overLimit && <span className="text-danger" role="status">Splitting makes {split.length} skills; maximum 20. Remove some first.</span>}
+            </div>;
+          })}
+        </>;
       })()}
       <label className="grid gap-1.5"><span className={labelClass}>Details</span><textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} />{entry.kind === "skill" && <span className="text-12 text-muted">Explain the scope of these skills. This supports matching and assessment; it is not printed beneath the skill pills. Put employer-specific examples and results in Experience.</span>}</label>
       <div className="flex gap-3">

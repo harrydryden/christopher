@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvLibrarySchema } from "@ava/core/cv";
-import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList } from "./cv-skill-list";
+import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList, splitCvLibrarySkillItem } from "./cv-skill-list";
 
 it("parses the six named skills without splitting ampersands and removes bullet markers and repeats", () => {
   const input = "• Financial Planning & Analysis, P&L Management; Unit Economics\n- Product Operations, Customer Success, Customer Support\n* financial planning & analysis";
@@ -46,6 +46,16 @@ it("keeps canonical comma labels and indices when another Library field or skill
   const normalised = normaliseSubmittedLibrarySkills(skillEdited, ["skills"], original) as CvLibrarySchemaType;
   expect(normalised.entries[0]?.skillItems).toEqual(["Governance, risk and compliance", "Reporting", "SQL", "Python"]);
   expect(normalised.entries[1]?.skillItems).toEqual(["Old A; Old B"]);
+});
+
+it("splits only the selected combined canonical label when explicitly requested", () => {
+  const combined = "Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support";
+  const before = ["Governance, risk and compliance", combined, "Reporting"];
+  expect(splitCvLibrarySkillItem(before, 1)).toEqual([
+    before[0], "Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support", "Reporting",
+  ]);
+  expect(before).toEqual(["Governance, risk and compliance", combined, "Reporting"]);
+  expect(splitCvLibrarySkillItem(["SQL"], 0)).toBeNull();
 });
 
 type CvLibrarySchemaType = ReturnType<typeof CvLibrarySchema.parse>;

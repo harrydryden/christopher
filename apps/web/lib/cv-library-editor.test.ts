@@ -453,6 +453,53 @@ it("preserves a canonical comma skill through focus, blur and unrelated Library 
   }
 });
 
+it("splits a stored combined skill only on request and preserves its supporting details on save", async () => {
+  const combined = "Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support";
+  const details = "Financial planning across products, with reporting and support handovers.\nResults stay with this evidence.";
+  const library: CvLibrary = { name: "Test", contact: "London", profile: "Commercial leader", entries: [
+    { id: "skills", kind: "skill", heading: "Commercial", details, skillItems: [combined] },
+  ] };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  vi.mocked(saveCvLibrary).mockResolvedValue({ ok: false, error: "Test save" });
+  try {
+    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 })));
+    const skills = container.querySelector<HTMLTextAreaElement>('[aria-label="Individual skills: Commercial"]')!;
+    expect(container.textContent).toContain("1/20 individual skills");
+    await act(async () => { skills.focus(); skills.blur(); });
+    expect(skills.value).toBe(combined);
+    const split = container.querySelector<HTMLButtonElement>('[aria-label="Split skill 1 in Commercial into separate skills"]')!;
+    expect(split).toBeTruthy();
+    await act(async () => split.click());
+    expect(container.textContent).toContain("6/20 individual skills");
+    expect(skills.value).toBe("Financial Planning & Analysis\nP&L Management\nUnit Economics\nProduct Operations\nCustomer Success\nCustomer Support");
+    await act(async () => container.querySelector<HTMLFormElement>("form")!.requestSubmit());
+    const sent = vi.mocked(saveCvLibrary).mock.calls.at(-1)?.[1] as FormData;
+    expect(JSON.parse(String(sent.get("editedSkillIds")))).toEqual(["skills"]);
+    const saved = JSON.parse(String(sent.get("library"))) as CvLibrary;
+    expect(saved.entries[0]?.skillItems).toEqual([
+      "Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support",
+    ]);
+    expect(saved.entries[0]?.details).toBe(details);
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    vi.mocked(saveCvLibrary).mockReset();
+  }
+});
+
+it("shows why a combined Library skill cannot be split past the 20-label limit", () => {
+  const library: CvLibrary = { name: "Test", contact: "", profile: "", entries: [
+    { id: "skills", kind: "skill", heading: "Tools", details: "Tooling experience", skillItems: [
+      ...Array.from({ length: 19 }, (_, index) => `Tool ${index + 1}`), "SQL, Python",
+    ] },
+  ] };
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
+  expect(html).toContain("Splitting makes 21 skills; maximum 20. Remove some first.");
+  expect(html).toMatch(/aria-label="Split skill 20 in Tools into separate skills"[^>]*disabled=""/);
+});
+
 it("keeps the exact unsaved draft after a conflicting reload and lets the person choose their wording", async () => {
   const base: CvLibrary = { name: "Rowan", contact: "", profile: "First bio", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],

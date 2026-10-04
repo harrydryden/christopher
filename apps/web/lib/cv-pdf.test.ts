@@ -60,10 +60,52 @@ it("groups Education and Skills beneath one parent heading and retains legacy pi
   const labels = draw.mock.calls.map((call) => call[0]);
   expect(labels).toContain("Education");
   expect(labels).toContain("Skills");
+  expect(labels).toContain("Internal evidence label");
   expect(labels.filter((label) => label === "EDUCATION AND SKILLS")).toHaveLength(1);
   expect(labels.indexOf("EDUCATION AND SKILLS")).toBeLessThan(labels.indexOf("Skills"));
-  expect(labels.indexOf("Skills")).toBeLessThan(labels.indexOf("Education"));
+  expect(labels.indexOf("Skills")).toBeLessThan(labels.indexOf("Internal evidence label"));
+  expect(labels.indexOf("Internal evidence label")).toBeLessThan(labels.indexOf("Education"));
   expect(rounded.mock.calls.length).toBeGreaterThan(1);
+});
+it("sets each skill section as a borderless left label and right wrapping pills", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
+  const headings = ["Operations and commercial leadership", "Technology, systems and data transformation"];
+  const report = await renderCvPdfWithReport({
+    ...fixture,
+    theme: { ...DEFAULT_CV_THEME, introPanel: false },
+    sections: headings.map((heading, index) => ({
+      entryId: `skills-${index}`, kind: "skill" as const, heading,
+      skillItems: Array.from({ length: 10 }, (_, skill) => `${heading} capability ${skill + 1}`),
+      bullets: [heading],
+    })),
+  });
+  expect(report.pageCount).toBe(1);
+  const labelCalls = headings.map(heading => draw.mock.calls.find(call => call[0] === heading)!);
+  expect(labelCalls.every(call => call)).toBe(true);
+  expect(labelCalls.map(call => Number(call[1]))).toEqual([44, 44]);
+  expect(labelCalls.map(call => (call[3] as { width: number }).width)).toEqual([116, 116]);
+  const skillPills = rounded.mock.calls.filter(call => Number(call[0]) > 100);
+  expect(skillPills).toHaveLength(20);
+  expect(skillPills.every(call => Number(call[0]) >= 174)).toBe(true);
+  expect(Number(labelCalls[0]![2])).toBeCloseTo(Number(skillPills[0]![1]));
+  expect(Number(labelCalls[1]![2])).toBeGreaterThan(Number(skillPills[9]![1]));
+  expect(draw.mock.calls.map(call => call[0]).filter(label => label === "Skills")).toHaveLength(1);
+});
+it("repeats the left skill label when an oversized row continues on another page", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const heading = "Long technology and data transformation heading";
+  const label = "W".repeat(145);
+  const report = await renderCvPdfWithReport({
+    ...fixture,
+    sections: [{ entryId: "skills", kind: "skill", heading,
+      skillItems: Array.from({ length: 20 }, (_, index) => `${label} ${index + 1}`), bullets: [label] }],
+  });
+  expect(report.pageCount).toBeGreaterThan(1);
+  const continued = draw.mock.calls.find(call => call[0] === `${heading} (continued)`);
+  expect(continued).toBeDefined();
+  expect(Number(continued![1])).toBe(44);
+  expect((continued![3] as { width: number }).width).toBe(116);
 });
 it("fits three skill sections of ten readable pills within half a page", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
@@ -96,7 +138,7 @@ it("fits three skill sections of ten readable pills within half a page", async (
   });
   const labels = draw.mock.calls.map((call) => call[0]);
   expect(report.pageCount).toBe(1);
-  expect(labels.filter((label) => label === "Skills")).toHaveLength(1);
+  expect(labels.filter((label) => label === "Skills")).toHaveLength(2);
   for (const section of sections) expect(labels).toContain(section.heading);
   const skillPills = rounded.mock.calls.filter((call) => call[2] !== undefined);
   expect(skillPills).toHaveLength(31);

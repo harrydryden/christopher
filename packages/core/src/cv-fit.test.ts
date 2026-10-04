@@ -123,6 +123,40 @@ it('selects individual skills by confirmed requirement evidence, including seman
  expect(fitted.content.sections.map(section => section.entryId)).toEqual(['front']);
  expect(fitted.content.sections[0]!.skillItems).toEqual(['JavaScript']);
 });
+it('budgets an exact 150-character relevant skill through every fitting retry', async () => {
+ const label = `JavaScript ${'x'.repeat(139)}`;
+ expect(label).toHaveLength(150);
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Developer',theme:{...DEFAULT_CV_THEME,maxPages:1},entries:[
+  {id:'skills',kind:'skill',heading:'Tools',details:label,skillItems:[label]},
+ ]};
+ const rubric: CvRubric = {caveats:[],requirements:[{id:'r1',label:'JS',quote:'Use JS',importance:'essential',category:'skills'}]};
+ const tailoring: CvTailoringPlan = {requirements:[{requirementId:'r1',status:'demonstrated',evidence:[{sourceId:'entry:skills:skill:0',quote:label}],reason:'Equivalent name.'}],gapQuestions:[]};
+ const authored: CvPlan = {summary:'Developer',sections:[{entryId:'skills',bullets:[label],skillItems:[label]}],gaps:[]};
+ for (const scale of [1, 0.76, 0.76 ** 2]) {
+  const budget = createCvWritingBudget(source, 'JS', scale, {plan:tailoring,rubric});
+  const block = budget.blocks.find(item => item.entryId === 'skills')!;
+  expect(block.relevantSkillItems).toEqual([label]);
+  expect(block.maxCharacters).toBeGreaterThanOrEqual(label.length);
+  expect(block.maxBulletCharacters).toBeGreaterThanOrEqual(label.length);
+  expect(cvBudgetViolations(authored,budget).filter(item => item.startsWith('skills:'))).toEqual([]);
+ }
+ const fitted = await selectCvToFit(source, authored, 'JS', createCvWritingBudget(source, 'JS', 0.76 ** 2, {plan:tailoring,rubric}), {plan:tailoring,rubric});
+ expect(fitted.pageCount).toBe(1);
+ expect(fitted.content.sections[0]!.skillItems).toEqual([label]);
+});
+it('keeps a semantically cited legacy label without carrying its unrelated neighbours', async () => {
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Developer',entries:[
+  {id:'legacy',kind:'skill',heading:'Tools',details:'JavaScript · Python'},
+ ]};
+ const rubric: CvRubric = {caveats:[],requirements:[{id:'r1',label:'JS',quote:'Use JS',importance:'essential',category:'skills'}]};
+ const tailoring: CvTailoringPlan = {requirements:[{requirementId:'r1',status:'demonstrated',evidence:[{sourceId:'entry:legacy:row:0',quote:'JavaScript'}],reason:'Equivalent name.'}],gapQuestions:[]};
+ const semantic = {plan:tailoring,rubric};
+ const fitted = await selectCvToFit(source,{summary:'Developer',sections:[{
+  entryId:'legacy',bullets:['JavaScript · Python'],bulletSources:[['entry:legacy:row:0']],
+ }],gaps:[]},'JS',createCvWritingBudget(source,'JS',1,semantic),semantic);
+ expect(fitted.content.sections[0]!.bullets).toEqual(['JavaScript']);
+ expect(fitted.plan.sections[0]!.bulletSources).toEqual([['entry:legacy:row:0']]);
+});
 it('caps new skill sections at ten while accepting older saved CVs with larger lists', () => {
  const skills = Array.from({length:11},(_,index)=>`Tool ${index}`);
  const section = {entryId:'skills',kind:'skill' as const,heading:'Skills',bullets:['Tool 0'],skillItems:skills};

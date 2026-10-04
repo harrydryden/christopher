@@ -87,7 +87,13 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
   const totalCharacters = Math.round(Math.max(2200, 4900 - roles.length * 110 - education.length * 45) * pages * scale);
   const summaryCharacters = Math.round(420 * Math.min(1, pages) * scale);
   const qualificationCharacters = education.length * Math.round(150 * scale);
-  const skillCharacters = skills.length * Math.round(180 * scale);
+  // An exact source label cannot be shortened to satisfy a smaller retry budget. Reserve at
+  // least enough for the longest relevant label in each structured block, including one-page CVs.
+  const skillAllowance = (entry: CvLibrary["entries"][number]) => Math.max(
+    Math.round(180 * scale),
+    ...relevantCvSkillItems(entry, target, semantic).map(item => item.length),
+  );
+  const skillCharacters = skills.reduce((sum, entry) => sum + skillAllowance(entry), 0);
   const interestCharacters = interests.length * Math.round(120 * scale);
   const roleCharacters = Math.max(roles.length * 100, totalCharacters - summaryCharacters - qualificationCharacters - skillCharacters - interestCharacters);
   const weights = roles.map((entry, index) => 1 + Math.min(2, entryRelevance(entry) / 5) + 2 / (index + 1));
@@ -98,7 +104,7 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
       maxBullets: Math.max(1, Math.min(bulletCap, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
   });
   blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10, maxBullets: 6, maxCharacters: Math.round(150 * scale), maxBulletCharacters: Math.round(150 * scale), maxSkills: 0 })));
-  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale),
+  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: skillAllowance(entry), maxBulletCharacters: Math.max(Math.round(90 * scale), ...relevantCvSkillItems(entry, target, semantic).map(item => item.length)),
     maxSkills: entry.skillItems ? Math.min(CV_LIMITS.skillsPerSection, Math.max(2, Math.round(5 * pages * scale))) : 0,
     ...(entry.skillItems ? { relevantSkillItems: relevantCvSkillItems(entry, target, semantic) } : {}) })));
   blocks.push(...interests.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 0, maxBullets: 2, maxCharacters: Math.round(120 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: 0 })));

@@ -205,7 +205,13 @@ export async function selectCvToFit(
       const selectedParts = section.bullets.map((bullet, index) => {
         const parts = bullet.split(" · ");
         const cited = sourceRequirements(section.bulletSources?.[index], semantic).size > 0;
-        return parts.filter(part => cvRelevance(part, target) > 0 || (semantic && cited && parts.length === 1));
+        // A planner can support an equivalent name ("JS" in the advert, "JavaScript" in the
+        // source). For a combined legacy bullet, accept only the individually quoted label:
+        // citing the whole row must not bring its unrelated neighbours along.
+        const quoted = new Set(semantic?.plan.requirements.flatMap(requirement => requirement.evidence)
+          .filter(reference => section.bulletSources?.[index]?.includes(reference.sourceId))
+          .map(reference => reference.quote.trim().replace(/\s+/g, " ").toLowerCase()) ?? []);
+        return parts.filter(part => cvRelevance(part, target) > 0 || (semantic && cited && (parts.length === 1 || quoted.has(part.trim().replace(/\s+/g, " ").toLowerCase()))));
       });
       const ranked = selectedParts.flatMap((parts, bulletIndex) => parts.map((part, partIndex) => ({
         bulletIndex, partIndex, score: cvRelevance(part, target),

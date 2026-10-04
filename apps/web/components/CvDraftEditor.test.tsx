@@ -143,3 +143,53 @@ it("shows each skill's character count and warns without truncating at 150", () 
   expect(container.textContent).toContain("151/150 characters · Too long");
   expect(save().disabled).toBe(true);
 });
+
+it("splits a saved Operations list only after the reviewer asks", () => {
+  const combined = "Planning, Delivery, Forecasting, Quality, Service, Reporting";
+  const withSkill = { ...content, sections: [{ entryId: "operations", kind: "skill", heading: "Operations", bullets: [combined], skillItems: [combined], bulletSources: [["entry:operations"]] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={withSkill} theme={DEFAULT_CV_THEME} />));
+  expect(container.textContent).toContain("1/10 skills");
+  expect(container.querySelector('[data-cv-editor-dirty="false"]')).not.toBeNull();
+  act(() => container.querySelector<HTMLButtonElement>('[aria-label="Split skill 1 into separate skills"]')!.click());
+  expect(container.textContent).toContain("6/10 skills");
+  expect(container.querySelectorAll<HTMLInputElement>('[aria-label^="Skill "][aria-label$="in Operations"]')).toHaveLength(6);
+  expect(container.querySelector<HTMLInputElement>('[name="skills-0"]')?.value).toBe("Planning\nDelivery\nForecasting\nQuality\nService\nReporting");
+});
+
+it("keeps Library skill pickers within their source sections and splits a copied combined list", () => {
+  const combined = "Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support";
+  const withSkill = { ...content, sections: [{ entryId: "commercial", kind: "skill", heading: "Commercial", bullets: ["Sales"], skillItems: ["Sales"] }] } as CvContent;
+  const sources = [
+    { id: "commercial", heading: "Commercial", items: ["Sales", combined] },
+    { id: "technology", heading: "Technology", items: ["SQL", "Python"] },
+    { id: "operations", heading: "Operations", items: ["Planning", "Delivery"] },
+  ];
+  act(() => root.render(<CvDraftEditor id="cv-1" content={withSkill} theme={DEFAULT_CV_THEME} librarySkillSections={sources} />));
+  const commercialPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Library to Commercial"]')!;
+  expect([...commercialPicker.options].map(option => option.value)).toEqual(["", combined]);
+  expect([...commercialPicker.options].map(option => option.value)).not.toContain("SQL");
+  const sectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Library"]')!;
+  act(() => { sectionPicker.value = "technology"; sectionPicker.dispatchEvent(new Event("change", { bubbles: true })); });
+  const added = JSON.parse(container.querySelector<HTMLInputElement>('[name="addedSkills"]')!.value);
+  expect(added[0]).toMatchObject({ heading: "Technology", items: ["SQL", "Python"], sourceEntryId: "technology" });
+  const newSectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Library to new section"]')!;
+  expect([...newSectionPicker.options].map(option => option.value)).toEqual([""]);
+  act(() => { sectionPicker.value = "commercial"; sectionPicker.dispatchEvent(new Event("change", { bubbles: true })); });
+  const split = container.querySelector<HTMLButtonElement>('[aria-label="Split skill 2 in new section into separate skills"]')!;
+  act(() => split.click());
+  const updated = JSON.parse(container.querySelector<HTMLInputElement>('[name="addedSkills"]')!.value);
+  expect(updated[1].items).toEqual(["Sales", "Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"]);
+});
+
+it("asks which skills to take from a Library section larger than ten", () => {
+  const items = Array.from({ length: 12 }, (_, index) => `Skill ${index + 1}`);
+  act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} librarySkillSections={[{ id: "large", heading: "Large", items }]} />));
+  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Library"]')!;
+  act(() => { picker.value = "large"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(container.textContent).toContain("Choose up to 10 skills from Large");
+  expect(container.querySelector<HTMLInputElement>('[name="addedSkills"]')?.value).toBe("[]");
+  for (const index of [2, 11]) act(() => container.querySelector<HTMLInputElement>(`[aria-label="Select skill ${index + 1} from Large"]`)!.click());
+  act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Add selected Library section")!.click());
+  const added = JSON.parse(container.querySelector<HTMLInputElement>('[name="addedSkills"]')!.value);
+  expect(added[0]).toMatchObject({ heading: "Large", items: ["Skill 3", "Skill 12"] });
+});

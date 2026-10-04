@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@ava/core/cv";
-import { cvReviewSections, cvReviewSkillLimitIssue, cvReviewSkillCharacterIssue } from "./cv-review-edits";
+import { cvReviewSections, cvReviewSkillLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -75,4 +75,12 @@ it("matches schema character validation without collapsing internal spaces", () 
     const valid = CvContentSchema.safeParse({ ...saved, sections }).success;
     expect(cvReviewSkillCharacterIssue(sections) === null).toBe(valid);
   }
+});
+
+it("splits a combined skill only when requested and retains each intended label", () => {
+  const source = ["Financial Planning & Analysis, P&L Management; Unit Economics", "Technology · SQL · Python"];
+  expect(splitCvReviewSkillRow(source, 0)).toEqual(["Financial Planning & Analysis", "P&L Management", "Unit Economics", source[1]]);
+  expect(splitCvReviewSkillRow(source, 1)).toEqual([source[0], "Technology", "SQL", "Python"]);
+  expect(splitCvReviewSkillRow(["Governance, risk and compliance"], 0)).toEqual(["Governance", "risk and compliance"]);
+  expect(splitCvReviewSkillRow(["SQL"], 0)).toBeNull();
 });

@@ -1,7 +1,15 @@
 import type { CvContent } from "@ava/core/cv";
 import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@ava/core/cv-format";
 
-export type AddedSkillSection = { entryId: string; heading: string; items: string[] };
+export type AddedSkillSection = { entryId: string; heading: string; items: string[]; sourceEntryId?: string };
+
+/** An explicit review action; canonical labels containing commas stay whole until it is chosen. */
+export function splitCvReviewSkillRow(items: string[], index: number): string[] | null {
+  const value = items[index];
+  if (value === undefined) return null;
+  const split = value.split(/[,;\n]| · /).map(item => item.replace(/^\s*(?:(?:[-*•▪‣]|\d+[.)])\s*)+/, "").trim()).filter(Boolean);
+  return split.length > 1 ? [...items.slice(0, index), ...split, ...items.slice(index + 1)] : null;
+}
 
 export function cvReviewSkillLimitIssue(sections: CvContent["sections"]): string | null {
   const over = sections.find((section) => section.kind === "skill" && cvSectionTexts(section).length > CV_LIMITS.skillsPerSection);

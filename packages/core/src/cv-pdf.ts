@@ -178,16 +178,22 @@ export async function renderCvPdfWithReport(
   }
   const groups = CV_GROUPS;
   const ordered = cvDisplaySections(content).map((item) => item.section);
-  const skillSubheading = (heading: string) => {
-    const label = clean(heading);
-    return /^(?:skill|skills)$/i.test(label) ? null : label;
+  const skillHeadingGap = 4;
+  const pageBodyHeight = doc.page.height - 55 - 44;
+  const measureSkillLabel = (value: string) => {
+    doc.font(face.bold).fontSize(9);
+    return doc.heightOfString(clean(value), { width, lineGap: 2.5 });
+  };
+  const drawSkillLabel = (value: string, top: number) => {
+    doc.font(face.bold).fontSize(9).fillColor(ink)
+      .text(clean(value), 44, top, { width, lineGap: 2.5 });
+    doc.x = 44;
+    doc.y = top;
   };
   const measureSection = (section: CvContent["sections"][number]) => {
     // Education and Skills share a parent section, with a subsection for each. Qualifications carry
     // their own label in the bullet; retain headings only when they add information.
-    const sectionHeading = section.kind === "skill"
-      ? skillSubheading(section.heading)
-      : cvSectionHeading(section);
+    const sectionHeading = section.kind === "skill" ? clean(section.heading) : cvSectionHeading(section);
     const showHeading = sectionHeading !== null;
     doc.font(face.bold).fontSize(section.kind === "skill" ? 9 : 10);
     const headerHeight = showHeading
@@ -220,14 +226,19 @@ export async function renderCvPdfWithReport(
             face.regular,
           )
         : [];
+    const skillLabelHeight = section.kind === "skill" ? measureSkillLabel(sectionHeading!) : 0;
     const firstHeight = skillRows[0]?.height ?? bulletHeights[0] ?? 0;
-    const minimumHeight = headerHeight + industryHeight + firstHeight + 4;
+    const minimumHeight = section.kind === "skill"
+      ? skillLabelHeight + skillHeadingGap + firstHeight + 8
+      : headerHeight + industryHeight + firstHeight + 4;
     const contentHeight = skillRows.length
       ? skillRows.reduce(
           (sum, row) => sum + row.height + PILL_STYLES.skill.gapY,
           2,
         )
       : bulletHeights.reduce((sum, height) => sum + height + 3.5, 0);
+    const skillContentHeight = skillRows.reduce((sum, row) => sum + row.height, 0) +
+      Math.max(0, skillRows.length - 1) * PILL_STYLES.skill.gapY;
     return {
       section,
       sectionHeading,
@@ -235,7 +246,9 @@ export async function renderCvPdfWithReport(
       industryRows,
       skillRows,
       minimumHeight,
-      wholeHeight: headerHeight + industryHeight + contentHeight + 6,
+      wholeHeight: section.kind === "skill"
+        ? skillLabelHeight + skillHeadingGap + skillContentHeight + 8
+        : headerHeight + industryHeight + contentHeight + 6,
     };
   };
   let educationSkillsStarted = false;
@@ -243,11 +256,14 @@ export async function renderCvPdfWithReport(
     const sections = ordered.filter((s) => s.kind === kind).map(measureSection);
     if (!sections.length) continue;
     const first = sections[0]!;
+    const keepFirstSkillRow = kind === "skill" &&
+      first.wholeHeight <= pageBodyHeight - (educationSkillsStarted ? 20 : 60);
     if (kind === "education" || kind === "skill") {
+      const followingHeight = keepFirstSkillRow ? first.wholeHeight : first.minimumHeight;
       if (!educationSkillsStarted) {
-        heading("Education and Skills", 20 + first.minimumHeight);
+        heading("Education and Skills", 20 + followingHeight);
         educationSkillsStarted = true;
-      } else room(20 + first.minimumHeight);
+      } else room(20 + followingHeight);
       text(title, true, 10);
       doc.moveDown(0.5);
     } else heading(title, first.minimumHeight);
@@ -262,14 +278,31 @@ export async function renderCvPdfWithReport(
         wholeHeight,
       } = layout;
       // Preserve short roles intact when possible. Never strand a group heading.
-      room(
-        index > 0 && wholeHeight <= doc.page.height - 99
-          ? wholeHeight
-          : minimumHeight,
-      );
+      const keepWhole = section.kind === "skill"
+        ? (index === 0 ? keepFirstSkillRow : wholeHeight <= pageBodyHeight)
+        : index > 0 && wholeHeight <= pageBodyHeight;
+      room(keepWhole ? wholeHeight : minimumHeight);
+      if (section.kind === "skill") {
+        let top = doc.y;
+        top += measureSkillLabel(sectionHeading!) + skillHeadingGap;
+        drawSkillLabel(sectionHeading!, doc.y);
+        for (const row of skillRows) {
+          if (top + row.height > doc.page.height - 55) {
+            doc.addPage();
+            const continued = `${sectionHeading} (continued)`;
+            top = doc.y + measureSkillLabel(continued) + skillHeadingGap;
+            drawSkillLabel(continued, doc.y);
+          }
+          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill, face.regular);
+          top += row.height + PILL_STYLES.skill.gapY;
+        }
+        doc.x = 44;
+        doc.y = top - (skillRows.length ? PILL_STYLES.skill.gapY : 0) + 8;
+        continue;
+      }
       if (showHeading && sectionHeading) {
-        text(sectionHeading, true, section.kind === "skill" ? 9 : 10);
-        doc.moveDown(section.kind === "skill" ? 0.15 : 0.25);
+        text(sectionHeading, true, 10);
+        doc.moveDown(0.25);
       }
       if (industryRows.length) {
         let top = doc.y;
@@ -280,21 +313,7 @@ export async function renderCvPdfWithReport(
         doc.x = 44;
         doc.y = top - PILL_STYLES.industry.gapY + 6;
       }
-      if (skillRows.length) {
-        for (const row of skillRows) {
-          if (doc.y + row.height > doc.page.height - 55) {
-            doc.addPage();
-            text(`${sectionHeading ?? "Skills"} (continued)`, true, 9);
-            doc.moveDown(0.15);
-          }
-          const top = doc.y;
-          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill, face.regular);
-          doc.x = 44;
-          doc.y = top + row.height + PILL_STYLES.skill.gapY;
-        }
-        doc.y += 2;
-      } else
-        for (const bullet of section.skillItems ?? section.bullets) {
+      for (const bullet of section.skillItems ?? section.bullets) {
           doc.font(face.regular).fontSize(10);
           const height = doc.heightOfString(clean(bullet), {
             width: width - 12,
@@ -311,7 +330,7 @@ export async function renderCvPdfWithReport(
           doc.text(clean(bullet), 56, y, { width: width - 12, lineGap: 2.5 });
           doc.x = 44;
           doc.moveDown(0.3);
-        }
+      }
       doc.moveDown(0.45);
     }
   }

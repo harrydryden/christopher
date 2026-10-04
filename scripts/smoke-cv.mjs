@@ -319,6 +319,23 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     // Skill edits use the same normalisation for the preview and saved revision. Clearing the
     // last skill omits its section instead of sending the empty array that used to reject PDFs.
     await page.getByRole("button", { name: "Add skill section", exact: true }).click();
+    // Previously stored comma lists can be deliberately separated without rewriting legitimate
+    // comma-containing labels during an unrelated edit.
+    const combinedSkills = ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"];
+    await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).fill(combinedSkills.join(", "));
+    await page.getByRole("button", { name: "Split skill 1 in new section into separate skills", exact: true }).click();
+    for (const [index, label] of combinedSkills.entries()) {
+      assert.equal(await page.getByRole("textbox", { name: `Skill ${index + 1} in new section`, exact: true }).inputValue(), label);
+    }
+    await page.getByRole("button", { name: "Show PDF preview", exact: true }).click();
+    const splitPreview = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
+    await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
+    const splitResponse = await splitPreview;
+    assert.equal(splitResponse.status(), 200);
+    assert.deepEqual(splitResponse.request().postDataJSON().sections.at(-1).skillItems, combinedSkills);
+    await page.getByRole("button", { name: "Hide PDF preview", exact: true }).click();
+    await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
+    await page.getByRole("button", { name: "Add skill section", exact: true }).click();
     const tenSkills = ["SQL", "Python", "Forecasting", "Commercial strategy", "Operations", "Leadership", "Analysis", "Planning", "Reporting", "Partnerships"];
     for (const [index, skill] of tenSkills.entries()) {
       if (index) await page.getByRole("button", { name: "Add skill", exact: true }).click();

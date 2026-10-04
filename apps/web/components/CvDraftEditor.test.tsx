@@ -118,3 +118,28 @@ it("shows eleven legacy pills as eleven skills, then allows saving after one is 
   expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Save Direct Edits")?.disabled).toBe(false);
   expect(container.querySelector('[data-cv-editor-dirty="true"]')).not.toBeNull();
 });
+
+it("shows each skill's character count and warns without truncating at 150", () => {
+  const withSkill = { ...content, sections: [{ entryId: "s-1", kind: "skill", heading: "Tools", bullets: ["SQL"], skillItems: ["SQL"] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={withSkill} theme={DEFAULT_CV_THEME} />));
+  const skill = container.querySelector<HTMLInputElement>('[aria-label="Skill 1 in Tools"]')!;
+  const save = () => [...container.querySelectorAll("button")].find(button => button.textContent === "Save Direct Edits")!;
+  expect(skill.hasAttribute("maxlength")).toBe(false);
+  const type = (value: string) => act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(skill, value);
+    skill.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  type("x".repeat(119));
+  expect(container.textContent).toContain("119/150 characters");
+  type("x".repeat(120));
+  expect(container.textContent).toContain("120/150 characters · Approaching limit");
+  type("x".repeat(149));
+  expect(save().disabled).toBe(false);
+  type("x".repeat(150));
+  expect(container.textContent).toContain("150/150 characters · Approaching limit");
+  expect(save().disabled).toBe(false);
+  type("x".repeat(151));
+  expect(skill.value).toHaveLength(151);
+  expect(container.textContent).toContain("151/150 characters · Too long");
+  expect(save().disabled).toBe(true);
+});

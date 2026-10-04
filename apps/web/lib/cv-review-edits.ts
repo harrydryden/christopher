@@ -8,6 +8,12 @@ export function cvReviewSkillLimitIssue(sections: CvContent["sections"]): string
   return over ? `${over.heading} has more than ${CV_LIMITS.skillsPerSection} skills. Remove some before saving or previewing.` : null;
 }
 
+export function cvReviewSkillCharacterIssue(sections: CvContent["sections"]): string | null {
+  const over = sections.find((section) => section.kind === "skill" && cvSectionTexts(section)
+    .some(item => item.length > CV_LIMITS.skillCharacters));
+  return over ? `${over.heading} has a skill longer than ${CV_LIMITS.skillCharacters} characters. Shorten it before saving or previewing.` : null;
+}
+
 const lines = (value: string) => value.split("\n").map((line) => line.trim()).filter(Boolean);
 
 /** Build the exact sections that a review preview and a direct save will use. */

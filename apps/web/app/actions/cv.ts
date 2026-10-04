@@ -1,6 +1,6 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
-import { cvReviewSections, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { cvSectionTexts } from "@ava/core/cv-format";
 import { cvImprovementOwner } from "@ava/core/cv-assessment";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@ava/core/cv-review";
@@ -62,8 +62,8 @@ function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
       !Array.isArray(added) || !added.every((section) => section && typeof section.entryId === "string" && typeof section.heading === "string" && Array.isArray(section.items) && section.items.every((item: unknown) => typeof item === "string")))
     throw new UserFacingError("The skill edits could not be read. Refresh and try again.");
   content.sections = cvReviewSections(saved, rows, removed, added);
-  const skillLimitIssue = cvReviewSkillLimitIssue(content.sections);
-  if (skillLimitIssue) throw new UserFacingError(skillLimitIssue);
+  const skillIssue = cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
+  if (skillIssue) throw new UserFacingError(skillIssue);
   delete content.fitNotes;
   return CvContentSchema.parse(content);
 }

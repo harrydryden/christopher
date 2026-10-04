@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CvLibrarySchema, CvContentSchema, CvThemeSchema, DEFAULT_CV_THEME, cvForeground, cvMaxPages, materialiseCv, groupCvLibrary, resolveCvTheme, type CvLibrary } from './cv';
+import { CvLibrarySchema, CvPlanSchema, CvContentSchema, CvThemeSchema, DEFAULT_CV_THEME, cvForeground, cvMaxPages, materialiseCv, groupCvLibrary, resolveCvTheme, type CvLibrary } from './cv';
 const library: CvLibrary = { name: 'Example', contact: '', profile: '', entries: [{ id: 'skills', kind: 'skill', heading: 'Technical skills', details: 'Used SQL for reporting and Python for analysis.', skillItems: ['SQL', 'Python'] }] };
 const plan = { summary: 'Analyst.', sections: [{ entryId: 'skills', bullets: ['Reporting and analysis.'], skillItems: ['SQL'] }], gaps: [] };
 describe('structured skills and theme snapshots', () => {
@@ -23,6 +23,20 @@ describe('structured skills and theme snapshots', () => {
     expect(CvThemeSchema.safeParse({ ...DEFAULT_CV_THEME, primary: 'red' }).success).toBe(false);
     expect(CvLibrarySchema.safeParse({ ...library, entries: [{ ...library.entries[0], skillItems: ['SQL', 'sql'] }] }).success).toBe(false);
     expect(CvLibrarySchema.safeParse({ ...library, entries: [{ ...library.entries[0], kind: 'education' }] }).success).toBe(false);
+  });
+  it('accepts 149 and 150 character skill labels without changing them, and rejects 151', () => {
+    for (const length of [149, 150]) {
+      const label = 'S'.repeat(length);
+      const source = { ...library, entries: [{ ...library.entries[0]!, skillItems: [label] }] };
+      const authored = { summary: 'Analyst.', sections: [{ entryId: 'skills', bullets: ['Reporting'], skillItems: [label] }], gaps: [] };
+      expect(CvLibrarySchema.safeParse(source).success).toBe(true);
+      expect(CvPlanSchema.safeParse(authored).success).toBe(true);
+      expect(materialiseCv(source, authored).sections[0]?.skillItems).toEqual([label]);
+    }
+    const over = 'S'.repeat(151);
+    expect(CvLibrarySchema.safeParse({ ...library, entries: [{ ...library.entries[0], skillItems: [over] }] }).success).toBe(false);
+    expect(CvPlanSchema.safeParse({ summary: 'Analyst.', sections: [{ entryId: 'skills', bullets: ['Reporting'], skillItems: [over] }], gaps: [] }).success).toBe(false);
+    expect(CvContentSchema.safeParse({ name: 'Example', contact: '', summary: 'Analyst.', sections: [{ entryId: 'skills', kind: 'skill', heading: 'Skills', bullets: ['Reporting'], skillItems: [over] }], gaps: [] }).success).toBe(false);
   });
   it('preserves a custom palette and chooses readable foregrounds', () => {
     const theme = { ...DEFAULT_CV_THEME, background: '#102030' };

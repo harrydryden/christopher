@@ -29,6 +29,7 @@ import {
   type Employment,
 } from "./cv";
 import { cvQuoteIsAnchored } from "./cv-review";
+import { CV_LIMITS } from "./cv-format";
 import { assertPublicHttpUrl, UnsafeUrlError } from "./url-safety";
 import { escapeRegex, normaliseText } from "./normalize";
 
@@ -149,7 +150,7 @@ export const StoredLibraryProposalSchema = z.object({
     detail: z.string().min(1).max(4000),
     quote: z.string().max(4000),
   })).max(LIBRARY_IMPORT_MAX_JOBS),
-  skills: z.array(z.object({ id: z.string().min(1).max(100), text: z.string().min(1).max(80) }))
+  skills: z.array(z.object({ id: z.string().min(1).max(100), text: z.string().min(1).max(CV_LIMITS.skillCharacters) }))
     .max(LIBRARY_IMPORT_MAX_SKILLS),
 });
 
@@ -394,7 +395,7 @@ export function validateLibraryProposal(
   const seenSkills = new Set<string>();
   for (const item of plan.skills ?? []) {
     const skill = normaliseText(item.text);
-    if (!skill || skill.length > 80 || !anchoredWord(skill, text) || seenSkills.has(key(skill))
+    if (!skill || skill.length > CV_LIMITS.skillCharacters || !anchoredWord(skill, text) || seenSkills.has(key(skill))
       || skills.length >= LIBRARY_IMPORT_MAX_SKILLS) {
       dropped += 1;
       continue;

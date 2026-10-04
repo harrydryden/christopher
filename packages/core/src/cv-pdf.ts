@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, cvMaxPages, CvContentSchema, CV_GROUPS, type CvContent, type CvFont } from "./cv";
 import { LIBERATION_SANS_BOLD, LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
 
-import { cleanCvText, measurePillRows, drawPillRow, darkerPillColour, PILL_STYLES } from "./cv-pdf-pills";
+import { cleanCvText, measurePillRows, drawPillRow, PILL_STYLES } from "./cv-pdf-pills";
 
 export class CvLayoutError extends Error {}
 export function assertCvPageLimit(pageCount: number, maxPages: number): void {
@@ -178,9 +178,9 @@ export async function renderCvPdfWithReport(
   }
   const groups = CV_GROUPS;
   const ordered = cvDisplaySections(content).map((item) => item.section);
-  const skillSectionGap = 6;
+  const skillSectionGap = 9;
   const pageBodyHeight = doc.page.height - 55 - 44;
-  const skillHeadingColour = darkerPillColour(theme.pill);
+  const skillHeadingColour = accent;
   const measureSection = (section: CvContent["sections"][number]) => {
     // Education and Skills share a parent section, with a subsection for each. Qualifications carry
     // their own label in the bullet; retain headings only when they add information.

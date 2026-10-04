@@ -385,7 +385,7 @@ it("does not let a landing evidence score change what the form will post", () =>
 });
 
 it("counts pasted skills live, flags long labels, and normalises on submit without a blur", async () => {
-  const details = "Long supporting explanation, with commas.\nSecond paragraph stays exactly as written.";
+  const details = `${"Long supporting explanation, with commas. ".repeat(6).trim()}\nSecond paragraph stays exactly as written.`;
   const library: CvLibrary = { name: "Test", contact: "", profile: "", entries: [{ id: "skills", kind: "skill", heading: "Commercial", details }] };
   const container = document.createElement("div");
   document.body.append(container);

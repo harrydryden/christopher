@@ -10,7 +10,8 @@ it("parses the six named skills without splitting ampersands and removes bullet 
 });
 
 it("normalises labels for save and preserves supporting details and other evidence verbatim", () => {
-  const details = "Financial planning across several products, with a long account of scope and methods.\nSecond paragraph: budgets, reporting, and support handovers.";
+  const details = `${"Financial planning across several products, with a long account of scope and methods. ".repeat(6).trim()}\nSecond paragraph: budgets, reporting, and support handovers.`;
+  expect(details.length).toBeGreaterThan(150);
   const education = "Degree details, including a dissertation and research methods.";
   const longLabel = "A".repeat(150);
   const raw = {

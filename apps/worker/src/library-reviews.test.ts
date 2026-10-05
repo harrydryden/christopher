@@ -17,7 +17,7 @@ import { sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const now = new Date("2026-09-19T09:00:00Z");
 const later = new Date("2026-09-19T10:00:00Z");
 

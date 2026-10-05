@@ -15,7 +15,7 @@ import { transientFailure, verifyCandidate } from "./handlers/companies";
 import { LeaseLostError } from "./lease";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const now = new Date("2026-09-19T09:00:00Z");
 const GH_JOBS = "https://boards-api.greenhouse.io/v1/boards/acme/jobs";
 
@@ -59,7 +59,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   base = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = base.db;

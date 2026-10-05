@@ -64,7 +64,7 @@ vi.mock("@/lib/auth", async (original) => {
 });
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: () => (session ? { value: session } : undefined), set: vi.fn(), delete: vi.fn() }),
-  headers: async () => new Headers({ host: "ava.test", "x-forwarded-for": "198.51.100.44" }),
+  headers: async () => new Headers({ host: "col.test", "x-forwarded-for": "198.51.100.44" }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 vi.mock("next/navigation", () => ({

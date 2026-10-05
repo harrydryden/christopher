@@ -10,7 +10,7 @@ import { HEALTH_CACHE_MS, HEALTH_DB_STALE_FAIL_MS, startHealthServer, type Healt
 import { ensureTestUser } from "./test-users";
 import { runMonitorSample } from "./handlers/monitor-sample";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const TOKEN = "status-token-for-tests";
 
 let deps: WorkerDeps;
@@ -21,7 +21,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);

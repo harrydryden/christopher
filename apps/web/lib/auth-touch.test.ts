@@ -3,7 +3,7 @@
  * freezing the instance with the write in flight, and never makes the request wait. Outside a
  * request, where `after()` throws, it still runs.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";

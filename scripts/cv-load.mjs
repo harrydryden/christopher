@@ -41,7 +41,7 @@
  *   CV_LOAD_MAX_SECONDS         give up after this long (default 1800)
  *   CV_LOAD_PROJECT_CALL_MS     mean production request time the projection rescales to (default
  *                               60000; an assumption, not a measurement)
- *   CV_LOAD_REPORT_PATH         JSON report (default /tmp/ava-cv-load-report.json)
+ *   CV_LOAD_REPORT_PATH         JSON report (default /tmp/col-cv-load-report.json)
  */
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -375,14 +375,14 @@ async function main() {
   const stamp = `${process.pid}-${Date.now()}`;
   const eventsPath = join(tmpdir(), `cv-load-events-${stamp}.jsonl`);
   const webResultPath = join(tmpdir(), `cv-load-web-${stamp}.json`);
-  const reportPath = process.env.CV_LOAD_REPORT_PATH ?? '/tmp/ava-cv-load-report.json';
+  const reportPath = process.env.CV_LOAD_REPORT_PATH ?? '/tmp/col-cv-load-report.json';
   let worker, web, sampler;
   const samples = [];
   try {
     const { rows: [state] } = await pool.query(`select (select count(*)::int from users) users, (select count(*)::int from tasks) tasks`);
     if (state.users || state.tasks) throw new Error('The scratch database must be freshly migrated: drop and recreate ava_cvload, then pnpm db:migrate');
 
-    const common = { AVA_DISABLE_BROWSER: '1', NODE_ENV: 'development', LOG_LEVEL: process.env.LOG_LEVEL ?? 'warn' };
+    const common = { COL_DISABLE_BROWSER: '1', NODE_ENV: 'development', LOG_LEVEL: process.env.LOG_LEVEL ?? 'warn' };
     worker = child('worker', ['--import', 'tsx', 'scripts/cv-load-worker.mts'], {
       ...common,
       DATABASE_URL: withAppName(url, 'cvload-worker'),

@@ -14,9 +14,9 @@ const { chromium } = createRequire(new URL("../apps/worker/package.json", import
 const port = Number(process.env.SMOKE_PORT ?? 3127);
 const baseUrl = `http://127.0.0.1:${port}`;
 const secret = "role-import-smoke-secret-0123456789abcdef0123456789abcdef";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev" });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_dev" });
 const suffix = randomUUID().slice(0, 8);
-const email = `role-smoke-${suffix}@ava.invalid`;
+const email = `role-smoke-${suffix}@col.invalid`;
 const brandingDomain = `role-brand-${suffix}.test`;
 let browser;
 let web;
@@ -38,7 +38,7 @@ async function importId(page) {
 try {
   const account = await disposableAdmin(pool, { email, name: "Role Smoke", domain: `role-${suffix}.invalid`, companyName: "Role Smoke", secret, userAgent: "role-smoke" });
   const initialSubscriptions = Number((await pool.query("select count(*)::int as count from company_subscriptions where user_id = $1", [account.userId])).rows[0].count);
-  web = await startWeb({ port, env: { DATABASE_URL: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev", SESSION_SECRET: secret } });
+  web = await startWeb({ port, env: { DATABASE_URL: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_dev", SESSION_SECRET: secret } });
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const [name, value] = account.cookie.split("=");

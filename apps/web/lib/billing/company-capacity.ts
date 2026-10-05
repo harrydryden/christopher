@@ -25,6 +25,11 @@ export interface CompanyCapacityQuote {
   token: string;
 }
 
+/**
+ * The quote token's signing key. The `ava:` label is the product's name when quotes were
+ * introduced and deliberately stays: changing it would invalidate every quote in flight across a
+ * deploy, for no gain, since nothing reads it but this file.
+ */
 function signingKey(): string {
   const secret = process.env.SESSION_SECRET?.trim();
   if (!secret) throw new Error("SESSION_SECRET is not set");

@@ -9,7 +9,7 @@ import { handleScanCompany } from "./handlers/scan";
 import { TaskDeferred } from "./queue";
 import { ensureTestUser } from "./test-users";
 
-const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 let deps: WorkerDeps;
 let db: Db;
 let clock = new Date("2026-09-05T06:00:00Z");
@@ -19,7 +19,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = url;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   deps = await createDeps(readEnv(), { now: () => clock, settingsTtlMs: 0 });
   db = deps.db;

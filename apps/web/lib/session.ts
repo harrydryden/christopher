@@ -11,15 +11,22 @@
 
 const encoder = new TextEncoder();
 
-export const SESSION_COOKIE_NAME = "ava_session";
+export const SESSION_COOKIE_NAME = "col_session";
 /**
- * The session cookie's name before the product was renamed. It is still read, after
- * `SESSION_COOKIE_NAME`, so nobody is signed out by the deploy, and `endSession` clears it too.
- * Remove it one session TTL (30 days) after the release, when the last one has expired.
+ * The session cookie's names before the product was renamed (AVA, and before that Christopher),
+ * newest first. They are still read, in this order after `SESSION_COOKIE_NAME`, so nobody is
+ * signed out by the deploy, and `endSession` clears each of them too. Remove a name one session
+ * TTL (30 days) after the release that retired it, when the last cookie under it has expired.
  */
-export const LEGACY_SESSION_COOKIE_NAME = "christopher_session";
+export const LEGACY_SESSION_COOKIE_NAMES = ["ava_session", "christopher_session"] as const;
 /** Short-lived state for the Google sign-in round trip. */
-export const OAUTH_COOKIE_NAME = "ava_oauth";
+export const OAUTH_COOKIE_NAME = "col_oauth";
+/**
+ * The Google round trip's cookie under the AVA name. A sign-in that set it before the deploy and
+ * returns after it still completes: the callback reads it after `OAUTH_COOKIE_NAME`, and clears
+ * both. It lives ten minutes, so it can go in the release after this one.
+ */
+export const LEGACY_OAUTH_COOKIE_NAMES = ["ava_oauth"] as const;
 export const DEFAULT_SESSION_TTL_SECONDS = 2592000; // 30 days
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -79,9 +86,24 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-/** The session cookie a request carries: the current name first, then the legacy one. */
-export function sessionCookieValue(jar: { get(name: string): { value: string } | undefined }): string | undefined {
-  return jar.get(SESSION_COOKIE_NAME)?.value ?? jar.get(LEGACY_SESSION_COOKIE_NAME)?.value;
+type CookieReader = { get(name: string): { value: string } | undefined };
+
+function firstCookieValue(jar: CookieReader, names: readonly string[]): string | undefined {
+  for (const name of names) {
+    const value = jar.get(name)?.value;
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/** The session cookie a request carries: the current name first, then the legacy ones in order. */
+export function sessionCookieValue(jar: CookieReader): string | undefined {
+  return firstCookieValue(jar, [SESSION_COOKIE_NAME, ...LEGACY_SESSION_COOKIE_NAMES]);
+}
+
+/** The Google sign-in state cookie a request carries: the current name first, then the legacy one. */
+export function oauthCookieValue(jar: CookieReader): string | undefined {
+  return firstCookieValue(jar, [OAUTH_COOKIE_NAME, ...LEGACY_OAUTH_COOKIE_NAMES]);
 }
 
 export interface SessionCookie {

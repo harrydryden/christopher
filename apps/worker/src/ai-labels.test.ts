@@ -17,7 +17,7 @@ import { aiProviderFailureSql, isAiProviderFailure } from "../../../packages/db/
  * breaks here rather than quietly moving calls between Operations' columns or into the outage
  * alert.
  */
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
 // Holds are left live on purpose here; the suites after this one share the database.

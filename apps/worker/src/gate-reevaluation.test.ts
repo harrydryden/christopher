@@ -12,7 +12,7 @@ import { handleReevaluateGate } from "./handlers/learning";
 import { LeaseBusyError } from "./lease";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 let deps: WorkerDeps;
 let db: Db;
@@ -23,7 +23,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CV_PAGE_LIMITS } from "./cv-format";
-import { CV_FONTS, DEFAULT_CV_FONT, DEFAULT_CV_THEME, LEGACY_CV_FONT, type CvTheme } from "./cv-theme-values";
+import { CV_FONTS, DEFAULT_CV_FONT, DEFAULT_CV_THEME, LEGACY_CV_FONTS, type CvTheme } from "./cv-theme-values";
 export { CV_FONTS, CV_THEMES, DEFAULT_CV_FONT, DEFAULT_CV_THEME, cvForeground, cvMaxPages, type CvFont, type CvTheme } from "./cv-theme-values";
 
 const ColourSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a six-digit hex colour.");
@@ -13,7 +13,7 @@ export const CvThemeSchema = z.object({
   version: z.literal(1), primary: ColourSchema, background: ColourSchema,
   surface: ColourSchema, pill: ColourSchema, introPanel: z.boolean(), skillPills: z.boolean(),
   // Stored themes and saved revisions carry the old name, so it reads as the face it always was.
-  font: z.preprocess((font) => (font === LEGACY_CV_FONT ? DEFAULT_CV_FONT : font), z.enum(CV_FONTS)).default(DEFAULT_CV_FONT),
+  font: z.preprocess((font) => ((LEGACY_CV_FONTS as readonly unknown[]).includes(font) ? DEFAULT_CV_FONT : font), z.enum(CV_FONTS)).default(DEFAULT_CV_FONT),
   maxPages: z.number().int().min(CV_PAGE_LIMITS.min).max(CV_PAGE_LIMITS.max).default(CV_PAGE_LIMITS.default),
 });
 // The zod-free `CvTheme` must stay exactly what the schema produces; either drifting fails typecheck.

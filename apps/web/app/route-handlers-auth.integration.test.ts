@@ -38,7 +38,7 @@ function watchedDatabase(): Db {
 vi.mock("@/lib/db", () => ({ db: () => watchedDatabase() }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: () => (session ? { value: session } : undefined), set: vi.fn(), delete: vi.fn() }),
-  headers: async () => new Headers({ host: "ava.test", "x-forwarded-for": "198.51.100.45" }),
+  headers: async () => new Headers({ host: "col.test", "x-forwarded-for": "198.51.100.45" }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 
@@ -65,7 +65,7 @@ const ROUTES: Record<string, Access> = {
   // Signed cookie only, by design: it logs a navigation's timing and reads and writes no account's data.
   "api/performance/route.ts": "session",
   "api/scan-status/route.ts": "session",
-  "api/webhooks/stripe/route.ts": { public: "Stripe's raw-body signature is the credential; Checkout cannot hold an AVA session cookie." },
+  "api/webhooks/stripe/route.ts": { public: "Stripe's raw-body signature is the credential; Checkout cannot hold a Course of Life session cookie." },
   "api/work-status/route.ts": "session",
   "auth/google/callback/route.ts": { public: "Completes Google sign-in; the signed state cookie and Google's answer are the credential." },
   "auth/google/route.ts": { public: "Starts Google sign-in, before there is any session." },
@@ -94,10 +94,10 @@ async function handlers(route: string): Promise<Array<[string, Handler]>> {
 function request(route: string, method: string, headers: Record<string, string> = {}) {
   const path = "/" + route.replace(/^\(app\)\//, "").replace(/\/route\.ts$/, "").replace(/\[id\]/g, "00000000-0000-4000-8000-00000000abcd").replace(/\[token\]/g, "token");
   const body = method === "GET" || method === "HEAD" ? undefined : "{}";
-  return new NextRequest(`http://ava.test${path}`, {
+  return new NextRequest(`http://col.test${path}`, {
     method,
     body,
-    headers: { origin: "http://ava.test", host: "ava.test", "content-type": "application/json", ...headers },
+    headers: { origin: "http://col.test", host: "col.test", "content-type": "application/json", ...headers },
   });
 }
 const context = { params: Promise.resolve({ id: "00000000-0000-4000-8000-00000000abcd", token: "token" }) };
@@ -167,7 +167,7 @@ describe("a signed cookie whose session row is gone", () => {
       userId: signed.user.id, jobTitle: "Operations Manager", companyName: "Acme", appliedOn: "2026-09-01",
       pdfBase64: Buffer.from("%PDF-1.4 submitted").toString("base64"), history: [],
     }).returning();
-    const download = () => GET(new Request(`http://ava.test/api/applications/${application!.id}/pdf`), { params: Promise.resolve({ id: application!.id }) });
+    const download = () => GET(new Request(`http://col.test/api/applications/${application!.id}/pdf`), { params: Promise.resolve({ id: application!.id }) });
     session = signed.cookie;
 
     const served = await download();

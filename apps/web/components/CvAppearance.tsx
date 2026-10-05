@@ -7,9 +7,9 @@ import { CV_PAGE_CHOICES } from "@col/core/cv-format";
 import { CV_FONTS, CV_THEMES, cvForeground, type CvFont, type CvTheme } from "@col/core/cv-theme-values";
 import { selectClass } from "@/components/Field";
 
-/** Browser stand-ins for the PDF faces: AVA is Helvetica; Arial is Liberation Sans in the PDF. */
+/** Browser stand-ins for the PDF faces: Course of Life is Helvetica; Arial is Liberation Sans in the PDF. */
 const SAMPLE_FONT_FAMILY: Record<CvFont, string> = {
-  AVA: '"Helvetica Neue", Helvetica, "Liberation Sans", Arial, sans-serif',
+  "Course of Life": '"Helvetica Neue", Helvetica, "Liberation Sans", Arial, sans-serif',
   Arial: 'Arial, "Liberation Sans", Helvetica, sans-serif',
 };
 

@@ -115,6 +115,6 @@ export function viaRelay(databaseUrl, relayPort) {
  * on stop. `WEB_DB_POOL_MAX` sets the pool: 6 is production's pooled default, 3 the direct one.
  */
 export function startServer({ port, databaseUrl, pool }) {
-  const env = { DATABASE_URL: databaseUrl, SESSION_SECRET: BENCH_SECRET, AVA_DISABLE_BROWSER: "1", ...(pool ? { WEB_DB_POOL_MAX: String(pool) } : {}) };
+  const env = { DATABASE_URL: databaseUrl, SESSION_SECRET: BENCH_SECRET, COL_DISABLE_BROWSER: "1", ...(pool ? { WEB_DB_POOL_MAX: String(pool) } : {}) };
   return startWeb({ port, env, attempts: 90 });
 }

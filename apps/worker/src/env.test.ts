@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readEnv } from "./env";
 
-const BASE = { DATABASE_URL: "postgres://postgres@127.0.0.1:5432/ava_test" };
-const PRODUCTION = { ...BASE, NODE_ENV: "production", ADMIN_EMAILS: "owner@ava.dev" };
+const BASE = { DATABASE_URL: "postgres://postgres@127.0.0.1:5432/col_test" };
+const PRODUCTION = { ...BASE, NODE_ENV: "production", ADMIN_EMAILS: "owner@col.dev" };
 
 function captured() {
   const lines: Array<{ level: string; msg: string; data?: Record<string, unknown> }> = [];
@@ -34,21 +34,21 @@ describe("SCRAPER_CONTACT_EMAIL", () => {
 
   it("is used as given in production when it is a real address", () => {
     captured();
-    expect(readEnv({ ...PRODUCTION, SCRAPER_CONTACT_EMAIL: "crawler@ava.dev" }).contactEmail).toBe("crawler@ava.dev");
+    expect(readEnv({ ...PRODUCTION, SCRAPER_CONTACT_EMAIL: "crawler@col.dev" }).contactEmail).toBe("crawler@col.dev");
   });
 });
 
 describe("the database application name", () => {
-  it("is ava-worker on the worker and ava-web-cron when the interface's cron fallback runs the handlers", () => {
-    expect(readEnv(BASE).databaseApplicationName).toBe("ava-worker");
-    expect(readEnv({ ...BASE, VERCEL: "1" }).databaseApplicationName).toBe("ava-web-cron");
+  it("is col-worker on the worker and col-web-cron when the interface's cron fallback runs the handlers", () => {
+    expect(readEnv(BASE).databaseApplicationName).toBe("col-worker");
+    expect(readEnv({ ...BASE, VERCEL: "1" }).databaseApplicationName).toBe("col-web-cron");
   });
 });
 
 describe("the production boot line", () => {
   it("records concurrency, the pool ceiling and the heap limit", () => {
     const lines = captured();
-    const env = readEnv({ ...PRODUCTION, SCRAPER_CONTACT_EMAIL: "crawler@ava.dev", WORKER_CONCURRENCY: "3" });
+    const env = readEnv({ ...PRODUCTION, SCRAPER_CONTACT_EMAIL: "crawler@col.dev", WORKER_CONCURRENCY: "3" });
     // Three general slots and the default eight CV slots, two connections each, and a margin.
     expect(env.cvConcurrency).toBe(8);
     expect(env.databasePoolMax).toBe(26);
@@ -61,7 +61,7 @@ describe("the production boot line", () => {
 
   it("warns when ADMIN_EMAILS is unset, and says nothing outside production", () => {
     const lines = captured();
-    readEnv({ ...PRODUCTION, ADMIN_EMAILS: " ", SCRAPER_CONTACT_EMAIL: "crawler@ava.dev" });
+    readEnv({ ...PRODUCTION, ADMIN_EMAILS: " ", SCRAPER_CONTACT_EMAIL: "crawler@col.dev" });
     expect(lines.filter(line => line.level === "warn").map(line => line.msg)).toEqual([expect.stringMatching(/^ADMIN_EMAILS is unset/)]);
     lines.length = 0;
     readEnv(BASE);

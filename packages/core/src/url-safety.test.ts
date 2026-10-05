@@ -83,7 +83,7 @@ describe("assertPublicHttpUrl", () => {
 
   it("refuses names that only ever mean the local network", () => {
     for (const url of ["http://localhost:3000/", "http://LOCALHOST/", "http://api.localhost/", "http://printer.local/",
-      "http://metadata.google.internal/computeMetadata/v1/", "http://nas.home.arpa/", "http://ava-worker:8080/healthz", "http://intranet/"]) {
+      "http://metadata.google.internal/computeMetadata/v1/", "http://nas.home.arpa/", "http://col-worker:8080/healthz", "http://intranet/"]) {
       expect(refused(url)).toMatch(/local network name/);
     }
   });

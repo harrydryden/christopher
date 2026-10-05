@@ -169,8 +169,8 @@ export async function requestPasswordReset(email: string, origin: string | null)
   const token = await issueAuthToken(user.id, "password_reset");
   await sendEmail({
     to: user.email,
-    subject: "Reset your AVA password",
-    text: `Someone asked to reset the password for this AVA account.\n\nSet a new password here (the link works once, for an hour):\n${origin}/reset-password?token=${token}\n\nIf that was not you, ignore this message; nothing has changed.`,
+    subject: "Reset your Course of Life password",
+    text: `Someone asked to reset the password for this Course of Life account.\n\nSet a new password here (the link works once, for an hour):\n${origin}/reset-password?token=${token}\n\nIf that was not you, ignore this message; nothing has changed.`,
   });
 }
 
@@ -200,8 +200,8 @@ export async function sendVerificationEmail(user: User, origin: string | null): 
   const token = await issueAuthToken(user.id, "email_verification");
   return sendEmail({
     to: user.email,
-    subject: "Confirm your email for AVA",
-    text: `Confirm this address for your AVA account (the link works once, for a day, and asks for your password):\n${origin}/auth/verify?token=${token}\n\nIf you did not create an account, ignore this message.`,
+    subject: "Confirm your email for Course of Life",
+    text: `Confirm this address for your Course of Life account (the link works once, for a day, and asks for your password):\n${origin}/auth/verify?token=${token}\n\nIf you did not create an account, ignore this message.`,
   });
 }
 

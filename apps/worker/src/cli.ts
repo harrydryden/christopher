@@ -20,7 +20,7 @@
  *                                                recording without a key, or live with one)
  *   pnpm --filter @col/worker cli reencode-logos (one-off: store every captured logo as a 64 px WebP)
  *
- * Per-account commands act for AVA_CLI_USER (an email) or, when unset, the earliest
+ * Per-account commands act for COL_CLI_USER (an email) or, when unset, the earliest
  * administrator.
  *
  * Every command except `migrate` first checks that the database is at exactly this checkout's
@@ -104,7 +104,7 @@ function reportReplay(report: CvReplayReport, out: string | undefined) {
 }
 
 async function cliUser(deps: WorkerDeps) {
-  const email = renamedEnv(process.env, "AVA_CLI_USER", "CHRISTOPHER_CLI_USER")?.trim().toLowerCase();
+  const email = renamedEnv(process.env, "COL_CLI_USER", "AVA_CLI_USER", "CHRISTOPHER_CLI_USER")?.trim().toLowerCase();
   const rows = email
     ? await deps.db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1)
     : await deps.db.select().from(schema.users).where(and(eq(schema.users.role, "admin"), sql`${schema.users.claimedAt} is not null`)).orderBy(asc(schema.users.createdAt)).limit(1);

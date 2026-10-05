@@ -14,7 +14,7 @@ const fixture = { company1: "11111111-1111-1111-1111-111111111111", draft1: "222
 test("only a local ava_perf* database is accepted", () => {
   assert.equal(assertPerfDatabase("postgres://u:p@127.0.0.1:5432/ava_perf_ci").pathname, "/ava_perf_ci");
   assert.equal(assertPerfDatabase("postgresql://u@localhost/ava_perf_bench").pathname, "/ava_perf_bench");
-  for (const unsafe of ["postgres://u@db.example.com/ava_perf_ci", "postgres://u@localhost/ava_test", "postgres://u@localhost/christopher_dev",
+  for (const unsafe of ["postgres://u@db.example.com/ava_perf_ci", "postgres://u@localhost/col_test", "postgres://u@localhost/christopher_dev",
     "postgres://u@localhost/ava_perf-x", "mysql://u@localhost/ava_perf", "not a url"])
     assert.throws(() => assertPerfDatabase(unsafe), /ava_perf/, unsafe);
 });
@@ -138,5 +138,5 @@ test("the relay counts the statements a real client sends, when a database is at
 });
 
 test("the cookie is the interface's own shape", () => {
-  assert.match(sessionCookie("s", "id", 1), /^ava_session=v2\.id\.1\.[A-Za-z0-9_-]{43}$/);
+  assert.match(sessionCookie("s", "id", 1), /^col_session=v2\.id\.1\.[A-Za-z0-9_-]{43}$/);
 });

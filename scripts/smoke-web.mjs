@@ -15,11 +15,11 @@ const nextBin = createRequire(new URL("../apps/web/package.json", import.meta.ur
 
 const PORT = Number(process.env.SMOKE_PORT ?? 3123);
 const SECRET = "smoke-test-secret-0123456789abcdef0123456789abcdef";
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_dev";
 const skipBuild = process.argv.includes("--no-build");
 
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
-const SMOKE_EMAIL = "smoke@ava.invalid";
+const SMOKE_EMAIL = "smoke@col.invalid";
 const SMOKE_DOMAIN = "smoke.invalid";
 
 function run(cmd, args, opts = {}) {
@@ -56,7 +56,7 @@ const PAGES = [
   ["/library", ["Library", "Intro", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
     "Experience", "Education, skills and interests", "Scoring guide", "A strong row says",
     "Import a document", "Upload a CV", "Paste text", "Read your website",
-    "AVA does not read LinkedIn itself.",
+    "Course of Life does not read LinkedIn itself.",
     "Writing preferences", "Writing style", "Saved phrasing", "No library saved yet"]],
   ["/applications", ["Applications", "Active", "Closed", "Roles by stage", "What the stages mean"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],

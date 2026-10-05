@@ -3,7 +3,7 @@
  * call and its cost still recorded — when it does not yet, which is a release running a few
  * minutes ahead of the migration that adds them.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -13,7 +13,7 @@ import { runMigrations } from "./migrate";
 import { recordAiCall, resetAiCallColumnsProbe } from "./ai-budget";
 import { aiCalls } from "./schema";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 1 });
 beforeAll(() => runMigrations(db));
 beforeEach(() => resetAiCallColumnsProbe());
 afterAll(async () => {

@@ -39,7 +39,7 @@ jobs:
       - name: Require a verified evaluation at the shipped prompt set
         run: pnpm exec tsx scripts/check-evaluation-reports.ts
         env:
-          AVA_EVAL_GATE_REQUIRE_VERIFIED: "1"
+          COL_EVAL_GATE_REQUIRE_VERIFIED: "1"
 
   worker-release:
     needs: evaluation-qualification

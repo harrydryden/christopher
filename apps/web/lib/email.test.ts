@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sendEmail } from "./email";
 
-const mail = { to: "ada@example.com", subject: "Reset your AVA password", text: "https://ava.test/reset-password?token=secret-token" };
+const mail = { to: "ada@example.com", subject: "Reset your Course of Life password", text: "https://col.test/reset-password?token=secret-token" };
 
 let info: ReturnType<typeof vi.spyOn>;
 let warn: ReturnType<typeof vi.spyOn>;
@@ -51,7 +51,7 @@ it("logs the link outside production unless AUTH_EMAIL_LOG=0", async () => {
 it("sends through the provider when one is configured, and logs nothing", async () => {
   vi.stubEnv("NODE_ENV", "production");
   vi.stubEnv("RESEND_API_KEY", "re_test");
-  vi.stubEnv("EMAIL_FROM", "AVA <ava@example.com>");
+  vi.stubEnv("EMAIL_FROM", "Course of Life <col@example.com>");
   const fetched = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
   expect(await sendEmail(mail)).toEqual({ delivered: true });
   expect(fetched).toHaveBeenCalledTimes(1);

@@ -290,7 +290,7 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
   const referenceProof = { sourceMatchesLabel: referenceSourceMatches, rawHashVerified: options.referenceRawHashVerified === true };
   const uniqueCount = (rows: Array<{ url: string }>) => new Set(rows.map(row => canonicalPostingIdentity(row.url))).size;
   const fetcher = options.fetcher ?? new PoliteFetcher({
-    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
+    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "col-live-acceptance@example.invalid"),
     respectRobots: () => true,
   });
   let browserRenders = 0;

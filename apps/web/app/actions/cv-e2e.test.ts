@@ -8,8 +8,8 @@
  *
  * Run it against its own database so it does not collide with the suites that truncate shared
  * tables:
- *   TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_e2e \
- *   AVA_DISABLE_BROWSER=1 pnpm test cv-e2e
+ *   TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/col_e2e \
+ *   COL_DISABLE_BROWSER=1 pnpm test cv-e2e
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { consumeCvCredit, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";

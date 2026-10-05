@@ -20,7 +20,7 @@ import { ensureTestUser } from "./test-users";
 import { seedReplayFixtureDraft } from "./cv-replay-fixture";
 import { mergeStageRoutes, readRecordingHeader, recordCvDraft, replayCvDraft, replayFromRecording, serialiseNestedTransactions } from "./cv-replay";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 let deps: WorkerDeps;
 let db: Db;
@@ -28,7 +28,7 @@ let userId: string;
 
 beforeAll(async () => {
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv());
   await runMigrations(deps.db);
   db = deps.db;
@@ -68,7 +68,7 @@ async function footprint() {
 it("records a build through the real handler, replays it with no key and no client, grades it, and leaves nothing behind", async () => {
   const draft = await publishedDraft();
   const before = await footprint();
-  const path = join(mkdtempSync(join(tmpdir(), "ava-replay-")), "recording.jsonl");
+  const path = join(mkdtempSync(join(tmpdir(), "col-replay-")), "recording.jsonl");
 
   deps.aiClient = createScriptedAiClient({ barrierMs: 200 }).client;
   const recorded = await recordCvDraft(deps, draft.id, { path });
@@ -102,7 +102,7 @@ it("records a build through the real handler, replays it with no key and no clie
 
 it("fails a replay asked for another route, naming the prompt and version the recording does not hold", async () => {
   const draft = await publishedDraft();
-  const path = join(mkdtempSync(join(tmpdir(), "ava-replay-")), "recording.jsonl");
+  const path = join(mkdtempSync(join(tmpdir(), "col-replay-")), "recording.jsonl");
   deps.aiClient = createScriptedAiClient({ barrierMs: 200 }).client;
   await recordCvDraft(deps, draft.id, { path });
   deps.aiClient = undefined;
@@ -118,7 +118,7 @@ it("fails a replay asked for another route, naming the prompt and version the re
 
 it("replays live at a candidate route, sending the audit at that effort, graded against a recording's baseline", async () => {
   const draft = await publishedDraft();
-  const path = join(mkdtempSync(join(tmpdir(), "ava-replay-")), "recording.jsonl");
+  const path = join(mkdtempSync(join(tmpdir(), "col-replay-")), "recording.jsonl");
   deps.aiClient = createScriptedAiClient({ barrierMs: 200 }).client;
   await recordCvDraft(deps, draft.id, { path });
   deps.aiClient = undefined;

@@ -2,7 +2,7 @@
  * Hourly history maintenance against a real database: what each rule removes, what it must never
  * remove, and that the work keeps up with any backlog inside its budget.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, pruneWorkerEvents, schema } from "@col/db";
@@ -12,7 +12,7 @@ import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";
 import { ensureTestUser } from "./test-users";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 const deps = { db } as unknown as WorkerDeps;
 
 beforeAll(() => runMigrations(db));

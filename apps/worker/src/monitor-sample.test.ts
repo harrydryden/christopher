@@ -9,7 +9,7 @@ import { sql } from "drizzle-orm";
 import { MONITOR_THRESHOLDS, monitorLevels, runMonitorSample, slowQueriesPer15m, type MonitorSample } from "./handlers/monitor-sample";
 import { getInternal, setInternal } from "./settings";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 let db: Db;
 let pool: ReturnType<typeof createDb>["pool"];

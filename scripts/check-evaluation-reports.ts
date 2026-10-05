@@ -4,7 +4,7 @@
  *   pnpm exec tsx scripts/check-evaluation-reports.ts [--write]
  *
  * Reads every `docs/evaluations/<name>/report.json` and fails when the prompts that ship have not
- * been graded. Release qualification sets `AVA_EVAL_GATE_REQUIRE_VERIFIED=1` to require a verified
+ * been graded. Release qualification sets `COL_EVAL_GATE_REQUIRE_VERIFIED=1` to require a verified
  * published replay; ordinary pull-request CI accepts an explicitly unverified fixture with a
  * warning (scripts/evaluation-report-gate.mjs decides; docs/DEPLOY.md explains failures). It also fails when
  * packages/core/src/evaluated-routes.ts — the graded routes Health compares the `stageRoutes`
@@ -26,9 +26,9 @@ const reports = readdirSync(dir, { withFileTypes: true })
 const current = promptSetVersion();
 const requireVerified = requireVerifiedFromEnv();
 const result = checkEvaluationReports(reports, current, { requireVerified });
-console.log(`shipped prompt set: ${current}; ${reports.length} committed report(s)${requireVerified ? "; a verified report is required (AVA_EVAL_GATE_REQUIRE_VERIFIED)" : ""}`);
+console.log(`shipped prompt set: ${current}; ${reports.length} committed report(s)${requireVerified ? "; a verified report is required (COL_EVAL_GATE_REQUIRE_VERIFIED)" : ""}`);
 for (const note of result.notes) console.log(`note: ${note}`);
-for (const warning of result.warnings) console.warn(`warning: ${warning} (Set AVA_EVAL_GATE_REQUIRE_VERIFIED to make this a failure.)`);
+for (const warning of result.warnings) console.warn(`warning: ${warning} (Set COL_EVAL_GATE_REQUIRE_VERIFIED to make this a failure.)`);
 
 const defaults = Object.fromEntries(CV_PROMPT_IDS.map(id => [id, { model: PROMPTS[id].route.model, effort: PROMPTS[id].route.effort }]));
 const routesPath = join(root, "packages/core/src/evaluated-routes.ts");

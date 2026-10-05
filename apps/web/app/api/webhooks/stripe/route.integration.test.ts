@@ -14,8 +14,8 @@ beforeAll(async () => {
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
-  process.env.STRIPE_SECRET_KEY = "sk_test_ava_local";
-  process.env.STRIPE_WEBHOOK_SECRET = "whsec_ava_test";
+  process.env.STRIPE_SECRET_KEY = "sk_test_col_local";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_col_test";
   process.env.STRIPE_PRICE_SEARCH_MONTHLY = "price_search_test";
   process.env.STRIPE_PRICE_INTENSIVE_MONTHLY = "price_intensive_test";
   process.env.STRIPE_PRICE_COMPANY_BLOCK_MONTHLY = "price_company_block_test";

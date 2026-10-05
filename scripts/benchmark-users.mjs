@@ -195,7 +195,7 @@ async function main() {
     const draftByUser = new Map(drafts.map(row => [row.user_id, row.id]));
     await pool.query('analyze');
     const cookies = sessions.map(({ id }) => sessionCookie(secret, id, expires));
-    web = await startWeb({ port, env: { SESSION_SECRET: secret, AVA_DISABLE_BROWSER: '1' }, nodeArgs: ['--inspect=127.0.0.1:0'], probeTimeoutMs: 1_000 });
+    web = await startWeb({ port, env: { SESSION_SECRET: secret, COL_DISABLE_BROWSER: '1' }, nodeArgs: ['--inspect=127.0.0.1:0'], probeTimeoutMs: 1_000 });
     async function appHeapMiB() {
       const inspectorUrl = web.log().match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
       if (!inspectorUrl) return null;
@@ -442,7 +442,7 @@ async function main() {
         'This does not establish hosted connection, memory, network, serverless fan-out or sustained-soak headroom.',
         'The daily window runs its three phases for USERS_POLLING_SECONDS each, with the pollers\' backoff imported from apps/web/lib/polling.ts. Its worker is a stand-in that finishes one company every twelve seconds and records a scan row for each; no scan, fetch or model work runs.',
         'Database transactions per second are read from pg_stat_database, which every connection updates on its own schedule, and include the stand-in worker\'s one statement every ten seconds.'] };
-    await writeFile(process.env.USERS_REPORT_PATH ?? '/tmp/ava-users-report.json', JSON.stringify(report, null, 2) + '\n');
+    await writeFile(process.env.USERS_REPORT_PATH ?? '/tmp/col-users-report.json', JSON.stringify(report, null, 2) + '\n');
     console.log(JSON.stringify({ passed: report.passed, counts, phases: phases.map(({ label, errors, p95Ms, seconds }) => ({ label, errors, p95Ms, seconds })), failures }));
     if (!report.passed) process.exitCode = 1;
   } finally {

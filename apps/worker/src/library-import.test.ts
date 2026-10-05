@@ -25,7 +25,7 @@ import { HostBusyError, PrivateAddressError } from "./fetcher";
 import { ensureTestUser } from "./test-users";
 import { startTestServer, type TestServer } from "./test-server";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const HOSTS = ["jane.example.test", "www.jane.example.test", "closed.example.test"];
 
 const ROWS = {
@@ -122,8 +122,8 @@ beforeAll(async () => {
     },
   }, HOSTS);
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;
   userId = (await ensureTestUser(db, "library-import-task@example.com")).id;

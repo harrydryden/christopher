@@ -10,7 +10,7 @@ import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { compareSchema, discoverTargets, findCompany, readJournal, schemaState, type SchemaState } from "./cli-guards";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const WORKER_DIR = fileURLToPath(new URL("..", import.meta.url));
 
 let db: Db;
@@ -26,7 +26,7 @@ beforeEach(async () => { await db.execute(sql`truncate companies, tasks restart 
 function cli(...args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
     cwd: WORKER_DIR,
-    env: { ...process.env, DATABASE_URL, AVA_DISABLE_BROWSER: "1", NODE_ENV: "test" },
+    env: { ...process.env, DATABASE_URL, COL_DISABLE_BROWSER: "1", NODE_ENV: "test" },
     encoding: "utf8",
     timeout: 60_000,
   });

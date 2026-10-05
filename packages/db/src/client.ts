@@ -22,7 +22,7 @@ export interface CreateDbOptions {
   idleTimeoutMillis?: number;
   /**
    * The `application_name` every connection reports, so `pg_stat_activity` can say which client
-   * holds the database's backends (`ava-web`, `ava-worker`). It is the one startup parameter
+   * holds the database's backends (`col-web`, `col-worker`). It is the one startup parameter
    * PgBouncer accepts and tracks in transaction mode, so it is sent on 6432 too. One named in the
    * connection string takes precedence.
    */

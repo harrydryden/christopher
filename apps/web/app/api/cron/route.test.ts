@@ -14,14 +14,15 @@ import { signInTestUser } from "@/test/auth";
 import { startTestServer, type TestServer } from "../../../../worker/src/test-server";
 import { ensureTestUser } from "../../../../worker/src/test-users";
 
-/** The session cookie the next request carries, if any. */
+/** The session cookie the next request carries, if any, and the name it carries it under. */
 let sessionCookie: string | undefined;
+let sessionCookieName = "col_session";
 vi.mock("next/headers", () => ({
-  cookies: async () => ({ get: (name: string) => (name === "ava_session" && sessionCookie ? { value: sessionCookie } : undefined) }),
+  cookies: async () => ({ get: (name: string) => (name === sessionCookieName && sessionCookie ? { value: sessionCookie } : undefined) }),
   headers: async () => new Headers(),
 }));
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const SECRET = "cron-test-secret";
 
 const JOBS = {
@@ -54,7 +55,7 @@ let POST: (request: Request) => Promise<Response>;
 let runScheduledWork: typeof import("./scheduled-work").runScheduledWork;
 
 beforeAll(async () => {
-  process.env.AVA_SERVERLESS_FALLBACK = "1";
+  process.env.COL_SERVERLESS_FALLBACK = "1";
   server = await startTestServer(
     {
       "www.acme.example": SITE,
@@ -70,8 +71,8 @@ beforeAll(async () => {
 
   process.env.DATABASE_URL = DATABASE_URL;
   process.env.CRON_SECRET = SECRET;
-  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.COL_DISABLE_BROWSER = "1";
   process.env.SCRAPER_CONTACT_EMAIL = "you@example.com";
   delete process.env.ANTHROPIC_API_KEY;
   process.env.SESSION_SECRET = "cron-test-session-secret";
@@ -92,6 +93,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   sessionCookie = undefined;
+  sessionCookieName = "col_session";
   await db.execute(sql`truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_calls, users restart identity cascade`);
 });
 
@@ -138,6 +140,19 @@ describe("the cron route", () => {
     expect(viaGet.status).toBe(403);
     expect(await viaGet.json()).toEqual({ ok: false, error: "administrators only" });
     expect((await fromBrowser("POST", "https://example.test")).status).toBe(403);
+    expect(await db.select().from(schema.tasks)).toHaveLength(0);
+  });
+
+  it("still reads a session carried under a pre-rename cookie name, so the deploy signs nobody out", async () => {
+    await dailyRunDue();
+    ({ cookie: sessionCookie } = await signInTestUser(db, process.env.SESSION_SECRET!, "member@example.com", "member"));
+    for (const name of ["ava_session", "christopher_session"]) {
+      sessionCookieName = name;
+      // 403, not 401: the session was found and its account read; it is only not an administrator's.
+      expect((await fromBrowser("GET")).status, name).toBe(403);
+    }
+    sessionCookieName = "elsewhere_session";
+    expect((await fromBrowser("GET")).status).toBe(401);
     expect(await db.select().from(schema.tasks)).toHaveLength(0);
   });
 
@@ -258,7 +273,7 @@ describe("the cron route", () => {
   });
 
   it("schedules but does not drain when the fallback is off", async () => {
-    delete process.env.AVA_SERVERLESS_FALLBACK;
+    delete process.env.COL_SERVERLESS_FALLBACK;
     try {
       await db.insert(schema.settings).values([
         { key: "scanTime", value: "00:00" },
@@ -280,7 +295,7 @@ describe("the cron route", () => {
       expect(tasks.every((task) => task.status === "queued")).toBe(true);
       expect(await db.select().from(schema.scanRuns)).toHaveLength(0);
     } finally {
-      process.env.AVA_SERVERLESS_FALLBACK = "1";
+      process.env.COL_SERVERLESS_FALLBACK = "1";
     }
   }, 120_000);
 

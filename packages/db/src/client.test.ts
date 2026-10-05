@@ -1,13 +1,13 @@
 /**
  * The pool against a real database: what happens when a connection dies under it.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { createDb, namedStatementsFor, poolErrorCount, poolStats, serverTimeouts, timeRoundTrip, type SlowQuery } from "./client";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 // A second pool plays the operator (or the failover) that ends the first pool's connections.
 const admin = createDb(DATABASE_URL, { max: 1 });
 afterAll(() => admin.pool.end());
@@ -84,7 +84,7 @@ describe("server-side time limits", () => {
   });
 
   it("are overridden by the caller, then by DATABASE_STATEMENT_TIMEOUT_MS, and 0 turns them off", () => {
-    const direct = "postgres://u:p@127.0.0.1:5432/ava";
+    const direct = "postgres://u:p@127.0.0.1:5432/col";
     expect(serverTimeouts(direct, { statementTimeoutMs: 30_000 })).toEqual({ statement_timeout: 30_000, idle_in_transaction_session_timeout: 60_000 });
     vi.stubEnv("DATABASE_STATEMENT_TIMEOUT_MS", "45000");
     expect(serverTimeouts(direct)).toMatchObject({ statement_timeout: 45_000 });
@@ -94,9 +94,9 @@ describe("server-side time limits", () => {
 
   it("are not sent to Render's transaction pooler, which refuses unknown startup parameters", () => {
     for (const url of [
-      "postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/ava",
-      "postgres://u:p@dpg-example-a:6432/ava",
-      "postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:5432/ava?port=6432",
+      "postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/col",
+      "postgres://u:p@dpg-example-a:6432/col",
+      "postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:5432/col?port=6432",
     ]) {
       expect(serverTimeouts(url, { statementTimeoutMs: 30_000 })).toEqual({});
       const { pool } = createDb(url);
@@ -104,7 +104,7 @@ describe("server-side time limits", () => {
       expect(pool.options).not.toHaveProperty("idle_in_transaction_session_timeout");
       void pool.end();
     }
-    expect(serverTimeouts("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:5432/ava")).toMatchObject({ statement_timeout: 300_000 });
+    expect(serverTimeouts("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:5432/col")).toMatchObject({ statement_timeout: 300_000 });
   });
 });
 
@@ -151,12 +151,12 @@ describe("the endpoint a serverless deployment connects to", () => {
     const writes = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const flagged = () => writes.mock.calls.filter(([line]) => String(line).includes("database_direct_endpoint")).length;
     const open = (url: string) => { const { pool } = createDb(url); void pool.end(); };
-    const direct = "postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:5432/ava";
+    const direct = "postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:5432/col";
     open(direct);
     expect(flagged()).toBe(0);
     vi.stubEnv("VERCEL", "1");
-    open("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/ava");
-    open("postgres://u:p@127.0.0.1:5432/ava");
+    open("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/col");
+    open("postgres://u:p@127.0.0.1:5432/col");
     expect(flagged()).toBe(0);
     open(direct);
     open(direct);
@@ -170,8 +170,8 @@ describe("the endpoint a serverless deployment connects to", () => {
 
 describe("idle connections", () => {
   it("are closed after 30 seconds unless the caller keeps them longer, and are kept alive at the socket", async () => {
-    const plain = createDb("postgres://u:p@127.0.0.1:5432/ava");
-    const kept = createDb("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/ava", { idleTimeoutMillis: 120_000 });
+    const plain = createDb("postgres://u:p@127.0.0.1:5432/col");
+    const kept = createDb("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/col", { idleTimeoutMillis: 120_000 });
     try {
       expect(plain.pool.options).toMatchObject({ idleTimeoutMillis: 30_000, keepAlive: true, connectionTimeoutMillis: 10_000 });
       expect(kept.pool.options).toMatchObject({ idleTimeoutMillis: 120_000, keepAlive: true, connectionTimeoutMillis: 10_000 });

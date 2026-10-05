@@ -8,7 +8,7 @@ import { locationRevisionFor } from "./location-enrichment";
 import { runMigrations } from "./migrate";
 import * as schema from "./schema";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 2 });
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 2 });
 const now = new Date("2026-10-01T21:00:00Z");
 
 beforeAll(() => runMigrations(db), 60_000);

@@ -30,9 +30,9 @@ test("the committed config errors on LCP, CLS and TBT, and only warns on script 
 });
 
 test("the signed-in config fills in the CV and the cookie, and moves the port when asked", () => {
-  const config = signedInConfig(committed, { draftId: "d-1", cookie: "ava_session=v2.x", port: 3124 });
+  const config = signedInConfig(committed, { draftId: "d-1", cookie: "col_session=v2.x", port: 3124 });
   assert.equal(config.ci.collect.url[3], "http://127.0.0.1:3124/cv/d-1");
-  assert.deepEqual(JSON.parse(config.ci.collect.settings.extraHeaders), { cookie: "ava_session=v2.x" });
+  assert.deepEqual(JSON.parse(config.ci.collect.settings.extraHeaders), { cookie: "col_session=v2.x" });
   assert.equal(committed.ci.collect.settings.extraHeaders, undefined, "the committed file is not changed");
   const moved = signedInConfig(committed, { draftId: "d-1", cookie: "c", port: 4000 });
   assert.ok(moved.ci.collect.url.every(url => url.startsWith("http://127.0.0.1:4000/")));
@@ -50,12 +50,12 @@ test("the mobile pass drops the desktop preset and only warns", () => {
 test("the cookie is the interface's own shape", () => {
   const cookie = sessionCookie("secret", "session-1", 1_800_000_000);
   const sig = createHmac("sha256", "secret").update("session-1.1800000000").digest("base64url");
-  assert.equal(cookie, `ava_session=v2.session-1.1800000000.${sig}`);
+  assert.equal(cookie, `col_session=v2.session-1.1800000000.${sig}`);
 });
 
 test("the preview pass is /login signed out, with the bypass header, warnings only, and no cookie", () => {
-  const config = previewConfig(committed, { url: "https://ava-git-branch.vercel.app/some/path", bypass: "bypass-secret" });
-  assert.deepEqual(config.ci.collect.url, ["https://ava-git-branch.vercel.app/login"]);
+  const config = previewConfig(committed, { url: "https://col-git-branch.vercel.app/some/path", bypass: "bypass-secret" });
+  assert.deepEqual(config.ci.collect.url, ["https://col-git-branch.vercel.app/login"]);
   assert.equal(config.ci.collect.settings.preset, "desktop");
   assert.deepEqual(JSON.parse(config.ci.collect.settings.extraHeaders), { "x-vercel-protection-bypass": "bypass-secret", "x-vercel-set-bypass-cookie": "true" });
   for (const rule of Object.values(config.ci.assert.assertions)) assert.equal(rule[0], "warn");

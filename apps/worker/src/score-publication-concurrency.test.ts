@@ -46,7 +46,7 @@ beforeAll(async () => {
   await bootstrap.pool.end();
   process.env.DATABASE_URL = url;
   process.env.ANTHROPIC_API_KEY = "test-key";
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   writer = createDb(url, { max: 1, applicationName: "score-pub-writer" });
   publisher = createDb(url, { max: 1, applicationName: "score-pub-publisher" });

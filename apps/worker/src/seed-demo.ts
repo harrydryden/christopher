@@ -6,7 +6,7 @@
  *
  *   DATABASE_URL=... pnpm --filter @col/worker exec tsx src/seed-demo.ts
  *
- * Creates the account demo@ava.local (password: demo-password) that follows three
+ * Creates the account demo@col.local (password: demo-password) that follows three
  * companies, plus a second account that follows one of them, to show the shared catalogue.
  */
 import { createDb, createUser, schema, syncCompanyStatus } from "@col/db";
@@ -102,8 +102,8 @@ async function main() {
   await runMigrations(db);
   await db.execute(sql`truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, company_profiles, company_suggestions, filter_suggestions, preference_profiles, tasks, ai_calls, settings restart identity cascade`);
 
-  const { user: demo } = await createUser(db, { email: "demo@ava.local", name: "Demo", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "admin" });
-  const { user: second } = await createUser(db, { email: "engineer@ava.local", name: "Engineer", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "member" });
+  const { user: demo } = await createUser(db, { email: "demo@col.local", name: "Demo", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "admin" });
+  const { user: second } = await createUser(db, { email: "engineer@col.local", name: "Engineer", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "member" });
 
   await db.insert(schema.settings).values([{ key: "timezone", value: "Europe/London" }]).onConflictDoUpdate({ target: schema.settings.key, set: { value: sql`excluded.value` } });
   await db.insert(schema.userSettings).values([
@@ -328,7 +328,7 @@ A remit that includes process design and hiring; reporting to a founder or COO; 
   );
 
   const counts = await db.execute<{ jobs: number; table: number }>(sql`select (select count(*) from jobs)::int as jobs, (select count(*) from user_jobs where in_table)::int as "table"`);
-  console.log(`seeded ${COMPANIES.length} companies, ${counts.rows[0]?.jobs ?? 0} shared postings (${counts.rows[0]?.table ?? 0} account views in tables). Sign in as demo@ava.local / demo-password.`);
+  console.log(`seeded ${COMPANIES.length} companies, ${counts.rows[0]?.jobs ?? 0} shared postings (${counts.rows[0]?.table ?? 0} account views in tables). Sign in as demo@col.local / demo-password.`);
 }
 
 main()

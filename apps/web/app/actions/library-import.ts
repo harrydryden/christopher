@@ -87,7 +87,7 @@ export async function importLibraryDocument(form: FormData): Promise<ActionResul
       // Nothing was kept from it — a file that could not be converted keeps its refusal and no
       // text — so there is nothing left to read, and the same upload would fail the same way.
       if (!unread && !row.content) {
-        return fail(row.error ?? "AVA could not read that document. Try a different export of it, or paste the text instead.");
+        return fail(row.error ?? "Course of Life could not read that document. Try a different export of it, or paste the text instead.");
       }
       // Read, and still waiting for them: what was found is on this page already.
       if (row.proposal && !row.resolvedAt) {
@@ -99,11 +99,11 @@ export async function importLibraryDocument(form: FormData): Promise<ActionResul
       await reopenLibraryImport(user.id, row.id);
       await enqueue("import_library_document", { userId: user.id, importId: row.id });
       revalidatePath("/library");
-      return said("You have already imported this document. AVA is reading it again.");
+      return said("You have already imported this document. Course of Life is reading it again.");
     }
     await enqueue("import_library_document", { userId: user.id, importId: row.id });
     revalidatePath("/library");
-    return said("AVA is reading your document. What it finds will appear here in a few minutes.");
+    return said("Course of Life is reading your document. What it finds will appear here in a few minutes.");
   } catch (error) {
     return actionError(error, "That document could not be saved. Please try again.");
   }
@@ -142,7 +142,7 @@ async function prepareImport(
     return { error: `That file is larger than ${MEGABYTES}. Upload a smaller export, or paste the text instead.` };
   }
   if (!uploadKind(bytes, file.type)) {
-    return { error: "AVA reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead." };
+    return { error: "Course of Life reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead." };
   }
   return {
     input: {
@@ -250,11 +250,11 @@ export async function retryLibraryImport(importId: string): Promise<ActionResult
     const row = await getOwnLibraryImport(user.id, id);
     if (!row || row.resolvedAt) return fail("That import is no longer waiting. Refresh the page.");
     if (!row.error) return fail("There is nothing to try again for this import.");
-    if (!row.content) return fail("AVA no longer holds that document. Import it again, or paste its text.");
+    if (!row.content) return fail("Course of Life no longer holds that document. Import it again, or paste its text.");
     await reopenLibraryImport(user.id, id);
     await enqueue("import_library_document", { userId: user.id, importId: id });
     revalidatePath("/library");
-    return said("AVA is reading your document again.");
+    return said("Course of Life is reading your document again.");
   } catch (error) {
     return actionError(error, "That document could not be queued again. Refresh the page and try again.");
   }

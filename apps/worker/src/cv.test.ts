@@ -12,7 +12,7 @@ import { ensureTestUser } from "./test-users";
 import { handleGenerateCv } from "./handlers/cv";
 import { cvAuditBatches } from "./handlers/cv-stages";
 import type { WorkerDeps } from "./context";
-const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 const library = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
 let userId: string;
 beforeAll(async () => { await runMigrations(client.db); userId = (await ensureTestUser(client.db, "cv@example.com")).id; });
@@ -249,7 +249,7 @@ it("fits a long CV within the default three-page limit without a second model ca
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.assessment!.pageCount).toBe(3);
-  expect(saved!.content!.theme).toMatchObject({ font: "AVA", maxPages: 3 });
+  expect(saved!.content!.theme).toMatchObject({ font: "Course of Life", maxPages: 3 });
   expect(saved!.content!.sections).toHaveLength(8);
 });
 

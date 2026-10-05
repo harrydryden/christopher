@@ -174,7 +174,7 @@ async function reviveRateLimitedSources(db: Db): Promise<void> {
 }
 
 async function verifyPdfBundle() {
-  for (const font of ["AVA", "Arial"] as const) {
+  for (const font of ["Course of Life", "Arial"] as const) {
     const pdf = await renderCvPdf({
       name: "PDF bundle check", contact: "London", summary: "Operations leader",
       sections: [{ entryId: "role", kind: "experience", heading: "Director · Example", bullets: ["Led operations."] }],
@@ -182,7 +182,7 @@ async function verifyPdfBundle() {
     });
     if (!pdf.subarray(0, 5).equals(Buffer.from("%PDF-"))) throw new Error(`${font} did not render a PDF`);
   }
-  console.log("worker PDF bundle check passed (AVA and Arial)");
+  console.log("worker PDF bundle check passed (Course of Life and Arial)");
 }
 
 (process.argv.includes("--verify-pdf") ? verifyPdfBundle() : main()).catch((err) => {

@@ -1,6 +1,7 @@
 /** Bounded public Siemens continuation audit. Scratch database and synthetic follower only. */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { renamedEnv } from "@col/core";
 import { createUser, enqueueTask, schema, subscribeToCompany } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
@@ -47,10 +48,10 @@ async function main(): Promise<void> {
   const url = databaseUrl();
   const initialise = process.argv.includes("--init");
   if (!initialise && !process.env.SCRAPER_CONTACT_EMAIL) throw new Error("SCRAPER_CONTACT_EMAIL is required for the public fetcher");
-  if (process.env.AVA_HOST_MAP || process.env.CHRISTOPHER_HOST_MAP) throw new Error("Host mapping is forbidden in this public audit");
+  if (renamedEnv(process.env, "COL_HOST_MAP", "AVA_HOST_MAP", "CHRISTOPHER_HOST_MAP")) throw new Error("Host mapping is forbidden in this public audit");
   // The caller never starts score/description workers. This process cannot call a paid model or
   // render a browser page even if a credential exists in the invoking shell.
-  const env = readEnv({ ...process.env, DATABASE_URL: url, ANTHROPIC_API_KEY: "", AVA_DISABLE_BROWSER: "1",
+  const env = readEnv({ ...process.env, DATABASE_URL: url, ANTHROPIC_API_KEY: "", COL_DISABLE_BROWSER: "1",
     WORKER_CONCURRENCY: "1", CV_CONCURRENCY: "1", NODE_ENV: "development" });
   const deps = await createDeps(env);
   try {

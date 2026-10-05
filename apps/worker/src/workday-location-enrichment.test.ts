@@ -13,7 +13,7 @@ import { onAbandon } from "./handlers/abandon";
 import { TaskDeferred } from "./queue";
 import { ensureTestUser } from "./test-users";
 
-const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const host = "acme.wd1.myworkdayjobs.com";
 const listingUrl = `https://${host}/wday/cxs/acme/Search/jobs`;
 const detailUrl = `https://${host}/wday/cxs/acme/Search/job/US/Operations/JR-1`;
@@ -26,7 +26,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = url;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;

@@ -3,7 +3,7 @@
  * Covers the whole path the spec describes: add a homepage URL, discover the careers source,
  * scan it, apply the keyword and location gate, then detect a removed role two scans later.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  *
  * Most cases carry a budget above the suite's 30-second default, because each drives discovery and
  * whole scans through the queue against the test server, paced per host like a real board: the
@@ -28,7 +28,7 @@ import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskDeferred, TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "api.ashbyhq.com", "pager.example", "acme.wd1.myworkdayjobs.com"];
 
 /** A real PNG, because the logo capture sniffs the bytes and refuses anything that is not one. */
@@ -173,8 +173,8 @@ beforeAll(async () => {
 
   server = await startTestServer({}, HOSTS);
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.COL_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
 
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });

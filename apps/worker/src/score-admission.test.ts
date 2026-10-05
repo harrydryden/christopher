@@ -9,7 +9,7 @@ import { admitScores, handleAdmitScores } from "./score-admission";
 import { onAbandon } from "./handlers/abandon";
 import { handleRescoreAll, handleScoreJob, prepareScoreJob } from "./handlers/learning";
 
-const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 let deps: WorkerDeps;
 let db: Db;
 const now = new Date("2026-09-29T12:00:00Z");
@@ -19,7 +19,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = url;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);

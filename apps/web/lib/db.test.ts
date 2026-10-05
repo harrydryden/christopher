@@ -12,15 +12,15 @@ vi.mock("@vercel/functions/db-connections", () => ({ attachDatabasePool }));
 
 import { DIRECT_IDLE_TIMEOUT_MS, DIRECT_POOL_MAX, POOLED_IDLE_TIMEOUT_MS, POOLED_POOL_MAX, webPoolIdleTimeoutMs, webPoolMax } from "./db";
 
-const direct = "postgres://ava:secret@dpg-abc123-a.frankfurt-postgres.render.com:5432/ava";
-const pooled = "postgres://ava:secret@dpg-abc123-a.frankfurt-postgres.render.com:6432/ava";
+const direct = "postgres://col:secret@dpg-abc123-a.frankfurt-postgres.render.com:5432/col";
+const pooled = "postgres://col:secret@dpg-abc123-a.frankfurt-postgres.render.com:6432/col";
 
 describe("webPoolMax", () => {
   it("keeps three connections where each is a database backend", () => {
     expect(DIRECT_POOL_MAX).toBe(3);
     expect(webPoolMax(direct, undefined)).toBe(3);
-    expect(webPoolMax("postgres://dpg-abc123-a/ava", undefined)).toBe(3);
-    expect(webPoolMax("postgres://postgres:postgres@127.0.0.1:5432/ava", undefined)).toBe(3);
+    expect(webPoolMax("postgres://dpg-abc123-a/col", undefined)).toBe(3);
+    expect(webPoolMax("postgres://postgres:postgres@127.0.0.1:5432/col", undefined)).toBe(3);
     // Not a URL at all: the careful default.
     expect(webPoolMax("not a url", undefined)).toBe(3);
   });
@@ -28,10 +28,10 @@ describe("webPoolMax", () => {
   it("opens six through PgBouncer: Render's port 6432, as the address or a parameter, or a pooler host", () => {
     expect(POOLED_POOL_MAX).toBe(6);
     expect(webPoolMax(pooled, undefined)).toBe(6);
-    expect(webPoolMax("postgres://ava:secret@dpg-abc123-a/ava?port=6432", undefined)).toBe(6);
-    expect(webPoolMax("postgres://ava:secret@ep-quiet-sun-123-pooler.eu-central-1.example.com/ava", undefined)).toBe(6);
+    expect(webPoolMax("postgres://col:secret@dpg-abc123-a/col?port=6432", undefined)).toBe(6);
+    expect(webPoolMax("postgres://col:secret@ep-quiet-sun-123-pooler.eu-central-1.example.com/col", undefined)).toBe(6);
     // "pooler" elsewhere in the name is not a pooler host.
-    expect(webPoolMax("postgres://ava:secret@pooler-notes.example.com/ava", undefined)).toBe(3);
+    expect(webPoolMax("postgres://col:secret@pooler-notes.example.com/col", undefined)).toBe(3);
   });
 
   it("takes WEB_DB_POOL_MAX from 1 to 20 over either default, and ignores anything else", () => {
@@ -49,14 +49,14 @@ describe("webPoolIdleTimeoutMs", () => {
   it("keeps an idle connection two minutes through PgBouncer, where it holds no backend", () => {
     expect(POOLED_IDLE_TIMEOUT_MS).toBe(120_000);
     expect(webPoolIdleTimeoutMs(pooled)).toBe(120_000);
-    expect(webPoolIdleTimeoutMs("postgres://ava:secret@dpg-abc123-a/ava?port=6432")).toBe(120_000);
-    expect(webPoolIdleTimeoutMs("postgres://ava:secret@ep-quiet-sun-123-pooler.eu-central-1.example.com/ava")).toBe(120_000);
+    expect(webPoolIdleTimeoutMs("postgres://col:secret@dpg-abc123-a/col?port=6432")).toBe(120_000);
+    expect(webPoolIdleTimeoutMs("postgres://col:secret@ep-quiet-sun-123-pooler.eu-central-1.example.com/col")).toBe(120_000);
   });
 
   it("keeps thirty seconds on the direct endpoint, where every idle connection is a backend", () => {
     expect(DIRECT_IDLE_TIMEOUT_MS).toBe(30_000);
     expect(webPoolIdleTimeoutMs(direct)).toBe(30_000);
-    expect(webPoolIdleTimeoutMs("postgres://postgres:postgres@127.0.0.1:5432/ava")).toBe(30_000);
+    expect(webPoolIdleTimeoutMs("postgres://postgres:postgres@127.0.0.1:5432/col")).toBe(30_000);
     expect(webPoolIdleTimeoutMs("not a url")).toBe(30_000);
   });
 });
@@ -78,7 +78,7 @@ describe("db()", () => {
     expect(db()).toBe(db());
     expect(createDb).toHaveBeenCalledTimes(1);
     expect(createDb).toHaveBeenCalledWith(pooled, {
-      max: 6, idleTimeoutMillis: 120_000, statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000, reportRoundTrip: true, applicationName: "ava-web",
+      max: 6, idleTimeoutMillis: 120_000, statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000, reportRoundTrip: true, applicationName: "col-web",
     });
     expect(attachDatabasePool).toHaveBeenCalledTimes(1);
     expect(attachDatabasePool).toHaveBeenCalledWith(pool);

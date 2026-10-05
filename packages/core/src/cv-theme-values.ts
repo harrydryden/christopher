@@ -6,15 +6,19 @@
 import { CV_PAGE_LIMITS } from "./cv-format";
 
 /**
- * AVA is the renderer's own face (the standard Helvetica every PDF viewer carries).
+ * Course of Life is the renderer's own face (the standard Helvetica every PDF viewer carries).
  * Arial embeds Liberation Sans, its metric-compatible open equivalent, so it looks the same on
  * every machine. The names are what the user chooses in Settings.
  */
-export const CV_FONTS = ["AVA", "Arial"] as const;
+export const CV_FONTS = ["Course of Life", "Arial"] as const;
 export type CvFont = (typeof CV_FONTS)[number];
-export const DEFAULT_CV_FONT: CvFont = "AVA";
-/** The name the AVA face was stored under before the product was renamed. */
-export const LEGACY_CV_FONT = "Christopher";
+export const DEFAULT_CV_FONT: CvFont = "Course of Life";
+/**
+ * The names the Course of Life face was stored under before the product was renamed (AVA, and
+ * before that Christopher). Stored themes still carry them; `CvThemeSchema` reads either as the
+ * default face.
+ */
+export const LEGACY_CV_FONTS = ["AVA", "Christopher"] as const;
 /** A resolved theme: what `CvThemeSchema` produces, with the font and page limit filled in. */
 export type CvTheme = {
   version: 1;

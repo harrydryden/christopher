@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { assertDedicatedDatabase, backoffDelays, benchmarkShape, calibrated, needsRender, POLL_MODEL, quietSchedule, refreshPathFor, REFRESH_PATHS, SCAN_STATUS_PATH, seedAccounts, summarise, TARGETS, WORK_STATUS_PATH } from './benchmark-users.mjs';
 test('database guard accepts only the exact dedicated local database', () => {
   assert.equal(assertDedicatedDatabase('postgres://u:p@127.0.0.1:55439/christopher_users_benchmark').pathname, '/christopher_users_benchmark');
-  for (const unsafe of ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@localhost/ava_test','postgres://u:p@localhost/postgres'])
+  for (const unsafe of ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@localhost/col_test','postgres://u:p@localhost/postgres'])
     assert.throws(() => assertDedicatedDatabase(unsafe), /dedicated local/);
 });
 test('summary reports errors and percentiles', () => {

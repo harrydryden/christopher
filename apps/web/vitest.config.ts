@@ -13,7 +13,7 @@ export default defineConfig({
     exclude: ["node_modules/**", ".next/**"],
     environment: "node",
     // Password hashing at production cost would dominate the account tests; the old cost is plenty here.
-    env: { AVA_SCRYPT_N: "16384" },
+    env: { COL_SCRYPT_N: "16384" },
     // Long enough for a loaded CI machine, short enough that a hung pool or a missing resolve names
     // its test inside the job's budget. A case that needs longer says so, and why, beside it.
     testTimeout: 60_000,

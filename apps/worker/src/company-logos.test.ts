@@ -11,7 +11,7 @@ import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import pg from "pg";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const DAY = 86_400_000;
 const now = new Date("2026-09-19T09:00:00Z");
 

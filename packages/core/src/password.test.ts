@@ -1,5 +1,5 @@
 /**
- * AVA_SCRYPT_N is a test-suite knob. Copied into a deployment it would make every new hash cheaper
+ * COL_SCRYPT_N is a test-suite knob. Copied into a deployment it would make every new hash cheaper
  * to crack, and `needsRehash` would treat the weaker cost as current and never upgrade it.
  */
 import { afterEach, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ const costOf = (hash: string) => Number(hash.split("$")[1]);
 
 it("honours the cheaper test cost outside production", async () => {
   vi.stubEnv("NODE_ENV", "test");
-  vi.stubEnv("AVA_SCRYPT_N", "16384");
+  vi.stubEnv("COL_SCRYPT_N", "16384");
   const hash = await hashPassword("correct horse battery staple");
   expect(costOf(hash)).toBe(16384);
   expect(needsRehash(hash)).toBe(false);
@@ -19,7 +19,7 @@ it("honours the cheaper test cost outside production", async () => {
 
 it("ignores the override in production, and upgrades a hash made at the cheaper cost", async () => {
   vi.stubEnv("NODE_ENV", "test");
-  vi.stubEnv("AVA_SCRYPT_N", "16384");
+  vi.stubEnv("COL_SCRYPT_N", "16384");
   const cheap = await hashPassword("correct horse battery staple");
 
   vi.stubEnv("NODE_ENV", "production");

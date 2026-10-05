@@ -3,7 +3,7 @@
  * Local and CI servers usually do not preload pg_stat_statements, so the reader's answer depends on
  * the server: rows when it is loaded, the reason when it is not. Both are asserted, whichever applies.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -13,7 +13,7 @@ import { createDb } from "./client";
 import { runMigrations } from "./migrate";
 import { formatStatementTotals, resetStatements, topStatements } from "./pg-stat";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 1 });
 beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
 
@@ -45,9 +45,9 @@ describe("migration 0045's pg_stat_statements", () => {
     let ran = false;
     await db.transaction(async (tx) => {
       await tx.execute(sql`drop extension if exists pg_stat_statements`);
-      await tx.execute(sql`create role ava_pgstat_unprivileged nologin`);
-      await tx.execute(sql`grant usage, create on schema public to ava_pgstat_unprivileged`);
-      await tx.execute(sql`set local role ava_pgstat_unprivileged`);
+      await tx.execute(sql`create role col_pgstat_unprivileged nologin`);
+      await tx.execute(sql`grant usage, create on schema public to col_pgstat_unprivileged`);
+      await tx.execute(sql`set local role col_pgstat_unprivileged`);
       await tx.execute(sql.raw(GUARDED));
       await tx.execute(sql`reset role`);
       const installed = await tx.execute(sql`select 1 from pg_extension where extname = 'pg_stat_statements'`);

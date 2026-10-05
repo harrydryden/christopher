@@ -48,7 +48,7 @@ const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingm
 const LEGACY_DOC_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
 
 export const UNREADABLE_DOCUMENT =
-  "AVA reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead.";
+  "Course of Life reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead.";
 
 /**
  * The most a document may expand to once its compressed parts are inflated, measured before
@@ -256,7 +256,7 @@ function assertPdfWithinCaps(buffer: Buffer): void {
   const tooLarge = tooLargeFor("pdf");
   const source = buffer.toString("latin1");
   if (/\/Encrypt\s*(?:\d+\s+\d+\s+R|<<)/.test(source)) {
-    throw new DocumentReadError("That PDF is protected, so AVA cannot check it is safe to read. Export it again without protection, or paste the text instead.");
+    throw new DocumentReadError("That PDF is protected, so Course of Life cannot check it is safe to read. Export it again without protection, or paste the text instead.");
   }
   const opening = /(?<!end)stream(?:\r\n|\r|\n)/g;
   let content = 0;

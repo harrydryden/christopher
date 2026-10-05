@@ -9,7 +9,7 @@ import { agePriorities, claimTask } from "./queue";
 import { getInternal } from "./settings";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const { db, pool } = createDb(DATABASE_URL, { max: 4 });
 
 beforeAll(async () => { await runMigrations(db as Db); });

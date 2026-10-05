@@ -14,7 +14,7 @@
  *  - release qualification additionally needs a published, passing CV replay at the shipped
  *    prompt set that is not marked unverified, and the newest replay with graded routes must be
  *    that verified evidence. Ordinary CI warns while all reports are unverified so fixture runs
- *    remain useful. `AVA_EVAL_GATE_REQUIRE_VERIFIED=1` enables the release rule.
+ *    remain useful. `COL_EVAL_GATE_REQUIRE_VERIFIED=1` enables the release rule.
  */
 
 /** The prompt set a report says it was graded at, wherever the script that wrote it put it. */
@@ -23,9 +23,13 @@ export function reportPromptSet(report) {
     ?? report?.cvPromptsSha256 ?? report?.reproducibility?.cvPromptsSha256 ?? null;
 }
 
-/** Whether `AVA_EVAL_GATE_REQUIRE_VERIFIED` is set: any value but empty, `0` or `false`. */
+/**
+ * Whether `COL_EVAL_GATE_REQUIRE_VERIFIED` is set: any value but empty, `0` or `false`. The
+ * pre-rename `AVA_EVAL_GATE_REQUIRE_VERIFIED` is still read where the new name is unset or empty,
+ * the rule `renamedEnv` in @col/core applies (this plain script cannot import it).
+ */
 export function requireVerifiedFromEnv(env = process.env) {
-  const value = (env.AVA_EVAL_GATE_REQUIRE_VERIFIED ?? "").trim().toLowerCase();
+  const value = (env.COL_EVAL_GATE_REQUIRE_VERIFIED || env.AVA_EVAL_GATE_REQUIRE_VERIFIED || "").trim().toLowerCase();
   return value !== "" && value !== "0" && value !== "false";
 }
 

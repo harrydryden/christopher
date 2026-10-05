@@ -66,11 +66,11 @@ async function main() {
 
   const results: LiveAcceptanceResult[] = [];
   const fetcher = new PoliteFetcher({
-    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
+    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "col-live-acceptance@example.invalid"),
     respectRobots: () => true,
   });
   const browser = browserEnabled ? new BrowserRenderer({
-    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
+    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "col-live-acceptance@example.invalid"),
     beforeNavigate: host => fetcher.waitForHost(host),
     allowNavigate: (url, allowHost) => fetcher.assertRobotsAllowed(url, allowHost),
     concurrency: 1,

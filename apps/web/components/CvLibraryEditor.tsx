@@ -286,7 +286,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     const url = URL.createObjectURL(new Blob([JSON.stringify(recovery.original, null, 2)], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `ava-library-unsaved-v${recovery.version - 1}.json`;
+    link.download = `col-library-unsaved-v${recovery.version - 1}.json`;
     document.body.append(link);
     link.click();
     link.remove();

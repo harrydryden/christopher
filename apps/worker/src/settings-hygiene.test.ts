@@ -5,7 +5,7 @@
  * now live in `user_jobs.score_input_hash` and `source_admission_rejections`, and migration 0023
  * carries the stored values across so nothing is re-scored or re-fetched after a deploy.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
@@ -17,7 +17,7 @@ import { loadSettings, loadUserSettings, loadUserSettingsMany } from "./settings
 import { loadAdmissionCache } from "./admission-cache";
 import { ensureTestUser } from "./test-users";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
 beforeEach(() => db.execute(sql`truncate users, companies, career_sources, jobs, user_jobs, settings, source_admission_rejections restart identity cascade`));

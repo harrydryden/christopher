@@ -11,7 +11,7 @@ test('restored pair drill accepts only the named Docker server and two local dat
   for (const candidate of [
     [source.replace('127.0.0.1', 'example.com'), target, container],
     [source.replace('55439', '5432'), target.replace('55439', '5432'), container],
-    [source.replace('christopher_users_benchmark', 'ava_test'), target, container],
+    [source.replace('christopher_users_benchmark', 'col_test'), target, container],
     [source, target.replace('christopher_recovery_drill', 'production'), container],
     [source, target, 'another-postgres'],
   ]) assert.throws(() => validatePairDrillUrls(...candidate));

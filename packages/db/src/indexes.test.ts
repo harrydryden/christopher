@@ -4,7 +4,7 @@
  * what these prove is that the index exists and that the planner can use it, partial predicates
  * included, not how it would choose on production statistics.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -12,7 +12,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { createDb } from "./client";
 import { runMigrations } from "./migrate";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 1 });
 beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
 

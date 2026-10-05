@@ -5,7 +5,7 @@ import { and, eq, sql, type SQL } from "drizzle-orm";
 import { ensureTestUser } from "./test-users";
 import { reconcileOrphanScores } from "./score-orphans";
 
-const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const { db, pool } = createDb(url);
 const old = new Date("2026-09-28T09:00:00Z");
 

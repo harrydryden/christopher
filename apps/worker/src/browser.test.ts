@@ -1,7 +1,7 @@
 /**
  * Headless Chromium: renders a page whose roles arrive from JavaScript, and captures the API call
  * the page makes so the applicant tracking system can be identified from it.
- * Skipped when AVA_DISABLE_BROWSER=1 (CI without a browser).
+ * Skipped when COL_DISABLE_BROWSER=1 (CI without a browser).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
@@ -12,7 +12,7 @@ import { HttpTrafficLedger } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 import { ats, discovery, renamedEnv, SourceFetchError } from "@col/core";
 
-const skip = renamedEnv(process.env, "AVA_DISABLE_BROWSER", "CHRISTOPHER_DISABLE_BROWSER") === "1";
+const skip = renamedEnv(process.env, "COL_DISABLE_BROWSER", "AVA_DISABLE_BROWSER", "CHRISTOPHER_DISABLE_BROWSER") === "1";
 const GH_API = "https://boards-api.greenhouse.io/v1/boards/acmeindustries/jobs?content=true";
 
 const SHELL_PAGE = `<!doctype html><html><head><title>Open Roles | Acme Industries</title></head><body>
@@ -100,7 +100,7 @@ beforeAll(async () => {
     ["www.acmeind.example", "boards-api.greenhouse.io"],
   );
   renderer = new BrowserRenderer({
-    userAgent: "AVAJobMonitor/0.1 (test)",
+    userAgent: "CourseOfLifeJobMonitor/0.1 (test)",
     hostMap: server.hostMap,
     executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
   });
@@ -216,11 +216,11 @@ describe.skipIf(skip)("headless rendering", () => {
     expect(titles).toContain("Finance Director");
     expect(page.incomplete).toBe(false);
     // The mark the search leaves for the click is gone before the next snapshot is taken.
-    expect([...listingCaptures(page)].some(p => p.html.includes("data-ava-listing-control"))).toBe(false);
+    expect([...listingCaptures(page)].some(p => p.html.includes("data-col-listing-control"))).toBe(false);
   }, 120_000);
 
   it("stops snapshotting at the byte cap and says the listing is incomplete", async () => {
-    const capped = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, maxRenderBytes: 300_000 });
+    const capped = new BrowserRenderer({ userAgent: "CourseOfLifeJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, maxRenderBytes: 300_000 });
     try {
       const page = await capped.render("https://www.acmeind.example/grow", { scrollAndExpand: true });
       expect(page.incomplete).toBe(true);
@@ -230,7 +230,7 @@ describe.skipIf(skip)("headless rendering", () => {
       expect(held).toBeLessThanOrEqual(300_000);
       expect(page.compressedListingPages!.every(capture => capture.decodedBytes <= 300_000)).toBe(true);
       // A single page larger than the cap is refused, as the fetcher refuses an oversized body.
-      const tiny = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, maxRenderBytes: 5_000 });
+      const tiny = new BrowserRenderer({ userAgent: "CourseOfLifeJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, maxRenderBytes: 5_000 });
       try {
         await expect(tiny.render("https://www.acmeind.example/big")).rejects.toMatchObject({ kind: "parse" });
       } finally { await tiny.close(); }
@@ -241,7 +241,7 @@ describe.skipIf(skip)("headless rendering", () => {
     const deferred: Array<{ host: string; retryAfter?: string }> = [];
     const ledger = new HttpTrafficLedger(null);
     const polite = new BrowserRenderer({
-      userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, traffic: ledger,
+      userAgent: "CourseOfLifeJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, traffic: ledger,
       onRateLimited: async (host, headers) => { deferred.push({ host, retryAfter: headers["retry-after"] }); },
     });
     try {
@@ -253,7 +253,7 @@ describe.skipIf(skip)("headless rendering", () => {
   }, 120_000);
 
   it("closes an idle browser after its quiet period and launches another for the next render", async () => {
-    const idle = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, idleCloseMs: 500 });
+    const idle = new BrowserRenderer({ userAgent: "CourseOfLifeJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, idleCloseMs: 500 });
     try {
       expect((await idle.render("https://www.acmeind.example/fine")).html).toContain("fine");
       expect(idle.running).toBe(true);
@@ -270,7 +270,7 @@ describe.skipIf(skip)("headless rendering", () => {
 
   it("gives up a page that hangs its main thread, and the renders queued behind it still run", async () => {
     const ledger = new HttpTrafficLedger(null);
-    const bounded = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, renderTimeoutMs: 5_000, concurrency: 1, traffic: ledger });
+    const bounded = new BrowserRenderer({ userAgent: "CourseOfLifeJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, renderTimeoutMs: 5_000, concurrency: 1, traffic: ledger });
     try {
       const started = Date.now();
       const hung = bounded.render("https://www.acmeind.example/hang");
@@ -318,7 +318,7 @@ describe.skipIf(skip)("headless rendering", () => {
     const port = typeof address === "object" && address ? address.port : 0;
     const startUrl = `http://127.0.0.1:${port}/start`;
     const guarded = new BrowserRenderer({
-      userAgent: "AVAJobMonitor/0.1 (test)",
+      userAgent: "CourseOfLifeJobMonitor/0.1 (test)",
       executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
       // The fixture is on loopback, which the address guard would otherwise refuse outright.
       isAllowedAddress: address => address === "127.0.0.1",
@@ -390,7 +390,7 @@ describe.skipIf(skip)("headless rendering", () => {
       await listen(page, "127.0.0.1");
       const outside = `http://127.0.0.1:${(page.address() as AddressInfo).port}`;
       guarded = new BrowserRenderer({
-        userAgent: "AVAJobMonitor/0.1 (test)",
+        userAgent: "CourseOfLifeJobMonitor/0.1 (test)",
         executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
         isAllowedAddress: address => address === "127.0.0.1",
       });

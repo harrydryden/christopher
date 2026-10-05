@@ -1,6 +1,6 @@
-# AVA — web
+# Course of Life — web
 
-Next.js (App Router) UI for AVA, the careers page monitor: several accounts, one shared company catalogue. See
+Next.js (App Router) UI for Course of Life, the careers page monitor: several accounts, one shared company catalogue. See
 [`docs/SPEC.md`](../../docs/SPEC.md) at the repo root for the full product spec.
 
 This app only reads and writes the shared Postgres database (`@col/db`) — it never
@@ -31,7 +31,7 @@ From the repo root (dependencies are installed at the workspace root already):
 #    e.g. pg_ctlcluster 16 main start
 
 # 2. Run the dev server:
-DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_dev \
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/col_dev \
 SESSION_SECRET=some-long-random-string \
 pnpm --filter @col/web dev
 ```

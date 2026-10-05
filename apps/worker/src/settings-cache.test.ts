@@ -9,7 +9,7 @@ import { readEnv } from "./env";
  * The worker's cache of each account's merged settings. Past a thousand accounts it used to be
  * cleared wholesale, and every gate re-evaluation cleared it for everyone.
  */
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 let deps: WorkerDeps;
 
 beforeAll(async () => {
@@ -17,7 +17,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { settingsTtlMs: 600_000 });
 }, 60_000);
 afterAll(async () => { await deps?.close(); });

@@ -53,7 +53,7 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
 
       <Card title="Scheduled work">
         <p className="mb-3 text-14 text-muted">
-          Queues anything due now. Without a worker service (<code>AVA_SERVERLESS_FALLBACK=1</code>) it also works the queue for up to a minute.
+          Queues anything due now. Without a worker service (<code>COL_SERVERLESS_FALLBACK=1</code>) it also works the queue for up to a minute.
         </p>
         <RunScheduledWork />
       </Card>

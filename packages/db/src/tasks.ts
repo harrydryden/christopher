@@ -25,6 +25,12 @@ export interface EnqueueOptions {
  * The channel a worker listens on for new work. A notification carries no payload: it only says
  * "claim now", and the claim decides what, so a lost or duplicated one costs nothing but a poll.
  */
+/**
+ * The queue's wake-up channel. It keeps the AVA name on purpose, as do the advisory-lock keys
+ * (`ava:users`, `ava:ai-budget`, `ava:daily-runs`, …): a web and a worker on different releases
+ * overlap during every deploy, and a renamed channel or lock key would stop them waking or
+ * excluding each other for that window. These names are never shown to anyone; keep them stable.
+ */
 export const TASKS_CHANNEL = "ava_tasks";
 
 /** What an enqueue writes with: an insert, and the statement that wakes a listening worker. */

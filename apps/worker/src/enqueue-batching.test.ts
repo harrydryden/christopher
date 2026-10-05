@@ -24,7 +24,7 @@ beforeAll(async () => {
     if (text) sent.push(text);
     return (original as (...a: unknown[]) => unknown).apply(this, args);
   };
-  ({ db, pool } = createDb(testDatabaseUrl("ava-batching-test"), { max: 1 }));
+  ({ db, pool } = createDb(testDatabaseUrl("col-batching-test"), { max: 1 }));
   await runMigrations(db);
 }, 60_000);
 afterAll(async () => {

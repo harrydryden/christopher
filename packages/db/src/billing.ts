@@ -201,7 +201,7 @@ export async function assertCanActivateCompanies(database: BillingWriter, userId
   const target = entitlement.active + increment;
   if (target > TECHNICAL_COMPANY_LIMIT) throw new BillingLimitError(
     "company_technical_limit",
-    `AVA can monitor at most ${TECHNICAL_COMPANY_LIMIT} active companies for one account.`,
+    `Course of Life can monitor at most ${TECHNICAL_COMPANY_LIMIT} active companies for one account.`,
   );
   if (target > entitlement.capacity) {
     const message = entitlement.plan === "free"

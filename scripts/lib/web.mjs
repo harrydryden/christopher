@@ -11,7 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 /** apps/web/lib/session.ts's cookie: `v2.<sessionId>.<expires>.<base64url HMAC-SHA256>`. */
 export function sessionCookie(secret, sessionId, expiresEpochSeconds) {
   const sig = createHmac("sha256", secret).update(`${sessionId}.${expiresEpochSeconds}`).digest("base64url");
-  return `ava_session=v2.${sessionId}.${expiresEpochSeconds}.${sig}`;
+  return `col_session=v2.${sessionId}.${expiresEpochSeconds}.${sig}`;
 }
 
 /** One session row for `userId` and the cookie that presents it. */

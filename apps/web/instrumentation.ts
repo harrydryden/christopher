@@ -16,5 +16,5 @@ export async function register(): Promise<void> {
   // traceidratio reads its ratio from here; 10 % unless the deployment says otherwise.
   process.env.OTEL_TRACES_SAMPLER_ARG ??= "0.1";
   const { registerOTel } = await import("@vercel/otel");
-  registerOTel({ serviceName: process.env.OTEL_SERVICE_NAME?.trim() || "ava-web", traceSampler: "traceidratio" });
+  registerOTel({ serviceName: process.env.OTEL_SERVICE_NAME?.trim() || "col-web", traceSampler: "traceidratio" });
 }

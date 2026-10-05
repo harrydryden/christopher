@@ -8,7 +8,7 @@
  * a page, and a shared constant is not worth either.
  */
 
-/** The two formats AVA reads, as the picker offers them and as the action checks them. */
+/** The two formats Course of Life reads, as the picker offers them and as the action checks them. */
 export const LIBRARY_UPLOAD_MIMES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

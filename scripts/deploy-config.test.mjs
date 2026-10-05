@@ -87,8 +87,8 @@ test("the Playwright base image matches the Playwright the worker installs", () 
 test("the example environment points at the local database the README creates", () => {
   const url = new URL(read(".env.example").match(/^DATABASE_URL=(.+)$/m)[1]);
   assert.equal(url.port, "5432");
-  assert.equal(url.pathname, "/ava_dev");
-  assert.match(read("README.md"), /createdb ava_dev/);
+  assert.equal(url.pathname, "/col_dev");
+  assert.match(read("README.md"), /createdb col_dev/);
 });
 
 test("release identity checks wait for verified evaluation while pull-request CI keeps fixture checks", () => {
@@ -96,12 +96,12 @@ test("release identity checks wait for verified evaluation while pull-request CI
   const qualification = release.split("  evaluation-qualification:\n")[1]?.split("  worker-release:\n")[0] ?? "";
   assert.match(qualification, /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
   assert.match(qualification, /run: pnpm exec tsx scripts\/check-evaluation-reports\.ts/);
-  assert.match(qualification, /AVA_EVAL_GATE_REQUIRE_VERIFIED: "1"/);
+  assert.match(qualification, /COL_EVAL_GATE_REQUIRE_VERIFIED: "1"/);
   for (const name of ["worker-release", "web-release"]) {
     const job = release.split(`  ${name}:\n`)[1]?.split(/^  [a-z-]+:\n/m)[0] ?? "";
     assert.match(job, /needs: evaluation-qualification/, `${name} must wait for qualification`);
   }
   const ci = read(".github/workflows/ci.yml");
   assert.match(ci, /run: pnpm exec tsx scripts\/check-evaluation-reports\.ts/);
-  assert.doesNotMatch(ci, /AVA_EVAL_GATE_REQUIRE_VERIFIED/);
+  assert.doesNotMatch(ci, /COL_EVAL_GATE_REQUIRE_VERIFIED/);
 });

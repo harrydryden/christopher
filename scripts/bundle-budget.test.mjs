@@ -15,7 +15,7 @@ const noise = bytes => randomBytes(bytes);
  * layout, a route handler that must be ignored, and a CSS file that must not count.
  */
 function fixture(extraPageChunk) {
-  const dir = mkdtempSync(join(tmpdir(), "ava-bundle-budget-"));
+  const dir = mkdtempSync(join(tmpdir(), "col-bundle-budget-"));
   const files = {
     "static/chunks/webpack-aaa.js": noise(2_000),
     "static/chunks/main-app-bbb.js": noise(3_000),

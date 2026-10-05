@@ -1,5 +1,5 @@
 /**
- * Database schema for AVA. See docs/SPEC.md section 5.
+ * Database schema for Course of Life. See docs/SPEC.md section 5.
  * Conventions: snake_case columns, timestamptz everywhere, uuid primary keys.
  *
  * Two kinds of table live here:

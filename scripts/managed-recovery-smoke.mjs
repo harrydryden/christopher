@@ -20,7 +20,7 @@ export function validateManagedRecoveryUrl(raw) {
 
 async function main() {
   const started = performance.now();
-  const url = validateManagedRecoveryUrl(await readFile(process.env.RECOVERY_URL_FILE ?? '/tmp/ava-managed-recovery-url', 'utf8'));
+  const url = validateManagedRecoveryUrl(await readFile(process.env.RECOVERY_URL_FILE ?? '/tmp/col-managed-recovery-url', 'utf8'));
   const require = createRequire(new URL('../apps/web/package.json', import.meta.url));
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: url.href, ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 10_000, statement_timeout: 30_000 });
@@ -47,7 +47,7 @@ async function main() {
     if (!user) throw new Error('Recovery copy has no claimed account');
     const { cookie } = await insertSession(pool, user.id, { secret, ttlSeconds: 900, userAgent: 'isolated managed recovery smoke', id: sessionId, ipAddress: '127.0.0.1' });
     // The server's output is discarded, never kept: it could carry the recovery copy's credentials.
-    web = await startWeb({ port, host: '127.0.0.1', env: { DATABASE_URL: url.href, SESSION_SECRET: secret, AVA_SERVERLESS_FALLBACK: '0' },
+    web = await startWeb({ port, host: '127.0.0.1', env: { DATABASE_URL: url.href, SESSION_SECRET: secret, COL_SERVERLESS_FALLBACK: '0' },
       probeTimeoutMs: 1000, logLimit: 0 });
     for (const path of ['/', '/companies', '/applications', '/library', '/api/work-status', '/admin/health']) {
       const at = performance.now();

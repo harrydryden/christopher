@@ -6,7 +6,7 @@ import { reserveLocationRead, WORKDAY_LOCATION_READS_PER_HOUR } from "./location
 import { runMigrations } from "./migrate";
 import * as schema from "./schema";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const databaseUrl = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const first = createDb(databaseUrl, { max: 4 });
 const second = createDb(databaseUrl, { max: 4 });
 const now = new Date("2026-10-01T12:00:00Z");

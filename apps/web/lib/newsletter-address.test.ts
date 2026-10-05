@@ -26,7 +26,7 @@ describe("newsletter delivery addresses", () => {
   });
   it("reads the recipient out of a real To header", () => {
     const token = addressTokenFor(a, "test-secret");
-    expect(localPartOf(`Christopher <${token}+linkedin@inbox.example.com>`)).toBe(token);
+    expect(localPartOf(`Course of Life <${token}+linkedin@inbox.example.com>`)).toBe(token);
     expect(sourceIdForAddress(`"Feed" <${token}@inbox.example.com>`, [b, a], "test-secret")).toBe(a);
     expect(sourceIdForAddress(`${token}@inbox.example.com`, [b], "test-secret")).toBeNull();
     expect(sourceIdForAddress("nobody@inbox.example.com", [a, b], "test-secret")).toBeNull();

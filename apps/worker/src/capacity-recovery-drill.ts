@@ -84,7 +84,7 @@ async function main() {
   const server = await startTestServer({}, [...hosts, "boards-api.greenhouse.io", "job-boards.greenhouse.io"]);
   server.setRoutes(fixtureRoutes(hosts));
   const deps = await createDeps(readEnv({ DATABASE_URL: databaseUrl, WORKER_CONCURRENCY: "3", BROWSER_CONCURRENCY: "1",
-    SCAN_SPREAD_MINUTES: "0", AVA_HOST_MAP: JSON.stringify(server.hostMap), RENDER_INSTANCE_ID: "local-capacity-drill" }));
+    SCAN_SPREAD_MINUTES: "0", COL_HOST_MAP: JSON.stringify(server.hostMap), RENDER_INSTANCE_ID: "local-capacity-drill" }));
   const samples: Awaited<ReturnType<typeof resourceSample>>[] = [];
   const timer = setInterval(() => void resourceSample().then(s => samples.push(s)), 250);
   const started = Date.now();
@@ -135,7 +135,7 @@ async function main() {
       resources, samples,
       limitations: ["Local Docker evidence only; it does not pass the hosted capacity gate.", "Synthetic private pages exercise browser-capable discovery without public providers or paid AI.", "The local PostgreSQL server is outside the worker cgroup and does not model Render network latency or PgBouncer."],
     };
-    await writeFile(process.env.CAPACITY_REPORT_PATH ?? "/tmp/ava-worker-capacity.json", JSON.stringify(report, null, 2) + "\n");
+    await writeFile(process.env.CAPACITY_REPORT_PATH ?? "/tmp/col-worker-capacity.json", JSON.stringify(report, null, 2) + "\n");
     console.log(JSON.stringify({ passed: report.passed, elapsedSeconds: report.elapsedSeconds, resources, failures }));
     if (!report.passed) process.exitCode = 1;
   } finally {

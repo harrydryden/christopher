@@ -51,7 +51,7 @@ Six things recur across the audits. Fixing any one of them improves several jour
 
 ## Journey 1: Onboarding
 
-**The job.** "Get AVA watching the right companies for the right roles, with enough about me
+**The job.** "Get Course of Life watching the right companies for the right roles, with enough about me
 that its ranking and its CVs are mine, without a week of setup." Done means: a first scan has run
 against filters I chose, and I know what happens next. The anxiety is a blank table that may mean
 "nothing matches" or "nothing has happened".
@@ -110,7 +110,7 @@ on a low-effort call is well under a dollar **[inferred from the A4 pricing; no 
 
 ## Journey 2: Add companies and track new roles
 
-**The job.** "Tell AVA who I am interested in and let it find their roles, reliably, without
+**The job.** "Tell Course of Life who I am interested in and let it find their roles, reliably, without
 me babysitting it." Done means: the company shows its careers page, a scan has run, matching roles are
 in my table, and I will hear when something needs me. The anxiety is silent failure: a source that
 reports nothing for months.
@@ -141,7 +141,7 @@ next scan time (2.3) answers the real question.
 ## Journey 3: Review roles and decide
 
 **The job.** "Get through today's new roles fast and make a sound apply-or-pass call on each, with
-AVA learning from what I say." Done means: the Matched tab is empty, every pass has a reason,
+Course of Life learning from what I say." Done means: the Matched tab is empty, every pass has a reason,
 and the shortlist is real. The anxiety is deciding blind or losing a role by mistake.
 
 **Today.** The review panel shows title, meta line, fit rationale and links. **It does not show the

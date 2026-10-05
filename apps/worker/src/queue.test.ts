@@ -14,7 +14,7 @@ import { reconcileCvDrafts, schedulerTick, startScheduler } from "./scheduler";
 import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
 /** Every connection this file opens carries this name, so it can ask about its own sessions alone. */
-const SUITE = "ava-queue-test";
+const SUITE = "col-queue-test";
 const DATABASE_URL = testDatabaseUrl(SUITE);
 
 let deps: WorkerDeps;
@@ -26,7 +26,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);

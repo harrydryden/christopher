@@ -27,7 +27,7 @@ import { tryReserveAi } from "./budget";
 import { LeaseBusyError, LeaseLostError } from "./lease";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 let deps: WorkerDeps;
 let db: Db;
@@ -43,7 +43,7 @@ const plan = { summary: "Operations leader", sections: [{ entryId: "one", bullet
 
 beforeAll(async () => {
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   const bootstrap = await createDeps(readEnv());
   await runMigrations(bootstrap.db);
   deps = bootstrap;

@@ -8,6 +8,7 @@ export const PILL_STYLES = {
 type PillStyle = (typeof PILL_STYLES)[keyof typeof PILL_STYLES];
 type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number; heading: boolean };
 export type PillRow = { pills: Pill[]; height: number };
+const HEADING_TIP_WIDTH = 5;
 type HeadingPill = { label: string; font: string };
 import { cleanCvText } from "./cv-format";
 export { cleanCvText } from "./cv-format";
@@ -26,8 +27,8 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
     ...labels.map(value => ({ value, face: font, isHeading: false }))].map(({ value, face, isHeading }) => {
     const label = cleanCvText(value);
     doc.font(face).fontSize(style.fontSize);
-    const pillWidth = Math.min(width, Math.ceil(doc.widthOfString(label) + style.paddingX * 2 + 1));
-    const textWidth = pillWidth - style.paddingX * 2;
+    const pillWidth = Math.min(width, Math.ceil(doc.widthOfString(label) + style.paddingX * 2 + 1 + (isHeading ? HEADING_TIP_WIDTH : 0)));
+    const textWidth = pillWidth - style.paddingX * 2 - (isHeading ? HEADING_TIP_WIDTH : 0);
     const textHeight = doc.heightOfString(label, { width: textWidth, lineGap: 1, align: "center", baseline: "middle" });
     return { label, x: 0, width: pillWidth, height: Math.ceil(textHeight + style.paddingY * 2), textHeight,
       lineHeight: doc.currentLineHeight(true) + 1, heading: isHeading };
@@ -67,10 +68,18 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
 export function drawPillRow(doc: PDFKit.PDFDocument, row: PillRow, left: number, top: number, colour: string, style: PillStyle, font = "Helvetica", heading?: { colour: string; font: string }): void {
   for (const pill of row.pills) {
     const fill = pill.heading ? heading?.colour ?? darkerPillColour(colour) : colour;
+    if (pill.heading) {
+      const x = left + pill.x;
+      const right = x + pill.width;
+      doc.save().moveTo(x, top).lineTo(right - HEADING_TIP_WIDTH, top)
+        .lineTo(right, top + row.height / 2).lineTo(right - HEADING_TIP_WIDTH, top + row.height)
+        .lineTo(x, top + row.height).closePath().clip();
+    }
     doc.roundedRect(left + pill.x, top, pill.width, row.height, style.radius).fill(fill);
+    if (pill.heading) doc.restore();
     // Reset the font even after a page break/continuation heading.
     doc.font(pill.heading ? heading?.font ?? font : font).fontSize(style.fontSize).fillColor(cvForeground(fill)).text(pill.label,
       left + pill.x + style.paddingX, top + (row.height - pill.textHeight + pill.lineHeight) / 2,
-      { width: pill.width - style.paddingX * 2, lineGap: 1, align: "center", baseline: "middle" });
+      { width: pill.width - style.paddingX * 2 - (pill.heading ? HEADING_TIP_WIDTH : 0), lineGap: 1, align: "center", baseline: "middle" });
   }
 }

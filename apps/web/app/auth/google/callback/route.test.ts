@@ -24,7 +24,7 @@ vi.mock("@/lib/auth", () => ({ startSession: vi.fn(async () => "session-1") }));
 
 import { GET as start } from "../route";
 import { GET as callback } from "./route";
-import { OAUTH_COOKIE_NAME } from "@/lib/session";
+import { LEGACY_OAUTH_COOKIE_NAMES, OAUTH_COOKIE_NAME } from "@/lib/session";
 
 beforeAll(() => {
   process.env.SESSION_SECRET = "google-callback-test-secret";
@@ -51,4 +51,16 @@ it("never redirects off-site after a genuine sign-in, whatever the next paramete
   for (const next of ["%2F%09%2Fevil.example%2F", "%2F%0A%2Fevil.example", "%2F%0D%0A%2Fevil.example", "%2F.%2F%2Fevil.example", "%2F%2Fevil.example"]) {
     expect(await roundTrip(next), next).toBe("https://app.example/");
   }
+});
+
+it("completes a sign-in started before the rename, under the AVA cookie name, and clears it", async () => {
+  const started = await start(new Request(`https://app.example/auth/google?next=${encodeURIComponent("/roles")}`));
+  const state = new URL(started.headers.get("location")!).searchParams.get("state");
+  const legacyName = LEGACY_OAUTH_COOKIE_NAMES[0];
+  expect(legacyName).toBe("ava_oauth");
+  jar.set(legacyName, jar.get(OAUTH_COOKIE_NAME)!);
+  jar.delete(OAUTH_COOKIE_NAME);
+  const finished = await callback(new Request(`https://app.example/auth/google/callback?code=code&state=${state}`));
+  expect(finished.headers.get("location")).toBe("https://app.example/roles");
+  expect(jar.has(legacyName)).toBe(false);
 });

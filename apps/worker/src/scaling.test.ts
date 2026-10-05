@@ -1,14 +1,14 @@
 import { beforeAll, beforeEach, afterAll, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { accountAiSpend, aiUsageByAccount, createDb, schema, totalAiSpend } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { aiBudgetWindowStart } from "@ava/core";
+import { accountAiSpend, aiUsageByAccount, createDb, schema, totalAiSpend } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { aiBudgetWindowStart } from "@col/core";
 import { sql } from "drizzle-orm";
 import { reserveAi } from "./budget";
 import { ensureTestUser, testDatabaseUrl } from "./test-users";
 import { selectExamples } from "./recommendation-context";
 /** Every connection this file opens carries this name, so it can ask about its own sessions alone. */
-const SUITE = "ava-scaling-test";
+const SUITE = "col-scaling-test";
 const { db, pool } = createDb(testDatabaseUrl(SUITE));
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));

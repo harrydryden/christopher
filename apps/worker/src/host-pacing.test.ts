@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { reserveHostTurn } from "./context";
 
@@ -8,7 +8,7 @@ import { reserveHostTurn } from "./context";
  * A host's turns in the shared pacing table. A turn further off than the fetcher will wait is not
  * taken: the request is requeued, and a turn nobody used must not push everyone behind it back.
  */
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate host_pacing`));
 afterAll(async () => { await db.execute(sql`truncate host_pacing`); await pool.end(); });

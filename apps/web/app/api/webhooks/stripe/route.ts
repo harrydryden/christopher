@@ -14,8 +14,8 @@ import {
   type BillingStatus,
   type BillingWriter,
   type CvTopupKey,
-} from "@ava/db";
-import { billingAccounts } from "@ava/db/schema";
+} from "@col/db";
+import { billingAccounts } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { companyBlockPriceId, packForPrice, planForPrice, stripeClient } from "@/lib/billing/stripe";
 

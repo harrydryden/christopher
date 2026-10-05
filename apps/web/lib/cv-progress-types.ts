@@ -2,7 +2,7 @@
  * What `/api/cv/[id]/progress` answers, and what the CV page hands its live build component as the
  * first reading. Client-safe: types only.
  */
-import type { CvBuildFailure } from "@ava/core";
+import type { CvBuildFailure } from "@col/core";
 import type { CvJournalStepWire } from "./cv-build-journal";
 
 /** The build's state as the header renders it, with its moments as ISO strings. */

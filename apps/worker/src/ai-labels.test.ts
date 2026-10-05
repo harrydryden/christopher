@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { aiOutcome, aiUsageByAccount, createDb, schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { aiOutcome, aiUsageByAccount, createDb, schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import {
   CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR,
   PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS,
-} from "@ava/ai";
+} from "@col/ai";
 import { sql } from "drizzle-orm";
 // Not re-exported from the package: its consumer, the outage query, lives beside it.
 import { aiProviderFailureSql, isAiProviderFailure } from "../../../packages/db/src/ai-budget";
@@ -17,7 +17,7 @@ import { aiProviderFailureSql, isAiProviderFailure } from "../../../packages/db/
  * breaks here rather than quietly moving calls between Operations' columns or into the outage
  * alert.
  */
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
 // Holds are left live on purpose here; the suites after this one share the database.

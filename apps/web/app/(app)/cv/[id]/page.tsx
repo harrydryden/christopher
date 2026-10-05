@@ -20,16 +20,16 @@ import { getOwnCvSharing } from "@/lib/queries/cv-shares";
 import { openCommentCounts } from "@/lib/cv-share";
 import { cvNextAction } from "@/lib/cv-next-action";
 import { CvNextAction } from "@/components/CvNextAction";
-import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent } from "@ava/core/cv-review";
-import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
-import { CV_LIMITS } from "@ava/core/cv-format";
-import type { CvAssessment } from "@ava/core/cv-assessment";
+import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent } from "@col/core/cv-review";
+import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary } from "@col/core/cv";
+import { CV_LIMITS } from "@col/core/cv-format";
+import type { CvAssessment } from "@col/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
 import { cvEditFormId } from "@/lib/cv-content-links";
 import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
-import { applications, cvLibraries } from "@ava/db";
+import { applications, cvLibraries } from "@col/db";
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { zUuid } from "@/lib/validation";
@@ -56,7 +56,7 @@ function finaliseObstacle(draft: {
   jobDescription: string;
   librarySnapshot: CvLibrary;
   assessment: CvAssessment | null;
-  reviewDecision?: import("@ava/core/cv-review").CvReviewDecision | null;
+  reviewDecision?: import("@col/core/cv-review").CvReviewDecision | null;
 }): string | null {
   if (!draft.content) return null;
   try {

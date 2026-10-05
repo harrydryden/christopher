@@ -34,13 +34,13 @@ importers:
 
   apps/web:
     dependencies:
-      '@ava/core':
+      '@col/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@ava/db':
+      '@col/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@ava/worker':
+      '@col/worker':
         specifier: workspace:*
         version: link:../worker
       '@opentelemetry/api':
@@ -119,13 +119,13 @@ importers:
 
   apps/worker:
     dependencies:
-      '@ava/ai':
+      '@col/ai':
         specifier: workspace:*
         version: link:../../packages/ai
-      '@ava/core':
+      '@col/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@ava/db':
+      '@col/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@opentelemetry/api':
@@ -189,7 +189,7 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.124.0
         version: 0.124.0(zod@4.5.4)
-      '@ava/core':
+      '@col/core':
         specifier: workspace:*
         version: link:../core
       zod:
@@ -236,7 +236,7 @@ importers:
 
   packages/db:
     dependencies:
-      '@ava/core':
+      '@col/core':
         specifier: workspace:*
         version: link:../core
       '@opentelemetry/api':

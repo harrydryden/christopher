@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { CvContentSchema } from "@ava/core/cv";
+import { CvContentSchema } from "@col/core/cv";
 import { cvReviewSections, cvReviewSkillLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({

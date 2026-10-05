@@ -14,8 +14,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
@@ -64,7 +64,7 @@ vi.mock("@/lib/auth", async (original) => {
 });
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: () => (session ? { value: session } : undefined), set: vi.fn(), delete: vi.fn() }),
-  headers: async () => new Headers({ host: "ava.test", "x-forwarded-for": "198.51.100.44" }),
+  headers: async () => new Headers({ host: "col.test", "x-forwarded-for": "198.51.100.44" }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 vi.mock("next/navigation", () => ({

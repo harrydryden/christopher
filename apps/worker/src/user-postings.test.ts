@@ -7,9 +7,9 @@
  * than storing a second one beside it, after which the ordinary two-miss rule applies.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db, type User } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { normalisePostingUrl, sha1 } from "@ava/core";
+import { createDb, schema, subscribeToCompany, type Db, type User } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { normalisePostingUrl, sha1 } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -17,7 +17,7 @@ import { _scanSourceForTests } from "./handlers/scan";
 import { ensureTestUser } from "./test-users";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const HOSTS = ["boards-api.greenhouse.io", "job-boards.greenhouse.io"];
 
 /** The role the scan finds for itself, which is here to show the ordinary rules still run. */
@@ -64,8 +64,8 @@ beforeAll(async () => {
 
   server = await startTestServer(board([LISTED]), HOSTS);
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.COL_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;

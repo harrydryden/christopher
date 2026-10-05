@@ -388,7 +388,7 @@ test("a monitor sample twenty minutes old is attention: the task that takes it h
 
 /** A throwaway repository whose history is main, then a branch merged with a merge commit. */
 function history() {
-  const dir = mkdtempSync(join(tmpdir(), "ava-release-checks-"));
+  const dir = mkdtempSync(join(tmpdir(), "col-release-checks-"));
   const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
   const commit = (message, files) => {
     for (const [path, content] of Object.entries(files)) {
@@ -396,7 +396,7 @@ function history() {
       writeFileSync(join(dir, path), content);
     }
     git("add", "-A");
-    git("-c", "user.name=test", "-c", "user.email=test@ava.dev", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message);
+    git("-c", "user.name=test", "-c", "user.email=test@col.dev", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message);
     return git("rev-parse", "HEAD");
   };
   git("init", "-q", "-b", "main");
@@ -443,7 +443,7 @@ test("a merge commit that brings worker changes needs the worker to redeploy", (
     repo.git("checkout", "-q", "-b", "feature");
     repo.commit("feature", { "apps/worker/a.ts": "2" });
     repo.git("checkout", "-q", "main");
-    repo.git("-c", "user.name=test", "-c", "user.email=test@ava.dev", "-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "merge", "feature");
+    repo.git("-c", "user.name=test", "-c", "user.email=test@col.dev", "-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "merge", "feature");
     const merge = repo.git("rev-parse", "HEAD");
     assert.equal(sameWorkerInputs(before, merge, { cwd: repo.dir }), false);
     const docs = repo.commit("docs after the merge", { "docs/z.md": "z" });

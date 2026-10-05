@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { pruneHttpHostDaily } from "@ava/db";
+import { pruneHttpHostDaily } from "@col/db";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
 import { reconcileOrphanScores } from "./score-orphans";

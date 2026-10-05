@@ -1,5 +1,5 @@
-import { EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@ava/core/cv-helpers";
-import { EVIDENCE_MARKS_BY_FACET, EVIDENCE_MARK_SPECS } from "@ava/core/evidence-rubric";
+import { EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@col/core/cv-helpers";
+import { EVIDENCE_MARKS_BY_FACET, EVIDENCE_MARK_SPECS } from "@col/core/evidence-rubric";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/table";
 
 /**

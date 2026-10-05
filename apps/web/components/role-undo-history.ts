@@ -2,9 +2,9 @@
 export interface RoleUndoEntry { jobId: string; text: string; revision: string; decisionId?: string }
 
 const LIMIT = 5;
-export const ROLE_UNDO_CHANGED = "ava:role-undo-changed";
-const key = (scope: string) => `ava:role-undo:${scope}`;
-const revisionKey = (scope: string, jobId: string) => `ava:role-undo-revision:${scope}:${jobId}`;
+export const ROLE_UNDO_CHANGED = "col:role-undo-changed";
+const key = (scope: string) => `col:role-undo:${scope}`;
+const revisionKey = (scope: string, jobId: string) => `col:role-undo-revision:${scope}:${jobId}`;
 
 export function recentRoleUndos(scope: string): RoleUndoEntry[] {
   try {

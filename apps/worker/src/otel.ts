@@ -47,7 +47,7 @@ async function start(env: NodeJS.ProcessEnv): Promise<boolean> {
     import("@opentelemetry/instrumentation-undici"),
   ]);
   const sdk = new NodeSDK({
-    serviceName: env.OTEL_SERVICE_NAME?.trim() || "ava-worker",
+    serviceName: env.OTEL_SERVICE_NAME?.trim() || "col-worker",
     sampler: new tracing.ParentBasedSampler({ root: new tracing.TraceIdRatioBasedSampler(samplerRatio(env)) }),
     spanProcessors: [new tracing.BatchSpanProcessor(new OTLPTraceExporter(), { maxQueueSize: MAX_QUEUED_SPANS })],
     instrumentations: [new PgInstrumentation({ enhancedDatabaseReporting: false }), new UndiciInstrumentation()],
@@ -65,7 +65,7 @@ export async function stopOtel(): Promise<void> {
   starting = null;
 }
 
-const tracer = () => trace.getTracer("ava-worker");
+const tracer = () => trace.getTracer("col-worker");
 
 /** Run `work` inside a span named `name`: ended however it settles, marked as an error if it throws. */
 export async function withSpan<T>(name: string, attributes: Attributes, work: (span: Span) => Promise<T>): Promise<T> {

@@ -4,14 +4,14 @@
  * waiting for the worker at once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, grantCvCredits, releaseCvCredit, reserveCvCredit, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createDb, grantCvCredits, releaseCvCredit, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
-import { CV_THEMES, DEFAULT_CV_THEME } from "@ava/core/cv";
+import { runMigrations } from "@col/db/migrate";
+import { CV_THEMES, DEFAULT_CV_THEME } from "@col/core/cv";
 import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -35,8 +35,8 @@ vi.mock("@/lib/cv-pdf", async (actual) => {
 });
 
 import { assessCvDraft, dismissCvReviewItem, finaliseCvDraft, quoteCvBuild, requestCv, saveCvDraft } from "./cv";
-import { createCvAssessment } from "@ava/core/cv-review";
-import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
+import { createCvAssessment } from "@col/core/cv-review";
+import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@col/core/cv-assessment";
 import { reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { CV_BUILD_CAP_MESSAGE, MAX_CV_BUILDS_IN_FLIGHT } from "@/lib/cv-build-capacity";
 import { CV_WORKER_STOPPED_MESSAGE, cvBuildState } from "@/lib/cv-build-state";

@@ -136,7 +136,7 @@ it("does not expose another account's recent decisions in the same browser tab",
 });
 
 it("rejects older tokenless Undo history and offers a reload of the latest role state", () => {
-  sessionStorage.setItem("ava:role-undo:person-1", JSON.stringify([{ jobId: FIRST.id, text: "Shortlisted Head of Operations", revision: "old" }]));
+  sessionStorage.setItem("col:role-undo:person-1", JSON.stringify([{ jobId: FIRST.id, text: "Shortlisted Head of Operations", revision: "old" }]));
   act(() => root.render(<RolesTable rows={[]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
   expect(text()).toContain("Older Undo entries cannot be checked against the latest decision");
   expect(button("Reload roles")).toBeTruthy();
@@ -148,8 +148,8 @@ it("keeps a visible shortlisted row and its history when a stale Undo is refused
   const decided: RoleRowVM = { ...FIRST, workflowStatus: "user-shortlisted", stage: "shortlisted",
     decision: { id: FIRST.id, decision: "apply", reason: "", createdLabel: "just now", createdTitle: "now" } };
   const entry = { jobId: FIRST.id, text: "Shortlisted Head of Operations at Meridian", revision: "rev-1", decisionId: FIRST.id };
-  sessionStorage.setItem(`ava:role-undo-revision:person-1:${FIRST.id}`, entry.revision);
-  sessionStorage.setItem("ava:role-undo:person-1", JSON.stringify([entry]));
+  sessionStorage.setItem(`col:role-undo-revision:person-1:${FIRST.id}`, entry.revision);
+  sessionStorage.setItem("col:role-undo:person-1", JSON.stringify([entry]));
   actions.undoDecisionIfCurrent.mockResolvedValue({ ok: false, error: "This decision changed in another tab. Reload roles before trying again." });
   act(() => root.render(<RolesTable rows={[decided]} companies={COMPANIES} keyboard historyScope="person-1" emptyState={<p>Nothing</p>} />));
 

@@ -1,6 +1,6 @@
 /**
  * Credit and company entitlements against the real schema.
- * Requires TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -22,7 +22,7 @@ import {
 } from "./billing";
 import { companies, companySubscriptions, users } from "./schema";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 1 });
 beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
 

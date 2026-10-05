@@ -10,7 +10,7 @@
  * When the worker's detail objects change, change the constants here with them.
  */
 import { describe, expect, it } from "vitest";
-import { CV_BUILD_MOTIONS, CV_BUILD_STAGE_NAMES } from "@ava/core";
+import { CV_BUILD_MOTIONS, CV_BUILD_STAGE_NAMES } from "@col/core";
 import type { CvJournalStep } from "./cv-build-journal";
 import {
   currentMotionLine,

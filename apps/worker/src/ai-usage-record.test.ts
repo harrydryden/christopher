@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { recordAiUsage, tryReserveAi, type AiHold } from "./budget";
 import { ensureTestUser } from "./test-users";
@@ -13,7 +13,7 @@ import { ensureTestUser } from "./test-users";
  * spend vanished from the budget for good. And a build's single hold stayed at its whole estimate
  * while each of its calls was recorded, so the build's spend counted twice until it ended.
  */
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
 // Holds are left live on purpose here; the suites after this one share the database.

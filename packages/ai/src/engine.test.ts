@@ -4,7 +4,7 @@ import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, isModelAccessFailure } fro
 import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, SDK_MAX_RETRIES, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
-import type { CvLibrary } from "@ava/core";
+import type { CvLibrary } from "@col/core";
 import * as P from "./prompts";
 
 interface Captured {
@@ -767,7 +767,7 @@ describe("source company extraction", () => {
 });
 
 it('passes structured skills and wording guidance to generation without palette settings', async () => {
-  const { DEFAULT_CV_THEME } = await import('@ava/core/cv');
+  const { DEFAULT_CV_THEME } = await import('@col/core/cv');
   const { engine, calls } = engineWith({ summary: 'Analyst', sections: [{ entryId: 's', bullets: ['Reporting'], skillItems: ['SQL'] }], gaps: [] });
   await engine.buildCv({ library: { name: 'Example', contact: '', profile: '', theme: DEFAULT_CV_THEME, stylePreferences: 'Concise', entries: [{ id: 's', kind: 'skill', heading: 'Tools', details: 'Reporting', skillItems: ['SQL'] }] }, jobTitle: 'Analyst', company: 'Example', description: 'Analyse data' });
   const text = userBlocks(calls[0]!.params).map(block => block.text).join("");

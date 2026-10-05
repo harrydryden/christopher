@@ -4,8 +4,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
-import { createDb, queueScoring, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, queueScoring, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { testDatabaseUrl } from "./test-users";
 import { queueMissingCompanyProfiles } from "./handlers/companies";
@@ -24,7 +24,7 @@ beforeAll(async () => {
     if (text) sent.push(text);
     return (original as (...a: unknown[]) => unknown).apply(this, args);
   };
-  ({ db, pool } = createDb(testDatabaseUrl("ava-batching-test"), { max: 1 }));
+  ({ db, pool } = createDb(testDatabaseUrl("col-batching-test"), { max: 1 }));
   await runMigrations(db);
 }, 60_000);
 afterAll(async () => {

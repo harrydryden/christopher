@@ -1,6 +1,6 @@
 import { cache } from "react";
-import { latestApplicationFor, roleStageSql, roleStatusSql } from "@ava/db";
-import { MANUAL_RESCAN_INTERVAL_MS } from "@ava/core";
+import { latestApplicationFor, roleStageSql, roleStatusSql } from "@col/db";
+import { MANUAL_RESCAN_INTERVAL_MS } from "@col/core";
 import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns, ilike, or, type SQL } from "drizzle-orm";
 import { DEFAULT_COMPANY_SORT, type CompanySort, type CompanySortKey } from "@/lib/company-sort";
 import {
@@ -24,7 +24,7 @@ import {
   type DiscoveryRun,
   type Scan,
   type Task,
-} from "@ava/db/schema";
+} from "@col/db/schema";
 import { db } from "@/lib/db";
 import type { CompanySetupRows, TimelineCandidate, TimelineTask } from "@/lib/company-timeline";
 import { readClampedPage } from "@/lib/queries/paging";

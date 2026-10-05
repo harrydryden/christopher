@@ -91,6 +91,10 @@ test("warns when every report at the shipped prompt set is unverified, and fails
   ], "new", { requireVerified: true });
   assert.match(newerFixture.problems.at(-1), /newest CV replay.*unverified/);
   assert.equal(requireVerifiedFromEnv({}), false);
-  assert.equal(requireVerifiedFromEnv({ AVA_EVAL_GATE_REQUIRE_VERIFIED: "0" }), false);
+  assert.equal(requireVerifiedFromEnv({ COL_EVAL_GATE_REQUIRE_VERIFIED: "0" }), false);
+  assert.equal(requireVerifiedFromEnv({ COL_EVAL_GATE_REQUIRE_VERIFIED: "1" }), true);
+  // The pre-rename name is still read where the new one is unset or empty, and never overrides it.
   assert.equal(requireVerifiedFromEnv({ AVA_EVAL_GATE_REQUIRE_VERIFIED: "1" }), true);
+  assert.equal(requireVerifiedFromEnv({ COL_EVAL_GATE_REQUIRE_VERIFIED: "", AVA_EVAL_GATE_REQUIRE_VERIFIED: "1" }), true);
+  assert.equal(requireVerifiedFromEnv({ COL_EVAL_GATE_REQUIRE_VERIFIED: "0", AVA_EVAL_GATE_REQUIRE_VERIFIED: "1" }), false);
 });

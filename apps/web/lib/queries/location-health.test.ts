@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { createTestDb } from "@/test/db";
 import { ensureTestUser } from "@/test/auth";
 import { sql } from "drizzle-orm";

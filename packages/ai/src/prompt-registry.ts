@@ -13,8 +13,8 @@
 import { createHash } from "node:crypto";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { CvRubricSchema, CvReviewPlanSchema } from "@ava/core/cv-assessment";
-import { CvPlanSchema, CvTailoringPlanOutputSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@ava/core";
+import { CvRubricSchema, CvReviewPlanSchema } from "@col/core/cv-assessment";
+import { CvPlanSchema, CvTailoringPlanOutputSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@col/core";
 import { CV_AUTHOR_PROMPT, CV_REVIEW_PROMPT, CV_RUBRIC_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import * as P from "./prompts";
 import * as S from "./schemas";

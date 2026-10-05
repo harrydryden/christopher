@@ -1,15 +1,15 @@
 /** What a boot does before it claims anything: once per change, and in one statement. */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createDb, enqueueTask, listUserIds, schema, SEED_TAGS, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, DEFAULT_SYSTEM_SETTINGS, GATE_REEVALUATION_VERSION, priorityFor } from "@ava/core";
+import { createDb, enqueueTask, listUserIds, schema, SEED_TAGS, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, DEFAULT_SYSTEM_SETTINGS, GATE_REEVALUATION_VERSION, priorityFor } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import { configuredModels, enqueueBootGateReevaluation, GATE_REEVALUATION_KEY, probeConfiguredModels, seedTagVocabularies } from "./boot";
 import { agePriorities, claimTask } from "./queue";
 import { getInternal } from "./settings";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const { db, pool } = createDb(DATABASE_URL, { max: 4 });
 
 beforeAll(async () => { await runMigrations(db as Db); });

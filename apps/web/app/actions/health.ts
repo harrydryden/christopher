@@ -3,8 +3,8 @@
 import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, asc, eq, sql } from "drizzle-orm";
-import { requestLocationEnrichment, type Db } from "@ava/db";
-import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks } from "@ava/db/schema";
+import { requestLocationEnrichment, type Db } from "@col/db";
+import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks } from "@col/db/schema";
 import { markSourceConfirmed, useDiscoveryCandidate } from "./companies";
 import { db } from "@/lib/db";
 import { fail, isUserFacingError, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";

@@ -4,7 +4,7 @@
  * `/api/cv/library` open the library before sending it, and the editor holds what they sent
  * rather than opening it again.
  */
-import { consolidateExperience, normaliseCvLibrary, splitLegacyContact, type CvLibrary } from "@ava/core/cv";
+import { consolidateExperience, normaliseCvLibrary, splitLegacyContact, type CvLibrary } from "@col/core/cv";
 
 declare const opened: unique symbol;
 /**

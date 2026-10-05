@@ -21,8 +21,8 @@ import {
   isActiveStoredEvidence,
   rowFacets,
   type CvLibrary,
-} from "@ava/core/cv";
-import type { EvidenceMark } from "@ava/core/evidence-rubric";
+} from "@col/core/cv";
+import type { EvidenceMark } from "@col/core/evidence-rubric";
 import {
   evidenceRatingFor,
   facetForPrompt,
@@ -30,7 +30,7 @@ import {
   rulesLibraryReview,
   type LibraryEntryReview,
   type LibraryReviewSource,
-} from "@ava/core/library-review";
+} from "@col/core/library-review";
 import {
   libraryEvidenceLine,
   NO_EVIDENCE,

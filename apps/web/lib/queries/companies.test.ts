@@ -3,9 +3,9 @@
  * of finished tasks only in the half hour after that scan, when a rescan can have been served from it.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 
 let database: Db;
@@ -13,7 +13,7 @@ let pool: ReturnType<typeof createDb>["pool"];
 const reads = vi.hoisted(() => ({ n: 0 }));
 vi.mock("@/lib/db", () => ({ db: () => { reads.n++; return database; } }));
 import { companyScanTiming, listCataloguePage, listCompanyPage } from "./companies";
-import { subscribeToCompany } from "@ava/db";
+import { subscribeToCompany } from "@col/db";
 import { ensureTestUser } from "@/test/auth";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
 

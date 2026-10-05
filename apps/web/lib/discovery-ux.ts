@@ -1,4 +1,4 @@
-import { isImportOnlySourceError, sourceIsImportOnly } from "@ava/core";
+import { isImportOnlySourceError, sourceIsImportOnly } from "@col/core";
 
 /**
  * Discovery's forms always have something to say on success, so they name their own result type —

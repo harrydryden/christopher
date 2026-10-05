@@ -1,6 +1,6 @@
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import type { RenderedPage } from "@ava/core";
+import type { RenderedPage } from "@col/core";
 import { listingCaptureCount, listingCaptures } from "./listing-captures";
 
 const url = "https://example.test/jobs";

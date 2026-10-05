@@ -1,6 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
-import { cvLibraries } from "@ava/db";
-import { CvThemeSchema, DEFAULT_CV_THEME } from "@ava/core/cv";
+import { cvLibraries } from "@col/db";
+import { CvThemeSchema, DEFAULT_CV_THEME } from "@col/core/cv";
 import { db } from "./db";
 import { getSettingsFor } from "./settings";
 

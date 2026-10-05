@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { isImportOnlyKind, sha1, stripHtml } from "@ava/core";
-import { discoveryDocuments, discoverySources } from "@ava/db/schema";
+import { isImportOnlyKind, sha1, stripHtml } from "@col/core";
+import { discoveryDocuments, discoverySources } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import { zUuid } from "@/lib/validation";

@@ -8,20 +8,20 @@
  *
  * Run it against its own database so it does not collide with the suites that truncate shared
  * tables:
- *   TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_e2e \
- *   AVA_DISABLE_BROWSER=1 pnpm test cv-e2e
+ *   TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/col_e2e \
+ *   COL_DISABLE_BROWSER=1 pnpm test cv-e2e
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { consumeCvCredit, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@ava/db";
+import { consumeCvCredit, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
 import { randomUUID } from "node:crypto";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { CV_THEMES } from "@ava/core/cv";
-import { cvClaimItems } from "@ava/core/cv-assessment";
-import { renderCvPdfWithReport } from "@ava/core/cv-pdf";
+import { CV_THEMES } from "@col/core/cv";
+import { cvClaimItems } from "@col/core/cv-assessment";
+import { renderCvPdfWithReport } from "@col/core/cv-pdf";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 import {
   callsOf,
   createScriptedAiClient,

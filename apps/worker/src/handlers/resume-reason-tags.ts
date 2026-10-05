@@ -1,5 +1,5 @@
-import { accountCanScore, enqueueStandard, enqueueTasks, taskRow, type Task } from "@ava/db";
-import type { TaskPayloads } from "@ava/core";
+import { accountCanScore, enqueueStandard, enqueueTasks, taskRow, type Task } from "@col/db";
+import type { TaskPayloads } from "@col/core";
 import { sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 

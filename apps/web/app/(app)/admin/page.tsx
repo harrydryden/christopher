@@ -4,8 +4,8 @@ import { saveRegistrationSettings } from "@/app/actions/settings";
 import { ResetLinkButton } from "@/components/ResetLinkButton";
 import { RunScheduledWork } from "@/components/RunScheduledWork";
 import { adminEmails } from "@/lib/accounts";
-import { isPlaceholderEmail } from "@ava/db";
-import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
+import { isPlaceholderEmail } from "@col/db";
+import { MAX_ACCOUNT_AI_BUDGET_USD } from "@col/core";
 import { getSystemSettings } from "@/lib/settings";
 import { accountAiBudgets, defaultAccountAiBudget } from "@/lib/queries/accounts";
 import { Badge } from "@/components/Badge";
@@ -53,7 +53,7 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
 
       <Card title="Scheduled work">
         <p className="mb-3 text-14 text-muted">
-          Queues anything due now. Without a worker service (<code>AVA_SERVERLESS_FALLBACK=1</code>) it also works the queue for up to a minute.
+          Queues anything due now. Without a worker service (<code>COL_SERVERLESS_FALLBACK=1</code>) it also works the queue for up to a minute.
         </p>
         <RunScheduledWork />
       </Card>

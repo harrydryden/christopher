@@ -20,9 +20,9 @@ const HEADERS = `
 export async function cookies() {
   const value = globalThis.__cvLoad?.cookie?.();
   return {
-    get: (name) => (value && name === 'ava_session' ? { name, value } : undefined),
-    getAll: () => (value ? [{ name: 'ava_session', value }] : []),
-    has: (name) => !!value && name === 'ava_session',
+    get: (name) => (value && name === 'col_session' ? { name, value } : undefined),
+    getAll: () => (value ? [{ name: 'col_session', value }] : []),
+    has: (name) => !!value && name === 'col_session',
     set() {}, delete() {},
   };
 }

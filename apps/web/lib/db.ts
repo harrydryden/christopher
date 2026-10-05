@@ -1,5 +1,5 @@
 import { attachDatabasePool } from "@vercel/functions/db-connections";
-import { createDb, isTransactionPooledUrl } from "@ava/db/client";
+import { createDb, isTransactionPooledUrl } from "@col/db/client";
 export type Db = ReturnType<typeof createDb>["db"];
 let cached: Db | null = null;
 
@@ -56,7 +56,7 @@ export function webPoolIdleTimeoutMs(url: string): number {
  * backends can be budgeted by client: `WEB_DB_POOL_MAX` × peak instances stays at or under 60
  * (docs/DEPLOY.md). A DATABASE_URL naming its own `application_name` takes precedence.
  */
-export const WEB_APPLICATION_NAME = "ava-web";
+export const WEB_APPLICATION_NAME = "col-web";
 
 /** Shared connection policy, with a small serverless pool. Direct subpath avoids migrations. */
 export function db(): Db {

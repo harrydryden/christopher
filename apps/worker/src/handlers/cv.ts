@@ -1,15 +1,15 @@
-import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@ava/core/cv-fit";
+import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@col/core/cv-fit";
 import {
   renderCvPdfWithReport,
   assertCvPageLimit,
   CvLayoutError,
-} from "@ava/core/cv-pdf";
+} from "@col/core/cv-pdf";
 import {
   createCvAssessment,
   cvAssessmentCurrent,
   cvLibraryVerdicts,
   validateCvRubric,
-} from "@ava/core/cv-review";
+} from "@col/core/cv-review";
 import {
   cvTextItems,
   cvClaimItems,
@@ -19,13 +19,13 @@ import {
   type CvAssessment,
   type CvReviewPlan,
   type CvRubric,
-} from "@ava/core/cv-assessment";
-import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "@ava/core/cv-tailoring";
-import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
-import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@ava/core/cv-quality";
+} from "@col/core/cv-assessment";
+import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "@col/core/cv-tailoring";
+import { buildCvGapQuiz } from "@col/core/cv-gap-quiz";
+import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@col/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, releaseCvCredit, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
-import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
+import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, releaseCvCredit, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@col/db";
+import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@col/ai";
 import {
   CvContentSchema,
   CvStoredPlanSchema,
@@ -46,7 +46,7 @@ import {
   type CvBuildStageName,
   type CvContent,
   type CvFailureKind,
-} from "@ava/core";
+} from "@col/core";
 import {
   AUTHOR_CALL,
   callFailureMessage,
@@ -56,7 +56,7 @@ import {
   REVIEW_CALL,
   RUBRIC_CALL,
   type CvCallDoing,
-} from "@ava/core/cv-build-failure";
+} from "@col/core/cv-build-failure";
 import { withResourceLease } from "../lease";
 import { budgetLimits, recordAiUsage, tryReserveAi, type AiBudgetLimits, type AiBudgetRefusal, type AiHold } from "../budget";
 import { backoffMs, type TaskRunContext } from "../queue";

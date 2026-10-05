@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { roleStatus, liveFor } from "@ava/core";
+import { roleStatus, liveFor } from "@col/core";
 import { routeUser } from "@/lib/route-auth";
 import { csvRow } from "@/lib/csv";
 import {
@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
     status: 200,
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="ava-roles-${now.toISOString().slice(0, 10)}.csv"`,
+      "content-disposition": `attachment; filename="col-roles-${now.toISOString().slice(0, 10)}.csv"`,
       // One account's whole table, decisions and reasons: no proxy or browser cache may keep it.
       "cache-control": "private, no-store",
       "x-content-type-options": "nosniff",

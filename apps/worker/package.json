@@ -1,5 +1,5 @@
 {
-  "name": "@ava/worker",
+  "name": "@col/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,9 +14,9 @@
     "cli": "tsx src/cli.ts"
   },
   "dependencies": {
-    "@ava/ai": "workspace:*",
-    "@ava/core": "workspace:*",
-    "@ava/db": "workspace:*",
+    "@col/ai": "workspace:*",
+    "@col/core": "workspace:*",
+    "@col/db": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
     "@opentelemetry/instrumentation-pg": "^0.74.0",

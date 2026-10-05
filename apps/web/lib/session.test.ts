@@ -4,7 +4,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
-  createSessionCookieValue, createSignedValue, isSecureHost, readSessionCookie, readSignedValue, sanitizeNextPath, sessionCookieValue,
+  createSessionCookieValue, createSignedValue, isSecureHost, oauthCookieValue, readSessionCookie, readSignedValue, sanitizeNextPath, sessionCookieValue,
   sessionSecret,
 } from "./session";
 
@@ -125,18 +125,28 @@ describe("redirect targets", () => {
     expect(sanitizeNextPath("/a/../b")).toBe("/a/../b");
   });
 
-  it("reads the renamed cookie first and the legacy one after it, so the rename signs nobody out", () => {
+  it("reads the renamed cookie first and the legacy ones after it in order, so the rename signs nobody out", () => {
     const jar = (values: Record<string, string>) => ({ get: (name: string) => (name in values ? { value: values[name]! } : undefined) });
-    expect(sessionCookieValue(jar({ ava_session: "new" }))).toBe("new");
+    expect(sessionCookieValue(jar({ col_session: "new" }))).toBe("new");
+    expect(sessionCookieValue(jar({ ava_session: "ava" }))).toBe("ava");
     expect(sessionCookieValue(jar({ christopher_session: "old" }))).toBe("old");
-    expect(sessionCookieValue(jar({ ava_session: "new", christopher_session: "old" }))).toBe("new");
+    expect(sessionCookieValue(jar({ col_session: "new", ava_session: "ava", christopher_session: "old" }))).toBe("new");
+    expect(sessionCookieValue(jar({ ava_session: "ava", christopher_session: "old" }))).toBe("ava");
     expect(sessionCookieValue(jar({}))).toBeUndefined();
+  });
+
+  it("reads the Google round trip's state under the renamed cookie first and the AVA one after it", () => {
+    const jar = (values: Record<string, string>) => ({ get: (name: string) => (name in values ? { value: values[name]! } : undefined) });
+    expect(oauthCookieValue(jar({ col_oauth: "new" }))).toBe("new");
+    expect(oauthCookieValue(jar({ ava_oauth: "ava" }))).toBe("ava");
+    expect(oauthCookieValue(jar({ col_oauth: "new", ava_oauth: "ava" }))).toBe("new");
+    expect(oauthCookieValue(jar({}))).toBeUndefined();
   });
 
   it("marks cookies secure everywhere except plain localhost", () => {
     expect(isSecureHost("localhost:3000")).toBe(false);
     expect(isSecureHost("127.0.0.1")).toBe(false);
-    expect(isSecureHost("ava.example")).toBe(true);
+    expect(isSecureHost("col.example")).toBe(true);
     expect(isSecureHost(null)).toBe(true);
   });
 });

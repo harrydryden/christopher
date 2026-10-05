@@ -19,8 +19,8 @@ import {
   setRowFacets,
   updateResponsibilityRows,
   type EvidenceFacet,
-} from "@ava/core/cv-helpers";
-import type { CvLibrary, Employment } from "@ava/core/cv";
+} from "@col/core/cv-helpers";
+import type { CvLibrary, Employment } from "@col/core/cv";
 
 type CvEntry = CvLibrary["entries"][number];
 

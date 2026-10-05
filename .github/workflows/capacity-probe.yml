@@ -31,7 +31,7 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/christopher_users_benchmark
-      AVA_DISABLE_BROWSER: "1"
+      COL_DISABLE_BROWSER: "1"
       USERS_REPORT_PATH: ${{ github.workspace }}/users-report.json
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate
-      - run: pnpm --filter @ava/web build
+      - run: pnpm --filter @col/web build
         env:
           SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
       - run: node scripts/benchmark-users.mjs

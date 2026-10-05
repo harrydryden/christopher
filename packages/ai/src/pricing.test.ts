@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { STAGE_ROUTE_IDS } from "@ava/core";
+import { STAGE_ROUTE_IDS } from "@col/core";
 import { CV_FITTER_ATTEMPTS, cvStageModel, estimateCostUsd, estimateCvBuildUsd, estimateStage } from "./pricing";
 import { EFFORT_OUTPUT_SCALE, PROMPTS, PROMPT_IDS, expectedOutputTokens } from "./prompt-registry";
 import { createAiEngine } from "./engine";

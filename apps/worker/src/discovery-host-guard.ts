@@ -1,4 +1,4 @@
-import type { FetchContext, FetchInit } from "@ava/core";
+import type { FetchContext, FetchInit } from "@col/core";
 
 /** Carry one discovery run's deny-only host guard into every adapter verification request. */
 export function guardedDiscoveryFetchContext(fetchCtx: FetchContext, allowHost?: FetchInit["allowHost"], onChallenge?: (error: unknown, requestedUrl: string) => void): FetchContext {

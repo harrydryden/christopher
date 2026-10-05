@@ -4,8 +4,8 @@
  * the companies that account follows. Every suggestion is verified deterministically before the
  * user ever sees it (SPEC R-8.3).
  */
-import { schema, taskRow, enqueueTasks, type Task } from "@ava/db";
-import { discovery, ensureHttpUrl, evaluateGate, extractDomain, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
+import { schema, taskRow, enqueueTasks, type Task } from "@col/db";
+import { discovery, ensureHttpUrl, evaluateGate, extractDomain, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@col/core";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetStop, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { ACCOUNT_BUDGET_REFUSED, withinAccountBudget } from "../budget";
@@ -13,7 +13,7 @@ import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";
 import { withResourceLease } from "../lease";
 import { selectExamples, recommendationContext, followedCompanies } from "../recommendation-context";
-import { sha1 } from "@ava/core";
+import { sha1 } from "@col/core";
 import { log } from "../log";
 
 const PARKED_MARKERS = /(domain (?:is )?for sale|buy this domain|parked (?:free )?courtesy|this domain has expired|godaddy\.com\/domain)/i;

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { claimableTaskSql } from "@ava/db";
+import { claimableTaskSql } from "@col/db";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
 import { getInternal, setInternal } from "../settings";

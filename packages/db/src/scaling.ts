@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { DEFAULT_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
+import { DEFAULT_ACCOUNT_AI_BUDGET_USD } from "@col/core";
 import type { Db } from "./client";
 import { aiProviderFailureSql } from "./ai-budget";
 

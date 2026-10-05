@@ -17,7 +17,7 @@ import {
   createCvShare,
   resolveCvShareComment as resolveCommentRow,
   revokeCvShare,
-} from "@ava/db";
+} from "@col/db";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailLinkOrigin } from "@/lib/origin";

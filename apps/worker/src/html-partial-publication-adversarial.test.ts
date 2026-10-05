@@ -1,15 +1,15 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { sha1 } from "@ava/core";
+import { sha1 } from "@col/core";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handleScanCompany } from "./handlers/scan";
 import { TaskDeferred } from "./queue";
 import { ensureTestUser } from "./test-users";
 
-const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 let deps: WorkerDeps;
 let db: Db;
 let clock = new Date("2026-09-05T06:00:00Z");
@@ -19,7 +19,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = url;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   deps = await createDeps(readEnv(), { now: () => clock, settingsTtlMs: 0 });
   db = deps.db;

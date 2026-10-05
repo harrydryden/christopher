@@ -4,10 +4,10 @@ import { cvReviewSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue,
 import { useFormStatus } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
-import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@ava/core/cv-format";
-import { cvDisplaySections } from "@ava/core/cv-helpers";
-import type { CvTheme } from "@ava/core/cv-theme-values";
-import type { CvContent } from "@ava/core/cv";
+import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@col/core/cv-format";
+import { cvDisplaySections } from "@col/core/cv-helpers";
+import type { CvTheme } from "@col/core/cv-theme-values";
+import type { CvContent } from "@col/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
 import { CvWorkspacePanel } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
@@ -153,9 +153,9 @@ export function CvDraftEditor({
     // first load, and `/api/cv/preview` validates again on the server regardless.
     // A chunk that cannot be fetched (offline, or a deployment that replaced it) must say so rather
     // than leave the button doing nothing.
-    let CvContentSchema: typeof import("@ava/core/cv").CvContentSchema;
+    let CvContentSchema: typeof import("@col/core/cv").CvContentSchema;
     try {
-      ({ CvContentSchema } = await import("@ava/core/cv"));
+      ({ CvContentSchema } = await import("@col/core/cv"));
     } catch {
       setError("Could not load the preview. Check your connection and try again.");
       return;

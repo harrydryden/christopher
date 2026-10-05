@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { runMigrations } from '@ava/db/migrate';
-import type { Db } from '@ava/db';
+import { runMigrations } from '@col/db/migrate';
+import type { Db } from '@col/db';
 import { createTestDb } from '@/test/db';
 
 const jar = vi.hoisted(() => ({ value: undefined as string | undefined }));
@@ -68,7 +68,7 @@ describe('POST /api/performance', () => {
   });
 
   it('refuses any key beyond the seven it defines, so nothing identifying can ride along', async () => {
-    for (const extra of [{ userId: crypto.randomUUID() }, { sessionId: 'x' }, { email: 'a@b.c' }, { url: 'https://ava.example/?view=x' }, { id: 'v5-123' }]) {
+    for (const extra of [{ userId: crypto.randomUUID() }, { sessionId: 'x' }, { email: 'a@b.c' }, { url: 'https://col.example/?view=x' }, { id: 'v5-123' }]) {
       expect((await beacon([report(extra)])).status, JSON.stringify(extra)).toBe(400);
     }
     // The old navigation beacon's shape is gone too.

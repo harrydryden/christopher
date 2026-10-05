@@ -1,6 +1,6 @@
-import { accountCanScore, createDb, type Db } from "@ava/db";
-import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, modelForCallSite, type AppSettings, type DiscoveryAiHooks, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
-import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref, type ReserveHint } from "@ava/ai";
+import { accountCanScore, createDb, type Db } from "@col/db";
+import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, modelForCallSite, type AppSettings, type DiscoveryAiHooks, type DiscoveryContext, type FetchContext, type SystemSettings } from "@col/core";
+import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref, type ReserveHint } from "@col/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";

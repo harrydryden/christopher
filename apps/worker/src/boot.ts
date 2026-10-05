@@ -6,9 +6,9 @@
  * one is a boot that takes longer the more people use the product, at exactly the moment the
  * worker can least afford it.
  */
-import { recordWorkerEvent, SEED_TAGS, type Db } from "@ava/db";
-import { DEFAULT_SETTINGS, GATE_REEVALUATION_VERSION, isKnownModel, type SystemSettings } from "@ava/core";
-import type { AiEngine } from "@ava/ai";
+import { recordWorkerEvent, SEED_TAGS, type Db } from "@col/db";
+import { DEFAULT_SETTINGS, GATE_REEVALUATION_VERSION, isKnownModel, type SystemSettings } from "@col/core";
+import type { AiEngine } from "@col/ai";
 import { sql } from "drizzle-orm";
 import { log } from "./log";
 import { getInternal, setInternal } from "./settings";

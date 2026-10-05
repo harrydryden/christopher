@@ -3,8 +3,8 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { companies, jobs, roleImports, tasks, userJobs, users } from "@ava/db";
-import { assertPublicHttpUrl, ensureHttpUrl, extractDomain, normalisePostingUrl, normalizeTitle, sha1, UnsafeUrlError } from "@ava/core";
+import { companies, jobs, roleImports, tasks, userJobs, users } from "@col/db";
+import { assertPublicHttpUrl, ensureHttpUrl, extractDomain, normalisePostingUrl, normalizeTitle, sha1, UnsafeUrlError } from "@col/core";
 import { requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { recordDecisions } from "@/lib/decisions";

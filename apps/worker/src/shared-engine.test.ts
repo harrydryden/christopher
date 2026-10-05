@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
-import { STREAM_CEILING_MS, SDK_MAX_RETRIES, type AiClientLike, type ParseResponse } from "@ava/ai";
+import { STREAM_CEILING_MS, SDK_MAX_RETRIES, type AiClientLike, type ParseResponse } from "@col/ai";
 import { createDeps, holdMinutesFor, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { ensureTestUser } from "./test-users";
@@ -11,7 +11,7 @@ import { ensureTestUser } from "./test-users";
  * The shared engine as the worker builds it: which model it picks, and how long the hold each of
  * its calls takes lives.
  */
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 let deps: WorkerDeps;
 let db: Db;
 let userId: string;
@@ -29,7 +29,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { aiClient: client });
   db = deps.db;
   userId = (await ensureTestUser(db, "shared-engine@example.com")).id;

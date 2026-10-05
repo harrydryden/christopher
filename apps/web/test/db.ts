@@ -8,10 +8,10 @@
  * So every suite gets the narrower three, and a test that hangs on them has found a request that
  * needs more than production has.
  */
-import { createDb, type CreateDbOptions } from "@ava/db";
+import { createDb, type CreateDbOptions } from "@col/db";
 
 /** The default is shared with every worker and database suite, so `pnpm -r test` needs one database. */
-export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 /** The interface's production pool size. */
 export const INTERFACE_POOL_SIZE = 3;

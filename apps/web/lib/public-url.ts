@@ -1,4 +1,4 @@
-import { assertPublicHttpUrl, UnsafeUrlError } from "@ava/core";
+import { assertPublicHttpUrl, UnsafeUrlError } from "@col/core";
 
 /**
  * Why the worker will not fetch `url` — a private or local address, a scheme other than http(s),

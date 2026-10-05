@@ -3,8 +3,8 @@
  * moment its enqueue commits, and picks up what was enqueued while its listener was away.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, enqueueTask, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { testDatabaseUrl } from "./test-users";
 import { createDeps, type WorkerDeps } from "./context";
@@ -12,7 +12,7 @@ import { readEnv } from "./env";
 import { sleep, TaskDeferred, TaskQueue } from "./queue";
 import { TaskWakeup } from "./task-wakeup";
 
-const SUITE = "ava-wakeup-test";
+const SUITE = "col-wakeup-test";
 const DATABASE_URL = testDatabaseUrl(SUITE);
 let deps: WorkerDeps;
 let db: Db;
@@ -24,7 +24,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);

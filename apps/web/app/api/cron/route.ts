@@ -3,7 +3,7 @@
  *
  * Vercel Cron calls this once a day with `Authorization: Bearer $CRON_SECRET`. It runs a
  * scheduler tick, which queues the daily run and the weekly jobs on their day. It also works
- * through the queue itself, but only where `AVA_SERVERLESS_FALLBACK=1` says that is the
+ * through the queue itself, but only where `COL_SERVERLESS_FALLBACK=1` says that is the
  * whole of the deployment: each task it runs is cut off before `maxDuration`, it never launches a
  * browser and it never starts a CV build, so it is a fallback rather than a second worker. A task
  * cut off goes back on the queue for the next call, with the attempt counted.

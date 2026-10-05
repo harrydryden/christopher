@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
-import { IncompleteListingError, type FetchContext, type RenderedPage } from "@ava/core";
+import { IncompleteListingError, type FetchContext, type RenderedPage } from "@col/core";
 import { observeHtmlListing } from "./live-acceptance-html";
 
 const url = "https://example.test/jobs";

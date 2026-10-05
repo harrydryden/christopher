@@ -1,9 +1,9 @@
 /** The scheduler's per-account fan-outs: bounded statements, whatever the number of accounts. */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, enqueueTask, schema, type Db } from "@ava/db";
-import { enqueueTasks } from "@ava/db/tasks";
-import { runMigrations } from "@ava/db/migrate";
-import { dedupeKeyFor } from "@ava/core";
+import { createDb, enqueueTask, schema, type Db } from "@col/db";
+import { enqueueTasks } from "@col/db/tasks";
+import { runMigrations } from "@col/db/migrate";
+import { dedupeKeyFor } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -11,7 +11,7 @@ import { claimTask, failTask } from "./queue";
 import { schedulerTick } from "./scheduler";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 let deps: WorkerDeps;
 let db: Db;
@@ -22,7 +22,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);

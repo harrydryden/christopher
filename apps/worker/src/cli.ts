@@ -1,26 +1,26 @@
 /**
  * Operational CLI. Run one-off jobs without waiting for the scheduler:
- *   pnpm --filter @ava/worker cli migrate        (apply this checkout's migrations; nothing else does)
- *   pnpm --filter @ava/worker cli probe <url>    (dry run: what would discovery find?)
- *   pnpm --filter @ava/worker cli add <homepage-url>   (follows it as the CLI account)
- *   pnpm --filter @ava/worker cli discover <company-id|domain|name> [careers-url]
- *   pnpm --filter @ava/worker cli discover --all (every active company, never a careers URL)
- *   pnpm --filter @ava/worker cli scan [company-id|domain|name]
- *   pnpm --filter @ava/worker cli drain          (run queued tasks to completion)
- *   pnpm --filter @ava/worker cli list           (companies, sources, followers, counts)
- *   pnpm --filter @ava/worker cli table          (the CLI account's roles table as text)
- *   pnpm --filter @ava/worker cli users          (accounts and roles)
- *   pnpm --filter @ava/worker cli pgstat [--reset]
+ *   pnpm --filter @col/worker cli migrate        (apply this checkout's migrations; nothing else does)
+ *   pnpm --filter @col/worker cli probe <url>    (dry run: what would discovery find?)
+ *   pnpm --filter @col/worker cli add <homepage-url>   (follows it as the CLI account)
+ *   pnpm --filter @col/worker cli discover <company-id|domain|name> [careers-url]
+ *   pnpm --filter @col/worker cli discover --all (every active company, never a careers URL)
+ *   pnpm --filter @col/worker cli scan [company-id|domain|name]
+ *   pnpm --filter @col/worker cli drain          (run queued tasks to completion)
+ *   pnpm --filter @col/worker cli list           (companies, sources, followers, counts)
+ *   pnpm --filter @col/worker cli table          (the CLI account's roles table as text)
+ *   pnpm --filter @col/worker cli users          (accounts and roles)
+ *   pnpm --filter @col/worker cli pgstat [--reset]
  *                                                (the 20 statements that cost the database the most
  *                                                time, from pg_stat_statements; --reset starts afresh)
- *   pnpm --filter @ava/worker cli record <draft-id> [--out <file>] [--routes <json>]
+ *   pnpm --filter @col/worker cli record <draft-id> [--out <file>] [--routes <json>]
  *                                                (a live, paid rebuild of a draft, recorded for replay)
- *   pnpm --filter @ava/worker cli replay <draft-id> [--recordings <file> | --baseline <file>] [--routes <json>] [--out <report.json>]
+ *   pnpm --filter @col/worker cli replay <draft-id> [--recordings <file> | --baseline <file>] [--routes <json>] [--out <report.json>]
  *                                                (rebuild and grade a draft without publishing; from a
  *                                                recording without a key, or live with one)
- *   pnpm --filter @ava/worker cli reencode-logos (one-off: store every captured logo as a 64 px WebP)
+ *   pnpm --filter @col/worker cli reencode-logos (one-off: store every captured logo as a 64 px WebP)
  *
- * Per-account commands act for AVA_CLI_USER (an email) or, when unset, the earliest
+ * Per-account commands act for COL_CLI_USER (an email) or, when unset, the earliest
  * administrator.
  *
  * Every command except `migrate` first checks that the database is at exactly this checkout's
@@ -28,9 +28,9 @@
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { schema, enqueueStandard, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@ava/db";
+import { schema, enqueueStandard, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@col/db";
 import { admitScores } from "./score-admission";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import {
   discovery,
   displayStatus,
@@ -41,7 +41,7 @@ import {
   renamedEnv,
   sanitiseStageRoutes,
   type StageRoutes,
-} from "@ava/core";
+} from "@col/core";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { createDeps, makeDiscoveryContext, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -50,7 +50,7 @@ import { analyzeTables, IMPORT_ANALYZE_THRESHOLD, IMPORT_TABLES } from "./analyz
 import { handlers } from "./handlers";
 import { TaskQueue } from "./queue";
 import { schedulerTick } from "./scheduler";
-import { createProviderClient } from "@ava/ai";
+import { createProviderClient } from "@col/ai";
 import { readRecordingHeader, recordCvDraft, replayCvDraft, replayFromRecording, type CvReplayReport } from "./cv-replay";
 
 /** `--name value` from the arguments after the command, or undefined. */
@@ -104,7 +104,7 @@ function reportReplay(report: CvReplayReport, out: string | undefined) {
 }
 
 async function cliUser(deps: WorkerDeps) {
-  const email = renamedEnv(process.env, "AVA_CLI_USER", "CHRISTOPHER_CLI_USER")?.trim().toLowerCase();
+  const email = renamedEnv(process.env, "COL_CLI_USER", "AVA_CLI_USER", "CHRISTOPHER_CLI_USER")?.trim().toLowerCase();
   const rows = email
     ? await deps.db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1)
     : await deps.db.select().from(schema.users).where(and(eq(schema.users.role, "admin"), sql`${schema.users.claimedAt} is not null`)).orderBy(asc(schema.users.createdAt)).limit(1);

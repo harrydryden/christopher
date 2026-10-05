@@ -14,7 +14,7 @@ import { getBillingSummary } from "@/lib/billing/service";
 // The banner and every control it disables say one sentence, from one place.
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { NavLink } from "@/components/NavLink";
-import { Monogram } from "@/components/brand";
+import { MarkSmall } from "@/components/brand";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
@@ -56,7 +56,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     <WorkspaceShell><NavigationMetrics />
       <a href="#main-content" className="sr-only focus:not-sr-only focus:bg-bg focus:p-3 focus:text-fg">Skip to main content</a>
       <div className="flex items-center gap-3 border-b border-line-muted bg-raised px-4 py-2 text-13">
-        <Monogram size={16} />
+        <MarkSmall size={16} className="text-brand" />
         <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>
       {needsEmailConfirmation(user) && (

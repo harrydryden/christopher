@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { appendProfile, createDb, enqueueStandard, lockAccountScoreInput, schema, syncCompanyStatus, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { appendProfile, createDb, enqueueStandard, lockAccountScoreInput, schema, syncCompanyStatus, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -46,7 +46,7 @@ beforeAll(async () => {
   await bootstrap.pool.end();
   process.env.DATABASE_URL = url;
   process.env.ANTHROPIC_API_KEY = "test-key";
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   writer = createDb(url, { max: 1, applicationName: "score-pub-writer" });
   publisher = createDb(url, { max: 1, applicationName: "score-pub-publisher" });

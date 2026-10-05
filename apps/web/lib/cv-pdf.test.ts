@@ -11,7 +11,7 @@ it("renders an actual PDF from stored content without requiring a browser", asyn
 // checked the file signature, so an entirely unstyled PDF passed.
 import PDFDocument from "pdfkit";
 import { afterEach, vi } from "vitest";
-import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@ava/core/cv";
+import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@col/core/cv";
 import { renderCvPdfWithReport } from "./cv-pdf";
 const fixture: CvContent = { name: "Example Candidate", contact: "London", summary: "Operations leader.", sections: [
   { entryId: "skill", kind: "skill", heading: "Internal evidence label", bullets: ["Planning and reporting."] },
@@ -154,7 +154,7 @@ it("fits three skill sections of ten readable pills within half a page", async (
   const last = skillPills[skillPills.length - 1]!;
   expect(Number(last[1]) + Number(last[3]) - Number(parentHeading![2])).toBeLessThan(420);
 });
-it.each(["AVA", "Arial"] as const)("keeps the reported 18 skills compact and uniform in %s", async (font) => {
+it.each(["Course of Life", "Arial"] as const)("keeps the reported 18 skills compact and uniform in %s", async (font) => {
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const groups = [
@@ -215,7 +215,7 @@ it("rejects downloads above the CV's own page limit while allowing a complete di
   await expect(renderCvPdf(trimmed)).resolves.toBeInstanceOf(Buffer);
   await expect(renderCvPdf({ ...trimmed, theme: { ...DEFAULT_CV_THEME, maxPages: 2 } })).rejects.toThrow("the maximum is 2");
 });
-it("embeds Liberation Sans for the Arial font and keeps the built-in face for AVA", async () => {
+it("embeds Liberation Sans for the Arial font and keeps the built-in face for Course of Life", async () => {
   const builtIn = (await renderCvPdf(fixture)).toString("latin1");
   expect(builtIn).toContain("/BaseFont /Helvetica");
   expect(builtIn).not.toContain("LiberationSans");
@@ -330,7 +330,7 @@ it("renders both profile and website links as separate PDF annotations", async (
   expect(raw).toContain(`/URI (${linkedinUrl})`);
   expect(raw).toContain(`/URI (${websiteUrl})`);
 });
-it.each(["AVA", "Arial"] as const)("flows an experience across pages instead of leaving a large gap in %s", async font => {
+it.each(["Course of Life", "Arial"] as const)("flows an experience across pages instead of leaving a large gap in %s", async font => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const pages = vi.spyOn(PDFDocument.prototype, "addPage");
   const first = Array.from({ length: 5 }, (_, i) => `First achievement ${i + 1}: ${"Led planning, reporting and delivery across regional teams. ".repeat(5)}`);

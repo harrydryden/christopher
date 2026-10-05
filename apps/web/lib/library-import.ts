@@ -7,7 +7,7 @@
  * without another query — `listOpenLibraryImports` says so — and everything below turns that into
  * the words the person sees.
  */
-import { countProposedItems, StoredLibraryProposalSchema, type LibraryProposal } from "@ava/core/library-import";
+import { countProposedItems, StoredLibraryProposalSchema, type LibraryProposal } from "@col/core/library-import";
 import { LIBRARY_IMPORT_SLOW_MS } from "./library-import-clock";
 export { LIBRARY_IMPORT_SLOW_MS } from "./library-import-clock";
 

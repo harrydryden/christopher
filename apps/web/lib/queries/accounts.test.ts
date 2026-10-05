@@ -4,12 +4,12 @@
  * account's reset marker, so a reset stops old spend counting without deleting any of it.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { DEFAULT_ACCOUNT_AI_BUDGET_USD, MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { DEFAULT_ACCOUNT_AI_BUDGET_USD, MAX_ACCOUNT_AI_BUDGET_USD } from "@col/core";
 import { sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -17,7 +17,7 @@ let user: User;
 let other: User;
 const reads = vi.hoisted(() => ({ n: 0 }));
 vi.mock("@/lib/db", () => ({ db: () => { reads.n++; return database; } }));
-import { accountAiSpend } from "@ava/db";
+import { accountAiSpend } from "@col/db";
 import { createTestDb } from "@/test/db";
 import { accountAiBudget, accountAiBudgets } from "./accounts";
 

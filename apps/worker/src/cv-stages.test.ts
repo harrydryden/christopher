@@ -3,10 +3,10 @@
  * per-stage allowance, and an audit whose batches finish, fail and are cancelled independently.
  */
 import { describe, expect, it } from "vitest";
-import type { CvBuildCheckpoint } from "@ava/core";
-import { cvAuditBatchOutputTokens, type StageRoutes } from "@ava/ai";
-import type { CvRubric } from "@ava/core/cv-assessment";
-import { CvBuildStop } from "@ava/core/cv-build-failure";
+import type { CvBuildCheckpoint } from "@col/core";
+import { cvAuditBatchOutputTokens, type StageRoutes } from "@col/ai";
+import type { CvRubric } from "@col/core/cv-assessment";
+import { CvBuildStop } from "@col/core/cv-build-failure";
 import { CvStageRunner, cvAuditBatches, estimateCvStage, type CvStage } from "./handlers/cv-stages";
 
 function runnerWith(options: { prompts?: string; allowanceMs?: number; signal?: AbortSignal; checkpoint?: CvBuildCheckpoint } = {}) {

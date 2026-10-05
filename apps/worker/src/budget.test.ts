@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { accountAiStanding, accountsWithBudget, budgetLimits, BudgetRefusedError, isAccountBudgetRefusal, tryReserveAi, UNLIMITED_AI_BUDGET_USD } from "./budget";
 import { aiBudgetStop, type WorkerDeps } from "./context";
@@ -13,7 +13,7 @@ import { ensureTestUser } from "./test-users";
  * for them: no day total over every account's calls, and no lock shared by the whole deployment.
  * The account's own budget is still judged under a lock of its own, so it stays exact.
  */
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test");
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
 // Holds are left live on purpose here; the suites after this one share the database.

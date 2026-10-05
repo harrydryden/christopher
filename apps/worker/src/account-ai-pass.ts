@@ -1,6 +1,6 @@
-import { aiBudgetRefusalMessage, aiFeatureLabel, type AppSettings } from "@ava/core";
-import { createAiEngine, type AiFailure } from "@ava/ai";
-import { accountCanScore } from "@ava/db";
+import { aiBudgetRefusalMessage, aiFeatureLabel, type AppSettings } from "@col/core";
+import { createAiEngine, type AiFailure } from "@col/ai";
+import { accountCanScore } from "@col/db";
 import { budgetLimits, recordAiUsage, tryReserveAi, type AiHold } from "./budget";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";

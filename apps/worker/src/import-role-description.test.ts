@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { renderCvPdf } from "@ava/core/cv-pdf";
-import { createDb, reevaluateGate, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { renderCvPdf } from "@col/core/cv-pdf";
+import { createDb, reevaluateGate, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -31,8 +31,8 @@ beforeAll(async () => {
     "/challenge": { body: "<html>captcha challenge</html>", headers: { "cf-mitigated": "challenge" } },
   } }, ["roles.example.test"]);
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv());
   db = deps.db;
   userId = (await ensureTestUser(db, "role-import-worker@example.com")).id;

@@ -2,8 +2,8 @@
 import { requireVerifiedUser } from "@/lib/auth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { reevaluateGate, subscribeToCompany } from "@ava/db";
-import { careerSources, companies, companySubscriptions, companySuggestions, jobs } from "@ava/db/schema";
+import { reevaluateGate, subscribeToCompany } from "@col/db";
+import { careerSources, companies, companySubscriptions, companySuggestions, jobs } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { hasChosenGate } from "@/lib/queries/setup";

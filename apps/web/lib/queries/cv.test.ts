@@ -11,16 +11,16 @@
  * and a reader whose signature differs reads the ledger again whole.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { cvStepsSignature } from "@/lib/cv-build-state";
 import { mergeSteps } from "@/lib/cv-build-journal";
 import { cvProgressReading } from "@/lib/cv-progress";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
-import type { CvBuildFailure } from "@ava/core";
+import type { User } from "@col/db/schema";
+import type { CvBuildFailure } from "@col/core";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

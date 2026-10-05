@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import { Mark } from "./brand";
+import { Wordmark } from "./brand";
 import { Badge, toneText } from "./Badge";
 import { Elapsed } from "./Elapsed";
 import { CV_MILESTONES, CV_STAGE_LABELS, cvStalledMessage, type CvMilestone } from "@/lib/cv-build-narrative";
 import type { CvProgressBuild } from "@/lib/cv-progress-types";
 
 /**
- * A build is a chain of model calls that can honestly take twenty minutes, so a turning mark says
+ * A build is a chain of model calls that can honestly take twenty minutes, so a redrawing mark says
  * nothing. What the reader needs is when it started, what it is doing, when it last moved, and
  * which attempt this is — and, when it has stopped moving, to be told so rather than left watching.
  *
@@ -48,7 +48,7 @@ export function CvBuildProgress({
   return (
     <section aria-label="CV build progress" aria-busy={stopped ? undefined : "true"} className="space-y-6 border-2 border-line bg-raised p-5 sm:p-6">
       <div className="flex items-center gap-5">
-        <Mark size={48} searching={!stopped} className="shrink-0 text-brand" />
+        <Wordmark size={32} searching={!stopped} className="shrink-0 text-brand" />
         <div role="status" aria-live="polite" aria-atomic="true" className="min-w-0 space-y-1">
           <h2 className="ds-pixel text-16 text-fg">
             {stopped

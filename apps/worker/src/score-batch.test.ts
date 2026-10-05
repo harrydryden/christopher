@@ -7,13 +7,13 @@
  * one that ended with every kind of result, and one that could not be sent are all reachable.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { aiUsageByAccount, costPerScoredRole, createDb, enqueueTask, queueScoring, schema, totalAiSpend, type Db, type Task } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { parseScoreBatchCustomId, type ScoreBatchRecord } from "@ava/core";
+import { aiUsageByAccount, costPerScoredRole, createDb, enqueueTask, queueScoring, schema, totalAiSpend, type Db, type Task } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { parseScoreBatchCustomId, type ScoreBatchRecord } from "@col/core";
 import {
   BATCH_ERROR_PREFIX, PROMPTS, estimateBatchCostUsd, estimateCostUsd,
   type AiBatchesLike, type AiBatchLike, type AiBatchMeta, type AiBatchResultLike, type AiCallMeta, type AiClientLike, type ParseResponse,
-} from "@ava/ai";
+} from "@col/ai";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -81,7 +81,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = TEST_DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0, aiClient: client });
   db = deps.db;
   alice = (await ensureTestUser(db, "batch-alice@example.com")).id;

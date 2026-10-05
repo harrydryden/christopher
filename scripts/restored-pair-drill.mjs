@@ -144,10 +144,10 @@ async function seedSource(pool) {
 
 function startWorker(url, port) {
   const env = safeEnvironment({ DATABASE_URL: url.href, NODE_ENV: 'development', PORT: String(port),
-    AVA_DISABLE_BROWSER: '1', DAILY_AI_BUDGET_USD: '0', DISCOVERY_AI_BUDGET_USD: '0',
+    COL_DISABLE_BROWSER: '1', DAILY_AI_BUDGET_USD: '0', DISCOVERY_AI_BUDGET_USD: '0',
     WORKER_CONCURRENCY: '1', CV_CONCURRENCY: '1', SCAN_SPREAD_MINUTES: '0',
     RENDER_INSTANCE_ID: `restored-pair-${process.pid}`, SCRAPER_CONTACT_EMAIL: EMAIL });
-  const child = spawn('pnpm', ['--filter', '@ava/worker', 'start:source'], {
+  const child = spawn('pnpm', ['--filter', '@col/worker', 'start:source'], {
     cwd: REPO, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
@@ -209,9 +209,9 @@ async function main() {
   const admin = new Pool({ connectionString: maintenance.href, max: 1 });
   const sourcePool = new Pool({ connectionString: source.href, max: 2 });
   const targetPool = new Pool({ connectionString: target.href, max: 3 });
-  const work = await mkdtemp(join(tmpdir(), 'ava-restored-pair-'));
+  const work = await mkdtemp(join(tmpdir(), 'col-restored-pair-'));
   const restoreReport = join(work, 'restore.json');
-  const reportPath = process.env.RECOVERY_PAIR_REPORT_PATH ?? '/tmp/ava-restored-pair-report.json';
+  const reportPath = process.env.RECOVERY_PAIR_REPORT_PATH ?? '/tmp/col-restored-pair-report.json';
   const webPort = Number(process.env.RECOVERY_WEB_PORT ?? 3183);
   const workerPort = Number(process.env.RECOVERY_WORKER_PORT ?? 3184);
   if (![webPort, workerPort].every(n => Number.isSafeInteger(n) && n >= 1024 && n <= 65535) || webPort === workerPort)
@@ -263,7 +263,7 @@ async function main() {
       || account.library_version !== 1 || account.application_status !== 'applied' || !account.role_visible)
       throw new Error('Restored account-scoped company, role, Library or application content changed');
     web = await startWeb({ port: webPort, host: '127.0.0.1', logLimit: 0,
-      env: { DATABASE_URL: target.href, SESSION_SECRET: secret, AVA_SERVERLESS_FALLBACK: '0', ANTHROPIC_API_KEY: '' } });
+      env: { DATABASE_URL: target.href, SESSION_SECRET: secret, COL_SERVERLESS_FALLBACK: '0', ANTHROPIC_API_KEY: '' } });
     const pages = [];
     for (const [path, marker] of [['/', ROLE], ['/companies', COMPANY], ['/applications', COMPANY], ['/library', 'Synthetic Candidate']]) {
       const response = await fetch(`http://127.0.0.1:${webPort}${path}`, { headers: { cookie: session.cookie },

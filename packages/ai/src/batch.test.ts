@@ -174,7 +174,7 @@ describe("reading a batch result", () => {
 
 describe("recording and replaying a batch", () => {
   it("records the submission and every result under its prompt, and replays them without the provider", async () => {
-    const path = join(mkdtempSync(join(tmpdir(), "ava-batch-recording-")), "calls.jsonl");
+    const path = join(mkdtempSync(join(tmpdir(), "col-batch-recording-")), "calls.jsonl");
     const fake = fakeBatches();
     const recorder = new RecordingClient({ messages: { create: async () => answer(), batches: fake.resource } }, { path });
     const recording = createAiEngine({ client: recorder, getModel: () => MODEL });

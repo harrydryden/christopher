@@ -20,7 +20,7 @@ import {
   type CvBuildFailure,
   type CvFailureAction,
   type CvFailureKind,
-} from "@ava/core";
+} from "@col/core";
 import { formatClock } from "./format";
 import { cvStalledMessage } from "./cv-build-narrative";
 

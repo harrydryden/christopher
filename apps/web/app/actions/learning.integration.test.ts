@@ -4,12 +4,12 @@
  * overlong answer — comes back to the page as a sentence rather than as a crash page.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, type Db } from "@col/db";
 import { createTestDb, TEST_DATABASE_URL } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

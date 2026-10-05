@@ -3,7 +3,7 @@
  * and record themselves in their own table in their own schema, so nothing here touches the
  * journal the other suites migrate with.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -14,7 +14,7 @@ import { sql } from "drizzle-orm";
 import { createDb } from "./client";
 import { readJournal, runMigrations, unappliedMigrations, type JournalEntry } from "./migrate";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const { db, pool } = createDb(DATABASE_URL, { max: 2 });
 const probe = { migrationsSchema: "migration_probe", migrationsTable: "__probe_migrations" };
 let folder: string;
@@ -32,7 +32,7 @@ async function writeProbeFolder(entries: Array<JournalEntry & { sql?: string }>)
 }
 
 beforeAll(async () => {
-  folder = await mkdtemp(join(tmpdir(), "ava-migrations-"));
+  folder = await mkdtemp(join(tmpdir(), "col-migrations-"));
   await runMigrations(db);
 });
 afterEach(() => db.execute(sql`drop schema if exists migration_probe cascade`));

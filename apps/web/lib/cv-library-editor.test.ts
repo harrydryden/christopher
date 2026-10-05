@@ -5,7 +5,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
-import type { CvLibrary } from "@ava/core/cv";
+import type { CvLibrary } from "@col/core/cv";
 import { CvLibraryEditor } from "../components/CvLibraryEditor";
 import { jobRemovalConfirm } from "../components/EmploymentHistoryTable";
 import type { LibraryEvidence } from "./cv-library-evidence";

@@ -1,7 +1,7 @@
 /** Worker-owned admission for A5 scores. Producers ask for roles; only this layer knows whether
  * the deployed model is configured and whether each account has budget left. */
-import { queueScoring, schema, type Db, type ScoreState, type Task } from "@ava/db";
-import { aiBudgetWindowStart, type AppSettings, type TaskPayloads } from "@ava/core";
+import { queueScoring, schema, type Db, type ScoreState, type Task } from "@col/db";
+import { aiBudgetWindowStart, type AppSettings, type TaskPayloads } from "@col/core";
 import { sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { accountsWithBudget } from "./budget";

@@ -1,5 +1,5 @@
 /**
- * Database schema for AVA. See docs/SPEC.md section 5.
+ * Database schema for Course of Life. See docs/SPEC.md section 5.
  * Conventions: snake_case columns, timestamptz everywhere, uuid primary keys.
  *
  * Two kinds of table live here:
@@ -10,15 +10,15 @@
  *    follows which company, `user_jobs` holds one person's gate result, fit score and archive
  *    marker for a shared posting, and decisions, profiles, CVs and settings all carry a `user_id`.
  */
-import type { CvLibrary, CvContent, LibraryEntryReview } from "@ava/core";
-import type { CvAssessment, CvJobSource } from "@ava/core/cv-assessment";
-import type { CvReviewDecision } from "@ava/core/cv-review";
-import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
-import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@ava/core";
-import { APPLICATION_STATUSES, type ApplicationStatus } from "@ava/core/role-workflow";
-import { EVIDENCE_RATINGS, LIBRARY_REVIEW_SOURCES, type EvidenceRating, type LibraryReviewSource } from "@ava/core/library-review";
-import { LOGO_SOURCES } from "@ava/core/logo-capture";
-import { TASK_TYPE_NAMES, type TaskType } from "@ava/core/tasks";
+import type { CvLibrary, CvContent, LibraryEntryReview } from "@col/core";
+import type { CvAssessment, CvJobSource } from "@col/core/cv-assessment";
+import type { CvReviewDecision } from "@col/core/cv-review";
+import type { CvTailoringPlan } from "@col/core/cv-tailoring";
+import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@col/core";
+import { APPLICATION_STATUSES, type ApplicationStatus } from "@col/core/role-workflow";
+import { EVIDENCE_RATINGS, LIBRARY_REVIEW_SOURCES, type EvidenceRating, type LibraryReviewSource } from "@col/core/library-review";
+import { LOGO_SOURCES } from "@col/core/logo-capture";
+import { TASK_TYPE_NAMES, type TaskType } from "@col/core/tasks";
 import { sql } from "drizzle-orm";
 import { cvRoleKey } from "./cv-role-key";
 import {

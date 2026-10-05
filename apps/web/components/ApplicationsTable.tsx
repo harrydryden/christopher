@@ -10,10 +10,10 @@ import {
   applicationStage,
   roleStageRank,
   type ApplicationStatus,
-} from "@ava/core/role-workflow";
+} from "@col/core/role-workflow";
 import { Badge, stageTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
-import { Monogram } from "@/components/brand/Monogram";
+import { MarkSmall } from "@/components/brand";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { SettingsForm } from "@/components/SettingsForm";
@@ -300,7 +300,7 @@ function CvPanel({
       )}
       {row.jobId ? (
         // Availability streams in behind the table; until it lands the control waits under the mark.
-        <Suspense fallback={<span className="inline-block text-muted"><Monogram size={16} searching title="Checking CV credits" /></span>}>
+        <Suspense fallback={<span className="inline-block text-muted"><MarkSmall size={16} searching title="Checking CV credits" /></span>}>
           <CvBuildControl row={row} jobId={row.jobId} quotes={quotes} unverified={unverified} buildLabel={buildLabel} />
         </Suspense>
       ) : (

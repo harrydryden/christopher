@@ -5,12 +5,12 @@ import { requireAdmin, requireUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { and, eq, sql } from "drizzle-orm";
-import { userSettings as userSettingsTable } from "@ava/db/schema";
-import { lockAccountScoreInput } from "@ava/db";
+import { userSettings as userSettingsTable } from "@col/db/schema";
+import { lockAccountScoreInput } from "@col/db";
 import {
   isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD, parseTermList, SCORING_BATCH_MINUTES_MAX,
   SCORING_BATCH_MINUTES_MIN, SCORING_MODES, scoringBatchMinutesFrom, type GateSettings, type MatchField,
-} from "@ava/core";
+} from "@col/core";
 import { enqueue } from "@/lib/enqueue";
 import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
 import { getSettings, getSettingsFor, setSystemSetting, setUserSetting, saveSettingsAndGateLocked } from "@/lib/settings";

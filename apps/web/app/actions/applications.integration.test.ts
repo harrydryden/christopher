@@ -5,16 +5,16 @@
  * building a CV creates it, and recording a submitted CV upgrades whichever of those is already
  * there rather than adding a second. Withdrawing is also a decision, so it leaves one.
  */
-import { createCvAssessment } from "@ava/core/cv-review";
-import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@ava/core/cv-assessment";
+import { createCvAssessment } from "@col/core/cv-review";
+import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@col/core/cv-assessment";
 import { rubricFixture, reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createDb, schema, subscribeToCompany, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

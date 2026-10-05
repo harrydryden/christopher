@@ -3,13 +3,13 @@
  * one account. These are those reads, and the rule that keeps the first scan behind chosen filters.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
 import { buildSetupChecklist } from "@/lib/setup";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

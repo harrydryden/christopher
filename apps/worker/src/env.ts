@@ -1,5 +1,5 @@
 import v8 from "node:v8";
-import { renamedEnv } from "@ava/core";
+import { renamedEnv } from "@col/core";
 import { log } from "./log";
 
 export interface WorkerEnv {
@@ -18,7 +18,7 @@ export interface WorkerEnv {
   databasePoolMax: number;
   /**
    * What the pool's connections report as `application_name`, so `pg_stat_activity` tells the
-   * worker's backends from the interface's: `ava-worker`, or `ava-web-cron` when the interface's
+   * worker's backends from the interface's: `col-worker`, or `col-web-cron` when the interface's
    * cron fallback runs these handlers on Vercel.
    */
   databaseApplicationName: string;
@@ -44,12 +44,12 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   const production = env.NODE_ENV === "production";
   let hostMap: Record<string, string> = {};
-  const hostMapJson = renamedEnv(env, "AVA_HOST_MAP", "CHRISTOPHER_HOST_MAP");
+  const hostMapJson = renamedEnv(env, "COL_HOST_MAP", "AVA_HOST_MAP", "CHRISTOPHER_HOST_MAP");
   if (hostMapJson) {
     try {
       hostMap = JSON.parse(hostMapJson) as Record<string, string>;
     } catch {
-      throw new Error("AVA_HOST_MAP must be JSON");
+      throw new Error("COL_HOST_MAP must be JSON");
     }
   }
   const concurrency = bounded(env.WORKER_CONCURRENCY, 3, 1, 30);
@@ -64,14 +64,14 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
     concurrency,
     cvConcurrency,
     databasePoolMax: (concurrency + cvConcurrency) * 2 + 4,
-    databaseApplicationName: env.VERCEL ? "ava-web-cron" : "ava-worker",
+    databaseApplicationName: env.VERCEL ? "col-web-cron" : "col-worker",
     scanSpreadMinutes: bounded(env.SCAN_SPREAD_MINUTES, 60, 0, 720),
     browserConcurrency: bounded(env.BROWSER_CONCURRENCY, 1, 1, 8),
     dailyAiBudgetUsd: bounded(env.DAILY_AI_BUDGET_USD, 1000000, 0, 1000000),
     discoveryAiBudgetUsd: bounded(env.DISCOVERY_AI_BUDGET_USD, 1000000, 0, 1000000),
     chromiumExecutablePath: env.CHROMIUM_EXECUTABLE_PATH || undefined,
     hostMap,
-    disableBrowser: renamedEnv(env, "AVA_DISABLE_BROWSER", "CHRISTOPHER_DISABLE_BROWSER") === "1",
+    disableBrowser: renamedEnv(env, "COL_DISABLE_BROWSER", "AVA_DISABLE_BROWSER", "CHRISTOPHER_DISABLE_BROWSER") === "1",
     workerId: env.RENDER_INSTANCE_ID || env.HOSTNAME || `worker-${process.pid}`,
   };
   if (production) {

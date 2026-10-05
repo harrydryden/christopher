@@ -3,12 +3,12 @@
  * loop from one session, so each is throttled the way the public sign-in and reset forms are.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, createUser, schema, type Db } from "@ava/db";
+import { createDb, createUser, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS } from "@/lib/session";
-import { hashPassword, verifyPassword } from "@ava/core";
+import { hashPassword, verifyPassword } from "@col/core";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -17,7 +17,7 @@ let session: string | undefined;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: () => (session ? { value: session } : undefined) }),
-  headers: async () => new Headers({ host: "ava.test", "x-forwarded-for": "198.51.100.30" }),
+  headers: async () => new Headers({ host: "col.test", "x-forwarded-for": "198.51.100.30" }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
@@ -43,7 +43,7 @@ beforeAll(async () => {
   pool = client.pool;
   await runMigrations(database);
   process.env.SESSION_SECRET = "account-actions-test-secret";
-  process.env.APP_URL = "https://ava.test";
+  process.env.APP_URL = "https://col.test";
 });
 afterAll(async () => { await pool?.end(); });
 beforeEach(async () => {

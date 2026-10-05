@@ -9,9 +9,9 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import sharp from "sharp";
-import { createDb, readCompanyLogo, schema, type Db } from "@ava/db";
-import { normaliseLogo } from "@ava/core";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, readCompanyLogo, schema, type Db } from "@col/db";
+import { normaliseLogo } from "@col/core";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -20,7 +20,7 @@ import { handleReencodeLogos } from "./handlers/reencode-logos";
 import { encodeLogoWebp } from "./logo-encode";
 import { startTestServer, type TestServer } from "./test-server";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const HOSTS = ["www.touch.test", "icons.duckduckgo.com", "www.google.com"];
 
 let server: TestServer;
@@ -74,8 +74,8 @@ beforeAll(async () => {
   }, HOSTS);
 
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.COL_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;

@@ -2,7 +2,7 @@
  * The CV contract's pure helpers: reading, tagging, grouping and consolidating a Library, and the
  * display order of a CV. Nothing here imports zod, so the Library and CV editors can use them in the
  * browser without shipping the validator (about 23 KB gzipped). `cv.ts` holds the schemas and
- * re-exports everything public here, so server code keeps importing `@ava/core/cv`.
+ * re-exports everything public here, so server code keeps importing `@col/core/cv`.
  *
  * Types come from `cv.ts` as type-only imports, which the compiler erases: at run time this module
  * depends on `cv-format` alone.

@@ -7,8 +7,8 @@ import {
   type OutputFormat,
 } from "./prompt-registry";
 import { createAiEngine, type AiCallMeta, type AiUsageRecord } from "./engine";
-import { EVIDENCE_MARKS, LibraryReviewPlanSchema } from "@ava/core";
-import { EVIDENCE_MARK_RUBRICS } from "@ava/core/evidence-rubric-text";
+import { EVIDENCE_MARKS, LibraryReviewPlanSchema } from "@col/core";
+import { EVIDENCE_MARK_RUBRICS } from "@col/core/evidence-rubric-text";
 import { A12_REVIEW_LIBRARY, evidenceMarksBlock } from "./prompts";
 
 describe("the prompt registry", () => {

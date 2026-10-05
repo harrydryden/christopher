@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { FetchInit, FetchResponse, RenderedPage } from "@ava/core";
-import type { Ref } from "@ava/ai";
+import type { FetchInit, FetchResponse, RenderedPage } from "@col/core";
+import type { Ref } from "@col/ai";
 import { makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "./context";
 
 /**

@@ -4,9 +4,9 @@
  * statements with every card populated, and never more than eight of them at once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
 

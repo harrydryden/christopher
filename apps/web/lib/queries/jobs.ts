@@ -1,8 +1,8 @@
-import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@ava/db";
-import { defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
+import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@col/db";
+import { defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@col/core";
 import { getTableColumns, and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
-import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
-import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
+import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@col/db/schema";
+import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@col/core";
 import { cache } from "react";
 import { db } from "@/lib/db";
 import { companyIcon } from "@/lib/company-icon";

@@ -10,13 +10,13 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { materialiseCv, type CvLibrary } from "@ava/core/cv";
+import { materialiseCv, type CvLibrary } from "@col/core/cv";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createTestDb>["pool"];
@@ -24,7 +24,7 @@ let session: string | undefined;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: () => (session ? { value: session } : undefined), set: vi.fn(), delete: vi.fn() }),
-  headers: async () => new Headers({ host: "ava.test", "x-forwarded-for": "198.51.100.46" }),
+  headers: async () => new Headers({ host: "col.test", "x-forwarded-for": "198.51.100.46" }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
@@ -112,7 +112,7 @@ const form = (fields: Record<string, string>) => {
   return data;
 };
 const everything = parseRolesFilters({ decision: "all" });
-const exportText = async () => (await exportCsv(new NextRequest("http://ava.test/api/export.csv?decision=all"))).text();
+const exportText = async () => (await exportCsv(new NextRequest("http://col.test/api/export.csv?decision=all"))).text();
 
 /** A's table as each of its read paths returns it. */
 async function tableOfA() {
@@ -147,8 +147,8 @@ it("shows each follower of a shared posting only their own decision and stage, i
 it("answers another account's application PDF, CV PDF and application edits exactly as it answers ids that do not exist", async () => {
   // A's own downloads work, so the ids below are real.
   session = a.cookie;
-  expect((await applicationPdf(new Request("http://ava.test/"), { params: Promise.resolve({ id: application.id }) })).status).toBe(200);
-  expect((await cvPdf(new Request(`http://ava.test/api/cv/${draft.id}/pdf?preview=1`), { params: Promise.resolve({ id: draft.id }) })).status).toBe(200);
+  expect((await applicationPdf(new Request("http://col.test/"), { params: Promise.resolve({ id: application.id }) })).status).toBe(200);
+  expect((await cvPdf(new Request(`http://col.test/api/cv/${draft.id}/pdf?preview=1`), { params: Promise.resolve({ id: draft.id }) })).status).toBe(200);
   const rowsOfA = async () => ({
     application: await database.select().from(schema.applications).where(eq(schema.applications.userId, a.user.id)),
     drafts: await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.userId, a.user.id)),
@@ -162,11 +162,11 @@ it("answers another account's application PDF, CV PDF and application edits exac
   const both = async (attempt: (id: string) => Promise<unknown>, real: string) => [await attempt(real), await attempt(ABSENT)];
   const answer = async (response: Response) => ({ status: response.status, body: await response.text() });
 
-  const [pdfOfA, pdfOfNobody] = await both(async (id) => answer(await applicationPdf(new Request("http://ava.test/"), { params: Promise.resolve({ id }) })), application.id);
+  const [pdfOfA, pdfOfNobody] = await both(async (id) => answer(await applicationPdf(new Request("http://col.test/"), { params: Promise.resolve({ id }) })), application.id);
   expect(pdfOfA).toEqual({ status: 404, body: "Not found" });
   expect(pdfOfA).toEqual(pdfOfNobody);
 
-  const [cvOfA, cvOfNobody] = await both(async (id) => answer(await cvPdf(new Request(`http://ava.test/api/cv/${id}/pdf?preview=1`), { params: Promise.resolve({ id }) })), draft.id);
+  const [cvOfA, cvOfNobody] = await both(async (id) => answer(await cvPdf(new Request(`http://col.test/api/cv/${id}/pdf?preview=1`), { params: Promise.resolve({ id }) })), draft.id);
   expect(cvOfA).toEqual({ status: 404, body: "Not found" });
   expect(cvOfA).toEqual(cvOfNobody);
 

@@ -5,8 +5,8 @@
  * of it may be a public endpoint.
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { decisions, jobEvents, userJobs } from "@ava/db/schema";
-import { requestScores, lockAccountScoreInput, accountCanScore, type Db } from "@ava/db";
+import { decisions, jobEvents, userJobs } from "@col/db/schema";
+import { requestScores, lockAccountScoreInput, accountCanScore, type Db } from "@col/db";
 import type { db } from "./db";
 import { enqueue, enqueueMany } from "./enqueue";
 import { UserFacingError } from "./validation";

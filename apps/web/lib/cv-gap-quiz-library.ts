@@ -6,8 +6,8 @@
  * snapshot (every block's details, every row, the theme) and let the browser pick those out, so
  * the snapshot crossed the wire twice, in the RSC payload and in the HTML, for a select box.
  */
-import { isActiveStoredEvidence } from "@ava/core/cv-helpers";
-import type { CvGapQuiz, CvLibrary } from "@ava/core";
+import { isActiveStoredEvidence } from "@col/core/cv-helpers";
+import type { CvGapQuiz, CvLibrary } from "@col/core";
 
 /** The destinations a gap answer can be saved under, and nothing else of the Library. */
 export interface GapQuizLibrary {

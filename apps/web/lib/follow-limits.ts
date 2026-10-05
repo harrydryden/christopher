@@ -1,4 +1,4 @@
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 import { sql } from "drizzle-orm";
 import { assertCanActivateCompanies } from "./billing/service";
 

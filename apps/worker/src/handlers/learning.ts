@@ -1,8 +1,8 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
-import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, lockAccountScoreInput, lockScoreModelInput, accountCanScore, type ScoreState, type Task } from "@ava/db";
-import { decisionDigest, PROMPTS, resolveRoute, routedModel, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
-import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
+import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, lockAccountScoreInput, lockScoreModelInput, accountCanScore, type ScoreState, type Task } from "@col/db";
+import { decisionDigest, PROMPTS, resolveRoute, routedModel, type AiFailure, type ScoreJobInput, type ScoreJobResult } from "@col/ai";
+import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@col/core";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";

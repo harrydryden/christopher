@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { signInWithGoogle } from "@/lib/accounts";
 import { startSession } from "@/lib/auth";
 import { appOrigin, exchangeGoogleCode, fetchGoogleProfile, googleConfigured } from "@/lib/google";
-import { OAUTH_COOKIE_NAME, readSignedValue, sanitizeNextPath, sessionSecret } from "@/lib/session";
+import { LEGACY_OAUTH_COOKIE_NAMES, OAUTH_COOKIE_NAME, oauthCookieValue, readSignedValue, sanitizeNextPath, sessionSecret } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +14,8 @@ export async function GET(request: Request) {
   if (!secret || !googleConfigured()) return fail("google_not_configured");
   const url = new URL(request.url);
   const jar = await cookies();
-  const remembered = await readSignedValue(jar.get(OAUTH_COOKIE_NAME)?.value, secret);
-  jar.delete({ name: OAUTH_COOKIE_NAME, path: "/auth/google" });
+  const remembered = await readSignedValue(oauthCookieValue(jar), secret);
+  for (const name of [OAUTH_COOKIE_NAME, ...LEGACY_OAUTH_COOKIE_NAMES]) jar.delete({ name, path: "/auth/google" });
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!remembered || !code || !state || state !== remembered.state || !remembered.verifier) return fail("google_state");

@@ -39,7 +39,7 @@ function provider() {
   return { client, calls };
 }
 
-const scratch = () => join(mkdtempSync(join(tmpdir(), "ava-recording-")), "calls.jsonl");
+const scratch = () => join(mkdtempSync(join(tmpdir(), "col-recording-")), "calls.jsonl");
 
 describe("recording and replaying model calls", () => {
   it("records each answered call under its prompt, version, stage and input, and replays it without the provider", async () => {

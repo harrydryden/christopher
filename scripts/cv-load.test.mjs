@@ -124,7 +124,7 @@ test('the Next.js stubs cover the request modules the action and the route impor
   assert.throws(() => navigation.redirect('/cv/abc'), error => error.url === '/cv/abc');
   globalThis.__cvLoad = { cookie: () => 'signed' };
   const headers = await import(`data:text/javascript,${encodeURIComponent(STUBS['next/headers'])}`);
-  assert.deepEqual((await headers.cookies()).get('ava_session'), { name: 'ava_session', value: 'signed' });
+  assert.deepEqual((await headers.cookies()).get('col_session'), { name: 'col_session', value: 'signed' });
   assert.equal((await headers.cookies()).get('other'), undefined);
   delete globalThis.__cvLoad;
 });

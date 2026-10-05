@@ -6,44 +6,44 @@ import { describeSeedTarget, seedDemoTarget } from "./seed-guard";
 
 describe("seedDemoTarget", () => {
   it.each([
-    "postgres://postgres:postgres@127.0.0.1:5432/ava_dev",
-    "postgres://postgres@localhost/ava_dev",
+    "postgres://postgres:postgres@127.0.0.1:5432/col_dev",
+    "postgres://postgres@localhost/col_dev",
     "postgresql://postgres@[::1]:5433/anything",
-    "postgres:///ava_dev?host=/var/run/postgresql",
-    "postgres:///ava_dev",
+    "postgres:///col_dev?host=/var/run/postgresql",
+    "postgres:///col_dev",
   ])("accepts a database on this machine (%s)", url => {
     expect(() => seedDemoTarget(url, {})).not.toThrow();
   });
 
   it.each([
-    "postgres://ava:secret-value@dpg-d0example-a.frankfurt-postgres.render.com/ava",
-    "postgres://ava:secret-value@dpg-d0example-a/ava",
-    "postgres://ava:secret-value@10.0.0.5:5432/ava_dev",
+    "postgres://col:secret-value@dpg-d0example-a.frankfurt-postgres.render.com/col",
+    "postgres://col:secret-value@dpg-d0example-a/col",
+    "postgres://col:secret-value@10.0.0.5:5432/col_dev",
     // The authority says localhost, but pg connects to the host parameter.
-    "postgres://ava:secret-value@localhost/ava?host=db.production.example",
+    "postgres://col:secret-value@localhost/col?host=db.production.example",
   ])("refuses a remote database without naming the credentials (%s)", url => {
-    expect(() => seedDemoTarget(url, {})).toThrow(/refusing database "ava(_dev)?" on/);
+    expect(() => seedDemoTarget(url, {})).toThrow(/refusing database "col(_dev)?" on/);
     expect(() => seedDemoTarget(url, {})).not.toThrow(/secret-value/);
   });
 
   it("refuses an empty authority when PGHOST points elsewhere", () => {
-    expect(() => seedDemoTarget("postgres:///ava", { PGHOST: "db.production.example" })).toThrow(/refusing/);
+    expect(() => seedDemoTarget("postgres:///col", { PGHOST: "db.production.example" })).toThrow(/refusing/);
   });
 
   it("accepts a remote database only when SEED_DEMO_DATABASE names it exactly", () => {
-    const url = "postgres://ava:secret-value@dpg-d0example-a.frankfurt-postgres.render.com:5432/ava_staging";
-    expect(seedDemoTarget(url, { SEED_DEMO_DATABASE: "ava_staging" })).toEqual({ host: "dpg-d0example-a.frankfurt-postgres.render.com", port: "5432", database: "ava_staging" });
-    expect(() => seedDemoTarget(url, { SEED_DEMO_DATABASE: "ava" })).toThrow(/SEED_DEMO_DATABASE=ava_staging/);
+    const url = "postgres://col:secret-value@dpg-d0example-a.frankfurt-postgres.render.com:5432/col_staging";
+    expect(seedDemoTarget(url, { SEED_DEMO_DATABASE: "col_staging" })).toEqual({ host: "dpg-d0example-a.frankfurt-postgres.render.com", port: "5432", database: "col_staging" });
+    expect(() => seedDemoTarget(url, { SEED_DEMO_DATABASE: "col" })).toThrow(/SEED_DEMO_DATABASE=col_staging/);
     expect(() => seedDemoTarget(url, { SEED_DEMO_DATABASE: "" })).toThrow(/refusing/);
   });
 
   it("rejects something that is not a PostgreSQL URL", () => {
     expect(() => seedDemoTarget("not a url", {})).toThrow(/not a valid PostgreSQL URL/);
-    expect(() => seedDemoTarget("https://127.0.0.1/ava_dev", {})).toThrow(/not a valid PostgreSQL URL/);
+    expect(() => seedDemoTarget("https://127.0.0.1/col_dev", {})).toThrow(/not a valid PostgreSQL URL/);
   });
 
   it("describes the target without credentials", () => {
-    expect(describeSeedTarget(seedDemoTarget("postgres://postgres:hunter2@127.0.0.1:5432/ava_dev", {}))).toBe('database "ava_dev" on 127.0.0.1:5432');
+    expect(describeSeedTarget(seedDemoTarget("postgres://postgres:hunter2@127.0.0.1:5432/col_dev", {}))).toBe('database "col_dev" on 127.0.0.1:5432');
   });
 });
 
@@ -53,11 +53,11 @@ it("stops the seed script before it connects to a remote database", () => {
   const script = fileURLToPath(new URL("./seed-demo.ts", import.meta.url));
   const run = spawnSync(process.execPath, ["--import", "tsx", script], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
-    env: { ...process.env, DATABASE_URL: "postgres://ava:secret-value@192.0.2.1:1/ava", SEED_DEMO_DATABASE: "" },
+    env: { ...process.env, DATABASE_URL: "postgres://col:secret-value@192.0.2.1:1/col", SEED_DEMO_DATABASE: "" },
     encoding: "utf8",
     timeout: 30_000,
   });
   expect(run.status).toBe(1);
-  expect(run.stderr).toMatch(/refusing database "ava" on 192\.0\.2\.1:1/);
+  expect(run.stderr).toMatch(/refusing database "col" on 192\.0\.2\.1:1/);
   expect(run.stderr).not.toMatch(/secret-value|ECONNREFUSED|ETIMEDOUT/);
 });

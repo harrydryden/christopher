@@ -1,4 +1,4 @@
-import { ats, discovery, type DiscoveryAiHooks, type FetchInit, type SourceSpec, type SourceType } from "@ava/core";
+import { ats, discovery, type DiscoveryAiHooks, type FetchInit, type SourceSpec, type SourceType } from "@col/core";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import type { BrowserRenderer, RenderOptions } from "./browser";
 import { observeHtmlListing } from "./live-acceptance-html";
@@ -290,7 +290,7 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
   const referenceProof = { sourceMatchesLabel: referenceSourceMatches, rawHashVerified: options.referenceRawHashVerified === true };
   const uniqueCount = (rows: Array<{ url: string }>) => new Set(rows.map(row => canonicalPostingIdentity(row.url))).size;
   const fetcher = options.fetcher ?? new PoliteFetcher({
-    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
+    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "col-live-acceptance@example.invalid"),
     respectRobots: () => true,
   });
   let browserRenders = 0;

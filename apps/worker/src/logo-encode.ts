@@ -1,13 +1,13 @@
 /**
  * The worker's half of storing a logo small: the pixel work, which needs sharp (libvips), a native
- * library the pure core package does not carry. `normaliseLogo` in @ava/core decides what to
+ * library the pure core package does not carry. `normaliseLogo` in @col/core decides what to
  * re-encode and keeps the original when this throws.
  *
  * sharp is loaded on first use, as the browser is: the interface imports this package's handlers
  * for its cron, and a serverless function that never captures a logo should not load it. It runs
  * with one thread and no cache: the worker has 512 MB, and a logo a day per company needs neither.
  */
-import { LOGO_STORED_PX } from "@ava/core";
+import { LOGO_STORED_PX } from "@col/core";
 import { log } from "./log";
 
 /**

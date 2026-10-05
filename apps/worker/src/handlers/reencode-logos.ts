@@ -1,6 +1,6 @@
 /**
  * The one-off backfill that stores every captured logo as a capture now stores it: a 64 px WebP
- * (see `normaliseLogo` in @ava/core). Logos captured before that are the site's own icon, often a
+ * (see `normaliseLogo` in @col/core). Logos captured before that are the site's own icon, often a
  * 180 px touch icon or a 256 px ICO of 15 to 100 KB, served fifty to a roles page.
  *
  * One pass re-encodes a bounded batch in company order and queues the next pass itself while a
@@ -15,8 +15,8 @@
  * moves to now: that time is the version in the logo's URL, which browsers and the CDN cache as
  * immutable, so without the bump nobody would ever be sent the smaller file.
  */
-import { enqueueStandard, schema, type Task } from "@ava/db";
-import { normaliseLogo, type TaskPayloads } from "@ava/core";
+import { enqueueStandard, schema, type Task } from "@col/db";
+import { normaliseLogo, type TaskPayloads } from "@col/core";
 import { and, asc, eq, gt, notInArray } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { encodeLogoWebp } from "../logo-encode";

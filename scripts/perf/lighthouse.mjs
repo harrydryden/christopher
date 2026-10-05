@@ -1,7 +1,7 @@
 /**
  * Lighthouse CI against a production build of the interface, signed in.
  *
- *   pnpm --filter @ava/web build
+ *   pnpm --filter @col/web build
  *   DATABASE_URL=postgres://… node scripts/perf/lighthouse.mjs [--mobile-only | --desktop-only]
  *
  * `--preview <deployment-url>` instead measures `/login`, signed out, on a Vercel preview, warnings
@@ -9,7 +9,7 @@
  *
  * CHROME_PATH picks the browser; LHCI_CHROME_FLAGS adds flags (`--no-sandbox` when running as root).
  *
- * Seeds the way scripts/smoke-web.mjs does: a disposable administrator (`lhci@ava.invalid`) with one
+ * Seeds the way scripts/smoke-web.mjs does: a disposable administrator (`lhci@col.invalid`) with one
  * session row and the HMAC cookie apps/web/lib/session.ts expects, a throwaway company it follows
  * with one role, a Library and one CV, so `/`, `/companies`, `/library` and `/cv/<id>` render what a
  * signed-in person sees. Starts `next start` on LHCI_PORT (3124), runs `lhci autorun` with the
@@ -29,7 +29,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { disposableAdmin, startWeb } from "../lib/web.mjs";
 
-export const LHCI_EMAIL = "lhci@ava.invalid";
+export const LHCI_EMAIL = "lhci@col.invalid";
 export const LHCI_DOMAIN = "lhci.invalid";
 const ROOT = new URL("../../", import.meta.url);
 
@@ -123,7 +123,7 @@ export function previewConfig(desktop, { url, bypass }) {
 
 async function preview(url) {
   const lhci = createRequire(new URL("../../package.json", import.meta.url)).resolve("@lhci/cli/src/cli.js");
-  const dir = mkdtempSync(join(tmpdir(), "ava-lhci-"));
+  const dir = mkdtempSync(join(tmpdir(), "col-lhci-"));
   try {
     const base = JSON.parse(readFileSync(new URL("lighthouserc.json", ROOT), "utf8"));
     const path = join(dir, "lighthouserc.preview.json");
@@ -146,7 +146,7 @@ async function main() {
   const secret = `lighthouse-${randomBytes(24).toString("hex")}`;
   const passes = process.argv.includes("--mobile-only") ? ["mobile"] : process.argv.includes("--desktop-only") ? ["desktop"] : ["desktop", "mobile"];
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-  const dir = mkdtempSync(join(tmpdir(), "ava-lhci-"));
+  const dir = mkdtempSync(join(tmpdir(), "col-lhci-"));
   let web;
   let exitCode = 0;
   try {

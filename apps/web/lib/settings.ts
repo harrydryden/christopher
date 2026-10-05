@@ -1,8 +1,8 @@
 import { cache } from "react";
 import { eq, notLike, sql } from "drizzle-orm";
-import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
-import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
-import { accountCanScore, enqueueTask, enqueueTasks, taskRow, reevaluateGate, lockAccountScoreInput, lockScoreModelInput } from "@ava/db";
+import { settings as settingsTable, userSettings as userSettingsTable } from "@col/db/schema";
+import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@col/core";
+import { accountCanScore, enqueueTask, enqueueTasks, taskRow, reevaluateGate, lockAccountScoreInput, lockScoreModelInput } from "@col/db";
 import { requireUser } from "./auth";
 import { db } from "./db";
 import { enqueue } from "./enqueue";

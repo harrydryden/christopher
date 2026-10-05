@@ -6,15 +6,15 @@
  * back carry anything from the row it was read from that the reader has no business seeing.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, createCvShare, addCvShareComment, revokeCvShare, schema, type Db } from "@ava/db";
+import { createDb, createCvShare, addCvShareComment, revokeCvShare, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
-import { materialiseCv, type CvLibrary } from "@ava/core/cv";
+import { materialiseCv, type CvLibrary } from "@col/core/cv";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import { hashCvShareToken, newCvShareToken } from "@/lib/cv-share";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

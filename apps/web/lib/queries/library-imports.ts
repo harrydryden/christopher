@@ -2,12 +2,12 @@
  * The documents this account has on their way into the Library, as the Library page reads them.
  *
  * Every read here is scoped by account, as every per-account read is: an import carries somebody's
- * CV, and it belongs to them alone. The data layer in `@ava/db` does the work; this turns
+ * CV, and it belongs to them alone. The data layer in `@col/db` does the work; this turns
  * its rows into the views the page renders and keeps the page to one query.
  */
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import { listOpenLibraryImports, getLibraryImport } from "@ava/db";
-import { libraryImports } from "@ava/db/schema";
+import { listOpenLibraryImports, getLibraryImport } from "@col/db";
+import { libraryImports } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { libraryImportView, type LibraryImportView } from "@/lib/library-import";
 

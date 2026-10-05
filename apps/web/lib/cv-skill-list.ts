@@ -1,4 +1,4 @@
-import type { CvLibrary } from "@ava/core/cv";
+import type { CvLibrary } from "@col/core/cv";
 
 /** A pasted skill list is labels, never supporting evidence from the Details field. */
 export function parseCvSkillList(value: string, preserved: readonly string[] = []): string[] {

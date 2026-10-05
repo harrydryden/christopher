@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { SourceFetchError, type FetchContext } from "@ava/core";
+import { SourceFetchError, type FetchContext } from "@col/core";
 import { guardedDiscoveryFetchContext } from "./discovery-host-guard";
 
 it("reports an explicit challenge before an adapter can swallow its fetch error", async () => {

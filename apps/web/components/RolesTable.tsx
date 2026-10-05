@@ -8,7 +8,7 @@ import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } fr
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
-import { Monogram } from "@/components/brand/Monogram";
+import { MarkSmall } from "@/components/brand";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
 import { RetryScore } from "@/components/RetryScore";
@@ -18,7 +18,7 @@ import { reportRoleRefusal } from "@/lib/role-refusals";
 import { claimRoleRevision, discardLegacyRoleUndos, forgetRoleUndo, hasLegacyRoleUndos, isCurrentRoleRevision, recentRoleUndos, rememberRoleUndo, ROLE_UNDO_CHANGED, type RoleUndoEntry } from "./role-undo-history";
 import styles from "./RolesTable.module.css";
 
-import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
+import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@col/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
 
@@ -365,7 +365,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 )}
                 <div>
                   <h3 className="ds-label mb-1">Description</h3>
-                  {detail?.state === "loading" && <span className="inline-block text-muted"><Monogram size={16} searching title="Loading the description" /></span>}
+                  {detail?.state === "loading" && <span className="inline-block text-muted"><MarkSmall size={16} searching title="Loading the description" /></span>}
                   {detail?.state === "error" && <p className="text-13 text-danger">{detail.error}</p>}
                   {detail?.state === "ready" && (detail.details.description?.trim() ? (
                     <>

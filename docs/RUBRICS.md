@@ -1,6 +1,6 @@
 # The two rubrics
 
-AVA judges a person's evidence twice, with two rubrics that must not be confused.
+Course of Life judges a person's evidence twice, with two rubrics that must not be confused.
 
 | | Evidence rubric (static) | Role rubric (dynamic) |
 |---|---|---|

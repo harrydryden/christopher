@@ -1,5 +1,5 @@
-import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds, type Db, type ReleasedHolds } from "@ava/db";
-import { cvBuildFailure, type CvBuildFailure, type ScoreBatchRecord } from "@ava/core";
+import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds, type Db, type ReleasedHolds } from "@col/db";
+import { cvBuildFailure, type CvBuildFailure, type ScoreBatchRecord } from "@col/core";
 import type { AbandonHookMap, InterruptedHookMap } from "../queue";
 import { failOpenCvBuildStepsQuietly } from "./cv-journal";
 import { abandonScoreBatch } from "./score-batch-recovery";

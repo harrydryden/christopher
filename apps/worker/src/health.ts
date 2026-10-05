@@ -1,6 +1,6 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import { pendingTaskCounts, workloadMetrics } from "@ava/db";
+import { pendingTaskCounts, workloadMetrics } from "@col/db";
 import { sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";

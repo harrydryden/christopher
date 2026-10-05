@@ -1,4 +1,4 @@
-import type { SourceType } from "@ava/core";
+import type { SourceType } from "@col/core";
 import type { LiveAcceptanceCase } from "./live-acceptance";
 
 /** Evidence that a reviewer checked one SPEC §9 corpus stratum, separate from a posting label. */

@@ -1,6 +1,6 @@
 /** Durable HTTP listing pages for a scan_company task that yields between bounded page batches. */
 import { createHash } from "node:crypto";
-import { schema, type CareerSource, type Db } from "@ava/db";
+import { schema, type CareerSource, type Db } from "@col/db";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 

@@ -18,13 +18,13 @@ export const MIN_PASSWORD_LENGTH = 10;
 export const MAX_PASSWORD_LENGTH = 256;
 
 /**
- * AVA_SCRYPT_N lets test suites hash cheaply, never below the old cost. Production ignores it: a
+ * COL_SCRYPT_N lets test suites hash cheaply, never below the old cost. Production ignores it: a
  * value copied from a test environment would make every new hash cheaper to crack, and
  * `needsRehash` would treat the weaker cost as current and never upgrade it.
  */
 function currentN(): number {
   if (process.env.NODE_ENV === "production") return DEFAULT_SCRYPT_N;
-  const raw = Number(renamedEnv(process.env, "AVA_SCRYPT_N", "CHRISTOPHER_SCRYPT_N"));
+  const raw = Number(renamedEnv(process.env, "COL_SCRYPT_N", "AVA_SCRYPT_N", "CHRISTOPHER_SCRYPT_N"));
   if (Number.isInteger(raw) && raw >= MIN_SCRYPT_N && (raw & (raw - 1)) === 0) return raw;
   return DEFAULT_SCRYPT_N;
 }

@@ -1,4 +1,4 @@
-import { CV_LIMITS } from "@ava/core/cv";
+import { CV_LIMITS } from "@col/core/cv";
 /**
  * When evidence meets a requirement: the one definition the evidence plan and the audit both judge
  * by, so the plan's verdict on the library and the audit's verdict on the CV use the same words.

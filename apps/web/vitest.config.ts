@@ -7,12 +7,13 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./", import.meta.url)) },
   },
   test: {
-    // Component tests are `.test.tsx` and choose jsdom for themselves with a file pragma.
-    include: ["app/**/*.test.ts", "lib/**/*.test.ts", "components/**/*.test.tsx"],
+    // Component tests are `.test.tsx` and choose jsdom for themselves with a file pragma; plain
+    // `.test.ts` beside them (the brand artwork) needs no DOM.
+    include: ["app/**/*.test.ts", "lib/**/*.test.ts", "components/**/*.test.ts", "components/**/*.test.tsx"],
     exclude: ["node_modules/**", ".next/**"],
     environment: "node",
     // Password hashing at production cost would dominate the account tests; the old cost is plenty here.
-    env: { AVA_SCRYPT_N: "16384" },
+    env: { COL_SCRYPT_N: "16384" },
     // Long enough for a loaded CI machine, short enough that a hung pool or a missing resolve names
     // its test inside the job's budget. A case that needs longer says so, and why, beside it.
     testTimeout: 60_000,

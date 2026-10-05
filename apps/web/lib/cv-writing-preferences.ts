@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
-import { cvLibraries } from "@ava/db";
-import { resolveCvWritingPreferences } from "@ava/core/cv";
+import { cvLibraries } from "@col/db";
+import { resolveCvWritingPreferences } from "@col/core/cv";
 import { db } from "./db";
 import { getSettingsFor } from "./settings";
 

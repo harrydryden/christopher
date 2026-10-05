@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { deflateRawSync, deflateSync, crc32 } from "node:zlib";
-import { renderCvPdf } from "@ava/core/cv-pdf";
-import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@ava/db";
+import { renderCvPdf } from "@col/core/cv-pdf";
+import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@col/db";
 import {
   capDocumentText, documentKind, documentToText, tidyDocumentText, UNREADABLE_DOCUMENT,
   DOCUMENT_MAX_EXPANDED_BYTES, DOCX_MAX_ELEMENTS, DOCX_MAX_MARKUP_BYTES, PDF_MAX_CONTENT_BYTES, PDF_MAX_TEXT_OPERATORS,

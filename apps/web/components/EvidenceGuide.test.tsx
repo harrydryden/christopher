@@ -4,8 +4,8 @@
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS } from "@ava/core/cv-helpers";
-import { LIBRARY_FACET_WEIGHTS } from "@ava/core/library-review";
+import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS } from "@col/core/cv-helpers";
+import { LIBRARY_FACET_WEIGHTS } from "@col/core/library-review";
 import { EvidenceGuide, facetWorth, strongRowLine } from "./EvidenceGuide";
 
 const html = () => renderToStaticMarkup(<EvidenceGuide />);

@@ -2,9 +2,9 @@
  * What batch scoring does to hand roles back to live scoring and let go of a batch's holds. Kept
  * apart from the handlers so the abandonment hooks can use it without importing every handler.
  */
-import { enqueueTasks, notifyTaskWorkers } from "@ava/db/tasks";
-import type { Db } from "@ava/db";
-import { dedupeKeyFor, priorityFor, type ScoreBatchItem, type ScoreBatchRecord } from "@ava/core";
+import { enqueueTasks, notifyTaskWorkers } from "@col/db/tasks";
+import type { Db } from "@col/db";
+import { dedupeKeyFor, priorityFor, type ScoreBatchItem, type ScoreBatchRecord } from "@col/core";
 import { sql } from "drizzle-orm";
 
 /**

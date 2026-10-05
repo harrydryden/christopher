@@ -1,6 +1,6 @@
-import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
-import { CvBuildStop } from "@ava/core/cv-build-failure";
-import { mentionsDemographicAttribute, validateCvRubric } from "@ava/core/cv-review";
+import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@col/core/cv-assessment";
+import { CvBuildStop } from "@col/core/cv-build-failure";
+import { mentionsDemographicAttribute, validateCvRubric } from "@col/core/cv-review";
 import { cvReviewBatches, libraryVerdictLines, mergeRetry, reviewBatchIssues, markUnverifiedFindings, retryScope, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
 import {
   CV_PAGE_LIMITS,
@@ -24,7 +24,7 @@ import {
   type LibraryReviewPlan,
   type LibraryReviewPlanEntry,
   type LibraryRowReview,
-} from "@ava/core";
+} from "@col/core";
 import Anthropic, {
   APIConnectionError,
   APIError,

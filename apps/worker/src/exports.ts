@@ -3,7 +3,7 @@
  * when no separate worker service is deployed. See docs/DEPLOY.md.
  *
  * Nothing here imports Playwright eagerly: the browser is loaded on first use and only when
- * `AVA_DISABLE_BROWSER` is unset, so a serverless deployment never pulls it in.
+ * `COL_DISABLE_BROWSER` is unset, so a serverless deployment never pulls it in.
  */
 export { createDeps } from "./context";
 export { readEnv } from "./env";

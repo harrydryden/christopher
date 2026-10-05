@@ -1,5 +1,5 @@
 {
-  "name": "@ava/db",
+  "name": "@col/db",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -34,7 +34,7 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@ava/core": "workspace:*",
+    "@col/core": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "drizzle-orm": "0.45.2",
     "pg": "8.23.0"

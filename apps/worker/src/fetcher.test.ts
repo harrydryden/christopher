@@ -3,11 +3,11 @@ import http from "node:http";
 import net from "node:net";
 import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { SourceFetchError } from "@ava/core";
-import { createDb, listHttpHostDaily } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { SourceFetchError } from "@col/core";
+import { createDb, listHttpHostDaily } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
-import { sha1 } from "@ava/core";
+import { sha1 } from "@col/core";
 import { ATS_API_DELAY_MS, decodeBody, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, HostBusyError, hostDelayMs, HttpTrafficLedger, MAX_HOST_WAIT_MS, parseRobots, PoliteFetcher, PrivateAddressError, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
@@ -97,7 +97,7 @@ describe("polite fetcher", () => {
   it("identifies itself with a contact address", async () => {
     const res = await fetcher().fetchText("https://www.example.test/echo");
     const body = JSON.parse(res.body) as { ua: string; host: string };
-    expect(body.ua).toContain("AVAJobMonitor");
+    expect(body.ua).toContain("CourseOfLifeJobMonitor");
     expect(body.ua).toContain("mailto:you@example.com");
     // The logical hostname is preserved even though the request went to the test server.
     expect(body.host).toBe("www.example.test");
@@ -442,9 +442,10 @@ describe("robots.txt", () => {
   });
 
   it("lets a group for us replace the * group, under either of our names, and merges ours", () => {
-    const robots = "User-agent: *\nDisallow: /\n\nUser-agent: AVAJobMonitor\nAllow: /careers\nDisallow: /careers/drafts\n\nUser-agent: avajobmonitor/0.1\nDisallow: /tmp\n";
+    const robots = "User-agent: *\nDisallow: /\n\nUser-agent: CourseOfLifeJobMonitor\nAllow: /careers\nDisallow: /careers/drafts\n\nUser-agent: courseoflifejobmonitor/0.1\nDisallow: /tmp\n";
     expect(parseRobots(robots)).toEqual({ allow: ["/careers"], disallow: ["/careers/drafts", "/tmp"] });
-    // A group a site wrote for the name this worker had before the rename still means us.
+    // A group a site wrote for a name this worker had before a rename still means us.
+    expect(parseRobots("User-agent: *\nAllow: /\n\nUser-agent: AVAJobMonitor\nDisallow: /jobs\n").disallow).toEqual(["/jobs"]);
     expect(parseRobots("User-agent: *\nAllow: /\n\nUser-agent: ChristopherJobMonitor\nDisallow: /jobs\n").disallow).toEqual(["/jobs"]);
   });
 
@@ -463,7 +464,7 @@ describe("robots.txt", () => {
     try {
       const f = new PoliteFetcher({ userAgent: userAgentFor("you@example.com"), hostMap: site.hostMap, perHostDelayMs: 0, respectRobots: () => true, now: () => clock });
       await expect(f.fetchText("https://changing.test/jobs")).resolves.toMatchObject({ status: 200 });
-      rules = "User-agent: AVAJobMonitor\nDisallow: /jobs\n";
+      rules = "User-agent: CourseOfLifeJobMonitor\nDisallow: /jobs\n";
       clock += 23 * 3_600_000;
       await expect(f.fetchText("https://changing.test/jobs")).resolves.toMatchObject({ status: 200 });
       clock += 2 * 3_600_000;
@@ -633,7 +634,7 @@ describe("revalidating a listing too large to cache", () => {
 });
 
 describe("outbound traffic counters", () => {
-  const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+  const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
   const today = () => new Date().toISOString().slice(0, 10);
   let traffic: TestServer;
   let blackhole: net.Server;
@@ -834,7 +835,7 @@ describe("private and local destinations", () => {
 
   it("refuses schemes other than http and https, and names that only mean the local network", async () => {
     const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, resolveHost: async () => { throw new Error("DNS must not be asked"); } });
-    for (const url of ["file:///etc/passwd", "data:text/html,<title>x</title>", "http://localhost:8080/", "http://metadata.google.internal/computeMetadata/v1/", "http://ava-worker:8080/healthz"]) {
+    for (const url of ["file:///etc/passwd", "data:text/html,<title>x</title>", "http://localhost:8080/", "http://metadata.google.internal/computeMetadata/v1/", "http://col-worker:8080/healthz"]) {
       await expect(f.fetchText(url)).rejects.toBeInstanceOf(PrivateAddressError);
     }
   });

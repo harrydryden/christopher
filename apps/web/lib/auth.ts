@@ -7,10 +7,10 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { and, eq, gt, ne } from "drizzle-orm";
-import { sessions, users, type User } from "@ava/db/schema";
+import { sessions, users, type User } from "@col/db/schema";
 import { db } from "./db";
 import {
-  createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, isSecureHost, LEGACY_SESSION_COOKIE_NAME, readSessionCookie,
+  createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, isSecureHost, LEGACY_SESSION_COOKIE_NAMES, readSessionCookie,
   SESSION_COOKIE_NAME, sessionCookieValue, sessionSecret,
 } from "./session";
 
@@ -118,13 +118,13 @@ export async function startSession(userId: string, ttlSeconds = DEFAULT_SESSION_
   return session!.id;
 }
 
-/** Delete the current session row and clear its cookie, under either name. */
+/** Delete the current session row and clear its cookie, under the current name and every legacy one. */
 export async function endSession(): Promise<void> {
   const current = await getCurrentUser().catch(() => null);
   if (current) await db().delete(sessions).where(eq(sessions.id, current.sessionId));
   const jar = await cookies();
   jar.delete(SESSION_COOKIE_NAME);
-  jar.delete(LEGACY_SESSION_COOKIE_NAME);
+  for (const name of LEGACY_SESSION_COOKIE_NAMES) jar.delete(name);
 }
 
 /** Sign the account out of every other browser. */

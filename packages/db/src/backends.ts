@@ -5,8 +5,8 @@
  * allows 103, three reserved for superusers, and PgBouncer may open up to 93 of them for the
  * interface while the worker holds up to 26 on the direct port: 119 against 100 usable. When they
  * run out, a worker reconnect, a migration or an operator's `psql` fails with "sorry, too many
- * clients already" for every account at once. Clients report `application_name` (`ava-web`,
- * `ava-worker`), so the count can say who holds them. docs/DEPLOY.md gives the cap and the alert.
+ * clients already" for every account at once. Clients report `application_name` (`col-web`,
+ * `col-worker`), so the count can say who holds them. docs/DEPLOY.md gives the cap and the alert.
  */
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";

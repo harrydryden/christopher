@@ -1,4 +1,4 @@
-import type { GateSettings } from "@ava/core";
+import type { GateSettings } from "@col/core";
 import { saveGate } from "@/app/actions/settings";
 import { Card } from "@/components/Card";
 import { SettingsForm } from "@/components/SettingsForm";

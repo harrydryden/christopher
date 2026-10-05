@@ -8,7 +8,7 @@
  * follower and posting, created only once the posting passes that follower's gate.
  */
 import { withSpan } from "../otel";
-import { schema, taskRow, enqueueTasks, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, locationRevisionFor, type Task, type ViewUpdate } from "@ava/db";
+import { schema, taskRow, enqueueTasks, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, locationRevisionFor, type Task, type ViewUpdate } from "@col/db";
 import {
   ats,
   classifyScan,
@@ -36,9 +36,9 @@ import {
   type SystemSettings,
   SOURCE_FAILING_AFTER,
   stripHtml,
-} from "@ava/core";
+} from "@col/core";
 import { and, desc, eq, inArray, sql, or, isNull, gte } from "drizzle-orm";
-import type { CareerSource } from "@ava/db";
+import type { CareerSource } from "@col/db";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";

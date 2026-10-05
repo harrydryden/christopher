@@ -178,7 +178,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   reencode_logos: { priority: 7, dedupe: () => "reencode_logos" },
 };
 
-/** Every task type; @ava/db's `tasks.type` column enum is this list, re-exported. */
+/** Every task type; @col/db's `tasks.type` column enum is this list, re-exported. */
 export const TASK_TYPE_NAMES = Object.keys(TASKS) as [TaskType, ...TaskType[]];
 
 export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[T]): string | null {

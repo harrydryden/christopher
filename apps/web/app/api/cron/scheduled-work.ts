@@ -1,5 +1,5 @@
 /**
- * The work behind `/api/cron`: a scheduler tick and, where `AVA_SERVERLESS_FALLBACK=1` says there is
+ * The work behind `/api/cron`: a scheduler tick and, where `COL_SERVERLESS_FALLBACK=1` says there is
  * no worker service, as much of the queue as fits in one invocation.
  *
  * It lives beside the route rather than in it because a route module may export only its handlers
@@ -7,12 +7,12 @@
  * of their own.
  */
 import { randomBytes } from "node:crypto";
-import { releaseAiHolds } from "@ava/db";
-import { deadlineMsFor, renamedEnv, type TaskType } from "@ava/core";
+import { releaseAiHolds } from "@col/db";
+import { deadlineMsFor, renamedEnv, type TaskType } from "@col/core";
 import {
   claimTask, createDeps, handlers as workerHandlers, onAbandon as workerOnAbandon, onInterrupted as workerOnInterrupted,
   readEnv, schedulerTick, TaskQueue, type HandlerMap, type QueueOptions,
-} from "@ava/worker";
+} from "@col/worker";
 import { getWorkerHeartbeat } from "@/lib/queries/health";
 
 /**
@@ -47,7 +47,7 @@ export interface ScheduledWorkOptions {
 
 export async function runScheduledWork(options: ScheduledWorkOptions) {
   // A serverless invocation must never launch a browser: there is no Chromium in the runtime.
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   const started = Date.now();
   const processed: string[] = [];
   let timedOut = false;
@@ -63,7 +63,7 @@ export async function runScheduledWork(options: ScheduledWorkOptions) {
   // tasks take are released when it ends instead of counting against an account until they expire.
   const workerId = `vercel-cron-${randomBytes(4).toString("hex")}`;
   const deps = await createDeps({ ...readEnv(), concurrency: 1, workerId }, { settingsTtlMs: 0 });
-  const drains = renamedEnv(process.env, "AVA_SERVERLESS_FALLBACK", "CHRISTOPHER_SERVERLESS_FALLBACK") === "1";
+  const drains = renamedEnv(process.env, "COL_SERVERLESS_FALLBACK", "AVA_SERVERLESS_FALLBACK", "CHRISTOPHER_SERVERLESS_FALLBACK") === "1";
   const hardStopAt = started + options.hardStopMs;
   const claimUntil = started + options.claimForMs;
 

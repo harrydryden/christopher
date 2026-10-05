@@ -1,8 +1,8 @@
 /** `/healthz` is liveness alone; `/status` is the full reading, behind a token, cached. */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
-import { createDb, enqueueTask, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -10,7 +10,7 @@ import { HEALTH_CACHE_MS, HEALTH_DB_STALE_FAIL_MS, startHealthServer, type Healt
 import { ensureTestUser } from "./test-users";
 import { runMonitorSample } from "./handlers/monitor-sample";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const TOKEN = "status-token-for-tests";
 
 let deps: WorkerDeps;
@@ -21,7 +21,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);
@@ -118,7 +118,7 @@ it("answers /status with the queue and workload in one reading, and reuses it fo
     reads++;
     const [queue, metrics] = await Promise.all([
       db.select().from(schema.tasks),
-      (await import("@ava/db")).workloadMetrics(db),
+      (await import("@col/db")).workloadMetrics(db),
     ]);
     return { queue, metrics };
   };
@@ -153,7 +153,7 @@ it("answers /status with the queue and workload in one reading, and reuses it fo
 });
 
 it("leaves roles waiting for their batch out of the ready queue the release gate reads", async () => {
-  const { workloadMetrics } = await import("@ava/db");
+  const { workloadMetrics } = await import("@col/db");
   const ago = (m: number) => new Date(Date.now() - m * 60_000);
   await db.execute(sql`delete from settings where key in ('scoringMode', 'scoringBatchMinutes')`);
   try {

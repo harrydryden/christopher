@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { discovery } from "@ava/core";
+import { discovery } from "@col/core";
 import { PoliteFetcher } from "./fetcher";
 import { startTestServer, type RouteTable } from "./test-server";
 

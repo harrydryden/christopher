@@ -1,4 +1,4 @@
-# Deploying AVA
+# Deploying Course of Life
 
 Two shapes. Pick one, then follow its section.
 
@@ -26,7 +26,7 @@ the same learning loop.
 
 ## Before either shape: the database
 
-1. In Render, **New → Postgres**, named `ava-db` (the name `render.yaml` and the rest of this guide
+1. In Render, **New → Postgres**, named `col-db` (the name `render.yaml` and the rest of this guide
    use). Any paid instance is fine; the free tier expires after 30 days. Note the region, and put
    the interface in a nearby Vercel region later.
 2. Copy the **External Database URL**. It already carries `?sslmode=require`.
@@ -112,7 +112,7 @@ the same learning loop.
    your `psql` can fail with "sorry, too many clients already". A scan that cannot connect is a
    failed scan, never a closure, but CV builds and task claims stall. So keep
    `WEB_DB_POOL_MAX` × peak concurrent interface instances **at or under 60**, and alert at **80**
-   client backends. Every connection names itself (`ava-web`, `ava-worker`, or `ava-web-cron` for
+   client backends. Every connection names itself (`col-web`, `col-worker`, or `col-web-cron` for
    the interface's cron fallback, sent as the `application_name` startup parameter, which PgBouncer
    accepts; an `application_name` in `DATABASE_URL` takes precedence), so the count says who holds
    them:
@@ -122,7 +122,7 @@ the same learning loop.
    from pg_stat_activity where backend_type = 'client backend' group by 1 order by 2 desc;
    ```
 
-   `databaseBackends()` in `@ava/db` reads the same figures, with the usable ceiling, for monitoring.
+   `databaseBackends()` in `@col/db` reads the same figures, with the usable ceiling, for monitoring.
 
    That is why the interface's pool is 6 wide on the pooled endpoint and 3 on the direct one
    (`apps/web/lib/db.ts`). A full render of the Roles page issues about 14 statements, most of them
@@ -197,7 +197,7 @@ namespaces the sandbox needs) in a process that holds the database URL and the A
 `DATABASE_URL` is the one value that cannot be set through the API, because Render never exposes a
 database password over it. In the dashboard, open the worker service, go to **Environment**, add a
 variable named `DATABASE_URL`, and use the database picker in the value field to select
-**ava-db → Internal Connection String**. Saving triggers a redeploy.
+**col-db → Internal Connection String**. Saving triggers a redeploy.
 
 Until it is set, the worker builds and starts but exits with `DATABASE_URL is required`.
 
@@ -298,13 +298,12 @@ Deploy the interface exactly as above, and add:
 | `CRON_SECRET` | `openssl rand -hex 32`. Vercel sends it as `Authorization: Bearer …` on every cron call |
 | `ANTHROPIC_API_KEY` | your key |
 | `SCRAPER_CONTACT_EMAIL` | an address you read. Required: the cron route runs the worker's code, which refuses a missing or placeholder address in production |
-| `AVA_DISABLE_BROWSER` | `1`. There is no Chromium in the Vercel runtime |
-| `AVA_SERVERLESS_FALLBACK` | `1`. Without it the route only queues work; with it the route also runs the queue itself (see below) |
+| `COL_DISABLE_BROWSER` | `1`. There is no Chromium in the Vercel runtime |
+| `COL_SERVERLESS_FALLBACK` | `1`. Without it the route only queues work; with it the route also runs the queue itself (see below) |
 | `TZ` | e.g. `Europe/London` |
 
-A deployment made before the rename may still set `CHRISTOPHER_DISABLE_BROWSER` and
-`CHRISTOPHER_SERVERLESS_FALLBACK`. They are still read wherever the new names are unset, so nothing
-changes on deploy; rename them in the dashboard when convenient.
+A deployment made before the product was renamed may still set these under an old name; see
+[Renamed variables](#renamed-variables). Nothing changes on deploy.
 
 `apps/web/vercel.json` already declares the schedule (`0 6 * * *`). Change the time there if you
 want; on Hobby, Vercel runs cron jobs approximately, not to the minute.
@@ -314,7 +313,7 @@ run finishes in one invocation.
 
 ### Living without a worker
 
-- **`AVA_SERVERLESS_FALLBACK=1` is what makes the route do the work.** Without it the cron
+- **`COL_SERVERLESS_FALLBACK=1` is what makes the route do the work.** Without it the cron
   route only ticks the scheduler — it queues the day's run and the weekly jobs, and nothing runs
   them. With it, the same invocation works through the queue until its time is nearly up. Its
   limits are real: no browser, so a JavaScript careers page still cannot be scanned; and each task
@@ -334,9 +333,24 @@ run finishes in one invocation.
   `jobs.lever.co/...` address), and it is scanned normally from then on.
 
 Moving to shape A later is only a Render deploy: add the worker service, unset
-`AVA_DISABLE_BROWSER` and `AVA_SERVERLESS_FALLBACK` (and their old `CHRISTOPHER_*` names, if the
-deployment still sets them), and the same database keeps
+`COL_DISABLE_BROWSER` and `COL_SERVERLESS_FALLBACK` (and their old `AVA_*` and `CHRISTOPHER_*`
+names, if the deployment still sets them), and the same database keeps
 every company, role and decision.
+
+### Renamed variables
+
+The product has been renamed twice (Christopher, then AVA, now Course of Life), and its environment
+variables with it. The old names are still read wherever the new name is unset or empty, newest
+first, so nothing breaks on deploy. Rename them in the dashboards when convenient.
+
+| New name | Still read | Where |
+|---|---|---|
+| `COL_DISABLE_BROWSER` | `AVA_DISABLE_BROWSER`, `CHRISTOPHER_DISABLE_BROWSER` | Vercel, shape B only. The worker must **not** set it (it needs Chromium). |
+| `COL_SERVERLESS_FALLBACK` | `AVA_SERVERLESS_FALLBACK`, `CHRISTOPHER_SERVERLESS_FALLBACK` | Vercel, shape B only. Leave it unset beside the Render worker. |
+| `COL_CLI_USER` | `AVA_CLI_USER`, `CHRISTOPHER_CLI_USER` | Your own shell, when you run `pnpm cli` |
+| `COL_EVAL_GATE_REQUIRE_VERIFIED` | `AVA_EVAL_GATE_REQUIRE_VERIFIED` | Release qualification (`.github/workflows/release.yml` sets it); never in a deployment |
+| `COL_HOST_MAP` | `AVA_HOST_MAP`, `CHRISTOPHER_HOST_MAP` | Tests only. Never set it in production. |
+| `COL_SCRYPT_N` | `AVA_SCRYPT_N`, `CHRISTOPHER_SCRYPT_N` | Tests only. Ignored in production. |
 
 ---
 
@@ -462,9 +476,9 @@ job holds them to the registry (`scripts/check-evaluation-reports.ts`):
 - and at least one report at the shipped prompt set should not be marked unverified, meaning a live
   run graded the shipped prompts. No live run can happen in CI, so by default this is a warning
   (the job still passes, and its log says `warning: Every committed report at the shipped prompt
-  set … is marked unverified`). With `AVA_EVAL_GATE_REQUIRE_VERIFIED` set to anything but empty,
+  set … is marked unverified`). With `COL_EVAL_GATE_REQUIRE_VERIFIED` set to anything but empty,
   `0` or `false`, it is a failure. The Release workflow now runs
-  `AVA_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts` on the exact
+  `COL_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts` on the exact
   commit whose main-branch CI passed; both web and worker identity checks depend on that job. It
   requires a published, passing, verified CV replay at the shipped prompt set, and the newest replay
   must be verified so the evaluated routes cannot point at a newer fixture. The current committed
@@ -696,7 +710,7 @@ Both halves carry OpenTelemetry tracing that ships switched off. It starts only 
 (Grafana Cloud, Honeycomb, or Vercel's OTel integration on the interface); with either missing the
 code loads only the OpenTelemetry API, whose tracer does nothing.
 
-- **Interface** (`apps/web/instrumentation.ts`): `@vercel/otel` with service name `ava-web` and a
+- **Interface** (`apps/web/instrumentation.ts`): `@vercel/otel` with service name `col-web` and a
   trace-id ratio sampler, `OTEL_TRACES_SAMPLER_ARG` defaulting to `0.1`. Next.js contributes its
   route, render and fetch spans. Set the variables in Vercel › Settings › Environment Variables.
 - **Worker** (`apps/worker/src/otel.ts`, built to `dist/otel.mjs` and preloaded by the image's
@@ -763,19 +777,17 @@ delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#con
 - [ ] Confirm CI is green for the exact commit. Take a pre-release backup or provider restore point
   consistent with the supplied RPO.
 
-**The release that renamed the product (`4fc3ba4`)** also renamed the transaction advisory-lock keys
-the worker and the interface serialise on (`christopher:ai-budget`, `christopher:daily-runs`,
-`christopher:weekly-jobs`, `christopher:users` and `christopher:profiles:<account>` became
-`ava:…`). A lock only excludes holders of the same key, so while an old and a new process overlap —
-Render starts the new worker before it stops the old one, and old and new Vercel deployments serve
-side by side for a moment — the budget check, the daily run's fan-out and finalising, and the
-first-owner takeover are not serialised between them. The overlap is short (the new worker's
-health check, then the old one's shutdown, about a minute), so deploy that release when it has
-nothing to serialise: away from the scheduled run time, with no CV build running (Operations ›
-Running tasks), and with registration closed. What remains is a window in which two model calls
-could both pass an account's budget check, a bounded overspend. The same applies to any later
-release that changes a lock key; keep lock keys stable otherwise. `pnpm-lock.yaml` already names
-the `@ava/*` packages, so frozen installs are unaffected.
+**The release that renamed the product to AVA** (`4fc3ba4`) also renamed the transaction
+advisory-lock keys the worker and the interface serialise on (`christopher:ai-budget`,
+`christopher:daily-runs`, `christopher:weekly-jobs`, `christopher:users` and
+`christopher:profiles:<account>` became `ava:…`). A lock only excludes holders of the same key, so
+while an old and a new process overlapped, the budget check, the daily run's fan-out and
+finalising, and the first-owner takeover were not serialised between them. **The rename to Course
+of Life deliberately did not repeat this**: the lock keys and the queue's wake-up channel
+(`ava_tasks`) keep the AVA names, which nobody sees, so that release has no such window. Keep lock
+keys and the channel name stable; a release that must change one should be deployed away from the
+scheduled run time, with no CV build running and registration closed. `pnpm-lock.yaml` already
+names the `@col/*` packages, so frozen installs are unaffected.
 
 ### Roll out
 
@@ -957,7 +969,7 @@ image runs `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs` (
 deployed slot counts, the idle process measured 161–236 MB from source and 117–118 MB compiled (one
 outlier at 205 MB). The tests, the CLI and the drills still run from source through `tsx`, so the
 compiled entry point is exercised by the `worker-image` CI job, which boots the image on every pull
-request; `pnpm --filter @ava/worker build` then `pnpm --filter @ava/worker start` reproduces it locally. The
+request; `pnpm --filter @col/worker build` then `pnpm --filter @col/worker start` reproduces it locally. The
 browser is closed after five idle minutes and launched again on the next render (about 100 MiB
 outside V8 between bursts, a second or two on the first render after a quiet spell).
 

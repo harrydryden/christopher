@@ -2,10 +2,10 @@
 
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 
-import { appendProfile, latestProfileFor, ProfileVersionConflictError, setSubscriptionStatus, lockAccountScoreInput } from "@ava/db";
+import { appendProfile, latestProfileFor, ProfileVersionConflictError, setSubscriptionStatus, lockAccountScoreInput } from "@col/db";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { filterSuggestions, tagVocabulary, userSettings, type FilterSuggestion } from "@ava/db/schema";
+import { filterSuggestions, tagVocabulary, userSettings, type FilterSuggestion } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";

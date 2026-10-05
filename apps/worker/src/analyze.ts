@@ -12,7 +12,7 @@
  * A failure is logged and ignored; stale statistics are a slow plan, not a wrong answer.
  */
 import { sql } from "drizzle-orm";
-import type { Db } from "@ava/db";
+import type { Db } from "@col/db";
 import { log } from "./log";
 
 /** A gate re-evaluation that writes more than this many of an account's views is a bulk write. */

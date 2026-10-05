@@ -30,16 +30,16 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AVA",
-  description: "Careers page monitor",
+  title: "Course of Life",
+  description: "Find your path.",
   // favicon.ico, icon.svg and apple-icon.png live in app/ and Next links them
   // automatically; the manifest comes from app/manifest.ts.
   manifest: "/manifest.webmanifest",
-  appleWebApp: { title: "AVA" },
+  appleWebApp: { title: "Course of Life" },
 };
 
 export const viewport: Viewport = {
-  // The brand green: the sidebar and the favicon's triangle. A viewport colour
+  // The brand green: the sidebar and the favicon's mark. A viewport colour
   // cannot read a CSS custom property, so this literal mirrors --brand-green in
   // globals.css.
   themeColor: "#25593a",

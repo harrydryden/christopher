@@ -7,14 +7,14 @@
  * backoff and a real second claim.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, reserveCvCredit, schema, startCvBuildStep, type Db, type Task } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@ava/ai";
-import { DEFAULT_CV_THEME, materialiseCv } from "@ava/core/cv";
-import { createCvAssessment } from "@ava/core/cv-review";
-import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
-import type { CvBuildFailure, CvBuildStepView } from "@ava/core";
-import { dedupeKeyFor } from "@ava/core";
+import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, reserveCvCredit, schema, startCvBuildStep, type Db, type Task } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@col/ai";
+import { DEFAULT_CV_THEME, materialiseCv } from "@col/core/cv";
+import { createCvAssessment } from "@col/core/cv-review";
+import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@col/core/cv-assessment";
+import type { CvBuildFailure, CvBuildStepView } from "@col/core";
+import { dedupeKeyFor } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import { rubricFixture, reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 import { createDeps, type WorkerDeps } from "./context";
@@ -27,7 +27,7 @@ import { tryReserveAi } from "./budget";
 import { LeaseBusyError, LeaseLostError } from "./lease";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 let deps: WorkerDeps;
 let db: Db;
@@ -43,7 +43,7 @@ const plan = { summary: "Operations leader", sections: [{ entryId: "one", bullet
 
 beforeAll(async () => {
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   const bootstrap = await createDeps(readEnv());
   await runMigrations(bootstrap.db);
   deps = bootstrap;

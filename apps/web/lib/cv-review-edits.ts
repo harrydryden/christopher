@@ -1,5 +1,5 @@
-import type { CvContent } from "@ava/core/cv";
-import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@ava/core/cv-format";
+import type { CvContent } from "@col/core/cv";
+import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@col/core/cv-format";
 
 export type AddedSkillSection = { entryId: string; heading: string; items: string[]; sourceEntryId?: string };
 

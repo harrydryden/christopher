@@ -1,12 +1,12 @@
 /** Integration coverage for the planned CV path. No live model calls are made. */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { enqueueTask, listCvBuildSteps, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
-import type { CvAssessment, CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
-import { cvTailoringPlanForWriter, type CvTailoringPlan } from "@ava/core/cv-tailoring";
-import { dedupeKeyFor } from "@ava/core";
-import { DEFAULT_CV_THEME } from "@ava/core/cv";
+import { enqueueTask, listCvBuildSteps, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { RateLimitError, type AiClientLike, type ParseResponse } from "@col/ai";
+import type { CvAssessment, CvReviewPlan, CvRubric } from "@col/core/cv-assessment";
+import { cvTailoringPlanForWriter, type CvTailoringPlan } from "@col/core/cv-tailoring";
+import { dedupeKeyFor } from "@col/core";
+import { DEFAULT_CV_THEME } from "@col/core/cv";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -17,7 +17,7 @@ import { TaskQueue } from "./queue";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const USAGE = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 const rubric: CvRubric = { caveats: [], requirements: [
   { id: "lead", label: "Team leadership", quote: "Lead a team", importance: "essential", category: "experience" },
@@ -45,7 +45,7 @@ let userId: string;
 
 beforeAll(async () => {
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv());
   await runMigrations(deps.db);
   db = deps.db;

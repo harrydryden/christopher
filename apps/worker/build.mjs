@@ -1,6 +1,6 @@
 /**
  * Compiles the worker ahead of time for its image: `src/index.ts` and the workspace packages it
- * imports (`@ava/*`, which ship TypeScript) into one ES module, `dist/index.mjs`, which the image
+ * imports (`@col/*`, which ship TypeScript) into one ES module, `dist/index.mjs`, which the image
  * runs with plain `node`. Running from source under `tsx` kept the transpiler and its esbuild child
  * in the process for its whole life (docs/DEPLOY.md). Tests and the CLI still run from source with
  * `tsx`.
@@ -55,7 +55,7 @@ const externalDependencies = {
   name: "external-worker-dependencies",
   setup(b) {
     b.onResolve({ filter: /^[^./]/ }, args => {
-      if (args.path.startsWith("@ava/")) return undefined;
+      if (args.path.startsWith("@col/")) return undefined;
       const name = packageName(args.path);
       if (args.path.startsWith("node:") || isBuiltin(name) || existsSync(`${here}node_modules/${name}`)) return { path: args.path, external: true };
       return undefined;

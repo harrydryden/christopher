@@ -1,10 +1,10 @@
 /** Queue and scheduler behaviour against a real database. */
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@ava/db";
-import { AGEING_PRIORITY_FLOOR, cvBuildDeadlineMs, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
+import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@col/db";
+import { AGEING_PRIORITY_FLOOR, cvBuildDeadlineMs, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@col/core";
 import { ensureTestUser, testDatabaseUrl } from "./test-users";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -14,7 +14,7 @@ import { reconcileCvDrafts, schedulerTick, startScheduler } from "./scheduler";
 import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
 /** Every connection this file opens carries this name, so it can ask about its own sessions alone. */
-const SUITE = "ava-queue-test";
+const SUITE = "col-queue-test";
 const DATABASE_URL = testDatabaseUrl(SUITE);
 
 let deps: WorkerDeps;
@@ -26,7 +26,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.AVA_DISABLE_BROWSER = "1";
+  process.env.COL_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;
 }, 60_000);

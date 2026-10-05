@@ -33,7 +33,7 @@ secret as `STRIPE_WEBHOOK_SECRET`.
 - `charge.dispute.created`
 
 Enable plan changes, cancellation and payment-method updates in Stripe Customer Portal. Do not
-enable customer-controlled quantity changes: AVA previews and signs each company-capacity change
+enable customer-controlled quantity changes: Course of Life previews and signs each company-capacity change
 itself, limits the company-block price to Search and caps it at five blocks. Intensive already
 reaches the 200-company technical ceiling.
 

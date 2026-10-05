@@ -1,9 +1,9 @@
 /** Test helper: an account to act for, created once per email and reused across truncations. */
-import { createUser, schema, type Db } from "@ava/db";
+import { createUser, schema, type Db } from "@col/db";
 import { eq } from "drizzle-orm";
 
 /** The one database every suite defaults to, so `pnpm -r test` needs one database and no more. */
-export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
 /**
  * The test database, with every connection opened from it named for `suite`. `pg_stat_activity`

@@ -4,12 +4,12 @@
  * work carries no account at all, so both have to survive the trip to the table.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { aiFeatureLabel } from "@ava/core";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { aiFeatureLabel } from "@col/core";
 import { sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -18,7 +18,7 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTopStatements, getWebVitalsP75 } from "./health";
 import { getCvMotionMedians, resetCvMotionMedians } from "./cv";
 import { totalAiUsage } from "@/lib/ai-usage";
-import { aiOutcome, totalAiSpend } from "@ava/db";
+import { aiOutcome, totalAiSpend } from "@col/db";
 import { vitalBucket, vitalBucketValue } from "@/lib/web-vitals";
 
 /** The string packages/ai writes when it stops paying for a batch whose sibling has failed. */
@@ -373,7 +373,7 @@ it("shows what is running against its deadline, and what a crash handed back", a
 
   const { running: [running], retrying } = await activity();
   expect(running).toMatchObject({ type: "scan_company", subject: "Stripe", attempts: 109 });
-  // scan_company's three minutes, from the shared table in @ava/core.
+  // scan_company's three minutes, from the shared table in @col/core.
   expect(running!.deadlineMs).toBe(3 * MINUTE);
   expect(Date.now() - running!.startedAt!.getTime()).toBeGreaterThan(running!.deadlineMs);
 
@@ -598,7 +598,7 @@ it("estimates a motion from its finished runs only, and only once enough have fi
 
 import { countHealthItems, healthItemDetail, healthItemHeadline, healthItems, SOURCE_FAILING_AFTER } from "./health";
 import { formatUsd } from "@/lib/format";
-import { subscribeToCompany } from "@ava/db";
+import { subscribeToCompany } from "@col/db";
 import { createTestDb } from "@/test/db";
 
 async function resetAttention() {

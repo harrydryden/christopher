@@ -9,9 +9,9 @@
  *  - counts every outcome per host per day into `http_host_daily`
  */
 import { lookup } from "node:dns/promises";
-import { assertPublicHttpUrl, isIpLiteral, isPublicAddress, sha1, SourceFetchError, UnsafeUrlError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@ava/core";
-import { ats } from "@ava/core";
-import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@ava/db";
+import { assertPublicHttpUrl, isIpLiteral, isPublicAddress, sha1, SourceFetchError, UnsafeUrlError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@col/core";
+import { ats } from "@col/core";
+import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@col/db";
 import { log } from "./log";
 
 export interface FetcherOptions {
@@ -144,10 +144,11 @@ export function decodeBody(buf: Buffer, contentType: string | undefined): string
 }
 
 /**
- * The product tokens robots.txt groups are matched against: this worker's, and the one it had
- * before the rename, so a group a site wrote for the old name still applies to us.
+ * The product tokens robots.txt groups are matched against: this worker's, and the ones it had
+ * before the product was renamed (AVA, and before that Christopher), so a group a site wrote for
+ * an old name still applies to us.
  */
-const ROBOTS_TOKENS = ["avajobmonitor", "christopherjobmonitor"];
+const ROBOTS_TOKENS = ["courseoflifejobmonitor", "avajobmonitor", "christopherjobmonitor"];
 
 export interface RobotsRules {
   allow: string[];
@@ -939,5 +940,5 @@ export function statusKind(status: number): "blocked" | "rate_limited" | "http" 
 }
 
 export function userAgentFor(contactEmail: string): string {
-  return `Mozilla/5.0 (compatible; AVAJobMonitor/0.1; +mailto:${contactEmail})`;
+  return `Mozilla/5.0 (compatible; CourseOfLifeJobMonitor/0.1; +mailto:${contactEmail})`;
 }

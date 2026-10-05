@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import pg from "pg";
-import { createDb, enqueueTask, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { testDatabaseUrl } from "./test-users";
 import { claimTask, renewTask } from "./queue";
@@ -23,7 +23,7 @@ beforeAll(async () => {
     if (typeof q === "object" && q?.text) sent.push({ name: q.name, text: q.text, values: q.values ?? (Array.isArray(args[1]) ? args[1] : undefined) });
     return (original as (...a: unknown[]) => unknown).apply(this, args);
   };
-  ({ db, pool } = createDb(testDatabaseUrl("ava-prepared-test"), { max: 1 }));
+  ({ db, pool } = createDb(testDatabaseUrl("col-prepared-test"), { max: 1 }));
   await runMigrations(db);
 }, 60_000);
 afterAll(async () => {

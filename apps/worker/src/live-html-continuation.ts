@@ -4,16 +4,17 @@
  * disables paid AI and the browser, and executes an explicit number of real queue claims.
  *
  * Prepare a local database named ava_source_live on port 55439, then:
- *   DATABASE_URL=postgres://...@127.0.0.1:55439/ava_source_live pnpm --filter @ava/worker exec tsx src/live-html-continuation.ts --init
- *   SCRAPER_CONTACT_EMAIL=you@example.org DATABASE_URL=... pnpm --filter @ava/worker exec tsx src/live-html-continuation.ts --claims 2 --out /absolute/report.json
+ *   DATABASE_URL=postgres://...@127.0.0.1:55439/ava_source_live pnpm --filter @col/worker exec tsx src/live-html-continuation.ts --init
+ *   SCRAPER_CONTACT_EMAIL=you@example.org DATABASE_URL=... pnpm --filter @col/worker exec tsx src/live-html-continuation.ts --claims 2 --out /absolute/report.json
  * Repeat the second command in a fresh process with `--max-pages 80` to prove persistence:
  * the page ceiling is cumulative across processes, while each claim stages at most twenty pages.
  * `--finish --claims 30` permits a longer, still bounded follow-up once the short audit is reviewed.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { schema, enqueueTask } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { renamedEnv } from "@col/core";
+import { schema, enqueueTask } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
@@ -79,10 +80,10 @@ async function main() {
   if (!initialise && !outPath) throw new Error("--out needs an absolute JSON path for resumable evidence");
   if (outPath && !isAbsolute(outPath)) throw new Error("--out must be an absolute path");
   if (!initialise && !process.env.SCRAPER_CONTACT_EMAIL) throw new Error("Set SCRAPER_CONTACT_EMAIL for the public site's user agent");
-  if (process.env.AVA_HOST_MAP || process.env.CHRISTOPHER_HOST_MAP) throw new Error("Host mapping is forbidden in the public audit");
+  if (renamedEnv(process.env, "COL_HOST_MAP", "AVA_HOST_MAP", "CHRISTOPHER_HOST_MAP")) throw new Error("Host mapping is forbidden in the public audit");
   // A local scratch audit never receives provider credentials or starts Chromium, regardless of
   // what the invoking shell has configured for other work.
-  const env = readEnv({ ...process.env, DATABASE_URL: databaseUrl, ANTHROPIC_API_KEY: "", AVA_DISABLE_BROWSER: "1",
+  const env = readEnv({ ...process.env, DATABASE_URL: databaseUrl, ANTHROPIC_API_KEY: "", COL_DISABLE_BROWSER: "1",
     WORKER_CONCURRENCY: "1", CV_CONCURRENCY: "1", NODE_ENV: "development" });
   const deps = await createDeps(env);
   try {

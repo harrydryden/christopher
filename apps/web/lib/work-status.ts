@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
-import { cvDrafts, tasks } from '@ava/db/schema';
+import { cvDrafts, tasks } from '@col/db/schema';
 import { CV_PROGRESS_STALE_MS } from './cv-build-state';
 import { cache } from 'react';
 import { db } from './db';

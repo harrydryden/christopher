@@ -4,7 +4,7 @@
  * asked for while it runs gets one follow-up that reads the state as it is by then. CV builds are
  * the exception, one per draft whether queued or running.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql, type SQL } from "drizzle-orm";
@@ -14,7 +14,7 @@ import { runMigrations } from "./migrate";
 import { cvDrafts, tasks, users } from "./schema";
 import { activeTaskFor, enqueueTask, enqueueTasks, taskRow } from "./tasks";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 1 });
 beforeAll(() => runMigrations(db));
 // Scans and HTML continuation generations carry task foreign keys. This disposable fixture owns
 // no scan data, but Postgres still requires CASCADE when truncating a referenced parent table.

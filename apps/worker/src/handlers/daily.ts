@@ -1,5 +1,5 @@
-import { taskRow, companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTasks, type Task } from "@ava/db";
-import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@ava/core";
+import { taskRow, companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTasks, type Task } from "@col/db";
+import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";

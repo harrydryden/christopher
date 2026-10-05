@@ -35,15 +35,15 @@ import {
   usd,
   validateLibraryProposal,
   type TaskPayloads,
-} from "@ava/core";
-import { estimateLibraryImportUsd, type AiFailure } from "@ava/ai";
+} from "@col/core";
+import { estimateLibraryImportUsd, type AiFailure } from "@col/ai";
 import {
   completeLibraryImport,
   enqueueTask,
   getLibraryImportForWorker,
   type Db,
   type Task,
-} from "@ava/db";
+} from "@col/db";
 import { openAccountAiPass } from "../account-ai-pass";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { capDocumentText, DocumentReadError, documentToText, tidyDocumentText } from "../document-text";
@@ -61,7 +61,7 @@ const MAX_HOST_WAITS = 10;
  * What the person is told when the call returned nothing, by why it did. A provider that was
  * rate-limited, overloaded or dropped the connection, an answer cut off at its length limit, a
  * model the deployment cannot reach: none of those is anything wrong with the document, and
- * "AVA could not read that document" sent people off to re-export a file that was fine.
+ * "Course of Life could not read that document" sent people off to re-export a file that was fine.
  */
 function unansweredMessage(failure: AiFailure | undefined): string {
   switch (failure?.kind) {
@@ -70,13 +70,13 @@ function unansweredMessage(failure: AiFailure | undefined): string {
     case "connection":
     case "stalled":
     case "unknown":
-      return "AVA's model provider was too busy to read that document just now. Your document is kept: try this import again in a few minutes.";
+      return "Course of Life's model provider was too busy to read that document just now. Your document is kept: try this import again in a few minutes.";
     case "output_limit":
       return "Reading that document ran past the longest answer the model may give, so nothing was proposed. Your document is kept: try this import again, or paste the part of it that covers your career.";
     case "model_access":
-      return "AVA cannot reach its model at the moment, so the document was not read. Your document is kept: try this import again later.";
+      return "Course of Life cannot reach its model at the moment, so the document was not read. Your document is kept: try this import again later.";
     default:
-      return "AVA could not read that document. Try a different export of it, or paste the text instead.";
+      return "Course of Life could not read that document. Try a different export of it, or paste the text instead.";
   }
 }
 
@@ -153,7 +153,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
   const model = settings.cvModel;
   const pass = openAccountAiPass(deps, { userId, settings, callSite: "A11", model, refId: `library_import:${importId}`, signal: ctx?.signal });
   if (!pass.ai.enabled) {
-    return refuse("AVA cannot read documents at the moment: no model is configured. Your document is kept — try this import again once one is.", text);
+    return refuse("Course of Life cannot read documents at the moment: no model is configured. Your document is kept — try this import again once one is.", text);
   }
   const expected = estimateLibraryImportUsd(model, { documentBytes: Buffer.byteLength(text) });
   const admitted = await pass.admit(expected);
@@ -182,7 +182,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
       // The model answered something that is not a proposal at all. That is this document's
       // answer, not a fault the queue can retry away.
       if (error instanceof Error && error.name === "ZodError") {
-        return refuse("AVA could not make sense of that document. Try a different export of it, or paste the text instead.", text);
+        return refuse("Course of Life could not make sense of that document. Try a different export of it, or paste the text instead.", text);
       }
       throw error;
     }
@@ -228,7 +228,7 @@ async function websiteText(
     // A name that resolves into a private network is refused by the fetcher, and no retry makes it
     // public: that is an answer about the address, for the person to act on.
     if (error instanceof PrivateAddressError) {
-      return { error: `${host} points into a private network, so AVA will not fetch it. Use the address of your own public page, or paste its text instead.` };
+      return { error: `${host} points into a private network, so Course of Life will not fetch it. Use the address of your own public page, or paste its text instead.` };
     }
     const message = (error as Error)?.message ?? "";
     // A site that will not have us is an answer, not an outage: robots.txt is respected here as

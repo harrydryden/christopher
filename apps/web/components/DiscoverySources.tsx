@@ -1,10 +1,10 @@
 import { headers } from "next/headers";
 import { and, asc, desc, eq, sql, inArray } from "drizzle-orm";
-import { discoveryDocuments, discoverySources, tasks } from "@ava/db/schema";
+import { discoveryDocuments, discoverySources, tasks } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { discoverySourceHealth, notWorkingSources, SOURCE_KIND_LABELS } from "@/lib/discovery-ux";
-import { importOnlyReason } from "@ava/core";
+import { importOnlyReason } from "@col/core";
 import { checkDiscoverySource, importDiscoveryDocument, saveDiscoverySource, updateDiscoverySource } from "@/app/actions/discovery-sources";
 import { Button } from "./Button";
 import { Badge } from "./Badge";

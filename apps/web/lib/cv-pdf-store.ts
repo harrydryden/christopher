@@ -18,7 +18,7 @@
  */
 import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { cvPdfs } from "@ava/db/schema";
+import { cvPdfs } from "@col/db/schema";
 import { db } from "@/lib/db";
 
 /**

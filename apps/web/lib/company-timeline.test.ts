@@ -3,7 +3,7 @@
  * whole of it — including the elapsed figures — is testable without a database or a screenshot.
  */
 import { expect, it } from "vitest";
-import { deadlineFor } from "@ava/core";
+import { deadlineFor } from "@col/core";
 import {
   companySetupLine,
   narrateCompanySetup,

@@ -4,10 +4,10 @@ import {
   getCompanyEntitlement as readCompanyEntitlement,
   type BillingSummary,
   type BillingWriter,
-} from "@ava/db";
+} from "@col/db";
 import { db } from "@/lib/db";
 
-export type { BillingSummary } from "@ava/db";
+export type { BillingSummary } from "@col/db";
 
 export function getBillingSummary(userId: string): Promise<BillingSummary> {
   return readBillingSummary(db(), userId);

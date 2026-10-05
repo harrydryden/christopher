@@ -7,7 +7,7 @@
  * same address guard as the fetcher before it is sent. Chromium resolves names itself, so a name
  * that answers public to the guard and private to Chromium a moment later is not caught here.
  */
-import { SourceFetchError, type RenderedPage } from "@ava/core";
+import { SourceFetchError, type RenderedPage } from "@col/core";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { AddressGuard, explicitBotChallenge, type HttpTrafficLedger, type ResolveHost } from "./fetcher";
@@ -623,7 +623,7 @@ export class BrowserRenderer {
     const found = await page.evaluate(({ loadMore, next, limit }) => {
       const loadMoreText = new RegExp(loadMore.source, loadMore.flags);
       const nextText = new RegExp(next.source, next.flags);
-      document.querySelectorAll("[data-ava-listing-control]").forEach(el => el.removeAttribute("data-ava-listing-control"));
+      document.querySelectorAll("[data-col-listing-control]").forEach(el => el.removeAttribute("data-col-listing-control"));
       let examined = 0;
       for (const el of Array.from(document.querySelectorAll("button, a, [role=button]"))) {
         const text = (el.getAttribute("aria-label") || el.textContent || "").trim();
@@ -642,16 +642,16 @@ export class BrowserRenderer {
           // guarded browser may click it; every network request it starts is still checked.
           if (target.protocol !== "javascript:" && target.origin !== location.origin) continue;
         }
-        el.setAttribute("data-ava-listing-control", "");
+        el.setAttribute("data-col-listing-control", "");
         return "found";
       }
       return "none";
     }, { loadMore: { source: LOAD_MORE_TEXT.source, flags: LOAD_MORE_TEXT.flags }, next: { source: NEXT_TEXT.source, flags: NEXT_TEXT.flags }, limit: MAX_LISTING_CONTROL_CANDIDATES });
     if (found === "unparsable") throw new Error("A listing control has an unparsable link");
     if (found === "none") return false;
-    await page.locator("[data-ava-listing-control]").first().click({ timeout: 3000 });
+    await page.locator("[data-col-listing-control]").first().click({ timeout: 3000 });
     // The marker is ours, not the page's: it must not reach a snapshot.
-    await page.evaluate(() => document.querySelectorAll("[data-ava-listing-control]").forEach(el => el.removeAttribute("data-ava-listing-control"))).catch(() => undefined);
+    await page.evaluate(() => document.querySelectorAll("[data-col-listing-control]").forEach(el => el.removeAttribute("data-col-listing-control"))).catch(() => undefined);
     return true;
   }
 

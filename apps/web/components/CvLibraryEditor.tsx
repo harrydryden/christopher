@@ -1,8 +1,8 @@
 "use client";
 import { startTransition, useActionState, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
-import { EVIDENCE_FACET_PROMPTS, employmentCompanyGroups, employmentHeading, isActiveEvidence, responsibilityRows, rowFacets, type EvidenceFacet } from "@ava/core/cv-helpers";
-import type { CvLibrary, Employment } from "@ava/core/cv";
+import { EVIDENCE_FACET_PROMPTS, employmentCompanyGroups, employmentHeading, isActiveEvidence, responsibilityRows, rowFacets, type EvidenceFacet } from "@col/core/cv-helpers";
+import type { CvLibrary, Employment } from "@col/core/cv";
 import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { cvJobReadiness, cvLibraryReadiness } from "@/lib/cv-ready";
 import type { OpenedCvLibrary } from "@/lib/cv-library-open";
@@ -16,7 +16,7 @@ import { RowScoreButton } from "./RowScoreButton";
 import { EvidenceGuide } from "./EvidenceGuide";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
-import { CV_LIMITS, cvSkillCharacterState } from "@ava/core/cv-format";
+import { CV_LIMITS, cvSkillCharacterState } from "@col/core/cv-format";
 import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList, splitCvLibrarySkillItem } from "@/lib/cv-skill-list";
 
 const input = inputClass;
@@ -286,7 +286,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     const url = URL.createObjectURL(new Blob([JSON.stringify(recovery.original, null, 2)], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `ava-library-unsaved-v${recovery.version - 1}.json`;
+    link.download = `col-library-unsaved-v${recovery.version - 1}.json`;
     document.body.append(link);
     link.click();
     link.remove();

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 
 let database: Db;
@@ -11,7 +11,7 @@ let forwardedFor = "198.51.100.20";
 
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({
-  headers: async () => new Headers({ host: "ava.test", "x-forwarded-for": forwardedFor }),
+  headers: async () => new Headers({ host: "col.test", "x-forwarded-for": forwardedFor }),
   cookies: async () => ({ get: () => undefined, set: vi.fn(), delete: vi.fn() }),
 }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));

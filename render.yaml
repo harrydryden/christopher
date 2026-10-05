@@ -7,9 +7,9 @@
 # dashboard, and a change here does nothing to them. The dashboard is the source of truth for the
 # deployed service; change a value there as well as here. docs/DEPLOY.md lists what to compare.
 databases:
-  - name: ava-db
-    databaseName: ava
-    user: ava
+  - name: col-db
+    databaseName: col
+    user: col
     region: frankfurt        # beside the interface, which Vercel runs in fra1 (apps/web/vercel.json)
     plan: basic-256mb        # the free tier expires after 30 days; do not use it here
     # Storage is set apart from the plan. 1 GB, the smallest, is outgrown well before 1,000 accounts
@@ -20,7 +20,7 @@ databases:
 
 services:
   - type: web                # a web service, not a cron job: the scheduler must always be running
-    name: ava-worker
+    name: col-worker
     runtime: docker
     region: frankfurt        # the same region as the database, so the internal URL works
     plan: starter            # starter never sleeps; the free tier does
@@ -47,7 +47,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: ava-db
+          name: col-db
           property: connectionString
       - key: ANTHROPIC_API_KEY
         sync: false          # set this in the Render dashboard

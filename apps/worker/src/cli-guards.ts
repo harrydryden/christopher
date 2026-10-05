@@ -7,8 +7,8 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { schema, type Db } from "@ava/db";
-import { extractDomain } from "@ava/core";
+import { schema, type Db } from "@col/db";
+import { extractDomain } from "@col/core";
 import { asc, eq, or, sql, type SQL } from "drizzle-orm";
 
 export interface JournalEntry {
@@ -25,7 +25,7 @@ type Executor = Pick<Db, "execute">;
 
 /** The migrations this checkout ships, from the same folder `runMigrations` applies. */
 export function readJournal(): JournalEntry[] {
-  const folder = join(dirname(createRequire(import.meta.url).resolve("@ava/db/migrate")), "..", "drizzle");
+  const folder = join(dirname(createRequire(import.meta.url).resolve("@col/db/migrate")), "..", "drizzle");
   const journal = JSON.parse(readFileSync(join(folder, "meta", "_journal.json"), "utf8")) as { entries: JournalEntry[] };
   return journal.entries.map(({ tag, when }) => ({ tag, when }));
 }

@@ -10,7 +10,7 @@ import { linkedProviders } from "@/lib/accounts";
 import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
 import { googleConfigured } from "@/lib/google";
-import { MIN_PASSWORD_LENGTH } from "@ava/core";
+import { MIN_PASSWORD_LENGTH } from "@col/core";
 import { getBillingSummary } from "@/lib/billing/service";
 import { addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout } from "@/app/actions/billing";
 import { getCompanyCapacityQuote } from "@/lib/billing/company-capacity";

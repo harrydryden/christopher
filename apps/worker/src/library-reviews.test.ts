@@ -10,14 +10,14 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
   createDb, latestLibraryReviews, latestModelReviewsByEntry, libraryReviewsSignature, pruneLibraryReviews, schema,
   upsertLibraryReviews, type Db, type LibraryReviewUpsert,
-} from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { detectEvidenceMarks, normaliseLibraryReview, rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@ava/core";
+} from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { detectEvidenceMarks, normaliseLibraryReview, rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@col/core";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const now = new Date("2026-09-19T09:00:00Z");
 const later = new Date("2026-09-19T10:00:00Z");
 

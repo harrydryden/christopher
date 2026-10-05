@@ -5,23 +5,23 @@
  * through the quote anchoring it shares with the CV assessment, so it cannot be loaded in a browser
  * — and the Library editor is a client component that has to say, live as somebody types and tags
  * a row, what that row is still missing. So the shapes and the sentences live here, the arithmetic
- * stays in core (`@ava/core/evidence-rubric` is the browser-safe half of it: the marks, the
+ * stays in core (`@col/core/evidence-rubric` is the browser-safe half of it: the marks, the
  * checklists and `scoreRowAgainst`), and `cv-library-reviews.ts` is where the stored reviews meet
  * this on the server.
  *
  * Nothing here gates anything. A block rated None is still active evidence if the person says so.
  */
-import { EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_LABELS, evidenceRows, rowFacets, type EvidenceFacet } from "@ava/core/cv-helpers";
-import type { CvLibrary } from "@ava/core/cv";
+import { EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_LABELS, evidenceRows, rowFacets, type EvidenceFacet } from "@col/core/cv-helpers";
+import type { CvLibrary } from "@col/core/cv";
 // Types only: the scorer they belong to reaches `node:crypto` and never reaches the browser.
-import type { EvidenceRating, LibraryReviewSource } from "@ava/core/library-review";
+import type { EvidenceRating, LibraryReviewSource } from "@col/core/library-review";
 import {
   EVIDENCE_MARK_SPECS,
   detectEvidenceMarks,
   scoreRowAgainst,
   scoredAsLine,
   type EvidenceMark,
-} from "@ava/core/evidence-rubric";
+} from "@col/core/evidence-rubric";
 
 type CvEntry = CvLibrary["entries"][number];
 

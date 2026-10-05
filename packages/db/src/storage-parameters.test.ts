@@ -3,7 +3,7 @@
  * autovacuum thresholds for the tables that churn, and JIT off for the database, which a role that
  * does not own the database skips with a notice instead of failing the migration.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -12,7 +12,7 @@ import { sql } from "drizzle-orm";
 import { createDb } from "./client";
 import { runMigrations } from "./migrate";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 const { db, pool } = createDb(DATABASE_URL, { max: 1 });
 beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
@@ -69,10 +69,10 @@ describe("JIT", () => {
     client.on("notice", listen);
     try {
       await client.query("begin");
-      await client.query("create role ava_test_not_owner nologin");
-      await client.query("set local role ava_test_not_owner");
+      await client.query("create role col_test_not_owner nologin");
+      await client.query("set local role col_test_not_owner");
       await client.query(guarded);
-      expect(notices.some(message => message.includes("jit left as it is") && message.includes("ava_test_not_owner"))).toBe(true);
+      expect(notices.some(message => message.includes("jit left as it is") && message.includes("col_test_not_owner"))).toBe(true);
     } finally {
       await client.query("rollback");
       client.off("notice", listen);

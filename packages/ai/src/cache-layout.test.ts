@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cvTailoringEvidence, groupCvLibrary, type CvLibrary } from "@ava/core";
-import { cvEvidenceItems } from "@ava/core/cv-assessment";
+import { cvTailoringEvidence, groupCvLibrary, type CvLibrary } from "@col/core";
+import { cvEvidenceItems } from "@col/core/cv-assessment";
 import { createAiEngine, type AiClientLike, type AiUsageRecord, type ParseResponse } from "./engine";
 import { canonicalEvidence, canonicalEvidenceBlock, canonicalEvidenceItems, evidenceBlockId } from "./evidence";
 import { estimateCostUsd } from "./pricing";

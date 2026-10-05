@@ -26,7 +26,7 @@ export function LibraryImportCard() {
         <section className="grid gap-2">
           <h3 className="ds-pixel text-12 text-fg">Upload a CV</h3>
           <p className="text-12 text-muted">
-            PDF or Word, up to 5 MB. For LinkedIn, upload its More → Save to PDF export. AVA does not read LinkedIn itself.
+            PDF or Word, up to 5 MB. For LinkedIn, upload its More → Save to PDF export. Course of Life does not read LinkedIn itself.
           </p>
           <LibraryImportForm action={importLibraryDocument} submitLabel="Import document" pendingLabel="Uploading…">
             <input type="hidden" name="kind" value="cv" />

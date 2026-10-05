@@ -2,9 +2,9 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { recordWorkerEvent, type Db } from "@ava/db";
-import { aiBreakerStats, aiGovernorStats, defaultBreaker } from "@ava/ai";
-import { runMigrations } from "@ava/db/migrate";
+import { recordWorkerEvent, type Db } from "@col/db";
+import { aiBreakerStats, aiGovernorStats, defaultBreaker } from "@col/ai";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { enqueueBootGateReevaluation, probeConfiguredModels, seedTagVocabularies } from "./boot";
 import { createDeps } from "./context";
@@ -19,8 +19,8 @@ import { startScheduler } from "./scheduler";
 import { TaskWakeup } from "./task-wakeup";
 import { vitals } from "./vitals";
 import { stopOtel, traceHandlers } from "./otel";
-import { renderCvPdf } from "@ava/core/cv-pdf";
-import { DEFAULT_CV_THEME } from "@ava/core/cv-theme-values";
+import { renderCvPdf } from "@col/core/cv-pdf";
+import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
 
 async function main() {
   const env = readEnv();
@@ -174,7 +174,7 @@ async function reviveRateLimitedSources(db: Db): Promise<void> {
 }
 
 async function verifyPdfBundle() {
-  for (const font of ["AVA", "Arial"] as const) {
+  for (const font of ["Course of Life", "Arial"] as const) {
     const pdf = await renderCvPdf({
       name: "PDF bundle check", contact: "London", summary: "Operations leader",
       sections: [{ entryId: "role", kind: "experience", heading: "Director · Example", bullets: ["Led operations."] }],
@@ -182,7 +182,7 @@ async function verifyPdfBundle() {
     });
     if (!pdf.subarray(0, 5).equals(Buffer.from("%PDF-"))) throw new Error(`${font} did not render a PDF`);
   }
-  console.log("worker PDF bundle check passed (AVA and Arial)");
+  console.log("worker PDF bundle check passed (Course of Life and Arial)");
 }
 
 (process.argv.includes("--verify-pdf") ? verifyPdfBundle() : main()).catch((err) => {

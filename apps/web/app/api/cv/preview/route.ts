@@ -1,4 +1,4 @@
-import { CvContentSchema } from "@ava/core/cv";
+import { CvContentSchema } from "@col/core/cv";
 import { routeUser } from "@/lib/route-auth";
 import { readCapped } from "@/lib/route-request";
 import { renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";

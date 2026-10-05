@@ -28,14 +28,14 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ava_test
+          POSTGRES_DB: col_test
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
-      AVA_DISABLE_BROWSER: "1"
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_test
+      COL_DISABLE_BROWSER: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -68,14 +68,14 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ava_test
+          POSTGRES_DB: col_test
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
-      AVA_DISABLE_BROWSER: "1"
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_test
+      COL_DISABLE_BROWSER: "1"
       PGOPTIONS: "-c enable_indexscan=off -c enable_bitmapscan=off"
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @ava/worker exec vitest run --sequence.shuffle.files --sequence.seed ${{ github.run_number }}
+      - run: pnpm --filter @col/worker exec vitest run --sequence.shuffle.files --sequence.seed ${{ github.run_number }}
 
   # Everything that needs a real browser: the headless Chromium test and the smoke
   # run, which builds the interface, signs in, fetches every page and drives the CV
@@ -100,14 +100,14 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ava_test
+          POSTGRES_DB: col_test
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
-      AVA_DISABLE_BROWSER: "1"
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_test
+      COL_DISABLE_BROWSER: "1"
     steps:
       - uses: actions/checkout@v4
       # Restored before install, so the key never sees a node_modules tree.
@@ -129,7 +129,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Read the installed Playwright version
         id: playwright
-        run: echo "version=$(pnpm --filter @ava/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(pnpm --filter @col/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
       # Keyed on that version, so a Playwright bump downloads Chromium again and
       # nothing else does. The install step below still runs: on a hit it skips the
       # download and only settles the operating system packages.
@@ -138,10 +138,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      - run: pnpm --filter @ava/worker exec playwright install --with-deps chromium
-      - run: pnpm --filter @ava/worker exec vitest run src/browser.test.ts
+      - run: pnpm --filter @col/worker exec playwright install --with-deps chromium
+      - run: pnpm --filter @col/worker exec vitest run src/browser.test.ts
         env:
-          AVA_DISABLE_BROWSER: "0"
+          COL_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
       - run: pnpm smoke:web
       # The smoke run has just built .next; each route's first-load JavaScript, gzipped, against
@@ -162,13 +162,13 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ava_test
+          POSTGRES_DB: col_test
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
-      AVA_DISABLE_BROWSER: "1"
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_test
+      COL_DISABLE_BROWSER: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Restore the Next.js build cache
@@ -188,7 +188,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate
-      - run: pnpm --filter @ava/web build
+      - run: pnpm --filter @col/web build
         env:
           SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
       # Seeds a disposable signed-in account as smoke-web does, and deletes it in a finally.
@@ -215,7 +215,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ava_test
+          POSTGRES_DB: col_test
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
@@ -227,16 +227,16 @@ jobs:
         with:
           context: .
           load: true
-          tags: ava-worker:ci
+          tags: col-worker:ci
           cache-from: type=gha,scope=worker-image
           cache-to: type=gha,scope=worker-image,mode=max
       - name: Boot the image against the job's database and wait for /healthz
         run: |
           docker run -d --name worker --network host \
-            -e DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_test \
-            -e AVA_DISABLE_BROWSER=1 -e PORT=8080 \
-            -e SCRAPER_CONTACT_EMAIL=ci@ava.dev -e ADMIN_EMAILS=ci@ava.dev \
-            ava-worker:ci
+            -e DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/col_test \
+            -e COL_DISABLE_BROWSER=1 -e PORT=8080 \
+            -e SCRAPER_CONTACT_EMAIL=ci@col.dev -e ADMIN_EMAILS=ci@col.dev \
+            col-worker:ci
           for attempt in $(seq 1 45); do
             if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"ok":true'; then healthy=1; break; fi
             sleep 2

@@ -10,7 +10,7 @@ import {
   type CvBuildCosts,
   type ScoredRoleCost,
   type StatementTotals,
-} from "@ava/db";
+} from "@col/db";
 import {
   cvBuildSteps,
   discoveryRuns,
@@ -26,10 +26,10 @@ import {
   SOURCE_TYPES,
   type Task,
   type WorkerEventKind,
-} from "@ava/db/schema";
+} from "@col/db/schema";
 // The deadline table lives in packages/core so the interface can say how long a running task has
 // left without importing the worker.
-import { aiBudgetWindowStart, aiFeatureLabel, deadlineFor, resolveSystemSettings } from "@ava/core";
+import { aiBudgetWindowStart, aiFeatureLabel, deadlineFor, resolveSystemSettings } from "@col/core";
 import { cache } from "react";
 import { aiUsageKey, groupAiUsage, type AiUsageGroup, type AiUsagePercentiles } from "@/lib/ai-usage";
 import { accountAiBudget, budgetFromRow, budgetSelect, defaultAccountAiBudget, type BudgetRow } from "@/lib/queries/accounts";
@@ -1168,7 +1168,7 @@ export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanI
  * ------------------------------------------------------------------------------------------- */
 
 /** The worker's threshold, named here so Health says the same figure the scan handler acts on. */
-import { SOURCE_FAILING_AFTER } from "@ava/core";
+import { SOURCE_FAILING_AFTER } from "@col/core";
 export { SOURCE_FAILING_AFTER };
 
 export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "suspect_empty" | "partial" | "incomplete_read" | "rediscovery";

@@ -3,9 +3,9 @@
 import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { cvLibraries, decisions, tagVocabulary, userJobs } from "@ava/db/schema";
-import { accountCanScore, lockAccountScoreInput } from "@ava/db";
-import { evaluateLocation } from "@ava/core";
+import { cvLibraries, decisions, tagVocabulary, userJobs } from "@col/db/schema";
+import { accountCanScore, lockAccountScoreInput } from "@col/db";
+import { evaluateLocation } from "@col/core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";

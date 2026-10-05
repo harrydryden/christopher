@@ -1,4 +1,4 @@
-# AVA performance tuning guide
+# Course of Life performance tuning guide
 
 Scope: the Next.js 15.5 interface on Vercel (fra1), the Node worker on Render (Frankfurt) and Render Postgres 16 behind PgBouncer, as of 27 September 2026; statuses reflect `main` at commit `069cdef` (PR #81 merged) and the production database as checked today.
 
@@ -65,7 +65,7 @@ Response classes today, the basis for this section's cache policy:
 
 - **1.5 Compression by Vercel's edge** (done by platform [I]). Brotli, falling back to gzip, on streamed HTML and `text/x-component`; Next's `compress` applies only to `next start`. `/` is 243,479 B of HTML and 22,117 B gzip (11×) [M A-after §1]; Brotli is about 10–15 % smaller [M C]. Never set `content-encoding` in a handler. Check: `curl -sI -H 'Accept-Encoding: br' https://<host>/login | grep -i content-encoding` expects `br`.
 - **1.6 One origin over HTTP/2 and HTTP/3** (done [V] for same-origin; protocol [I]). Fonts are self-hosted by `next/font`, no third-party scripts [M C]. The only cross-origin fetches are uncaptured favicon fallbacks in `lib/company-icon.ts`, lazy and off the critical path. Check: DevTools Protocol column or `curl --http3 -I`.
-- **1.7 Session as a 105 B signed id with a database row** (done [V]). `ava_session=v2.<uuid>.<epoch>.<HMAC>`, `HttpOnly`, `SameSite=Lax`, `Secure`, 30 days (`lib/auth.ts:101-107`); one indexed join per request memoised with `cache()` (`auth.ts:21`); `lastSeenAt` throttled hourly (`auth.ts:34-36`, made safe in 4.6). Remove the `christopher_session` fallback after 2026-10-23 (`session.ts:17-20`).
+- **1.7 Session as a 105 B signed id with a database row** (done [V]). `col_session=v2.<uuid>.<epoch>.<HMAC>`, `HttpOnly`, `SameSite=Lax`, `Secure`, 30 days (`lib/auth.ts:101-107`); one indexed join per request memoised with `cache()` (`auth.ts:21`); `lastSeenAt` throttled hourly (`auth.ts:34-36`, made safe in 4.6). Remove the `christopher_session` fallback after 2026-10-23 (`session.ts:17-20`).
 - **1.8 Global state in Postgres, not instance memory** (done [V]). Sessions, `tasks`, rate limits (`lib/rate-limit.ts`) and settings live in the database. The one per-instance cache, `lib/scan-run-report.ts:16-18`, is 30 s, 1,000 entries, keyed `runId|userId`.
 
 #### Evaluated and not recommended
@@ -300,14 +300,14 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
 Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_buffers` 64MB, `work_mem` 1654kB, `max_connections` 103, `random_page_cost` 1.1, role-level `statement_timeout` 30s and `idle_in_transaction_session_timeout` 1min, database 55 MB, 2 connections open idle. Local measurements use `ava_perf_infra` (148,000 postings, 60,000 tasks, 130,000 `job_events`), `EXPLAIN (ANALYZE, BUFFERS)`, median of 5, `work_mem = 1654kB` [M G4].
 
 **4.1 Budget PostgreSQL backends, not PgBouncer client slots.**
-- Mechanism: append `application_name=ava-web` / `ava-worker` to each `DATABASE_URL` (node-pg reads it; PgBouncer tracks it in transaction mode); keep `WEB_DB_POOL_MAX × peak concurrent web instances ≤ 60`; alert at 80 client backends (`select count(*) from pg_stat_activity where backend_type = 'client backend'`; delivery in 5.5). Optional: `CREATE ROLE ava_web LOGIN … CONNECTION LIMIT 60` [I: whether Render lets the default user create roles is unverified].
+- Mechanism: append `application_name=col-web` / `col-worker` to each `DATABASE_URL` (node-pg reads it; PgBouncer tracks it in transaction mode); keep `WEB_DB_POOL_MAX × peak concurrent web instances ≤ 60`; alert at 80 client backends (`select count(*) from pg_stat_activity where backend_type = 'client backend'`; delivery in 5.5). Optional: `CREATE ROLE col_web LOGIN … CONNECTION LIMIT 60` [I: whether Render lets the default user create roles is unverified].
 - Arithmetic:
   - Render PgBouncer: `pool_mode = transaction`, `default_pool_size = max_db_connections = 93`, `max_client_conn = 30000`, `client_idle_timeout = 86400` (Render docs); `max_connections` 103 confirmed in production [V].
   - Client slots (6 per warm instance plus 6 for the cron fallback) are not a limit.
   - Backends are: 93 via PgBouncer plus the worker's 26 direct = 119 > 100 usable (103 − 3 reserved).
   - PgBouncer keeps server connections for `server_idle_timeout` (default 600 s [I: not exposed by Render]), so after a web burst a worker reconnect, migration or `psql` can fail with `sorry, too many clients already` for up to 10 minutes.
   - About 67 simultaneous web transactions (12 instances × 6) reach it [I]; observed live peak 8 [M HOSTED-CAPACITY].
-- Status: done [V] (commit d745150): `application_name` `ava-web` / `ava-worker` / `ava-web-cron` via pg's option (a URL value wins); `databaseBackends()` exported from `@ava/db` for 5.5; cap 60 and alert 80 in DEPLOY.md. Separate role not done (M, Render permission unverified).
+- Status: done [V] (commit d745150): `application_name` `col-web` / `col-worker` / `col-web-cron` via pg's option (a URL value wins); `databaseBackends()` exported from `@col/db` for 5.5; cap 60 and alert 80 in DEPLOY.md. Separate role not done (M, Render permission unverified).
 - Impact: prevents an outage that hits every account at once. A scan that cannot connect is a failed scan, never a closure, because only a successful scan closes a role; but CV builds and claims stall.
 - Effort: S (tagging, alert), M (separate role). Risk → guard: a role limit fails web transactions first, which retry; `WEB_DB_POOL_MAX` stays the fast lever (DEPLOY.md step 5).
 
@@ -374,8 +374,8 @@ Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_bu
 - Effort: S each. Risk → guard: keeps the latest successful snapshot per source, which closure reuse and suggestions read; add a `maintenance.test.ts` case.
 
 **4.8 Set `jit = off` for the database.**
-- Mechanism: `ALTER DATABASE ava SET jit = off;` Do not set `idle_session_timeout`: it would kill PgBouncer's idle server connections.
-- Status: done [V] (commit 4410996): `ALTER DATABASE <current> SET jit = off` in 0043, skipped with a NOTICE when the migrating role does not own the database. Impact: no captured plan crosses `jit_above_cost` (100,000; largest about 10,000) today; a catalogue-wide admin or export query at scale would pay 50–200 ms to compile [I]. Effort: S. Risk → guard: revert with `ALTER DATABASE ava RESET jit`.
+- Mechanism: `ALTER DATABASE col SET jit = off;` Do not set `idle_session_timeout`: it would kill PgBouncer's idle server connections.
+- Status: done [V] (commit 4410996): `ALTER DATABASE <current> SET jit = off` in 0043, skipped with a NOTICE when the migrating role does not own the database. Impact: no captured plan crosses `jit_above_cost` (100,000; largest about 10,000) today; a catalogue-wide admin or export query at scale would pay 50–200 ms to compile [I]. Effort: S. Risk → guard: revert with `ALTER DATABASE col RESET jit`.
 
 **4.9 Leave `basic-256mb` at a stated threshold.**
 - Mechanism: move to `basic-1gb` (`shared_buffers` about 256 MB) when `select sum(heap_blks_hit)::float / nullif(sum(heap_blks_hit + heap_blks_read), 0) from pg_statio_user_tables` falls below 0.99 over a day, or `pg_total_relation_size('user_jobs') + pg_indexes_size('jobs')` exceeds about 150 MB (≈ 700 accounts at 1,000 views).
@@ -469,7 +469,7 @@ Today [V]: four CI jobs, wall clock 8m17s (`check` 8m14s, of which `pnpm -r test
 - Impact: counts are deterministic where ms on shared runners is not. Effort: M. Risk → guard: update `baseline.json` in the PR with the reason.
 
 **5.9 Distributed tracing on three spans, sampled at 10 %.**
-- Mechanism: `apps/web/instrumentation.ts` with `registerOTel({ serviceName: 'ava-web', traceSampler: 'traceidratio' })`, `OTEL_TRACES_SAMPLER_ARG=0.1`, `@opentelemetry/instrumentation-pg` with `enhancedDatabaseReporting: false`.
+- Mechanism: `apps/web/instrumentation.ts` with `registerOTel({ serviceName: 'col-web', traceSampler: 'traceidratio' })`, `OTEL_TRACES_SAMPLER_ARG=0.1`, `@opentelemetry/instrumentation-pg` with `enhancedDatabaseReporting: false`.
   - Worker: `@opentelemetry/sdk-node` plus pg and undici instrumentation, manual spans `task.run`, `model.call` (model, call site, token and cache-read counts), `scan.fetch`; trace id in log lines via AsyncLocalStorage; no user id, email or CV text as attributes.
 - Status: done [V] (commit dfe79f9), off by default (needs `OTEL_SDK_DISABLED=false` and an OTLP endpoint). The interface has Next's spans only: the web package has no pg instrumentation dependency. Impact: splits a slow page into DB wait and render (A-after §3 did it by hand: 45–57 ms render against about 18 ms SQL wall). Effort: M. Risk → guard: memory on the 512 MB worker; `maxQueueSize: 512`, ship with `OTEL_SDK_DISABLED=true` until an endpoint exists, watch heap for a week.
 

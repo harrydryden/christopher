@@ -3,7 +3,7 @@
  * in the current one, so steady traffic reads as steady rather than as growth.
  */
 import { expect, it } from "vitest";
-import { emptyHttpCounters, type HttpHostDailyRow } from "@ava/db";
+import { emptyHttpCounters, type HttpHostDailyRow } from "@col/db";
 import { dayKey, foldOutboundTraffic } from "./outbound-traffic";
 
 const NOW = new Date("2026-09-23T15:00:00Z");

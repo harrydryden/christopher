@@ -20,7 +20,7 @@ describe("instrumentation", () => {
     expect(registerOTel).not.toHaveBeenCalled();
   });
 
-  it("registers ava-web with a trace-id ratio sampler at 10 % when enabled on Node, and never on the edge", async () => {
+  it("registers col-web with a trace-id ratio sampler at 10 % when enabled on Node, and never on the edge", async () => {
     vi.stubEnv("OTEL_SDK_DISABLED", "false");
     vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
     vi.stubEnv("OTEL_TRACES_SAMPLER_ARG", undefined as unknown as string);
@@ -29,7 +29,7 @@ describe("instrumentation", () => {
     expect(registerOTel).not.toHaveBeenCalled();
     vi.stubEnv("NEXT_RUNTIME", "nodejs");
     await register();
-    expect(registerOTel).toHaveBeenCalledWith({ serviceName: "ava-web", traceSampler: "traceidratio" });
+    expect(registerOTel).toHaveBeenCalledWith({ serviceName: "col-web", traceSampler: "traceidratio" });
     expect(process.env.OTEL_TRACES_SAMPLER_ARG).toBe("0.1");
   });
 });

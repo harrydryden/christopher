@@ -29,15 +29,15 @@ import {
   resolveRoute,
   type PromptId,
   type StageRoutes,
-} from "@ava/ai";
+} from "@col/ai";
 import {
   CV_STAGE_ALLOWANCE_MS,
   type CvBuildCheckpoint,
   type CvBuildMotion,
   type CvBuildStageName,
-} from "@ava/core";
-import { CvBuildStop } from "@ava/core/cv-build-failure";
-import type { CvClaimItem, CvRubric } from "@ava/core/cv-assessment";
+} from "@col/core";
+import { CvBuildStop } from "@col/core/cv-build-failure";
+import type { CvClaimItem, CvRubric } from "@col/core/cv-assessment";
 import { log } from "../log";
 
 /** The version of the prompts every checkpoint entry is pinned to: the model package's registry hash. */

@@ -15,7 +15,7 @@ export function WorkspaceMenu({ children, mobilePlan }: { children: ReactNode; m
     if (event.key === "Escape" && open) { setOpen(false); button.current?.focus(); }
   }}>
     <div className="flex items-center justify-between gap-3 md:mb-4">
-      <Link prefetch={false} href="/" className="flex min-h-11 items-center text-brand-ink" aria-label="Course of Life home"><Wordmark size={48} /></Link>
+      <Link prefetch={false} href="/" className="flex min-h-11 items-center text-brand-ink" aria-label="Course of Life home"><Wordmark size={32} /></Link>
       <div className="flex min-w-0 items-center gap-3 md:hidden">
         {mobilePlan}
         <button ref={button} type="button" aria-controls="workspace-menu" aria-expanded={open}

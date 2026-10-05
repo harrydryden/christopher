@@ -6,12 +6,14 @@
  *   pnpm exec tsx scripts/generate-brand-assets.ts
  *
  * Writes:
- *   apps/web/app/icon.svg          the small mark, what the tab shows: the Course of Life mark on
- *                                  its 16-cell tile, brand green on a transparent ground
+ *   apps/web/app/icon.svg          the small mark, what the tab shows: the Course of Life mark (a
+ *                                  C-shaped path with a point at its opening) on its 16-cell tile,
+ *                                  brand green on a transparent ground
  *   apps/web/app/favicon.ico       16/32/48 PNGs of it in one container
  *   apps/web/app/apple-icon.png    192px, the mark at 144 centred on white
  *   apps/web/public/brand/…        the mark (mark*), the small mark (mark-small*) and the stacked
- *                                  wordmark (wordmark*) in currentColor, brand green and light
+ *                                  wordmark (wordmark*, COURSE over OF.LIFE, 50×16 cells) in
+ *                                  currentColor, brand green and light
  *                                  green, as SVG and PNG; and the manifest icons, including a
  *                                  maskable one with the mark inside the safe zone
  */
@@ -66,7 +68,7 @@ const MARK_SMALL: Artwork = {
 const WORDMARK: Artwork = {
   width: WORDMARK_WIDTH,
   height: WORDMARK_TILE,
-  label: "course of.life",
+  label: "Course of Life",
   layers: [{ glyphs: WORDMARK_GLYPHS, paths: [WORDMARK_PATH] }],
 };
 

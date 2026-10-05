@@ -145,8 +145,11 @@ Stepped, never eased. `ease-step-2` and `ease-step-4`, at 120/240/480ms.
 While something is loading, a blank pixel passes through the mark: one cell
 painted in the ground colour (`--mark-ground`, the page white, or the green
 inside `ds-on-brand`) steps through the artwork's filled cells in plotter order
-— columns left to right, each column top to bottom — one cell per 48ms beat,
+— columns left to right, each column top to bottom — one cell per 32ms beat,
 stepped rather than interpolated, looping, as if the mark were being redrawn.
+The beat is the same for every form, so a bigger artwork takes longer rather
+than moving faster: the small mark's 63 cells come round in 2s, the mark's 96 in
+3.1s, the wordmark's 187 in 6s.
 The mark is still everywhere except the one loading indicator in view.
 `prefers-reduced-motion` stops every CSS animation and hides the blank cell, so
 the mark simply stands still.
@@ -167,13 +170,12 @@ opacity.
 
 ## The mark
 
-The mark is a point with three paths leaving it: a fork in the road. It is
-drawn on a 24×24 cell tile with 2-cell strokes — a 4×4 point at the centre, one
-path straight up, and two that leave the point's lower corners heading outward
-and steepen to vertical — so the three meet the tile's edge (two empty cells in)
-at the top and the bottom. The top path is straight so the mark stays
-mirror-symmetric, which a square grid renders exactly; the two below it arch.
-With the wordmark it is the only graphic in the product. The glyph rows live in
+The mark is a C-shaped path and a point. The path is the wordmark's own C — a
+square pixel C with its corners cut by one stroke — drawn on a 24×24 cell tile
+with 2-cell strokes, and a 4×4 point sits at its opening on the baseline, lower
+right, where the path leads: a course, and where it arrives. The point is at the
+opening rather than the centre because a point inside a C reads as a copyright
+sign. With the wordmark it is the only graphic in the product. The glyph rows live in
 `components/brand/mark-cells.ts` and are the single source: `Mark.tsx`,
 `MarkSmall.tsx` and `Wordmark.tsx` render them on the page, and
 `scripts/generate-brand-assets.ts` renders the favicon, the installed-app icons,
@@ -189,15 +191,17 @@ the page can never drift.
   would put two thirds of a pixel in each cell. It is the favicon (green on a
   transparent ground), the status strip's mark, and every inline loading
   indicator at 16px.
-- **The wordmark.** `Wordmark` is the domain, stacked: `course` over `of.life`,
-  lowercase pixel letters on a 7-row line (rows 0–1 ascender, 2–6 x-height) with
-  1-cell strokes and two empty rows between the lines, 29×16 cells
-  (`WORDMARK_WIDTH`, `WORDMARK_TILE`). **Both lines share one measure of 29
-  cells**, so the stack is a rectangle: the first line's glyphs are 4 cells wide
-  with 1 cell between them, the second line's are narrower (f 3; the dot, l and
-  i 1) with 2 cells between them. `mark-cells.ts` refuses to load if the lines
-  disagree, so a change to either line has to be balanced in the other. It heads
-  the sidebar at 48, sits under the mark on the sign-in panel at 64, and is the
+- **The wordmark.** `Wordmark` is the domain, stacked: `COURSE` over `OF.LIFE`,
+  in 5×7 pixel capitals with 1-cell strokes and two empty rows between the
+  lines, 50×16 cells (`WORDMARK_WIDTH`, `WORDMARK_TILE`). **Both lines are
+  justified to one measure of 50 cells**, so the stack is a rectangle: the
+  tracking is whatever makes the measures agree — the first line's six letters
+  sit 4 cells apart, the second line's seven slots 3 apart. The dot is a 2×2
+  square on the baseline and takes a slot of its own, tracked like a letter,
+  rather than tucking into the space between F and L. `mark-cells.ts` refuses to
+  load if the lines disagree, so a change to either line has to be balanced in
+  the other (`WORDMARK_LINES` holds each line's text and gap). It heads the
+  sidebar at 32, sits under the mark on the sign-in panel at 64, and is the
   loading indicator for a whole page or a CV build.
 - **Colour follows the ground.** Every form is drawn in `currentColor`: light
   green (`text-brand-ink`) on the sidebar and the sign-in panel, brand green
@@ -206,9 +210,11 @@ the page can never drift.
   no fixed fills.
 - `size` is the height, snapped to a whole multiple of the tile so cells land on
   device pixels; the width follows the artwork. `Mark` snaps to 24 (24, 48, 72),
-  `MarkSmall` to 16 (16, 32, 48), `Wordmark` to 16: 32 gives 58×32 on the
-  loading page, 48 gives 87×48 in the 192px sidebar and on a CV build, 64 gives
-  116×64 on the sign-in panel.
+  `MarkSmall` to 16 (16, 32, 48), `Wordmark` to 16: 32 gives 100×32 in the
+  sidebar and on the loading page, 48 gives 150×48 on a CV build, 64 gives
+  200×64 on the sign-in panel. The sidebar uses 32 rather than 48 because on a
+  320px phone the same link shares the header row with the plan readout and the
+  Menu button, and 150px would leave the readout almost no room.
 - `searching` redraws it, and that is the product's **only loading indicator**:
   a page loading (`loading.tsx`, the wordmark at 32), a CV building
   (`CvBuildProgress`, the wordmark at 48), a search or filter in flight
@@ -263,7 +269,7 @@ the 16-cell grid in `currentColor`.
 | `CompanyNotepad` | The company note. A `contenteditable` in the `Field` control shape — 2px muted border on the page ground, full-contrast on focus — with a Bold / Bullet list toolbar, `Saved HH:MM` or `Unsaved changes`, and a primary Save. `ds-notepad` draws the bullets and paragraph rhythm the browser's own `ul`/`p` would otherwise lose to preflight. Stored text is converted through `lib/notes-markdown`, never `innerHTML`. |
 | `Mark` | The mark on its 24-cell tile: the sign-in panel and the app icons. Above. |
 | `MarkSmall` | The same artwork on a 16-cell tile: the favicon, the status strip and every 16px loading indicator. Above. |
-| `Wordmark` | `course` over `of.life`, 29×16: the sidebar, the sign-in panel, the page and CV-build loading indicators. Above. |
+| `Wordmark` | `COURSE` over `OF.LIFE`, 50×16: the sidebar, the sign-in panel, the page and CV-build loading indicators. Above. |
 
 ---
 
@@ -284,8 +290,11 @@ monogram replaced them.
 When the product was renamed Course of Life, the AVA wordmark (A V A on kerned
 24-cell tiles), the triangle monogram with its knocked-out A, and the animation
 that turned each letter about its own axis were retired. The Course of Life
-mark, its 16-cell small form and the stacked `course of.life` wordmark replace
-them, and the blank pixel replaces the turn.
+mark, its 16-cell small form and the stacked wordmark replace them, and the
+blank pixel replaces the turn. The first Course of Life drawing — a junction, a
+point with three paths leaving it, over a lowercase `course of.life` wordmark 29
+cells wide, redrawn on a 48ms beat — gave way to the C-shaped path with its
+point, the uppercase wordmark justified to 50 cells and the 32ms beat.
 
 The CV document palettes in `components/CvAppearance.tsx` and `lib/cv-pdf.ts`
 are deliberately **not** part of this system. A CV is a document the user styles

@@ -18,9 +18,9 @@ export interface MarkProps {
 /**
  * How long the blank cell rests on each cell while the artwork is redrawn, in seconds. The beat
  * is the same for every artwork, so a bigger one takes longer to redraw rather than moving faster:
- * the small mark's 46 cells come round in 2.2s, the mark's 66 in 3.2s, the wordmark's 116 in 5.6s.
+ * the small mark's 63 cells come round in 2s, the mark's 96 in 3.1s, the wordmark's 187 in 6s.
  */
-export const MARK_BEAT_SECONDS = 0.048;
+export const MARK_BEAT_SECONDS = 0.032;
 
 /**
  * The renderer every form of the mark shares: one svg, one path of horizontal runs in

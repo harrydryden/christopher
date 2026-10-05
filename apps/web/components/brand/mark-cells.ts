@@ -1,22 +1,19 @@
 /**
  * The Course of Life mark and wordmark, as cell rows. Rows run top to bottom, `#` filled.
  *
- * The mark is a point with three arched paths leaving it: a fork in the road. It is drawn on a
- * 24-cell tile with 2-cell strokes: a 4-cell point at the centre, one path straight up, and two
- * that leave the point's lower corners heading outward and steepen to vertical, so the three
- * meet the tile's edge at the top and the bottom. The top path is straight so the mark stays
- * mirror-symmetric, which a square grid can render exactly; the two below it arch.
+ * The mark is a C-shaped path and a point: the wordmark's own C, drawn on a 24-cell tile with
+ * 2-cell strokes and its corners cut by one stroke, with a 4-cell point sitting at its opening on
+ * the baseline, where the path leads. (A point at the C's centre reads as a copyright sign, which
+ * is why it sits at the opening.) The small mark is the same artwork on a 16-cell tile, because it
+ * has to be crisp at 16px (the favicon and every inline indicator) where a 24-cell tile would put
+ * two thirds of a pixel in each cell.
  *
- * The small mark is the same artwork on a 16-cell tile, because it has to be crisp at 16px (the
- * favicon and every inline indicator) where a 24-cell tile would put two thirds of a pixel in
- * each cell.
- *
- * The wordmark is the domain, stacked: `course` over `of.life`, lowercase, both lines 29 cells
- * wide so they form a rectangle. Glyphs sit on a 7-row line (rows 0–1 ascender, 2–6 x-height)
- * with 1-cell strokes; the first line's glyphs are 4 cells wide with 1 cell between them, the
- * second line's are narrower (f 3, the dot, l and i 1) with 2 cells between them, which is what
- * brings it to the same measure. Two empty rows separate the lines, so the wordmark is 16 cells
- * tall and renders at whole multiples of 16 (32, 48, 64, 80, 96) with cells on device pixels.
+ * The wordmark is the domain, stacked: `COURSE` over `OF.LIFE`, in 5-by-7 pixel capitals with
+ * 1-cell strokes, both lines justified to one measure of 50 cells so they form a rectangle. The
+ * first line's six letters are tracked 4 cells apart, the second line's seven slots 3 apart; the
+ * dot is a 2-cell square on the baseline and takes a slot of its own. Two empty rows separate the
+ * lines, so the wordmark is 16 cells tall and renders at whole multiples of 16 (32, 48, 64, 80,
+ * 96) with cells on device pixels.
  *
  * This is the single source for the artwork. `Mark.tsx`, `MarkSmall.tsx` and `Wordmark.tsx`
  * render it on the page and `scripts/generate-brand-assets.ts` renders the favicon, the installed-
@@ -30,26 +27,26 @@ export const MARK_TILE = 24;
 export const GLYPH_MARK = [
   "........................",
   "........................",
-  "...........##...........",
-  "...........##...........",
-  "...........##...........",
-  "...........##...........",
-  "...........##...........",
-  "...........##...........",
-  "...........##...........",
-  "...........##...........",
-  "..........####..........",
-  "..........####..........",
-  "..........####..........",
-  "..........####..........",
-  "........##....##........",
-  "......###......###......",
-  ".....##..........##.....",
+  "........................",
+  "......############......",
+  "......############......",
   "....##............##....",
-  "...##..............##...",
-  "...##..............##...",
-  "..##................##..",
-  "..##................##..",
+  "....##............##....",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "..##....................",
+  "....##..............####",
+  "....##..............####",
+  "......############..####",
+  "......############..####",
+  "........................",
   "........................",
   "........................",
 ] as const;
@@ -59,44 +56,44 @@ export const MARK_SMALL_TILE = 16;
 
 export const GLYPH_MARK_SMALL = [
   "................",
-  ".......##.......",
-  ".......##.......",
-  ".......##.......",
-  ".......##.......",
-  ".......##.......",
-  "......####......",
-  "......####......",
-  "......####......",
-  "......####......",
-  "....##....##....",
-  "...##......##...",
+  "................",
+  "....########....",
+  "....########....",
   "..##........##..",
-  ".##..........##.",
-  ".##..........##.",
+  "..##........##..",
+  ".##.............",
+  ".##.............",
+  ".##.............",
+  ".##.............",
+  ".##.............",
+  "..##............",
+  "..##.........###",
+  "....########.###",
+  "....########.###",
   "................",
 ] as const;
 
-/** A wordmark glyph: its rows on the 7-row line. Widths vary; every row of a glyph is the same width. */
+/** A wordmark glyph: its rows on the 7-row line. Every row of a glyph is the same width. */
 export type GlyphRows = readonly string[];
 
-/** The lowercase glyphs the wordmark needs. Rows 0–1 are the ascender, rows 2–6 the x-height. */
+/** The capitals the wordmark needs, 5 by 7, and the dot: a 2-cell square on the baseline. */
 export const WORDMARK_LETTERS: Readonly<Record<string, GlyphRows>> = {
-  c: ["....", "....", ".###", "#...", "#...", "#...", ".###"],
-  o: ["....", "....", ".##.", "#..#", "#..#", "#..#", ".##."],
-  u: ["....", "....", "#..#", "#..#", "#..#", "#..#", ".###"],
-  r: ["....", "....", "#.##", "##..", "#...", "#...", "#..."],
-  s: ["....", "....", ".###", "#...", ".##.", "...#", "###."],
-  e: ["....", "....", ".##.", "#..#", "####", "#...", ".###"],
-  f: [".##", "#..", "###", "#..", "#..", "#..", "#.."],
-  ".": [".", ".", ".", ".", ".", ".", "#"],
-  l: ["#", "#", "#", "#", "#", "#", "#"],
-  i: ["#", ".", "#", "#", "#", "#", "#"],
+  C: [".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."],
+  O: [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+  U: ["#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+  R: ["####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"],
+  S: [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
+  E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
+  F: ["#####", "#....", "#....", "####.", "#....", "#....", "#...."],
+  L: ["#....", "#....", "#....", "#....", "#....", "#....", "#####"],
+  I: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"],
+  ".": ["..", "..", "..", "..", "..", "##", "##"],
 };
 
 /** The wordmark's two lines: the text, the cells between glyphs, and the row the line starts on. */
 export const WORDMARK_LINES = [
-  { text: "course", gap: 1, y: 0 },
-  { text: "of.life", gap: 2, y: 9 },
+  { text: "COURSE", gap: 4, y: 0 },
+  { text: "OF.LIFE", gap: 3, y: 9 },
 ] as const;
 
 /** The wordmark's height in cells: two 7-row lines with two empty rows between them. */
@@ -127,7 +124,7 @@ const LINE_WIDTHS = WORDMARK_LINES.map((line) =>
 );
 if (new Set(LINE_WIDTHS).size !== 1) throw new Error(`wordmark lines differ in width: ${LINE_WIDTHS.join(", ")}`);
 
-/** The wordmark's width in cells: 29. */
+/** The wordmark's width in cells: 50. */
 export const WORDMARK_WIDTH = LINE_WIDTHS[0]!;
 
 /** A filled cell, in tile coordinates. */

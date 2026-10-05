@@ -12,16 +12,16 @@ import {
 const filled = (rows: readonly string[]) => rows.join("").split("").filter((c) => c === "#").length;
 
 describe("the wordmark", () => {
-  it("sets both lines to the same 29-cell measure", () => {
-    expect(WORDMARK_WIDTH).toBe(29);
+  it("sets both lines to the same 50-cell measure", () => {
+    expect(WORDMARK_WIDTH).toBe(50);
     for (const line of WORDMARK_LINES) {
       const glyphs = [...line.text].map((ch) => WORDMARK_LETTERS[ch]!);
       const width = glyphs.reduce((w, rows) => w + rows[0]!.length, 0) + (glyphs.length - 1) * line.gap;
-      expect(width, line.text).toBe(29);
+      expect(width, line.text).toBe(50);
     }
   });
 
-  it("keeps every placed glyph inside its 29×16 box", () => {
+  it("keeps every placed glyph inside its 50×16 box", () => {
     expect(WORDMARK_TILE).toBe(16);
     for (const { rows, dx, dy } of WORDMARK_GLYPHS) {
       expect(dx + rows[0]!.length).toBeLessThanOrEqual(WORDMARK_WIDTH);
@@ -33,6 +33,7 @@ describe("the wordmark", () => {
     const total = WORDMARK_GLYPHS.reduce((n, g) => n + filled(g.rows), 0);
     expect(WORDMARK_CELLS).toHaveLength(total);
     expect(new Set(WORDMARK_CELLS.map((c) => `${c.x},${c.y}`)).size).toBe(total);
+    expect(total).toBe(187);
   });
 });
 
@@ -47,6 +48,7 @@ describe("the mark", () => {
   it("passes the blank pixel through every filled cell of both tiles", () => {
     expect(MARK_CELLS).toHaveLength(filled(GLYPH_MARK));
     expect(MARK_SMALL_CELLS).toHaveLength(filled(GLYPH_MARK_SMALL));
+    expect([MARK_CELLS.length, MARK_SMALL_CELLS.length]).toEqual([96, 63]);
   });
 });
 

@@ -17,8 +17,8 @@ it("draws each artwork as one path, snapped to a whole multiple of its tile", ()
 
   expect(renderToStaticMarkup(<MarkSmall />)).toContain('width="16" height="16"');
   const wordmark = renderToStaticMarkup(<Wordmark size={48} title="Course of Life" />);
-  expect(wordmark).toContain('viewBox="0 0 29 16"');
-  expect(wordmark).toContain('width="87" height="48"');
+  expect(wordmark).toContain('viewBox="0 0 50 16"');
+  expect(wordmark).toContain('width="150" height="48"');
   expect(wordmark).toContain('role="img"');
   expect(wordmark).toContain('aria-label="Course of Life"');
 });
@@ -35,6 +35,9 @@ it("steps one blank cell through the cells in order, one beat each, while search
   expect(html).toContain(`attributeName="x" values="${MARK_SMALL_CELLS.map((c) => c.x).join(";")}" calcMode="discrete" dur="${dur}" repeatCount="indefinite"`);
   expect(html).toContain(`attributeName="y" values="${MARK_SMALL_CELLS.map((c) => c.y).join(";")}" calcMode="discrete" dur="${dur}" repeatCount="indefinite"`);
 
+  // 187 cells on a 32ms beat: one pass of the wordmark takes about six seconds.
+  expect(MARK_BEAT_SECONDS).toBe(0.032);
   const wordmark = renderToStaticMarkup(<Wordmark searching />);
   expect(wordmark).toContain(`dur="${+(WORDMARK_CELLS.length * MARK_BEAT_SECONDS).toFixed(3)}s"`);
+  expect(wordmark).toContain('dur="5.984s"');
 });

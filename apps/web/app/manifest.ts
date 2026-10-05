@@ -8,8 +8,8 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/",
     display: "standalone",
     // The brand green (--brand-green in globals.css). The installed app and the
-    // tab agree: the Course of Life mark, a point with three paths leaving it, in
-    // green on white (light green on green for the maskable icon).
+    // tab agree: the Course of Life mark, a C-shaped path with a point at its
+    // opening, in green on white (light green on green for the maskable icon).
     background_color: "#25593a",
     theme_color: "#25593a",
     icons: [

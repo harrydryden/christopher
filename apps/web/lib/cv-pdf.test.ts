@@ -330,3 +330,43 @@ it("renders both profile and website links as separate PDF annotations", async (
   expect(raw).toContain(`/URI (${linkedinUrl})`);
   expect(raw).toContain(`/URI (${websiteUrl})`);
 });
+it.each(["AVA", "Arial"] as const)("flows an experience across pages instead of leaving a large gap in %s", async font => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const pages = vi.spyOn(PDFDocument.prototype, "addPage");
+  const first = Array.from({ length: 5 }, (_, i) => `First achievement ${i + 1}: ${"Led planning, reporting and delivery across regional teams. ".repeat(5)}`);
+  const second = Array.from({ length: 6 }, (_, i) => `Second achievement ${i + 1}: ${"Built operating plans and improved customer services across international businesses. ".repeat(5)}`);
+  await renderCvPdfWithReport({ ...fixture, theme: { ...DEFAULT_CV_THEME, font }, sections: [
+    {entryId: "first", kind: "experience", heading: "Director · First company", bullets: first},
+    {entryId: "second", kind: "experience", heading: "Manager · Second company", bullets: second},
+  ] });
+  const pageFor = (label: string) => {
+    const index = draw.mock.calls.findIndex(call => call[0] === label.trim());
+    expect(index).toBeGreaterThanOrEqual(0);
+    return pages.mock.invocationCallOrder.filter(order => order < draw.mock.invocationCallOrder[index]!).length;
+  };
+  expect(pageFor("Manager · Second company")).toBe(pageFor(first[0]!));
+  expect(pageFor(second[0]!)).toBe(pageFor("Manager · Second company"));
+  expect(pageFor(second.at(-1)!)).toBeGreaterThan(pageFor(second[0]!));
+  expect(draw.mock.calls.some(call => call[0] === "Manager · Second company (continued)")).toBe(true);
+  for (const bullet of [...first, ...second]) expect(draw.mock.calls.filter(call => call[0] === bullet.trim())).toHaveLength(1);
+});
+it("keeps an experience intact when only a small gap remains", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const pages = vi.spyOn(PDFDocument.prototype, "addPage");
+  const first = Array.from({length:6}, (_, i) => `First achievement ${i + 1}: ${"Led planning, reporting and delivery across regional teams. ".repeat(8)}`);
+  const second = Array.from({length:3}, (_, i) => `Second achievement ${i + 1}: ${"Built operating plans and improved customer services. ".repeat(4)}`);
+  await renderCvPdfWithReport({...fixture, sections:[
+    {entryId:"first", kind:"experience", heading:"Director · First company", bullets:first},
+    {entryId:"second", kind:"experience", heading:"Manager · Second company", bullets:second},
+  ]});
+  const pageFor = (label: string) => {
+    const index = draw.mock.calls.findIndex(call => call[0] === label.trim());
+    expect(index).toBeGreaterThanOrEqual(0);
+    return pages.mock.invocationCallOrder.filter(order => order < draw.mock.invocationCallOrder[index]!).length;
+  };
+  expect(pageFor(first.at(-1)!)).toBe(pageFor(first[0]!));
+  expect(pageFor("Manager · Second company")).toBe(pageFor(first[0]!) + 1);
+  expect(pageFor(second[0]!)).toBe(pageFor("Manager · Second company"));
+  expect(pageFor(second.at(-1)!)).toBe(pageFor(second[0]!));
+  expect(draw.mock.calls.some(call => call[0] === "Manager · Second company (continued)")).toBe(false);
+});

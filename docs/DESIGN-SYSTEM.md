@@ -211,13 +211,14 @@ the page can never drift.
 - `size` is the height, snapped to a whole multiple of the tile so cells land on
   device pixels; the width follows the artwork. `Mark` snaps to 24 (24, 48, 72),
   `MarkSmall` to 16 (16, 32, 48), `Wordmark` to 16: 32 gives 100×32 in the
-  sidebar and on the loading page, 48 gives 150×48 on a CV build, 64 gives
-  200×64 on the sign-in panel. The sidebar uses 32 rather than 48 because on a
-  320px phone the same link shares the header row with the plan readout and the
-  Menu button, and 150px would leave the readout almost no room.
+  sidebar, on the loading page and on a CV build, 64 gives 200×64 on the
+  sign-in panel. The sidebar and the CV build use 32 rather than 48 because on
+  a 320px phone the sidebar link shares the header row with the plan readout
+  and the Menu button, and the build card's heading sits beside the wordmark;
+  150px would leave either almost no room.
 - `searching` redraws it, and that is the product's **only loading indicator**:
   a page loading (`loading.tsx`, the wordmark at 32), a CV building
-  (`CvBuildProgress`, the wordmark at 48), a search or filter in flight
+  (`CvBuildProgress`, the wordmark at 32), a search or filter in flight
   (`SearchPending` inside a `SearchForm`), a description loading, a follow or a
   suggestion saving (the small mark at 16). Everywhere else — sidebar, sign-in,
   the status strip — the mark is still. A mark that is always moving tells the

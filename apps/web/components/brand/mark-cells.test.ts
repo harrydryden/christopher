@@ -52,6 +52,16 @@ describe("the mark", () => {
   });
 });
 
+describe("the glyphs", () => {
+  it("are 7 rows of one width, and the wordmark has one for every character it sets", () => {
+    for (const [ch, rows] of Object.entries(WORDMARK_LETTERS)) {
+      expect(rows, ch).toHaveLength(7);
+      expect(new Set(rows.map((row) => row.length)).size, ch).toBe(1);
+    }
+    for (const line of WORDMARK_LINES) for (const ch of line.text) expect(WORDMARK_LETTERS[ch], ch).toBeDefined();
+  });
+});
+
 describe("cellsOf", () => {
   it("orders cells column-major, each column top to bottom, offset by dx and dy", () => {
     expect(cellsOf(["#.#", "##.", ".##"], 10, 20)).toEqual([

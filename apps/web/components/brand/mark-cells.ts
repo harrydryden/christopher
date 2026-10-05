@@ -106,26 +106,32 @@ export interface PlacedGlyph {
   dy: number;
 }
 
-/** Every glyph of the wordmark, in reading order, with where it sits. */
-export const WORDMARK_GLYPHS: readonly PlacedGlyph[] = WORDMARK_LINES.flatMap((line) => {
-  let x = 0;
-  return [...line.text].map((ch) => {
-    const rows = WORDMARK_LETTERS[ch];
-    if (!rows) throw new Error(`no wordmark glyph for "${ch}"`);
-    const placed = { rows, dx: x, dy: line.y };
-    x += rows[0]!.length + line.gap;
-    return placed;
+/** Place each line's glyphs left to right, `gap` cells apart. */
+function placeGlyphs(): PlacedGlyph[] {
+  return WORDMARK_LINES.flatMap((line) => {
+    let x = 0;
+    return [...line.text].map((ch) => {
+      const rows = WORDMARK_LETTERS[ch]!;
+      const placed = { rows, dx: x, dy: line.y };
+      x += rows[0]!.length + line.gap;
+      return placed;
+    });
   });
-});
+}
 
-/** The measure of each line, which must agree: that is what makes the stack a rectangle. */
-const LINE_WIDTHS = WORDMARK_LINES.map((line) =>
-  [...line.text].reduce((w, ch) => w + WORDMARK_LETTERS[ch]![0]!.length, 0) + (line.text.length - 1) * line.gap,
-);
-if (new Set(LINE_WIDTHS).size !== 1) throw new Error(`wordmark lines differ in width: ${LINE_WIDTHS.join(", ")}`);
+/**
+ * Every glyph of the wordmark, in reading order, with where it sits.
+ *
+ * The derived exports below are marked pure so a bundle keeps only the artwork it draws: every
+ * page's client bundle carries the wordmark and the small mark, and the 24-cell mark, drawn only
+ * on the server-rendered sign-in panel, drops out. The artwork's invariants (square tiles, glyphs
+ * of 7 rows, both wordmark lines on one measure) are checked in `mark-cells.test.ts` rather than
+ * here, so the checks cost the browser nothing.
+ */
+export const WORDMARK_GLYPHS: readonly PlacedGlyph[] = /*#__PURE__*/ placeGlyphs();
 
-/** The wordmark's width in cells: 50. */
-export const WORDMARK_WIDTH = LINE_WIDTHS[0]!;
+/** The wordmark's width in cells: 50. Both lines share it; the test holds them to that. */
+export const WORDMARK_WIDTH = 50;
 
 /** A filled cell, in tile coordinates. */
 export interface Cell {
@@ -173,18 +179,16 @@ export function pathOf(glyphs: readonly PlacedGlyph[]): string {
   return runs.join("");
 }
 
-for (const [rows, tile] of [[GLYPH_MARK, MARK_TILE], [GLYPH_MARK_SMALL, MARK_SMALL_TILE]] as const) {
-  if (rows.length !== tile || rows.some((row) => row.length !== tile)) throw new Error(`the mark must be ${tile}×${tile}`);
-}
-for (const [ch, rows] of Object.entries(WORDMARK_LETTERS)) {
-  if (rows.length !== 7 || rows.some((row) => row.length !== rows[0]!.length)) throw new Error(`glyph "${ch}" is not 7 rows of one width`);
+/** The cells of every placed glyph, in reading order, each glyph in plotter order. */
+function wordmarkCells(): Cell[] {
+  return WORDMARK_GLYPHS.flatMap((g) => cellsOf(g.rows, g.dx, g.dy));
 }
 
-export const MARK_PATH = pathOf([{ rows: GLYPH_MARK, dx: 0, dy: 0 }]);
-export const MARK_SMALL_PATH = pathOf([{ rows: GLYPH_MARK_SMALL, dx: 0, dy: 0 }]);
-export const WORDMARK_PATH = pathOf(WORDMARK_GLYPHS);
+export const MARK_PATH = /*#__PURE__*/ pathOf([{ rows: GLYPH_MARK, dx: 0, dy: 0 }]);
+export const MARK_SMALL_PATH = /*#__PURE__*/ pathOf([{ rows: GLYPH_MARK_SMALL, dx: 0, dy: 0 }]);
+export const WORDMARK_PATH = /*#__PURE__*/ pathOf(WORDMARK_GLYPHS);
 
 /** The cells the blank pixel passes through while something loads, in order. */
-export const MARK_CELLS: readonly Cell[] = cellsOf(GLYPH_MARK);
-export const MARK_SMALL_CELLS: readonly Cell[] = cellsOf(GLYPH_MARK_SMALL);
-export const WORDMARK_CELLS: readonly Cell[] = WORDMARK_GLYPHS.flatMap((g) => cellsOf(g.rows, g.dx, g.dy));
+export const MARK_CELLS: readonly Cell[] = /*#__PURE__*/ cellsOf(GLYPH_MARK);
+export const MARK_SMALL_CELLS: readonly Cell[] = /*#__PURE__*/ cellsOf(GLYPH_MARK_SMALL);
+export const WORDMARK_CELLS: readonly Cell[] = /*#__PURE__*/ wordmarkCells();

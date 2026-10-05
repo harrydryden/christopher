@@ -180,6 +180,7 @@ export async function renderCvPdfWithReport(
   const ordered = cvDisplaySections(content).map((item) => item.section);
   const skillSectionGap = 9;
   const pageBodyHeight = doc.page.height - 55 - 44;
+  const quietBottomSpace = 100;
   const skillHeadingColour = accent;
   const measureSection = (section: CvContent["sections"][number]) => {
     // Education and Skills share a parent section, with a subsection for each. Qualifications carry
@@ -190,7 +191,7 @@ export async function renderCvPdfWithReport(
     const headerHeight = showHeading
       ? doc.heightOfString(sectionHeading, { width, lineGap: 2.5 }) + 4
       : 0;
-    doc.font(face.regular);
+    doc.font(face.regular).fontSize(10);
     const bulletHeights = (section.skillItems ?? section.bullets).map(
       (bullet) =>
         doc.heightOfString(clean(bullet), { width: width - 12, lineGap: 2.5 }),
@@ -222,9 +223,13 @@ export async function renderCvPdfWithReport(
     const firstSkillHeight = firstSkillRowIndex < 0 ? 0 : skillRows.slice(0, firstSkillRowIndex + 1)
       .reduce((sum, row) => sum + row.height, 0) + firstSkillRowIndex * PILL_STYLES.skill.gapY;
     const firstHeight = skillRows[0]?.height ?? bulletHeights[0] ?? 0;
+    const experienceStartHeight = (count: number) => headerHeight + industryHeight +
+      bulletHeights.slice(0, count).reduce((sum, height) => sum + height + 3.5, 0) + 6;
     const minimumHeight = section.kind === "skill"
       ? firstSkillHeight + skillSectionGap
-      : headerHeight + industryHeight + firstHeight + 4;
+      : section.kind === "experience"
+        ? experienceStartHeight(1)
+        : headerHeight + industryHeight + firstHeight + 4;
     const contentHeight = skillRows.length
       ? skillRows.reduce(
           (sum, row) => sum + row.height + PILL_STYLES.skill.gapY,
@@ -240,6 +245,7 @@ export async function renderCvPdfWithReport(
       industryRows,
       skillRows,
       minimumHeight,
+      experienceStartHeight: section.kind === "experience" ? experienceStartHeight(Math.min(2, bulletHeights.length)) : 0,
       wholeHeight: section.kind === "skill"
         ? skillContentHeight + skillSectionGap
         : headerHeight + industryHeight + contentHeight + 6,
@@ -260,7 +266,7 @@ export async function renderCvPdfWithReport(
       } else room(20 + followingHeight);
       text(title, true, 10);
       doc.moveDown(0.5);
-    } else heading(title, first.minimumHeight);
+    } else heading(title, kind === "experience" ? first.experienceStartHeight : first.minimumHeight);
     for (const [index, layout] of sections.entries()) {
       const {
         section,
@@ -270,12 +276,30 @@ export async function renderCvPdfWithReport(
         skillRows,
         minimumHeight,
         wholeHeight,
+        experienceStartHeight,
       } = layout;
-      // Preserve short roles intact when possible. Never strand a group heading.
-      const keepWhole = section.kind === "skill"
-        ? (index === 0 ? keepFirstSkillRow : wholeHeight <= pageBodyHeight)
-        : index > 0 && wholeHeight <= pageBodyHeight;
-      room(keepWhole ? wholeHeight : minimumHeight);
+      if (section.kind === "experience") {
+        const remaining = doc.page.height - 55 - doc.y;
+        // Use the bottom of a page if a role can begin with its heading and complete bullets.
+        // Move a short role whole only when doing so leaves little unused space behind.
+        if (wholeHeight <= remaining) {
+          room(wholeHeight);
+        } else if (wholeHeight <= pageBodyHeight && remaining <= quietBottomSpace) {
+          room(wholeHeight);
+        } else if (experienceStartHeight <= remaining) {
+          room(experienceStartHeight);
+        } else if (minimumHeight <= remaining && remaining > quietBottomSpace) {
+          room(minimumHeight);
+        } else {
+          room(Math.max(experienceStartHeight, remaining + 1));
+        }
+      } else {
+        // Preserve short education and skill sections intact when possible.
+        const keepWhole = section.kind === "skill"
+          ? (index === 0 ? keepFirstSkillRow : wholeHeight <= pageBodyHeight)
+          : index > 0 && wholeHeight <= pageBodyHeight;
+        room(keepWhole ? wholeHeight : minimumHeight);
+      }
       if (section.kind === "skill") {
         let top = doc.y;
         let rows = skillRows;

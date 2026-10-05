@@ -1,20 +1,21 @@
 import type { ReactNode } from "react";
-import { Mark } from "@/components/brand";
+import { Mark, Wordmark } from "@/components/brand";
 import { Card } from "@/components/Card";
 
 /**
  * The frame every sign-in page shares, in the app shell's two colours: a brand-green panel with
- * the light-green wordmark (a header on narrow screens, the left column on wide ones) and the form
+ * the light-green mark and wordmark (a header on narrow screens, the left column on wide ones) and the form
  * in a centred column on the white ground.
  */
 export function AuthShell({ title, children, footer }: { title?: string; children: ReactNode; footer?: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       <header className="ds-on-brand flex flex-col items-center justify-center gap-3 px-4 py-8 md:w-2/5 md:shrink-0">
-        <h1 className="text-brand-ink" aria-label="AVA">
+        <h1 className="flex flex-col items-center gap-4 text-brand-ink" aria-label="Course of Life">
           <Mark size={72} />
+          <Wordmark size={64} />
         </h1>
-        <p className="text-14 text-brand-ink-muted">Careers page monitor</p>
+        <p className="text-14 text-brand-ink-muted">Find your path.</p>
       </header>
       <main className="flex flex-1 items-center justify-center px-4 py-8">
         <div className="w-full max-w-sm">

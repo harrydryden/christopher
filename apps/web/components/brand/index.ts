@@ -1,2 +1,3 @@
 export { Mark } from "./Mark";
-export { Monogram } from "./Monogram";
+export { MarkSmall } from "./MarkSmall";
+export { Wordmark } from "./Wordmark";

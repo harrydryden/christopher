@@ -3,7 +3,7 @@ import { startTransition, useCallback, useEffect, useRef, useState, type Pointer
 import { acceptSuggestion, rejectSuggestion } from "@/app/actions/suggestions";
 import { Button } from "@/components/Button";
 import { labelClass } from "@/components/Field";
-import { Monogram } from "@/components/brand";
+import { MarkSmall } from "@/components/brand";
 
 export interface DeckCard {
   id: string;
@@ -209,7 +209,7 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
         {/* Every card on hand was decided faster than the answers came back: the next ones
             arrive with them, so this is a wait, not an empty deck. */}
         {saving && remaining > 0
-          ? <p role="status" className="flex items-center gap-2 text-14 text-muted"><Monogram size={16} searching title="Saving" /> Loading the next companies…</p>
+          ? <p role="status" className="flex items-center gap-2 text-14 text-muted"><MarkSmall size={16} searching title="Saving" /> Loading the next companies…</p>
           : empty}
       </div>
     );
@@ -271,7 +271,7 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
       <div className="flex flex-wrap items-center gap-3">
         <Button className="min-h-11" onClick={() => decide("left")} disabled={disabled || busyHere}>⟵ Dismiss</Button>
         <Button className="min-h-11" variant="primary" onClick={() => decide("right")} disabled={disabled || busyHere}>Follow ⟶</Button>
-        {saving && <Monogram size={16} searching title="Saving" />}
+        {saving && <MarkSmall size={16} searching title="Saving" />}
       </div>
       {disabledReason && <p role="status" className="text-12 text-warn">{disabledReason}</p>}
       {error && <p role="alert" className="text-14 text-danger">{error}</p>}

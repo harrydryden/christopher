@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   AVA pixel design system. See docs/DESIGN-SYSTEM.md.
+   Course of Life pixel design system. See docs/DESIGN-SYSTEM.md.
 
    Two layers:
 
@@ -74,6 +74,9 @@
   --brand-hover: var(--brand-green-deep);
   --brand-ink: var(--brand-green-light);
   --brand-ink-muted: var(--brand-green-soft);
+  /* The ground the mark sits on, which the loading indicator's blank cell is painted in so it
+     reads as a cell being redrawn. `ds-on-brand` switches it to the green. */
+  --mark-ground: var(--bg);
 }
 
 @theme static {
@@ -169,23 +172,6 @@
   /* Motion is stepped, never eased. */
   --ease-step-2: steps(2, end);
   --ease-step-4: steps(4, end);
-  --animate-mark-turn: ds-mark-turn 2.4s step-end infinite;
-}
-
-/* The mark's letters turn once about their own upright axis, in eight 45-degree steps on a 200ms
-   beat (the width is the cosine of the angle), then rest upright. A turn about the vertical axis
-   only ever narrows a letter towards its own centre line, so kerned letters cannot collide. */
-@keyframes ds-mark-turn {
-  0%       { transform: scaleX(1); }
-  8.3333%  { transform: scaleX(0.7071); }
-  16.6667% { transform: scaleX(0); }
-  25%      { transform: scaleX(-0.7071); }
-  33.3333% { transform: scaleX(-1); }
-  41.6667% { transform: scaleX(-0.7071); }
-  50%      { transform: scaleX(0); }
-  58.3333% { transform: scaleX(0.7071); }
-  66.6667% { transform: scaleX(1); }   /* 1.6s: eight steps */
-  100%     { transform: scaleX(1); }   /* 0.8s: held upright */
 }
 
 html {
@@ -210,6 +196,7 @@ body {
 @utility ds-on-brand {
   --focus: var(--brand-ink);
   --selection: rgb(232 254 204 / 0.3);
+  --mark-ground: var(--brand);
   background-color: var(--brand);
   color: var(--brand-ink);
 }
@@ -312,27 +299,19 @@ kbd {
   }
 }
 
-/* Each letter of the mark rotates about its own box; the class is on the <path>, so the turn
-   is a CSS transform and the letter's offset is baked into its coordinates. */
-@utility ds-mark-letter {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-/* While searching, every letter turns, one 200ms beat behind the letter before it. The letters are
-   kerned (pitch 14 on a 24-cell tile, boxes 20 wide), so an in-plane rotation would collide: a box
-   at 45 degrees reaches 14.1 cells from its centre, and its neighbour's centre is 14 away. The turn
-   is about each letter's vertical axis instead, which only ever narrows a row towards the letter's
-   own centre, so no turning letter can reach cells its upright self did not already stay clear of. */
-.ds-mark-turning > .ds-mark-letter { animation: var(--animate-mark-turn); }
-.ds-mark-turning > .ds-mark-letter:nth-of-type(2) { animation-delay: 0.2s; }
-.ds-mark-turning > .ds-mark-letter:nth-of-type(3) { animation-delay: 0.4s; }
+/* The loading indicator: one blank cell, in the colour of the ground the mark sits on, passing
+   through the artwork's cells while something loads. Its position is stepped by SMIL inside the
+   component (see components/brand/MarkTiles.tsx), so no per-artwork CSS is generated; only its
+   colour is set here. */
+.ds-mark-blank { fill: var(--mark-ground); }
 
 @media (prefers-reduced-motion: reduce) {
   .ds-animate,
   [class*="animate-"] {
     animation: none !important;
   }
+  /* SMIL ignores `animation: none`, so the blank cell is removed and the mark is simply still. */
+  .ds-mark-blank { display: none; }
 }
 
 /* Phone forms remain legible without Safari zooming the field on focus. Controls use the

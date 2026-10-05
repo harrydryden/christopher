@@ -788,13 +788,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       name: "CV build progress",
       exact: true,
     });
-    // One mark in both states now: reduced motion stops its letters turning
-    // rather than swapping in a separate still image. The turn is on each
-    // letter's path, not on the svg.
+    // One mark in both states now: reduced motion hides the blank cell that
+    // passes through the wordmark rather than swapping in a separate still
+    // image, so the wordmark simply stands still.
     const mark = progress.locator("svg").first();
     assert.equal(await mark.isVisible(), true);
     assert.equal(
-      await mark.locator(".ds-mark-letter").first().evaluate((el) => getComputedStyle(el).animationName),
+      await mark.locator(".ds-mark-blank").first().evaluate((el) => getComputedStyle(el).display),
       "none",
     );
     // The build moves on without the page being rendered again: the writing closes, the PDF is

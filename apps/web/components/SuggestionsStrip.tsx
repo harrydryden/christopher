@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { acceptFilterSuggestionWithReport, rejectFilterSuggestion } from "@/app/actions/learning";
-import { Monogram } from "@/components/brand/Monogram";
+import { MarkSmall } from "@/components/brand";
 import { useActionCall } from "./useActionCall";
 
 /** One pending filter suggestion, reduced to what a single line can carry. */
@@ -70,7 +70,7 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
           <a href="/learning" className="inline-flex min-h-11 items-center text-13 text-muted underline hover:text-fg">All suggestions</a>
         </div>
       </details>}
-      {pendingId !== null && <span className="text-muted"><Monogram size={16} searching title="Saving" /></span>}
+      {pendingId !== null && <span className="text-muted"><MarkSmall size={16} searching title="Saving" /></span>}
       {message && <p role="status" aria-live="polite" className="py-3 text-fg">{message}</p>}
       {error && <p role="alert" className="py-3 text-danger">{error}</p>}
     </div>

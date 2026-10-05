@@ -1,169 +1,193 @@
 /**
- * The AVA mark, as cell rows. Rows run top to bottom, `#` filled.
+ * The Course of Life mark and wordmark, as cell rows. Rows run top to bottom, `#` filled.
  *
- * The wordmark is three pixel letters, A V A, each drawn on its own 24×24 cell tile with 3-cell
- * strokes. The letter box is columns 2–21 and rows 2–21, so its centre is the tile centre.
+ * The mark is a point with three arched paths leaving it: a fork in the road. It is drawn on a
+ * 24-cell tile with 2-cell strokes: a 4-cell point at the centre, one path straight up, and two
+ * that leave the point's lower corners heading outward and steepen to vertical, so the three
+ * meet the tile's edge at the top and the bottom. The top path is straight so the mark stays
+ * mirror-symmetric, which a square grid can render exactly; the two below it arch.
  *
- * Both letters are all diagonal: each stroke steps one cell outward every two rows from a
- * two-cell point to a twenty-cell base, so the A is an upside-down V with a 3-row bar two thirds
- * of the way down, and the V is the A's outline turned over. Neither has a vertical side.
+ * The small mark is the same artwork on a 16-cell tile, because it has to be crisp at 16px (the
+ * favicon and every inline indicator) where a 24-cell tile would put two thirds of a pixel in
+ * each cell.
  *
- * The monogram is drawn on its own 16×16 tile, because it has to be crisp at 16px (the favicon
- * and the status strip) where a 24-cell tile would put two thirds of a pixel in each cell. It is
- * a triangle filling the tile, stepping outward on the same one-cell-per-two-rows slope as the
- * letters, with a 1-cell-stroke A knocked out of its lower half.
+ * The wordmark is the domain, stacked: `course` over `of.life`, lowercase, both lines 29 cells
+ * wide so they form a rectangle. Glyphs sit on a 7-row line (rows 0–1 ascender, 2–6 x-height)
+ * with 1-cell strokes; the first line's glyphs are 4 cells wide with 1 cell between them, the
+ * second line's are narrower (f 3, the dot, l and i 1) with 2 cells between them, which is what
+ * brings it to the same measure. Two empty rows separate the lines, so the wordmark is 16 cells
+ * tall and renders at whole multiples of 16 (32, 48, 64, 80, 96) with cells on device pixels.
  *
- * This is the single source for the artwork. `Mark.tsx` and `Monogram.tsx` render it in the app
- * and `scripts/generate-brand-assets.ts` renders the favicons and PNGs from it, so the tab icon and
- * the mark on the page can never drift apart.
+ * This is the single source for the artwork. `Mark.tsx`, `MarkSmall.tsx` and `Wordmark.tsx`
+ * render it on the page and `scripts/generate-brand-assets.ts` renders the favicon, the installed-
+ * app icons and the SVGs and PNGs in `public/brand/` from the same data, so the tab and the page
+ * can never drift apart.
  */
-export const GLYPH_A = [
+
+/** The mark on its 24-cell tile. */
+export const MARK_TILE = 24;
+
+export const GLYPH_MARK = [
   "........................",
   "........................",
   "...........##...........",
   "...........##...........",
+  "...........##...........",
+  "...........##...........",
+  "...........##...........",
+  "...........##...........",
+  "...........##...........",
+  "...........##...........",
   "..........####..........",
   "..........####..........",
-  ".........######.........",
-  ".........######.........",
-  "........###..###........",
-  "........###..###........",
-  ".......###....###.......",
-  ".......###....###.......",
+  "..........####..........",
+  "..........####..........",
+  "........##....##........",
   "......###......###......",
-  "......###......###......",
-  ".....###........###.....",
-  ".....##############.....",
-  "....################....",
-  "....################....",
-  "...###............###...",
-  "...###............###...",
-  "..###..............###..",
-  "..###..............###..",
+  ".....##..........##.....",
+  "....##............##....",
+  "...##..............##...",
+  "...##..............##...",
+  "..##................##..",
+  "..##................##..",
   "........................",
   "........................",
 ] as const;
 
-export const GLYPH_V = [
-  "........................",
-  "........................",
-  "..###..............###..",
-  "..###..............###..",
-  "...###............###...",
-  "...###............###...",
-  "....###..........###....",
-  "....###..........###....",
-  ".....###........###.....",
-  ".....###........###.....",
-  "......###......###......",
-  "......###......###......",
-  ".......###....###.......",
-  ".......###....###.......",
-  "........###..###........",
-  "........###..###........",
-  ".........######.........",
-  ".........######.........",
-  "..........####..........",
-  "..........####..........",
-  "...........##...........",
-  "...........##...........",
-  "........................",
-  "........................",
-] as const;
+/** The small mark's own tile: 16 cells, so it lands on whole device pixels at 16, 32 and 48. */
+export const MARK_SMALL_TILE = 16;
 
-/** Every wordmark letter sits on a 24-cell tile, and the wordmark renders at whole multiples of it. */
-export const TILE = 24;
-/**
- * Letters are kerned: tiles start 14 cells apart, so their boxes overlap and the A's right leg
- * runs parallel to the V's left one with three empty cells between them, one stroke's width of
- * air all the way down. Two empty cells remain at each edge.
- */
-export const PITCH = 14;
-/** The wordmark's width in cells: three tiles at pitch 14. */
-export const WORDMARK_WIDTH = 2 * PITCH + TILE;
-
-/** The wordmark's letters, each with the column its tile starts at: A at 0, V at 14, A at 28. */
-export const WORDMARK_GLYPHS = [
-  { rows: GLYPH_A, dx: 0 },
-  { rows: GLYPH_V, dx: PITCH },
-  { rows: GLYPH_A, dx: 2 * PITCH },
-] as const;
-
-/** The monogram's own tile: 16 cells, so it lands on whole device pixels at 16, 32 and 48. */
-export const MONOGRAM_TILE = 16;
-
-/** The monogram's A, drawn in the light brand green inside the triangle. */
-export const GLYPH_MONOGRAM_A = [
-  "................",
-  "................",
-  "................",
-  "................",
-  "................",
+export const GLYPH_MARK_SMALL = [
   "................",
   ".......##.......",
   ".......##.......",
-  "......#..#......",
-  "......#..#......",
-  ".....#....#.....",
-  ".....######.....",
-  "....#......#....",
-  "....#......#....",
-  "................",
-  "................",
-] as const;
-
-/** The monogram's triangle, point up and filling the tile, drawn in the brand green. */
-export const GLYPH_TRIANGLE = [
+  ".......##.......",
   ".......##.......",
   ".......##.......",
   "......####......",
   "......####......",
-  ".....######.....",
-  ".....######.....",
-  "....########....",
-  "....########....",
-  "...##########...",
-  "...##########...",
-  "..############..",
-  "..############..",
-  ".##############.",
-  ".##############.",
-  "################",
-  "################",
+  "......####......",
+  "......####......",
+  "....##....##....",
+  "...##......##...",
+  "..##........##..",
+  ".##..........##.",
+  ".##..........##.",
+  "................",
 ] as const;
 
-/** The triangle with the A's cells knocked out, so either layer alone still reads as the monogram. */
-const TRIANGLE_KNOCKOUT = GLYPH_TRIANGLE.map((row, y) =>
-  [...row].map((cell, x) => (GLYPH_MONOGRAM_A[y]![x] === "#" ? "." : cell)).join(""),
-);
+/** A wordmark glyph: its rows on the 7-row line. Widths vary; every row of a glyph is the same width. */
+export type GlyphRows = readonly string[];
 
-/**
- * One layer as one SVG path, offset `dx` cells: horizontal runs of filled cells become
- * rectangles, so a letter is a few hundred bytes rather than one element per cell. That matters
- * because every mark on a page is serialised into the RSC payload of every navigation.
- *
- * The offset is baked into the coordinates rather than given as a `transform` attribute, because
- * the turning animation sets a CSS transform on the letter, which would replace it.
- */
-export function pathOf(rows: readonly string[], dx = 0): string {
-  const runs: string[] = [];
-  rows.forEach((row, y) => {
-    let x = 0;
-    while (x < row.length) {
-      if (row[x] !== "#") { x++; continue; }
-      const start = x;
-      while (row[x] === "#") x++;
-      runs.push(`M${start + dx} ${y}h${x - start}v1H${start + dx}z`);
-    }
+/** The lowercase glyphs the wordmark needs. Rows 0–1 are the ascender, rows 2–6 the x-height. */
+export const WORDMARK_LETTERS: Readonly<Record<string, GlyphRows>> = {
+  c: ["....", "....", ".###", "#...", "#...", "#...", ".###"],
+  o: ["....", "....", ".##.", "#..#", "#..#", "#..#", ".##."],
+  u: ["....", "....", "#..#", "#..#", "#..#", "#..#", ".###"],
+  r: ["....", "....", "#.##", "##..", "#...", "#...", "#..."],
+  s: ["....", "....", ".###", "#...", ".##.", "...#", "###."],
+  e: ["....", "....", ".##.", "#..#", "####", "#...", ".###"],
+  f: [".##", "#..", "###", "#..", "#..", "#..", "#.."],
+  ".": [".", ".", ".", ".", ".", ".", "#"],
+  l: ["#", "#", "#", "#", "#", "#", "#"],
+  i: ["#", ".", "#", "#", "#", "#", "#"],
+};
+
+/** The wordmark's two lines: the text, the cells between glyphs, and the row the line starts on. */
+export const WORDMARK_LINES = [
+  { text: "course", gap: 1, y: 0 },
+  { text: "of.life", gap: 2, y: 9 },
+] as const;
+
+/** The wordmark's height in cells: two 7-row lines with two empty rows between them. */
+export const WORDMARK_TILE = 16;
+
+/** A glyph placed in the wordmark: its rows and the column and row its top-left cell sits at. */
+export interface PlacedGlyph {
+  rows: GlyphRows;
+  dx: number;
+  dy: number;
+}
+
+/** Every glyph of the wordmark, in reading order, with where it sits. */
+export const WORDMARK_GLYPHS: readonly PlacedGlyph[] = WORDMARK_LINES.flatMap((line) => {
+  let x = 0;
+  return [...line.text].map((ch) => {
+    const rows = WORDMARK_LETTERS[ch];
+    if (!rows) throw new Error(`no wordmark glyph for "${ch}"`);
+    const placed = { rows, dx: x, dy: line.y };
+    x += rows[0]!.length + line.gap;
+    return placed;
   });
+});
+
+/** The measure of each line, which must agree: that is what makes the stack a rectangle. */
+const LINE_WIDTHS = WORDMARK_LINES.map((line) =>
+  [...line.text].reduce((w, ch) => w + WORDMARK_LETTERS[ch]![0]!.length, 0) + (line.text.length - 1) * line.gap,
+);
+if (new Set(LINE_WIDTHS).size !== 1) throw new Error(`wordmark lines differ in width: ${LINE_WIDTHS.join(", ")}`);
+
+/** The wordmark's width in cells: 29. */
+export const WORDMARK_WIDTH = LINE_WIDTHS[0]!;
+
+/** A filled cell, in tile coordinates. */
+export interface Cell {
+  x: number;
+  y: number;
+}
+
+/**
+ * The filled cells of a glyph, in the order the blank pixel redraws them: columns left to right,
+ * each column top to bottom, so the pixel runs through a letter the way a plotter would.
+ */
+export function cellsOf(rows: GlyphRows, dx = 0, dy = 0): Cell[] {
+  const cells: Cell[] = [];
+  const width = rows[0]!.length;
+  for (let x = 0; x < width; x++) {
+    rows.forEach((row, y) => {
+      if (row[x] === "#") cells.push({ x: x + dx, y: y + dy });
+    });
+  }
+  return cells;
+}
+
+/**
+ * One SVG path of horizontal runs for a set of rows, offset by `dx`,`dy`. One path per artwork
+ * rather than a rect per cell, because every mark on a page is serialised into the payload of
+ * every navigation. The offset is baked into the coordinates rather than set with a `transform`.
+ */
+export function pathOf(glyphs: readonly PlacedGlyph[]): string {
+  const runs: string[] = [];
+  for (const { rows, dx, dy } of glyphs) {
+    rows.forEach((row, y) => {
+      let x = 0;
+      while (x < row.length) {
+        if (row[x] !== "#") {
+          x++;
+          continue;
+        }
+        let end = x;
+        while (end < row.length && row[end] === "#") end++;
+        runs.push(`M${x + dx} ${y + dy}h${end - x}v1H${x + dx}z`);
+        x = end;
+      }
+    });
+  }
   return runs.join("");
 }
 
-/** The monogram's A, the light layer. */
-export const MONOGRAM_PATH = pathOf(GLYPH_MONOGRAM_A);
-/** The monogram's triangle with the A knocked out, the dark layer. */
-export const MONOGRAM_TRIANGLE_PATH = pathOf(TRIANGLE_KNOCKOUT);
+for (const [rows, tile] of [[GLYPH_MARK, MARK_TILE], [GLYPH_MARK_SMALL, MARK_SMALL_TILE]] as const) {
+  if (rows.length !== tile || rows.some((row) => row.length !== tile)) throw new Error(`the mark must be ${tile}×${tile}`);
+}
+for (const [ch, rows] of Object.entries(WORDMARK_LETTERS)) {
+  if (rows.length !== 7 || rows.some((row) => row.length !== rows[0]!.length)) throw new Error(`glyph "${ch}" is not 7 rows of one width`);
+}
 
-/** The wordmark, one path per letter so that each can turn on its own. */
-export const WORDMARK_PATHS: readonly [string, string, string] =
-  WORDMARK_GLYPHS.map(({ rows, dx }) => pathOf(rows, dx)) as [string, string, string];
+export const MARK_PATH = pathOf([{ rows: GLYPH_MARK, dx: 0, dy: 0 }]);
+export const MARK_SMALL_PATH = pathOf([{ rows: GLYPH_MARK_SMALL, dx: 0, dy: 0 }]);
+export const WORDMARK_PATH = pathOf(WORDMARK_GLYPHS);
+
+/** The cells the blank pixel passes through while something loads, in order. */
+export const MARK_CELLS: readonly Cell[] = cellsOf(GLYPH_MARK);
+export const MARK_SMALL_CELLS: readonly Cell[] = cellsOf(GLYPH_MARK_SMALL);
+export const WORDMARK_CELLS: readonly Cell[] = WORDMARK_GLYPHS.flatMap((g) => cellsOf(g.rows, g.dx, g.dy));

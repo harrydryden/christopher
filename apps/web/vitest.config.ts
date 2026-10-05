@@ -7,8 +7,9 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./", import.meta.url)) },
   },
   test: {
-    // Component tests are `.test.tsx` and choose jsdom for themselves with a file pragma.
-    include: ["app/**/*.test.ts", "lib/**/*.test.ts", "components/**/*.test.tsx"],
+    // Component tests are `.test.tsx` and choose jsdom for themselves with a file pragma; plain
+    // `.test.ts` beside them (the brand artwork) needs no DOM.
+    include: ["app/**/*.test.ts", "lib/**/*.test.ts", "components/**/*.test.ts", "components/**/*.test.tsx"],
     exclude: ["node_modules/**", ".next/**"],
     environment: "node",
     // Password hashing at production cost would dominate the account tests; the old cost is plenty here.

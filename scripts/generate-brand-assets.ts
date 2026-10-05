@@ -6,14 +6,14 @@
  *   pnpm exec tsx scripts/generate-brand-assets.ts
  *
  * Writes:
- *   apps/web/app/icon.svg          the monogram, what the tab shows: a brand-green triangle with a
- *                                  light-green A, on a transparent ground
+ *   apps/web/app/icon.svg          the small mark, what the tab shows: the Course of Life mark on
+ *                                  its 16-cell tile, brand green on a transparent ground
  *   apps/web/app/favicon.ico       16/32/48 PNGs of it in one container
- *   apps/web/app/apple-icon.png    192px, the monogram centred on white
- *   apps/web/public/brand/…        the wordmark (mark*) in currentColor, brand green and light
- *                                  green, as SVG and PNG; the monogram (monogram*) as SVG and PNG;
- *                                  and the manifest icons, including a maskable one with the
- *                                  monogram inside the safe zone
+ *   apps/web/app/apple-icon.png    192px, the mark at 144 centred on white
+ *   apps/web/public/brand/…        the mark (mark*), the small mark (mark-small*) and the stacked
+ *                                  wordmark (wordmark*) in currentColor, brand green and light
+ *                                  green, as SVG and PNG; and the manifest icons, including a
+ *                                  maskable one with the mark inside the safe zone
  */
 import { deflateSync } from "node:zlib";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -21,8 +21,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  GLYPH_A, GLYPH_V, GLYPH_MONOGRAM_A, GLYPH_TRIANGLE, MONOGRAM_PATH, MONOGRAM_TILE, MONOGRAM_TRIANGLE_PATH,
-  TILE, WORDMARK_GLYPHS, WORDMARK_PATHS, WORDMARK_WIDTH,
+  GLYPH_MARK, GLYPH_MARK_SMALL, MARK_PATH, MARK_SMALL_PATH, MARK_SMALL_TILE, MARK_TILE,
+  WORDMARK_GLYPHS, WORDMARK_PATH, WORDMARK_TILE, WORDMARK_WIDTH, type PlacedGlyph,
 } from "../apps/web/components/brand/mark-cells.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -39,47 +39,52 @@ const WHITE: RGB = [255, 255, 255];
 
 /** One colour layer of an artwork: its cells for the rasters and its paths for the SVGs. */
 interface Layer {
-  glyphs: ReadonlyArray<{ rows: readonly string[]; dx: number }>;
+  glyphs: readonly PlacedGlyph[];
   paths: readonly string[];
 }
 
-/** A form of the mark: its size in cells and its layers, painted in order. */
+/** A form of the mark: its size in cells, its accessible name, and its layers, painted in order. */
 interface Artwork {
   width: number;
   height: number;
+  label: string;
   layers: readonly Layer[];
 }
 
+const MARK: Artwork = {
+  width: MARK_TILE,
+  height: MARK_TILE,
+  label: "Course of Life",
+  layers: [{ glyphs: [{ rows: GLYPH_MARK, dx: 0, dy: 0 }], paths: [MARK_PATH] }],
+};
+const MARK_SMALL: Artwork = {
+  width: MARK_SMALL_TILE,
+  height: MARK_SMALL_TILE,
+  label: "Course of Life",
+  layers: [{ glyphs: [{ rows: GLYPH_MARK_SMALL, dx: 0, dy: 0 }], paths: [MARK_SMALL_PATH] }],
+};
 const WORDMARK: Artwork = {
   width: WORDMARK_WIDTH,
-  height: TILE,
-  layers: [{ glyphs: WORDMARK_GLYPHS, paths: WORDMARK_PATHS }],
-};
-/** The triangle layer is the knockout path; its raster cells skip whatever the A layer paints. */
-const KNOCKOUT = GLYPH_TRIANGLE.map((row, y) => [...row].map((c, x) => (GLYPH_MONOGRAM_A[y]![x] === "#" ? "." : c)).join(""));
-const MONOGRAM: Artwork = {
-  width: MONOGRAM_TILE,
-  height: MONOGRAM_TILE,
-  layers: [
-    { glyphs: [{ rows: KNOCKOUT, dx: 0 }], paths: [MONOGRAM_TRIANGLE_PATH] },
-    { glyphs: [{ rows: GLYPH_MONOGRAM_A, dx: 0 }], paths: [MONOGRAM_PATH] },
-  ],
+  height: WORDMARK_TILE,
+  label: "course of.life",
+  layers: [{ glyphs: WORDMARK_GLYPHS, paths: [WORDMARK_PATH] }],
 };
 
-for (const rows of [GLYPH_A, GLYPH_V]) {
-  if (rows.length !== TILE || rows.some((row) => row.length !== TILE)) throw new Error(`letters must be ${TILE}×${TILE}`);
-}
-for (const rows of [GLYPH_TRIANGLE, GLYPH_MONOGRAM_A]) {
-  if (rows.length !== MONOGRAM_TILE || rows.some((row) => row.length !== MONOGRAM_TILE)) {
-    throw new Error(`monogram layers must be ${MONOGRAM_TILE}×${MONOGRAM_TILE}`);
+for (const art of [MARK, MARK_SMALL, WORDMARK]) {
+  for (const { glyphs } of art.layers) {
+    for (const { rows, dx, dy } of glyphs) {
+      if (dx + rows[0]!.length > art.width || dy + rows.length > art.height) {
+        throw new Error(`"${art.label}" has a glyph outside its ${art.width}×${art.height} box`);
+      }
+    }
   }
 }
 
 /** The filled cells of a layer as "x,y" keys. */
 function cellsOf(layer: Layer): Set<string> {
   const cells = new Set<string>();
-  for (const { rows, dx } of layer.glyphs) {
-    rows.forEach((row, y) => [...row].forEach((cell, x) => { if (cell === "#") cells.add(`${x + dx},${y}`); }));
+  for (const { rows, dx, dy } of layer.glyphs) {
+    rows.forEach((row, y) => [...row].forEach((cell, x) => { if (cell === "#") cells.add(`${x + dx},${y + dy}`); }));
   }
   return cells;
 }
@@ -181,7 +186,7 @@ function svg(art: Artwork, inks: readonly string[], ground?: string): string {
   const layers = art.layers
     .flatMap((layer, i) => layer.paths.map((d) => `<path d="${d}" fill="${inks[i]}"/>`))
     .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges" role="img" aria-label="AVA">${back}${layers}</svg>
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges" role="img" aria-label="${art.label}">${back}${layers}</svg>
 `;
 }
 
@@ -194,34 +199,41 @@ const write = (path: string, data: Buffer | string) => {
   console.log("wrote", path);
 };
 
-const MONOGRAM_INKS = [GREEN, LIGHT] as const;
-
-// The tab: the triangle fills the tile, with the corners left transparent.
-write("apps/web/app/icon.svg", svg(MONOGRAM, [GREEN_HEX, LIGHT_HEX]));
+// The tab: the small mark, because it is the artwork drawn for 16px, in green on a transparent
+// ground.
+write("apps/web/app/icon.svg", svg(MARK_SMALL, [GREEN_HEX]));
 write(
   "apps/web/app/favicon.ico",
-  ico([16, 32, 48].map((size) => ({ size, data: raster(MONOGRAM, size, MONOGRAM_INKS, null) }))),
+  ico([16, 32, 48].map((size) => ({ size, data: raster(MARK_SMALL, size, [GREEN], null) }))),
 );
-// Home-screen icons are opaque squares the platform crops, so the monogram sits on white with a
-// margin: two thirds of the square for the plain icons, half for the maskable one, which keeps the
-// triangle's corners inside the safe circle (40% of the width from the centre).
-write("apps/web/app/apple-icon.png", raster(MONOGRAM, 128, MONOGRAM_INKS, WHITE, 192));
-write("apps/web/public/brand/app-icon-192.png", raster(MONOGRAM, 128, MONOGRAM_INKS, WHITE, 192));
-write("apps/web/public/brand/app-icon-512.png", raster(MONOGRAM, 336, MONOGRAM_INKS, WHITE, 512));
-write("apps/web/public/brand/app-icon-maskable-512.png", raster(MONOGRAM, 256, MONOGRAM_INKS, WHITE, 512));
+// Home-screen icons are opaque squares the platform crops, so the mark sits on white with a
+// margin: three quarters of the square for the plain icons. The maskable one is the mark in light
+// green on a green ground at 288 of 512, which keeps its corners inside the safe circle (40% of
+// the width from the centre).
+write("apps/web/app/apple-icon.png", raster(MARK, 144, [GREEN], WHITE, 192));
+write("apps/web/public/brand/app-icon-192.png", raster(MARK, 144, [GREEN], WHITE, 192));
+write("apps/web/public/brand/app-icon-512.png", raster(MARK, 384, [GREEN], WHITE, 512));
+write("apps/web/public/brand/app-icon-maskable-512.png", raster(MARK, 288, [LIGHT], GREEN, 512));
 
-// Everything else, for documents and anywhere the ground is not ours to pick. The wordmark is
-// green on white grounds and light green on the brand green; the monogram carries both colours.
-write("apps/web/public/brand/mark.svg", svg(WORDMARK, ["currentColor"]));
-write("apps/web/public/brand/mark-green.svg", svg(WORDMARK, [GREEN_HEX]));
-write("apps/web/public/brand/mark-light.svg", svg(WORDMARK, [LIGHT_HEX]));
-write("apps/web/public/brand/monogram.svg", svg(MONOGRAM, [GREEN_HEX, LIGHT_HEX]));
-// PNGs are named for their height. The wordmark's are multiples of its 24-cell tile, the
-// monogram's of its 16-cell one.
+// Everything else, for documents and anywhere the ground is not ours to pick: green on white
+// grounds, light green on the brand green. PNGs are named for their height, which is a multiple of
+// the artwork's tile: 24 for the mark, 16 for the small mark and the wordmark.
+write("apps/web/public/brand/mark.svg", svg(MARK, ["currentColor"]));
+write("apps/web/public/brand/mark-green.svg", svg(MARK, [GREEN_HEX]));
+write("apps/web/public/brand/mark-light.svg", svg(MARK, [LIGHT_HEX]));
 for (const height of [24, 48, 96, 192]) {
-  write(`apps/web/public/brand/mark-green-${height}.png`, raster(WORDMARK, height, [GREEN], null));
-  write(`apps/web/public/brand/mark-light-${height}.png`, raster(WORDMARK, height, [LIGHT], null));
+  write(`apps/web/public/brand/mark-green-${height}.png`, raster(MARK, height, [GREEN], null));
+  write(`apps/web/public/brand/mark-light-${height}.png`, raster(MARK, height, [LIGHT], null));
 }
-for (const size of [16, 32, 48, 64, 128, 256, 512]) {
-  write(`apps/web/public/brand/monogram-${size}.png`, raster(MONOGRAM, size, MONOGRAM_INKS, null));
+write("apps/web/public/brand/mark-small.svg", svg(MARK_SMALL, ["currentColor"]));
+write("apps/web/public/brand/mark-small-green.svg", svg(MARK_SMALL, [GREEN_HEX]));
+for (const size of [16, 32, 48, 64]) {
+  write(`apps/web/public/brand/mark-small-green-${size}.png`, raster(MARK_SMALL, size, [GREEN], null));
+}
+write("apps/web/public/brand/wordmark.svg", svg(WORDMARK, ["currentColor"]));
+write("apps/web/public/brand/wordmark-green.svg", svg(WORDMARK, [GREEN_HEX]));
+write("apps/web/public/brand/wordmark-light.svg", svg(WORDMARK, [LIGHT_HEX]));
+for (const height of [32, 48, 64, 96]) {
+  write(`apps/web/public/brand/wordmark-green-${height}.png`, raster(WORDMARK, height, [GREEN], null));
+  write(`apps/web/public/brand/wordmark-light-${height}.png`, raster(WORDMARK, height, [LIGHT], null));
 }

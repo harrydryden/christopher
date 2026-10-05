@@ -1,7 +1,7 @@
 "use client";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import type { EvidenceFacet } from "@ava/core/cv-helpers";
-import { scoredAsLine } from "@ava/core/evidence-rubric";
+import type { EvidenceFacet } from "@col/core/cv-helpers";
+import { scoredAsLine } from "@col/core/evidence-rubric";
 import type { RowGuidance } from "@/lib/cv-library-evidence";
 import { FitBar } from "@/components/table";
 import { useAnchoredPanel } from "@/components/useAnchoredPanel";

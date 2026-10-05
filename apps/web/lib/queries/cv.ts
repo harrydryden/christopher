@@ -7,9 +7,9 @@ import {
   latestLibraryReviews,
   libraryReviewsSignature,
   tasks,
-} from "@ava/db";
-import type { CvBuildCheckpoint, CvBuildFailure, CvLibrary } from "@ava/core";
-import { libraryEntryInputHash, normaliseLibraryReview } from "@ava/core/library-review";
+} from "@col/db";
+import type { CvBuildCheckpoint, CvBuildFailure, CvLibrary } from "@col/core";
+import { libraryEntryInputHash, normaliseLibraryReview } from "@col/core/library-review";
 import type { CvBuildTask } from "@/lib/cv-build-state";
 import type { CvJournalStep } from "@/lib/cv-build-journal";
 import { CV_MEDIAN_MIN_RUNS, type CvMotionMedians } from "@/lib/cv-build-narrative";

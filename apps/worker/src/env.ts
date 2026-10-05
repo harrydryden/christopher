@@ -1,5 +1,5 @@
 import v8 from "node:v8";
-import { renamedEnv } from "@ava/core";
+import { renamedEnv } from "@col/core";
 import { log } from "./log";
 
 export interface WorkerEnv {

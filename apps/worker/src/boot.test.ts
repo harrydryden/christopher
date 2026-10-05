@@ -1,8 +1,8 @@
 /** What a boot does before it claims anything: once per change, and in one statement. */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createDb, enqueueTask, listUserIds, schema, SEED_TAGS, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, DEFAULT_SYSTEM_SETTINGS, GATE_REEVALUATION_VERSION, priorityFor } from "@ava/core";
+import { createDb, enqueueTask, listUserIds, schema, SEED_TAGS, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, DEFAULT_SYSTEM_SETTINGS, GATE_REEVALUATION_VERSION, priorityFor } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import { configuredModels, enqueueBootGateReevaluation, GATE_REEVALUATION_KEY, probeConfiguredModels, seedTagVocabularies } from "./boot";
 import { agePriorities, claimTask } from "./queue";

@@ -1,5 +1,5 @@
-import { notifyTaskWorkers, recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
-import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK_TYPES, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
+import { notifyTaskWorkers, recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@col/db";
+import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK_TYPES, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@col/core";
 import { and, eq, getTableColumns, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
@@ -66,7 +66,7 @@ const SPENT_SWEEP_LIMIT = 200;
 // Ten missed 30-second renewals; aligned with the resource lease expiry.
 export const TASK_STALE_AFTER_MS = 5 * 60_000;
 
-// The deadline table lives in @ava/core, because the interface shows elapsed time against
+// The deadline table lives in @col/core, because the interface shows elapsed time against
 // it and cannot import the worker. Re-exported here so nothing else had to change.
 export { deadlineMsFor, TASK_DEADLINES_MS };
 export type { TaskDeadlines };

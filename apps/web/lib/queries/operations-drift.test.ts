@@ -4,13 +4,13 @@
  * watched for drift.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { aiFeatureLabel } from "@ava/core";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { aiFeatureLabel } from "@col/core";
 import { sql } from "drizzle-orm";
 import { createTestDb } from "@/test/db";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

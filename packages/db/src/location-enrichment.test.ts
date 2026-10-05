@@ -1,6 +1,6 @@
 /** Synchronous subscription/settings re-evaluation must request counted Workday places durably. */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { DEFAULT_SETTINGS } from "@ava/core";
+import { DEFAULT_SETTINGS } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import { createDb, type Db } from "./client";
 import { reevaluateGate } from "./gate";

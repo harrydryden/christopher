@@ -1,4 +1,4 @@
-import { MODEL_CHOICES, isKnownModel } from "@ava/core";
+import { MODEL_CHOICES, isKnownModel } from "@col/core";
 
 /**
  * Model picker for the two model settings. A stored value that is not in the supported

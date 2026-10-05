@@ -1,4 +1,4 @@
-import { ats, discovery, type DiscoveryAiHooks, type FetchInit, type SourceSpec, type SourceType } from "@ava/core";
+import { ats, discovery, type DiscoveryAiHooks, type FetchInit, type SourceSpec, type SourceType } from "@col/core";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import type { BrowserRenderer, RenderOptions } from "./browser";
 import { observeHtmlListing } from "./live-acceptance-html";

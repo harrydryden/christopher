@@ -5,13 +5,13 @@
  * outside a server render memoises nothing.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createDb, schema, subscribeToCompany, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
-import { roleStatusSql } from "@ava/db";
+import { roleStatusSql } from "@col/db";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

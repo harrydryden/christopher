@@ -10,7 +10,7 @@ import {
   applicationStage,
   roleStageRank,
   type ApplicationStatus,
-} from "@ava/core/role-workflow";
+} from "@col/core/role-workflow";
 import { Badge, stageTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { MarkSmall } from "@/components/brand";

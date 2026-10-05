@@ -1,8 +1,8 @@
 /** Local-only 50-company daily-run timing and failure-isolation drill. */
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createDb, enqueueTask, schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";

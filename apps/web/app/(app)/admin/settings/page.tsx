@@ -8,7 +8,7 @@ import { inputClass, labelClass as fieldLabelClass, selectClass } from "@/compon
 import { requireAdmin } from "@/lib/auth";
 import { getSystemSettings } from "@/lib/settings";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
-import { MODEL_CHOICES, SCORING_BATCH_MINUTES_MAX, SCORING_BATCH_MINUTES_MIN, STAGE_EFFORTS } from "@ava/core";
+import { MODEL_CHOICES, SCORING_BATCH_MINUTES_MAX, SCORING_BATCH_MINUTES_MIN, STAGE_EFFORTS } from "@col/core";
 import { stageRouteRows } from "@/lib/stage-routes";
 
 export const dynamic = "force-dynamic";

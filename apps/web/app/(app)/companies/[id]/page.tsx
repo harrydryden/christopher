@@ -4,7 +4,7 @@ import type { RawSearchParams } from "@/lib/queries/jobs";
 import { SettingsForm } from "@/components/SettingsForm";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 import {
   disableSource,
   enableSource,

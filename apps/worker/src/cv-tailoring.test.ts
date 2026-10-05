@@ -1,12 +1,12 @@
 /** Integration coverage for the planned CV path. No live model calls are made. */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { enqueueTask, listCvBuildSteps, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
-import type { CvAssessment, CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
-import { cvTailoringPlanForWriter, type CvTailoringPlan } from "@ava/core/cv-tailoring";
-import { dedupeKeyFor } from "@ava/core";
-import { DEFAULT_CV_THEME } from "@ava/core/cv";
+import { enqueueTask, listCvBuildSteps, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { RateLimitError, type AiClientLike, type ParseResponse } from "@col/ai";
+import type { CvAssessment, CvReviewPlan, CvRubric } from "@col/core/cv-assessment";
+import { cvTailoringPlanForWriter, type CvTailoringPlan } from "@col/core/cv-tailoring";
+import { dedupeKeyFor } from "@col/core";
+import { DEFAULT_CV_THEME } from "@col/core/cv";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

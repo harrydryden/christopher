@@ -2,7 +2,7 @@
  * What the form lets through, and what it refuses before anything is uploaded.
  */
 import { expect, it } from "vitest";
-import { LIBRARY_IMPORT_MAX_BYTES } from "@ava/db";
+import { LIBRARY_IMPORT_MAX_BYTES } from "@col/db";
 import { LIBRARY_UPLOAD_MAX_BYTES, UPLOAD_ACCEPT, uploadKind } from "./library-upload";
 import nextConfig from "../next.config";
 

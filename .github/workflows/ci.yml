@@ -87,7 +87,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @ava/worker exec vitest run --sequence.shuffle.files --sequence.seed ${{ github.run_number }}
+      - run: pnpm --filter @col/worker exec vitest run --sequence.shuffle.files --sequence.seed ${{ github.run_number }}
 
   # Everything that needs a real browser: the headless Chromium test and the smoke
   # run, which builds the interface, signs in, fetches every page and drives the CV
@@ -129,7 +129,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Read the installed Playwright version
         id: playwright
-        run: echo "version=$(pnpm --filter @ava/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(pnpm --filter @col/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
       # Keyed on that version, so a Playwright bump downloads Chromium again and
       # nothing else does. The install step below still runs: on a hit it skips the
       # download and only settles the operating system packages.
@@ -138,8 +138,8 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      - run: pnpm --filter @ava/worker exec playwright install --with-deps chromium
-      - run: pnpm --filter @ava/worker exec vitest run src/browser.test.ts
+      - run: pnpm --filter @col/worker exec playwright install --with-deps chromium
+      - run: pnpm --filter @col/worker exec vitest run src/browser.test.ts
         env:
           AVA_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
@@ -188,7 +188,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate
-      - run: pnpm --filter @ava/web build
+      - run: pnpm --filter @col/web build
         env:
           SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
       # Seeds a disposable signed-in account as smoke-web does, and deletes it in a finally.

@@ -147,7 +147,7 @@ function startWorker(url, port) {
     AVA_DISABLE_BROWSER: '1', DAILY_AI_BUDGET_USD: '0', DISCOVERY_AI_BUDGET_USD: '0',
     WORKER_CONCURRENCY: '1', CV_CONCURRENCY: '1', SCAN_SPREAD_MINUTES: '0',
     RENDER_INSTANCE_ID: `restored-pair-${process.pid}`, SCRAPER_CONTACT_EMAIL: EMAIL });
-  const child = spawn('pnpm', ['--filter', '@ava/worker', 'start:source'], {
+  const child = spawn('pnpm', ['--filter', '@col/worker', 'start:source'], {
     cwd: REPO, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';

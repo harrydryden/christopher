@@ -44,7 +44,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate
-      - run: pnpm --filter @ava/web build
+      - run: pnpm --filter @col/web build
         env:
           SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
       - run: node scripts/benchmark-users.mjs

@@ -4,10 +4,10 @@
  * call, then discover a careers source and scan it with no worker process involved.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { dedupeKeyFor, priorityFor } from "@ava/core";
-import type { HandlerMap } from "@ava/worker";
+import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { dedupeKeyFor, priorityFor } from "@col/core";
+import type { HandlerMap } from "@col/worker";
 import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { signInTestUser } from "@/test/auth";

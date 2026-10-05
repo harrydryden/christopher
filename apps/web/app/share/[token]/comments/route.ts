@@ -13,7 +13,7 @@
  */
 import { NextResponse } from "next/server";
 import { readCapped } from "@/lib/route-request";
-import { addCvShareComment, CvShareClosedError } from "@ava/db";
+import { addCvShareComment, CvShareClosedError } from "@col/db";
 import { db } from "@/lib/db";
 import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import {

@@ -9,8 +9,8 @@
  */
 import { sql, type SQL } from "drizzle-orm";
 import { cache } from "react";
-import { aiBudgetWindowStart, DEFAULT_ACCOUNT_AI_BUDGET_USD, resolveUserSettings } from "@ava/core";
-import { accountAiSpend } from "@ava/db";
+import { aiBudgetWindowStart, DEFAULT_ACCOUNT_AI_BUDGET_USD, resolveUserSettings } from "@col/core";
+import { accountAiSpend } from "@col/db";
 import { db } from "@/lib/db";
 
 export interface AccountAiBudget {

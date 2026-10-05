@@ -2,15 +2,15 @@
 
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { normaliseEmail } from "@ava/db";
+import { normaliseEmail } from "@col/db";
 import { authenticateWithPassword, emailProblem, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail } from "@/lib/accounts";
 import { clientAddress, endSession, startSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailLinkOrigin, withParams } from "@/lib/origin";
 import { clearAttempts, LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
 import { sanitizeNextPath, sessionSecret } from "@/lib/session";
-import { passwordProblem } from "@ava/core";
-import { users } from "@ava/db/schema";
+import { passwordProblem } from "@col/core";
+import { users } from "@col/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function login(formData: FormData): Promise<void> {

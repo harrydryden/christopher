@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@ava/core";
+import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@col/core";
 import type { Db } from "./client";
 import { tasks } from "./schema";
 

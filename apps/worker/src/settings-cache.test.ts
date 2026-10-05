@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createDb } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { createDeps, USER_SETTINGS_CACHE_MAX, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 

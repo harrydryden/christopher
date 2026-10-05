@@ -1,4 +1,4 @@
-# @ava/db
+# @col/db
 
 The Drizzle schema (`src/schema.ts`), the migrations (`drizzle/`), the pool (`src/client.ts`) and
 the helpers every other package shares. `src/migrate.ts` applies the migrations; the worker runs it

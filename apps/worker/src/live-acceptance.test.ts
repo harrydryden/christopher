@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { liveAcceptanceVerdict, resolveLiveAcceptanceConcurrency, resolveLiveAcceptanceDiscoveryBudget, runLiveAcceptanceCase, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
 import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
-import { discovery } from "@ava/core";
+import { discovery } from "@col/core";
 import { compareReferencePostings, type ReferencePostingSnapshot } from "./live-acceptance-postings";
 import { createLiveAcceptanceAiBudget } from "./live-acceptance-ai";
 import { fullyCoveredCorpus } from "./live-acceptance-corpus.fixtures";

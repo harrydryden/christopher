@@ -1,7 +1,7 @@
 /**
  * What a client component statically imports is what the browser downloads on first load. zod
  * (about 23 KB gzipped, not tree-shakeable) and the CV schemas used to reach /settings only because
- * the theme picker imported a helper from `@ava/core/cv`, and to /library and /cv/[id] through the
+ * the theme picker imported a helper from `@col/core/cv`, and to /library and /cv/[id] through the
  * editors. This walks the static import graph of every client component the way the bundler does — following value imports and re-exports, stopping at
  * `"use server"` modules (the bundler sends a reference, not the code) and at dynamic `import()`
  * (a separate chunk, loaded only when it runs) — and fails if zod is anywhere in it.
@@ -27,10 +27,10 @@ function resolve(specifier: string, from: string): string | undefined {
   if (specifier === "zod" || specifier.startsWith("zod/")) return "zod";
   if (specifier.startsWith("@/")) return withExtension(path.join(WEB, specifier.slice(2)));
   if (specifier.startsWith(".")) return withExtension(path.resolve(path.dirname(from), specifier));
-  if (specifier === "@ava/core" || specifier.startsWith("@ava/core/")) {
-    const key = specifier === "@ava/core" ? "." : `./${specifier.slice("@ava/core/".length)}`;
+  if (specifier === "@col/core" || specifier.startsWith("@col/core/")) {
+    const key = specifier === "@col/core" ? "." : `./${specifier.slice("@col/core/".length)}`;
     const target = coreExports[key]?.default;
-    if (!target) throw new Error(`${from}: @ava/core has no export ${key}`);
+    if (!target) throw new Error(`${from}: @col/core has no export ${key}`);
     return path.join(CORE, target);
   }
   return undefined;
@@ -92,10 +92,10 @@ it("finds the client components it is guarding", () => {
   expect(clientEntries()).toEqual(expect.arrayContaining(["components/CvAppearance.tsx", "components/CvLibraryEditor.tsx", "components/CvDraftEditor.tsx"]));
 });
 
-// A client component that needs the CV schemas loads them with `await import("@ava/core/cv")` where
+// A client component that needs the CV schemas loads them with `await import("@col/core/cv")` where
 // the check runs (see CvDraftEditor's preview and CvLibraryEditor's reload merge), and takes values
-// the server already resolved as props; the zod-free parts of the contract are `@ava/core/cv-format`,
-// `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+// the server already resolved as props; the zod-free parts of the contract are `@col/core/cv-format`,
+// `@col/core/cv-helpers` and `@col/core/cv-theme-values`.
 it.each(clientEntries())("%s does not bundle zod", (entry) => {
   expect(zodPath(entry)).toBeUndefined();
 });

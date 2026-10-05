@@ -1,17 +1,17 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { cvReviewSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
-import { cvSectionTexts } from "@ava/core/cv-format";
-import { cvImprovementOwner } from "@ava/core/cv-assessment";
-import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@ava/core/cv-review";
+import { cvSectionTexts } from "@col/core/cv-format";
+import { cvImprovementOwner } from "@col/core/cv-assessment";
+import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit } from "@ava/db";
+import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit } from "@col/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
-  type AppSettings, type CvContent, type CvWritingPreferences } from "@ava/core";
-import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@ava/core/cv-gap-quiz";
+  type AppSettings, type CvContent, type CvWritingPreferences } from "@col/core";
+import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@col/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { normaliseSubmittedLibrarySkills } from "@/lib/cv-skill-list";
@@ -23,7 +23,7 @@ import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
 import { cvEvaluationRows } from "@/lib/cv-evaluation";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
-import { userSettings as userSettingsTable } from "@ava/db/schema";
+import { userSettings as userSettingsTable } from "@col/db/schema";
 import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";

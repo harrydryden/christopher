@@ -39,12 +39,12 @@ import {
   type Effort,
   type RecordingKey,
   type StageRoutes,
-} from "@ava/ai";
-import { schema, type Db, type Task } from "@ava/db";
-import { cvMaxPages } from "@ava/core";
-import { cvMatchPoints, type CvAssessment } from "@ava/core/cv-assessment";
-import { diagnoseCvQuality, type CvQualityDiagnostics } from "@ava/core/cv-quality";
-import type { CvContent } from "@ava/core/cv";
+} from "@col/ai";
+import { schema, type Db, type Task } from "@col/db";
+import { cvMaxPages } from "@col/core";
+import { cvMatchPoints, type CvAssessment } from "@col/core/cv-assessment";
+import { diagnoseCvQuality, type CvQualityDiagnostics } from "@col/core/cv-quality";
+import type { CvContent } from "@col/core/cv";
 import type { WorkerDeps } from "./context";
 import { handleGenerateCv, type CvBuildSink } from "./handlers/cv";
 import type { AiHold } from "./budget";

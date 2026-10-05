@@ -1,6 +1,6 @@
 "use client";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@ava/core/cv-helpers";
+import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@col/core/cv-helpers";
 import { Badge } from "@/components/Badge";
 import { useAnchoredPanel } from "@/components/useAnchoredPanel";
 

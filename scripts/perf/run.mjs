@@ -1,7 +1,7 @@
 /**
  * The weekly re-run of the audit measurements, compared with scripts/perf/baseline.json.
  *
- *   createdb ava_perf_ci && DATABASE_URL=… pnpm db:migrate && pnpm --filter @ava/web build
+ *   createdb ava_perf_ci && DATABASE_URL=… pnpm db:migrate && pnpm --filter @col/web build
  *   DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_perf_ci node scripts/perf/run.mjs [--no-decide]
  *
  * Seeds the fixture into the (empty, ava_perf*) database, then runs pages.mjs, roundtrips.mjs and

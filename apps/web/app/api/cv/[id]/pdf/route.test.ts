@@ -1,6 +1,6 @@
 /** The workspace's preview and download of a saved revision: owned, ready, and throttled per account. */
 import { beforeEach, expect, it, vi } from "vitest";
-import { materialiseCv, type CvLibrary } from "@ava/core/cv";
+import { materialiseCv, type CvLibrary } from "@col/core/cv";
 const auth = vi.hoisted(() => vi.fn());
 const throttle = vi.hoisted(() => vi.fn());
 const draft = vi.hoisted(() => vi.fn());
@@ -10,7 +10,7 @@ vi.mock("@/lib/queries/cv", () => ({ getOwnCvDraftForPdf: draft }));
 const store = vi.hoisted(() => ({ storedCvPdf: vi.fn(), storeCvPdf: vi.fn(), cvPdfContentHash: vi.fn((content: unknown) => `hash:${JSON.stringify(content).length}`) }));
 vi.mock("@/lib/cv-pdf-store", () => store);
 // The assessment's own rules are tested with it; here a finalised revision is simply finalisable.
-vi.mock("@ava/core/cv-review", () => ({ assertCvFinalisable: vi.fn() }));
+vi.mock("@col/core/cv-review", () => ({ assertCvFinalisable: vi.fn() }));
 import { GET } from "./route";
 import { CV_RENDER_BUSY_SENTENCE, CV_RENDER_LIMIT } from "@/lib/cv-render-limit";
 

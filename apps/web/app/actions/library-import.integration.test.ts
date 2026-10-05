@@ -9,12 +9,12 @@
  * nothing confirmed.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, createLibraryImport, getLibraryImport, schema, type Db } from "@ava/db";
+import { createDb, createLibraryImport, getLibraryImport, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import type { User } from "@ava/db/schema";
-import { runMigrations } from "@ava/db/migrate";
-import { renderCvPdf } from "@ava/core/cv-pdf";
-import { responsibilityRows, type CvLibrary } from "@ava/core";
+import type { User } from "@col/db/schema";
+import { runMigrations } from "@col/db/migrate";
+import { renderCvPdf } from "@col/core/cv-pdf";
+import { responsibilityRows, type CvLibrary } from "@col/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
 import { libraryImportView } from "@/lib/library-import";

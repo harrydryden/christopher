@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CvClaimItem, CvReviewPlan, CvRubric, CvTextItem } from "@ava/core/cv-assessment";
+import type { CvClaimItem, CvReviewPlan, CvRubric, CvTextItem } from "@col/core/cv-assessment";
 import { createAiEngine, type AiClientLike, type ParseResponse } from "./engine";
 import { cvClaimMemoFrom, cvClaimMemoKeys } from "./claim-memo";
 import { UNVERIFIED_CLAIM_REASON } from "./cv-review-batch";

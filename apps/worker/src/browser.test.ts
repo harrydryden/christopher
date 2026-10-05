@@ -10,7 +10,7 @@ import { BrowserRenderer } from "./browser";
 import { listingCaptures } from "./listing-captures";
 import { HttpTrafficLedger } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
-import { ats, discovery, renamedEnv, SourceFetchError } from "@ava/core";
+import { ats, discovery, renamedEnv, SourceFetchError } from "@col/core";
 
 const skip = renamedEnv(process.env, "AVA_DISABLE_BROWSER", "CHRISTOPHER_DISABLE_BROWSER") === "1";
 const GH_API = "https://boards-api.greenhouse.io/v1/boards/acmeindustries/jobs?content=true";

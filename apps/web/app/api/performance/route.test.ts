@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { runMigrations } from '@ava/db/migrate';
-import type { Db } from '@ava/db';
+import { runMigrations } from '@col/db/migrate';
+import type { Db } from '@col/db';
 import { createTestDb } from '@/test/db';
 
 const jar = vi.hoisted(() => ({ value: undefined as string | undefined }));

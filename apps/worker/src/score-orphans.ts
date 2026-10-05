@@ -2,7 +2,7 @@
  * Repair historical score labels whose durable work has ended or disappeared. This is deliberately
  * separate from provider admission: it never queues a model call or changes a saved fit score.
  */
-import type { Db } from "@ava/db";
+import type { Db } from "@col/db";
 import { sql } from "drizzle-orm";
 
 export const SCORE_ORPHAN_BATCH = 200;

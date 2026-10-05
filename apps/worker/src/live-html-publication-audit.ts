@@ -1,8 +1,8 @@
 /** Bounded public Siemens continuation audit. Scratch database and synthetic follower only. */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { createUser, enqueueTask, schema, subscribeToCompany } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createUser, enqueueTask, schema, subscribeToCompany } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";

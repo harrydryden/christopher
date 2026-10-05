@@ -1,4 +1,4 @@
-import { PRICING, type AiUsageRecord } from "@ava/ai";
+import { PRICING, type AiUsageRecord } from "@col/ai";
 
 export interface LiveAcceptanceAiBudgetSnapshot {
   capUsd: number;

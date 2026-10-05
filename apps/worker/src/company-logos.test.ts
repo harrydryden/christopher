@@ -6,8 +6,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
   companiesDueLogoCapture, companyLogoVersion, createDb, noteLogoFailure, readCompanyLogo, schema, storeCompanyLogo, type Db,
-} from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+} from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import pg from "pg";
 

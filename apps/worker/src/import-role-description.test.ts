@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { renderCvPdf } from "@ava/core/cv-pdf";
-import { createDb, reevaluateGate, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { renderCvPdf } from "@col/core/cv-pdf";
+import { createDb, reevaluateGate, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

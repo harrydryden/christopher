@@ -16,11 +16,11 @@ COPY packages/core/package.json packages/core/
 COPY packages/ai/package.json packages/ai/
 COPY apps/worker/package.json apps/worker/
 COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile --filter @ava/worker... --filter @ava/db --filter @ava/core --filter @ava/ai
+RUN pnpm install --frozen-lockfile --filter @col/worker... --filter @col/db --filter @col/core --filter @col/ai
 COPY tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/worker ./apps/worker
-RUN pnpm --filter @ava/worker build
+RUN pnpm --filter @col/worker build
 
 FROM mcr.microsoft.com/playwright:v1.56.1-noble
 ENV NODE_ENV=production \
@@ -51,7 +51,7 @@ COPY apps/worker/package.json apps/worker/
 # resolve a frozen lockfile.
 COPY apps/web/package.json apps/web/
 # Handed to the image's unprivileged pwuser in the same layer, so node_modules is not copied twice.
-RUN pnpm install --frozen-lockfile --filter @ava/worker... --filter @ava/db --filter @ava/core --filter @ava/ai \
+RUN pnpm install --frozen-lockfile --filter @col/worker... --filter @col/db --filter @col/core --filter @col/ai \
  && chown -R pwuser:pwuser /app
 
 COPY --chown=pwuser:pwuser tsconfig.base.json ./

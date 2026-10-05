@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, queueScoring, requestScores, schema, type Db, type Task } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, queueScoring, requestScores, schema, type Db, type Task } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { AccountVerificationRequiredError, createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

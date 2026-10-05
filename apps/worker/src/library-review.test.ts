@@ -8,10 +8,10 @@
  * rather than fail and retry for ever.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import type { AiClientLike, ParseResponse } from "@ava/ai";
-import { libraryEntryInputHash, setRowFacets, type CvLibrary } from "@ava/core";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import type { AiClientLike, ParseResponse } from "@col/ai";
+import { libraryEntryInputHash, setRowFacets, type CvLibrary } from "@col/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -334,7 +334,7 @@ it("finishes done with the budget sentence when the account cannot afford the pa
   expect(stored.map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "rules"]]);
   // Nothing here is tagged, so no row has a score of its own and the entries read 0, but each row
   // carries the marks its wording earns, ready for the moment the person types it.
-  const { rulesLibraryReview } = await import("@ava/core");
+  const { rulesLibraryReview } = await import("@col/core");
   const library = libraryOf();
   expect(stored.map(row => row.score)).toEqual(["later", "role"].map(id => rulesLibraryReview(library.entries.find(entry => entry.id === id)!, library).score));
   expect(stored.every(row => row.review.rows.every(item => item.marks.length > 0))).toBe(true);
@@ -402,7 +402,7 @@ it("keeps an entry the model left out on its baseline, and asks about it again o
   expect(stored.map(row => [row.entryId, row.source])).toEqual([["later", "rules"], ["role", "model"]]);
   // Its own facet tags still score it; the silence is not a model's zero.
   expect(stored.find(row => row.entryId === "later")!.score).toBe(
-    (await import("@ava/core")).rulesLibraryReview(libraryOf().entries[1]!, libraryOf()).score,
+    (await import("@col/core")).rulesLibraryReview(libraryOf().entries[1]!, libraryOf()).score,
   );
 
   const second = scriptedClient();

@@ -6,13 +6,13 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { DEFAULT_SETTINGS } from "@ava/core";
+import { DEFAULT_SETTINGS } from "@col/core";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb, TEST_DATABASE_URL } from "@/test/db";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

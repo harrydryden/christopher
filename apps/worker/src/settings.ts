@@ -1,5 +1,5 @@
-import { schema, type Db } from "@ava/db";
-import { resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings } from "@ava/core";
+import { schema, type Db } from "@col/db";
+import { resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings } from "@col/core";
 import { eq, inArray, notLike, sql } from "drizzle-orm";
 
 /**

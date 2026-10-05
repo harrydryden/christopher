@@ -7,9 +7,9 @@
  * than storing a second one beside it, after which the ordinary two-miss rule applies.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db, type User } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { normalisePostingUrl, sha1 } from "@ava/core";
+import { createDb, schema, subscribeToCompany, type Db, type User } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { normalisePostingUrl, sha1 } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

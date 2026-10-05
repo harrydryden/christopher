@@ -1,11 +1,11 @@
 import { cvContentLinks, cvLibraryJobFor, type CvContentLink } from "./cv-content-links";
 import { cvShareAnchorLabel, type CvShareCommentLike } from "./cv-share";
-import type { CvContent, CvLibrary } from "@ava/core/cv";
+import type { CvContent, CvLibrary } from "@col/core/cv";
 import {
   cvClaimItems,
   cvImprovementOwner,
   type CvAssessment,
-} from "@ava/core/cv-assessment";
+} from "@col/core/cv-assessment";
 
 export const CV_CHANGE_TYPES = [
   "None",

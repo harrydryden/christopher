@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { recordAiCall, type AiCallRecord, type Db } from "@ava/db";
-import { aiBudgetWindowStart, type AiBudgetRefusal, type AppSettings } from "@ava/core";
+import { recordAiCall, type AiCallRecord, type Db } from "@col/db";
+import { aiBudgetWindowStart, type AiBudgetRefusal, type AppSettings } from "@col/core";
 import type { WorkerEnv } from "./env";
 import { log } from "./log";
 

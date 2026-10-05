@@ -7,12 +7,12 @@
  * of their own.
  */
 import { randomBytes } from "node:crypto";
-import { releaseAiHolds } from "@ava/db";
-import { deadlineMsFor, renamedEnv, type TaskType } from "@ava/core";
+import { releaseAiHolds } from "@col/db";
+import { deadlineMsFor, renamedEnv, type TaskType } from "@col/core";
 import {
   claimTask, createDeps, handlers as workerHandlers, onAbandon as workerOnAbandon, onInterrupted as workerOnInterrupted,
   readEnv, schedulerTick, TaskQueue, type HandlerMap, type QueueOptions,
-} from "@ava/worker";
+} from "@col/worker";
 import { getWorkerHeartbeat } from "@/lib/queries/health";
 
 /**

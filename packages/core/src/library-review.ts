@@ -51,14 +51,14 @@ import { normaliseText, sha1 } from "./normalize";
 
 type CvEntry = CvLibrary["entries"][number];
 
-/** How much evidence an entry carries; @ava/db's column enum is this list, re-exported. */
+/** How much evidence an entry carries; @col/db's column enum is this list, re-exported. */
 export const EVIDENCE_RATINGS = ["none", "weak", "good", "strong"] as const;
 export type EvidenceRating = (typeof EVIDENCE_RATINGS)[number];
 
 /**
  * Who produced a review. `rules` is the deterministic baseline computed from the person's own
  * facet tags, written the moment a library is saved; `model` is the model's review, which lands
- * when the task has run. @ava/db's column enum is this list, re-exported.
+ * when the task has run. @col/db's column enum is this list, re-exported.
  */
 export const LIBRARY_REVIEW_SOURCES = ["rules", "model"] as const;
 export type LibraryReviewSource = (typeof LIBRARY_REVIEW_SOURCES)[number];

@@ -1,7 +1,7 @@
-import type { FilterSuggestion } from "@ava/db/schema";
+import type { FilterSuggestion } from "@col/db/schema";
 
 /**
- * The exact shape of `filter_suggestions.value` is produced by `@ava/ai`'s filter-suggestion
+ * The exact shape of `filter_suggestions.value` is produced by `@col/ai`'s filter-suggestion
  * call site, which is still being built alongside this UI (packages/ai/src is empty as of writing).
  * Reading several plausible key names keeps this page working once that shape lands, rather than
  * guessing one name and breaking silently.

@@ -12,9 +12,9 @@ import {
   findLiveCvShareByHash, listCvShareComments, listCvShares, recordCvShareView,
   resolveCvShareComment, revokeCvShare, schema,
   CV_SHARE_ANCHOR_MAX_CHARS, CV_SHARE_AUTHOR_NAME_MAX_CHARS, CV_SHARE_BODY_MAX_CHARS, type Db,
-} from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import type { CvLibrary } from "@ava/core";
+} from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import type { CvLibrary } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";

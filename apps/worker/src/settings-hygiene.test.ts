@@ -9,9 +9,9 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { createDb, schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { DEFAULT_SETTINGS } from "@ava/core";
+import { createDb, schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { DEFAULT_SETTINGS } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import { loadSettings, loadUserSettings, loadUserSettingsMany } from "./settings";
 import { loadAdmissionCache } from "./admission-cache";

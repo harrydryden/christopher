@@ -3,8 +3,8 @@
  * `/status`, and the real-user vitals' retention.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { MONITOR_THRESHOLDS, monitorLevels, runMonitorSample, slowQueriesPer15m, type MonitorSample } from "./handlers/monitor-sample";
 import { getInternal, setInternal } from "./settings";

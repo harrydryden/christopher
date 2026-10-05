@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { accountAiStanding, accountsWithBudget, budgetLimits, BudgetRefusedError, isAccountBudgetRefusal, tryReserveAi, UNLIMITED_AI_BUDGET_USD } from "./budget";
 import { aiBudgetStop, type WorkerDeps } from "./context";

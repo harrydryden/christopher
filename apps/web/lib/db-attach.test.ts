@@ -5,7 +5,7 @@
  */
 import { expect, it } from "vitest";
 import { attachDatabasePool } from "@vercel/functions/db-connections";
-import { createDb } from "@ava/db/client";
+import { createDb } from "@col/db/client";
 
 it("accepts the interface's pool and listens for its releases", async () => {
   const { pool } = createDb("postgres://ava:secret@dpg-abc123-a.frankfurt-postgres.render.com:6432/ava", { idleTimeoutMillis: 120_000 });

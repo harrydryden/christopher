@@ -1,4 +1,4 @@
-import type { RawPosting } from "@ava/core";
+import type { RawPosting } from "@col/core";
 
 /** A dated, independently captured listing of posting identities for one acceptance case. */
 export interface ReferencePostingSnapshot {

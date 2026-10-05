@@ -13,7 +13,7 @@
  * of its own, which a transaction-pooling PgBouncer cannot give and a pooled connection would lose.
  */
 import pg from "pg";
-import { TASKS_CHANNEL } from "@ava/db";
+import { TASKS_CHANNEL } from "@col/db";
 import { log } from "./log";
 
 /** Reconnect waits: 1 s, doubling to 30 s. */

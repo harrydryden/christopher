@@ -13,8 +13,8 @@
  * key: a re-capture changes the URL. Middleware still checks the session cookie's signature before
  * the CDN answers. For a takedown, purge the CDN or move the capture time.
  */
-import { unsafeSvgReason } from "@ava/core";
-import { companyLogoVersion, readCompanyLogo } from "@ava/db";
+import { unsafeSvgReason } from "@col/core";
+import { companyLogoVersion, readCompanyLogo } from "@col/db";
 import { routeUser } from "@/lib/route-auth";
 import { db } from "@/lib/db";
 import { zUuid } from "@/lib/validation";

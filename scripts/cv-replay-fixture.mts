@@ -7,7 +7,7 @@
  * publishes it through the real handler against the scripted client, then records a rebuild of it
  * through the same scripted client. It prints the draft id and the recording's path, for
  *
- *   pnpm --filter @ava/worker cli replay <draft-id> --recordings <recording.jsonl> --out <report.json>
+ *   pnpm --filter @col/worker cli replay <draft-id> --recordings <recording.jsonl> --out <report.json>
  *
  * The recording says it was made by an injected client, so every report replayed from it is marked
  * `unverified`: the answers are scripted, not the provider's. Point DATABASE_URL at a scratch or

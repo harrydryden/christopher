@@ -18,14 +18,14 @@ import {
   type CvBlockBudget,
   type CvPlan,
   type CvWritingBudget,
-} from "@ava/core";
+} from "@col/core";
 import type {
   CvClaimItem,
   CvReviewPlan,
   CvRubric,
   CvTextItem,
-} from "@ava/core/cv-assessment";
-// The interface does not depend on @ava/ai by name; the worker it drives does.
+} from "@col/core/cv-assessment";
+// The interface does not depend on @col/ai by name; the worker it drives does.
 import type { AiCallMeta, AiClientLike, AiStreamLike, CanonicalEvidence } from "../../../packages/ai/src/index";
 import { canonicalEvidenceItems } from "../../../packages/ai/src/evidence";
 import { reviewFixture } from "../../../packages/core/test/cv-review-fixture";

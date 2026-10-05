@@ -1,4 +1,4 @@
-import { ensureHttpUrl, extractDomain } from "@ava/core";
+import { ensureHttpUrl, extractDomain } from "@col/core";
 
 /**
  * What the Discover tab's one box was given: a name to search the catalogue for, or a homepage.

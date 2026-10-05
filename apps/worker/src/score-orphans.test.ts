@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, requestScores, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, requestScores, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { ensureTestUser } from "./test-users";
 import { reconcileOrphanScores } from "./score-orphans";

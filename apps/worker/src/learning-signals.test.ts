@@ -7,11 +7,11 @@
  * and a rejection that never expires is a filter the person can no longer be offered.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { gzipSync } from "node:zlib";
-import { NotFoundError } from "@ava/ai";
+import { NotFoundError } from "@col/ai";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import {

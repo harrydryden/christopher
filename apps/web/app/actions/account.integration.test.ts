@@ -3,12 +3,12 @@
  * loop from one session, so each is throttled the way the public sign-in and reset forms are.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, createUser, schema, type Db } from "@ava/db";
+import { createDb, createUser, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS } from "@/lib/session";
-import { hashPassword, verifyPassword } from "@ava/core";
+import { hashPassword, verifyPassword } from "@col/core";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

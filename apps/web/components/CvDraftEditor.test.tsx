@@ -6,12 +6,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { DEFAULT_CV_THEME } from "@ava/core/cv-theme-values";
-import type { CvContent } from "@ava/core/cv";
+import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
+import type { CvContent } from "@col/core/cv";
 
 vi.mock("@/app/actions/cv", () => ({ saveCvDraft: vi.fn() }));
-// The lazily loaded check, unreachable: `import("@ava/core/cv")` rejects as a failed chunk would.
-vi.mock("@ava/core/cv", () => { throw new Error("Failed to fetch dynamically imported module"); });
+// The lazily loaded check, unreachable: `import("@col/core/cv")` rejects as a failed chunk would.
+vi.mock("@col/core/cv", () => { throw new Error("Failed to fetch dynamically imported module"); });
 
 import { CvDraftEditor } from "./CvDraftEditor";
 

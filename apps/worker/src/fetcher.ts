@@ -9,9 +9,9 @@
  *  - counts every outcome per host per day into `http_host_daily`
  */
 import { lookup } from "node:dns/promises";
-import { assertPublicHttpUrl, isIpLiteral, isPublicAddress, sha1, SourceFetchError, UnsafeUrlError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@ava/core";
-import { ats } from "@ava/core";
-import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@ava/db";
+import { assertPublicHttpUrl, isIpLiteral, isPublicAddress, sha1, SourceFetchError, UnsafeUrlError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@col/core";
+import { ats } from "@col/core";
+import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@col/db";
 import { log } from "./log";
 
 export interface FetcherOptions {

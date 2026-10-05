@@ -46,15 +46,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Read the installed Playwright version
         id: playwright
-        run: echo "version=$(pnpm --filter @ava/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(pnpm --filter @col/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Restore the Chromium download
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      - run: pnpm --filter @ava/worker exec playwright install --with-deps chromium
+      - run: pnpm --filter @col/worker exec playwright install --with-deps chromium
       - run: pnpm db:migrate
-      - run: pnpm --filter @ava/web build
+      - run: pnpm --filter @col/web build
         env:
           SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
       - name: Measure and compare with the baseline

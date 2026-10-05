@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { CvLibrarySchema } from "@ava/core/cv";
+import { CvLibrarySchema } from "@col/core/cv";
 import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList, splitCvLibrarySkillItem } from "./cv-skill-list";
 
 it("parses the six named skills without splitting ampersands and removes bullet markers and repeats", () => {

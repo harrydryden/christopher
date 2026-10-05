@@ -7,7 +7,7 @@
  * same address guard as the fetcher before it is sent. Chromium resolves names itself, so a name
  * that answers public to the guard and private to Chromium a moment later is not caught here.
  */
-import { SourceFetchError, type RenderedPage } from "@ava/core";
+import { SourceFetchError, type RenderedPage } from "@col/core";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { AddressGuard, explicitBotChallenge, type HttpTrafficLedger, type ResolveHost } from "./fetcher";

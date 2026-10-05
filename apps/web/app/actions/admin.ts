@@ -3,9 +3,9 @@
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { retireSourceRoles } from "@ava/db";
-import { careerSources, companies, companyNameSuggestions } from "@ava/db/schema";
-import { ensureHttpUrl, extractDomain } from "@ava/core";
+import { retireSourceRoles } from "@col/db";
+import { careerSources, companies, companyNameSuggestions } from "@col/db/schema";
+import { ensureHttpUrl, extractDomain } from "@col/core";
 import { requireAdmin } from "@/lib/auth";
 import { applySuggestedName, enqueueCompanyNameRescores, normaliseCompanyName } from "@/lib/company-names";
 import { db } from "@/lib/db";

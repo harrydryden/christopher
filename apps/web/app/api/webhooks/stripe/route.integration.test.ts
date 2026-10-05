@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb } from "@/test/db";
-import { ensureFreeEntitlement, getBillingSummary, grantCvCredits, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { ensureFreeEntitlement, getBillingSummary, grantCvCredits, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 
 let database: Db;
 let pool: ReturnType<typeof createTestDb>["pool"];

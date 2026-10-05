@@ -1,4 +1,4 @@
-import type { SourceType } from "@ava/core";
+import type { SourceType } from "@col/core";
 import type { LiveAcceptanceCase } from "./live-acceptance";
 
 /** Synthetic structure fixture only; it is never a human-labelled posting corpus. */

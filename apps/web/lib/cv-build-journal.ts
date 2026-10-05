@@ -9,7 +9,7 @@
  * Client-safe: type imports only, so the narrative can render in the browser without pulling the
  * core package's parsers into the bundle.
  */
-import type { CvBuildFailure, CvBuildStepStatus, CvBuildStepView } from "@ava/core";
+import type { CvBuildFailure, CvBuildStepStatus, CvBuildStepView } from "@col/core";
 
 // TODO(merge P2): `adopt_revision` joins `CV_BUILD_MOTIONS` in packages/core/src/cv-build.ts with
 // the improvement pass that now runs after the baseline is published. Until then it is a string

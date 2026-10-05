@@ -1,5 +1,5 @@
 /** Test helper: an account to act for, created once per email and reused across truncations. */
-import { createUser, schema, type Db } from "@ava/db";
+import { createUser, schema, type Db } from "@col/db";
 import { eq } from "drizzle-orm";
 
 /** The one database every suite defaults to, so `pnpm -r test` needs one database and no more. */

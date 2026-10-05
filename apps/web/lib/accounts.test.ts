@@ -3,9 +3,9 @@
  * owner's takeover, password sign-in, Google linking, single-use confirmation and reset links, throttling.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, completeAccountClaim, createDb, DEFAULT_ADMIN_EMAILS, lockAccountScoreInput, SEED_TAGS, schema, type Db } from "@ava/db";
+import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, completeAccountClaim, createDb, DEFAULT_ADMIN_EMAILS, lockAccountScoreInput, SEED_TAGS, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

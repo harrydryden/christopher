@@ -7,8 +7,8 @@
  * in `lib/setup.ts`, which touches no database.
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { resolveUserSettings } from "@ava/core";
-import { companySubscriptions, cvLibraries, userSettings, users } from "@ava/db/schema";
+import { resolveUserSettings } from "@col/core";
+import { companySubscriptions, cvLibraries, userSettings, users } from "@col/db/schema";
 import { needsEmailConfirmation } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CHOOSE_GATE_SENTENCE, type MonitoringFacts, type SetupFacts } from "@/lib/setup";

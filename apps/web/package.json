@@ -1,5 +1,5 @@
 {
-  "name": "@ava/web",
+  "name": "@col/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,9 +12,9 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@ava/core": "workspace:*",
-    "@ava/db": "workspace:*",
-    "@ava/worker": "workspace:*",
+    "@col/core": "workspace:*",
+    "@col/db": "workspace:*",
+    "@col/worker": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "@vercel/functions": "^3.9.9",
     "@vercel/otel": "^2.1.3",

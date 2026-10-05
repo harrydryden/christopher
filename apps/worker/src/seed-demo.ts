@@ -4,14 +4,14 @@
  * in the database. It therefore refuses anything but a local database unless SEED_DEMO_DATABASE
  * names the target database exactly (see seed-guard.ts).
  *
- *   DATABASE_URL=... pnpm --filter @ava/worker exec tsx src/seed-demo.ts
+ *   DATABASE_URL=... pnpm --filter @col/worker exec tsx src/seed-demo.ts
  *
  * Creates the account demo@ava.local (password: demo-password) that follows three
  * companies, plus a second account that follows one of them, to show the shared catalogue.
  */
-import { createDb, createUser, schema, syncCompanyStatus } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS, hashPassword } from "@ava/core";
+import { createDb, createUser, schema, syncCompanyStatus } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS, hashPassword } from "@col/core";
 import { sql } from "drizzle-orm";
 import { describeSeedTarget, seedDemoTarget, type SeedTarget } from "./seed-guard";
 

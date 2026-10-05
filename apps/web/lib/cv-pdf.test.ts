@@ -11,7 +11,7 @@ it("renders an actual PDF from stored content without requiring a browser", asyn
 // checked the file signature, so an entirely unstyled PDF passed.
 import PDFDocument from "pdfkit";
 import { afterEach, vi } from "vitest";
-import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@ava/core/cv";
+import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@col/core/cv";
 import { renderCvPdfWithReport } from "./cv-pdf";
 const fixture: CvContent = { name: "Example Candidate", contact: "London", summary: "Operations leader.", sections: [
   { entryId: "skill", kind: "skill", heading: "Internal evidence label", bullets: ["Planning and reporting."] },

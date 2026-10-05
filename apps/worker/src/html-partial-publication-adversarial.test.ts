@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { sha1 } from "@ava/core";
+import { sha1 } from "@col/core";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handleScanCompany } from "./handlers/scan";

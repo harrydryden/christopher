@@ -11,11 +11,11 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
   createDb, createLibraryImport, getLibraryImport, listOpenLibraryImports, schema, type Db,
-} from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
-import { renderCvPdf } from "@ava/core/cv-pdf";
-import type { LibraryProposal } from "@ava/core";
+} from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { RateLimitError, type AiClientLike, type ParseResponse } from "@col/ai";
+import { renderCvPdf } from "@col/core/cv-pdf";
+import type { LibraryProposal } from "@col/core";
 import { sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

@@ -6,8 +6,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
   createDb, latestApplicationFor, roleStageSql, schema, type ApplicationStatus, type Db,
-} from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+} from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";

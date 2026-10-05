@@ -18,7 +18,7 @@ import { reportRoleRefusal } from "@/lib/role-refusals";
 import { claimRoleRevision, discardLegacyRoleUndos, forgetRoleUndo, hasLegacyRoleUndos, isCurrentRoleRevision, recentRoleUndos, rememberRoleUndo, ROLE_UNDO_CHANGED, type RoleUndoEntry } from "./role-undo-history";
 import styles from "./RolesTable.module.css";
 
-import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
+import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@col/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
 

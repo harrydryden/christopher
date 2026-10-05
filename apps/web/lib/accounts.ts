@@ -7,9 +7,9 @@
  * confirmation link completed with the account's password, or a reset link used to set a password.
  */
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, lockAccountScoreInput, normaliseEmail, promoteIfEntitled, type CreateUserResult, type Db } from "@ava/db";
-import { authAccounts, authTokens, cvVersions, sessions, users, type User } from "@ava/db/schema";
-import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@ava/core";
+import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, lockAccountScoreInput, normaliseEmail, promoteIfEntitled, type CreateUserResult, type Db } from "@col/db";
+import { authAccounts, authTokens, cvVersions, sessions, users, type User } from "@col/db/schema";
+import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@col/core";
 import { consumeAuthTokenIn, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
 import { sendEmail } from "./email";

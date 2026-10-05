@@ -4,13 +4,13 @@
  * by every account asking about the same domain.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema, type Db, type Task } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, type Db, type Task } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { DiscoveryRetryError, handleDiscover, onDiscoverAbandoned } from "./handlers/discover";
-import { SourceFetchError } from "@ava/core";
+import { SourceFetchError } from "@col/core";
 import { transientFailure, verifyCandidate } from "./handlers/companies";
 import { LeaseLostError } from "./lease";
 import { ensureTestUser } from "./test-users";

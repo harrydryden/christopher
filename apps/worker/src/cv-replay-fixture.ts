@@ -5,9 +5,9 @@
  * plan exactly as a published CV does. Used by `cv-replay.test.ts` and `scripts/cv-replay-fixture.mts`.
  * No real person's data: the candidate, the employers and the advert are invented.
  */
-import { createUser, enqueueTask, schema, type Db } from "@ava/db";
-import { dedupeKeyFor } from "@ava/core";
-import type { AiClientLike } from "@ava/ai";
+import { createUser, enqueueTask, schema, type Db } from "@col/db";
+import { dedupeKeyFor } from "@col/core";
+import type { AiClientLike } from "@col/ai";
 import { eq } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { TaskQueue } from "./queue";

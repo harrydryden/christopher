@@ -7,8 +7,8 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
 

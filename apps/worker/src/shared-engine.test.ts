@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
-import { STREAM_CEILING_MS, SDK_MAX_RETRIES, type AiClientLike, type ParseResponse } from "@ava/ai";
+import { STREAM_CEILING_MS, SDK_MAX_RETRIES, type AiClientLike, type ParseResponse } from "@col/ai";
 import { createDeps, holdMinutesFor, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { ensureTestUser } from "./test-users";

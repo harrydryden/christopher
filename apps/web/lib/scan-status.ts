@@ -1,5 +1,5 @@
-import { localDateParts, type SystemSettings } from "@ava/core";
-import type { ScanRun } from "@ava/db/schema";
+import { localDateParts, type SystemSettings } from "@col/core";
+import type { ScanRun } from "@col/db/schema";
 import { scanStripFacts } from "./queries/scan-strip";
 import { getSystemSettings } from "./settings";
 import { getWorkerStatus } from "./queries/health";

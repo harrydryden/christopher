@@ -1,4 +1,4 @@
-import { ats, IncompleteListingError, looksRemote, normalizeUrl, type FetchContext, type RawPosting, type SourceSpec } from "@ava/core";
+import { ats, IncompleteListingError, looksRemote, normalizeUrl, type FetchContext, type RawPosting, type SourceSpec } from "@col/core";
 import { listingCaptures } from "./listing-captures";
 
 /**

@@ -11,8 +11,8 @@
  * Pure and deterministic: the same library always serialises to the same bytes, which is what lets
  * a block built from it be cached and read back by the next call of the same build.
  */
-import { cvTailoringEvidence, rowFacets, type CvLibrary, type Employment, type EvidenceFacet } from "@ava/core";
-import type { CvTextItem } from "@ava/core/cv-assessment";
+import { cvTailoringEvidence, rowFacets, type CvLibrary, type Employment, type EvidenceFacet } from "@col/core";
+import type { CvTextItem } from "@col/core/cv-assessment";
 
 export interface CanonicalEvidenceRow {
   /** `entry:<entryId>:row:<n>` or `entry:<entryId>:skill:<n>`: what a plan or a bullet cites. */
@@ -99,4 +99,4 @@ export function canonicalEvidenceItems(evidence: CanonicalEvidence): CvTextItem[
 }
 
 /** Moved to core, where the plan's library verdicts are derived; re-exported for the audit. */
-export { evidenceBlockId } from "@ava/core/cv-assessment";
+export { evidenceBlockId } from "@col/core/cv-assessment";

@@ -1,8 +1,8 @@
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
-import type { CvBuildFailure } from "@ava/core";
+import type { CvBuildFailure } from "@col/core";
 import type { Db } from "./client";
 import { cvDrafts, cvShareComments, cvShares, cvTailoringPlans } from "./schema";
-import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
+import type { CvTailoringPlan } from "@col/core/cv-tailoring";
 import { cvRoleKey } from "./cv-role-key";
 import {
   archiveRetention,

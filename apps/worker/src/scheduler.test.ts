@@ -1,9 +1,9 @@
 /** The scheduler's per-account fan-outs: bounded statements, whatever the number of accounts. */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, enqueueTask, schema, type Db } from "@ava/db";
-import { enqueueTasks } from "@ava/db/tasks";
-import { runMigrations } from "@ava/db/migrate";
-import { dedupeKeyFor } from "@ava/core";
+import { createDb, enqueueTask, schema, type Db } from "@col/db";
+import { enqueueTasks } from "@col/db/tasks";
+import { runMigrations } from "@col/db/migrate";
+import { dedupeKeyFor } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

@@ -1,7 +1,7 @@
 /**
  * Lighthouse CI against a production build of the interface, signed in.
  *
- *   pnpm --filter @ava/web build
+ *   pnpm --filter @col/web build
  *   DATABASE_URL=postgres://… node scripts/perf/lighthouse.mjs [--mobile-only | --desktop-only]
  *
  * `--preview <deployment-url>` instead measures `/login`, signed out, on a Vercel preview, warnings

@@ -7,7 +7,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { and, eq, gt, ne } from "drizzle-orm";
-import { sessions, users, type User } from "@ava/db/schema";
+import { sessions, users, type User } from "@col/db/schema";
 import { db } from "./db";
 import {
   createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, isSecureHost, LEGACY_SESSION_COOKIE_NAME, readSessionCookie,

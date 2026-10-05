@@ -2,8 +2,8 @@
 
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { requestScores, type Db } from "@ava/db";
-import { decisions, jobs, userJobs } from "@ava/db/schema";
+import { requestScores, type Db } from "@col/db";
+import { decisions, jobs, userJobs } from "@col/db/schema";
 import { requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { revalidate } from "@/lib/action-helpers";

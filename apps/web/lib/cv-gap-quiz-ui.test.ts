@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@ava/core";
+import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@col/core";
 import { CvGapQuiz } from "@/components/CvGapQuiz";
 import { gapDestinationValue, gapQuizForm, gapQuizLibrary } from "@/lib/cv-gap-quiz-library";
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { CvEvaluationRow } from "@/lib/cv-evaluation";
-import type { CvReviewDecision } from "@ava/core/cv-review";
+import type { CvReviewDecision } from "@col/core/cv-review";
 import { dismissCvReviewItem, finaliseCvDraft } from "@/app/actions/cv";
 import { SettingsForm } from "./SettingsForm";
 import { CvContentBlockLink } from "./CvWorkspace";

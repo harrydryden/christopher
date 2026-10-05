@@ -1,10 +1,10 @@
 /** Queue and scheduler behaviour against a real database. */
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@ava/db";
-import { AGEING_PRIORITY_FLOOR, cvBuildDeadlineMs, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
+import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@col/db";
+import { AGEING_PRIORITY_FLOOR, cvBuildDeadlineMs, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@col/core";
 import { ensureTestUser, testDatabaseUrl } from "./test-users";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

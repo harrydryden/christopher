@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RawPosting } from "@ava/core";
+import type { RawPosting } from "@col/core";
 import {
   canonicalPostingIdentity,
   compareReferencePostings,

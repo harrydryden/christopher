@@ -6,8 +6,8 @@
  * by the code, and the report is ordered by what each line cost. Pure: the rows come from
  * `aiUsageByAccount`, nothing here reads the database.
  */
-import { aiFeatureLabel } from "@ava/core";
-import type { AiAccountUsage } from "@ava/db";
+import { aiFeatureLabel } from "@col/core";
+import type { AiAccountUsage } from "@col/db";
 
 export interface AiUsageGroup {
   /** Stable row key: the account, feature and model this line is for. */

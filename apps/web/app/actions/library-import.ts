@@ -22,7 +22,7 @@ import {
   stripControlCharacters,
   stripHtml,
   validateLibraryProposal,
-} from "@ava/core";
+} from "@col/core";
 import {
   createLibraryImport,
   LIBRARY_IMPORT_MAX_BYTES,
@@ -31,7 +31,7 @@ import {
   resolveLibraryImport,
   type CreateLibraryImportInput,
   type Db,
-} from "@ava/db";
+} from "@col/db";
 import { writeCvLibraryVersion } from "@/lib/cv-library-write";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";

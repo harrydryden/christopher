@@ -1,4 +1,4 @@
-import { compileGate, type AppSettings, type CompiledGate, type GateInput, type GateResult, type GateSettings } from "@ava/core";
+import { compileGate, type AppSettings, type CompiledGate, type GateInput, type GateResult, type GateSettings } from "@col/core";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";

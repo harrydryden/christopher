@@ -7,14 +7,14 @@
  * backoff and a real second claim.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, reserveCvCredit, schema, startCvBuildStep, type Db, type Task } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@ava/ai";
-import { DEFAULT_CV_THEME, materialiseCv } from "@ava/core/cv";
-import { createCvAssessment } from "@ava/core/cv-review";
-import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
-import type { CvBuildFailure, CvBuildStepView } from "@ava/core";
-import { dedupeKeyFor } from "@ava/core";
+import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, reserveCvCredit, schema, startCvBuildStep, type Db, type Task } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@col/ai";
+import { DEFAULT_CV_THEME, materialiseCv } from "@col/core/cv";
+import { createCvAssessment } from "@col/core/cv-review";
+import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@col/core/cv-assessment";
+import type { CvBuildFailure, CvBuildStepView } from "@col/core";
+import { dedupeKeyFor } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import { rubricFixture, reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 import { createDeps, type WorkerDeps } from "./context";

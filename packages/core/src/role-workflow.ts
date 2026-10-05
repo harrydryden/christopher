@@ -69,7 +69,7 @@ export const ROLE_STAGE_DESCRIPTIONS: Record<RoleStage, string> = {
   dismissed: "You passed on it, withdrew, or it stopped matching and was archived.",
 };
 
-/** What an `applications` row can say; @ava/db's column enum is this list, re-exported. */
+/** What an `applications` row can say; @col/db's column enum is this list, re-exported. */
 export const APPLICATION_STATUSES = ["applying", "applied", "screening", "interview", "offer", "accepted", "rejected", "withdrawn"] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 

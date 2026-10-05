@@ -3,8 +3,8 @@ import { useState } from "react";
 // Only the zod-free theme values: this component ships to /settings and the CV page, and the
 // validator is not needed to pick colours. Callers pass a theme already resolved on the server
 // (or, in the CV editor, resolved once from the server-validated revision).
-import { CV_PAGE_CHOICES } from "@ava/core/cv-format";
-import { CV_FONTS, CV_THEMES, cvForeground, type CvFont, type CvTheme } from "@ava/core/cv-theme-values";
+import { CV_PAGE_CHOICES } from "@col/core/cv-format";
+import { CV_FONTS, CV_THEMES, cvForeground, type CvFont, type CvTheme } from "@col/core/cv-theme-values";
 import { selectClass } from "@/components/Field";
 
 /** Browser stand-ins for the PDF faces: AVA is Helvetica; Arial is Liberation Sans in the PDF. */

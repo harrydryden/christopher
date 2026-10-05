@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createDb = vi.hoisted(() => vi.fn());
 const attachDatabasePool = vi.hoisted(() => vi.fn());
-vi.mock("@ava/db/client", async (original) => ({ ...(await original<typeof import("@ava/db/client")>()), createDb }));
+vi.mock("@col/db/client", async (original) => ({ ...(await original<typeof import("@col/db/client")>()), createDb }));
 vi.mock("@vercel/functions/db-connections", () => ({ attachDatabasePool }));
 
 import { DIRECT_IDLE_TIMEOUT_MS, DIRECT_POOL_MAX, POOLED_IDLE_TIMEOUT_MS, POOLED_POOL_MAX, webPoolIdleTimeoutMs, webPoolMax } from "./db";

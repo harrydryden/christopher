@@ -9,9 +9,9 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import sharp from "sharp";
-import { createDb, readCompanyLogo, schema, type Db } from "@ava/db";
-import { normaliseLogo } from "@ava/core";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, readCompanyLogo, schema, type Db } from "@col/db";
+import { normaliseLogo } from "@col/core";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

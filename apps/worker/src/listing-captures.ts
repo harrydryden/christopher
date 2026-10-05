@@ -1,5 +1,5 @@
 import { gunzipSync } from "node:zlib";
-import { SourceFetchError, type RenderedPage } from "@ava/core";
+import { SourceFetchError, type RenderedPage } from "@col/core";
 
 export const MAX_DECODED_LISTING_BYTES = 5_000_000;
 

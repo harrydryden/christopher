@@ -2,9 +2,9 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { recordWorkerEvent, type Db } from "@ava/db";
-import { aiBreakerStats, aiGovernorStats, defaultBreaker } from "@ava/ai";
-import { runMigrations } from "@ava/db/migrate";
+import { recordWorkerEvent, type Db } from "@col/db";
+import { aiBreakerStats, aiGovernorStats, defaultBreaker } from "@col/ai";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { enqueueBootGateReevaluation, probeConfiguredModels, seedTagVocabularies } from "./boot";
 import { createDeps } from "./context";
@@ -19,8 +19,8 @@ import { startScheduler } from "./scheduler";
 import { TaskWakeup } from "./task-wakeup";
 import { vitals } from "./vitals";
 import { stopOtel, traceHandlers } from "./otel";
-import { renderCvPdf } from "@ava/core/cv-pdf";
-import { DEFAULT_CV_THEME } from "@ava/core/cv-theme-values";
+import { renderCvPdf } from "@col/core/cv-pdf";
+import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
 
 async function main() {
   const env = readEnv();

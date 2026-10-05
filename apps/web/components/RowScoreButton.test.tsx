@@ -6,7 +6,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import type { EvidenceFacet } from "@ava/core/cv-helpers";
+import type { EvidenceFacet } from "@col/core/cv-helpers";
 import type { RowGuidance } from "@/lib/cv-library-evidence";
 import { RowScoreButton } from "./RowScoreButton";
 

@@ -1,5 +1,5 @@
-import { schema, taskRow, enqueueTasks, type Task } from "@ava/db";
-import { discovery, extractDomain, isImportOnlyKind, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@ava/core";
+import { schema, taskRow, enqueueTasks, type Task } from "@col/db";
+import { discovery, extractDomain, isImportOnlyKind, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@col/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { aiBudgetStop, makeFetchContext, type WorkerDeps } from "../context";
 import { recommendationContext } from "../recommendation-context";

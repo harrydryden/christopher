@@ -14,7 +14,7 @@
  * a verdict and is never filed: the revision asks about that claim again.
  */
 import { createHash } from "node:crypto";
-import type { CvClaimItem, CvReviewPlan, CvRubric, CvTextItem } from "@ava/core/cv-assessment";
+import type { CvClaimItem, CvReviewPlan, CvRubric, CvTextItem } from "@col/core/cv-assessment";
 import { UNVERIFIED_CLAIM_REASON } from "./cv-review-batch";
 
 export type CvClaimVerdict = Omit<CvReviewPlan["claims"][number], "claimId">;

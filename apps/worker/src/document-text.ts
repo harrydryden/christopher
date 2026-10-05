@@ -21,8 +21,8 @@
  * to export the file again.
  */
 import { inflateRawSync, inflateSync } from "node:zlib";
-import { stripControlCharacters } from "@ava/core/library-import";
-import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@ava/db";
+import { stripControlCharacters } from "@col/core/library-import";
+import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@col/db";
 
 /** What the conversion produced, and whether the person is seeing all of it. */
 export interface DocumentText {

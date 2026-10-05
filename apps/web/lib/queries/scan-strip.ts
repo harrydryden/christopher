@@ -6,9 +6,9 @@
  * pool checkouts (of three) for it alone. The role and company counts use the expressions their own
  * pages count with (`roleStatusSql`, the pending status), so the strip and the page never disagree.
  */
-import { roleStatusSql } from "@ava/db";
+import { roleStatusSql } from "@col/db";
 import { sql } from "drizzle-orm";
-import { careerSources, companySubscriptions, companySuggestions, decisions, jobs, scanRuns, scans, userJobs } from "@ava/db/schema";
+import { careerSources, companySubscriptions, companySuggestions, decisions, jobs, scanRuns, scans, userJobs } from "@col/db/schema";
 import { db } from "@/lib/db";
 
 /**

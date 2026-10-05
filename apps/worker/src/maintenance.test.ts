@@ -5,8 +5,8 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, pruneWorkerEvents, schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, pruneWorkerEvents, schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";

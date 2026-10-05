@@ -1,6 +1,6 @@
-import { schema, taskRow, enqueueStandard, pruneWorkerEvents, recordWorkerEvent, releaseOrphanedCvHolds } from "@ava/db";
-import { enqueueTasks } from "@ava/db/tasks";
-import { localDateParts, resolveUserSettings } from "@ava/core";
+import { schema, taskRow, enqueueStandard, pruneWorkerEvents, recordWorkerEvent, releaseOrphanedCvHolds } from "@col/db";
+import { enqueueTasks } from "@col/db/tasks";
+import { localDateParts, resolveUserSettings } from "@col/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";

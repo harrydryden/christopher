@@ -37,8 +37,8 @@ import {
   type Employment,
   type LibraryRowReview,
   type TaskPayloads,
-} from "@ava/core";
-import { estimateLibraryReviewUsd, type LibraryReviewEntry } from "@ava/ai";
+} from "@col/core";
+import { estimateLibraryReviewUsd, type LibraryReviewEntry } from "@col/ai";
 import {
   accountCanScore,
   latestCvLibrary,
@@ -49,7 +49,7 @@ import {
   type Db,
   type LibraryReviewUpsert,
   type Task,
-} from "@ava/db";
+} from "@col/db";
 import { openAccountAiPass } from "../account-ai-pass";
 import type { TaskRunContext } from "../queue";
 import type { WorkerDeps } from "../context";

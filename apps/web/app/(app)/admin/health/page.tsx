@@ -1,5 +1,5 @@
-import { workloadMetrics } from "@ava/db";
-import { aiBudgetWindowStart, CV_BUILD_MOTIONS, CV_FAILURE_POLICIES, type CvFailureKind } from "@ava/core";
+import { workloadMetrics } from "@col/db";
+import { aiBudgetWindowStart, CV_BUILD_MOTIONS, CV_FAILURE_POLICIES, type CvFailureKind } from "@col/core";
 import { CV_STAGE_LABELS } from "@/lib/cv-build-narrative";
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";

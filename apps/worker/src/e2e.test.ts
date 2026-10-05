@@ -11,10 +11,10 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
-import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
+import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@col/db";
 import { ensureTestUser } from "./test-users";
-import { runMigrations } from "@ava/db/migrate";
-import { ats, dedupeKeyFor, discovery, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
+import { runMigrations } from "@col/db/migrate";
+import { ats, dedupeKeyFor, discovery, displayStatus, liveFor, priorityFor, sha1 } from "@col/core";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -1771,9 +1771,9 @@ it("fences company profile replacement and retains previous evidence on lost own
   await db.insert(schema.companyProfiles).values({ companyId: company.id, name: company.name, domain: company.domain, sector: "Previous sector" });
   const fakeAi = { enabled: true, profileCompany: async () => ({ oneLiner: "Updated profile", sector: "New sector" }) } as unknown as WorkerDeps["ai"];
   const lost = { ...deps, ai: fakeAi, assertOwnership: async () => { throw new Error("lease lost"); } };
-  await expect(handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@ava/db").Task, lost)).rejects.toThrow("lease lost");
+  await expect(handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@col/db").Task, lost)).rejects.toThrow("lease lost");
   expect((await db.select().from(schema.companyProfiles))[0]!.sector).toBe("Previous sector");
-  await handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@ava/db").Task, { ...deps, ai: fakeAi });
+  await handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@col/db").Task, { ...deps, ai: fakeAi });
   const profiles = await db.select().from(schema.companyProfiles);
   expect(profiles).toHaveLength(1); expect(profiles[0]!.sector).toBe("New sector");
 });
@@ -1814,7 +1814,7 @@ describe("shared catalogue", () => {
     expect(manual!.result).toMatchObject({ skipped: "scanned recently" });
 
     // Pausing one follower leaves the company active for the other; unfollowing everyone retires it.
-    const { setSubscriptionStatus } = await import("@ava/db");
+    const { setSubscriptionStatus } = await import("@col/db");
     await setSubscriptionStatus(db, user.id, company.id, "paused");
     expect((await db.select().from(schema.companies).where(eq(schema.companies.id, company.id)))[0]!.status).toBe("active");
     await setSubscriptionStatus(db, engineer.id, company.id, "archived");

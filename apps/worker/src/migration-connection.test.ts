@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
-import { createDb } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 
 it.each([
   "postgres://operator:private-test-value@dpg-example-a:6432/ava",

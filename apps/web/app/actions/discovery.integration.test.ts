@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import type { User } from "@ava/db/schema";
-import { runMigrations } from "@ava/db/migrate";
+import type { User } from "@col/db/schema";
+import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { discoverySourceHealth } from "@/lib/discovery-ux";
 

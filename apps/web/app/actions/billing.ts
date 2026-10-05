@@ -2,8 +2,8 @@
 
 import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
-import { CV_TOPUPS, type CvTopupKey } from "@ava/db";
-import { billingAccounts } from "@ava/db/schema";
+import { CV_TOPUPS, type CvTopupKey } from "@col/db";
+import { billingAccounts } from "@col/db/schema";
 import { eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";

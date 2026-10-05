@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@ava/core";
+import { ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@col/core";
 import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { buttonLinkClass } from "./Button";

@@ -9,17 +9,17 @@
  * readable at all.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, upsertLibraryReviews, type Db } from "@ava/db";
+import { createDb, schema, upsertLibraryReviews, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { libraryEntryInputHash, rulesLibraryReview } from "@ava/core/library-review";
-import { EVIDENCE_MARKS_BY_FACET, detectEvidenceMarks, scoreRowAgainst } from "@ava/core/evidence-rubric";
-import { sha1 } from "@ava/core";
-import { groupCvLibrary, type CvLibrary, type EvidenceFacet } from "@ava/core/cv";
-import { cvTailoringEvidence } from "@ava/core/cv-tailoring";
+import { libraryEntryInputHash, rulesLibraryReview } from "@col/core/library-review";
+import { EVIDENCE_MARKS_BY_FACET, detectEvidenceMarks, scoreRowAgainst } from "@col/core/evidence-rubric";
+import { sha1 } from "@col/core";
+import { groupCvLibrary, type CvLibrary, type EvidenceFacet } from "@col/core/cv";
+import { cvTailoringEvidence } from "@col/core/cv-tailoring";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

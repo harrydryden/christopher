@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { COMPANY_BLOCK_SIZE, PLAN_CATALOG, updateBillingAccount } from "@ava/db";
-import { billingAccounts } from "@ava/db/schema";
+import { COMPANY_BLOCK_SIZE, PLAN_CATALOG, updateBillingAccount } from "@col/db";
+import { billingAccounts } from "@col/db/schema";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getBillingSummary } from "./service";

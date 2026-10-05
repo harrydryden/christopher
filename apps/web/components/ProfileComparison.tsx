@@ -1,4 +1,4 @@
-import type { PreferenceProfile } from "@ava/db/schema";
+import type { PreferenceProfile } from "@col/db/schema";
 import { diffLines, displayDiff, pinnedLines, questionLines, textLines, type DisplayLine } from "@/lib/profile-version-diff";
 
 export type ComparedProfile = Pick<PreferenceProfile, "version" | "markdown" | "pinnedStatements" | "openQuestions">;

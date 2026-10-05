@@ -12,8 +12,8 @@
  * the worker, which takes only role locks.
  */
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { Db } from "@ava/db";
-import { cvDrafts } from "@ava/db/schema";
+import type { Db } from "@col/db";
+import { cvDrafts } from "@col/db/schema";
 import { UserFacingError } from "@/lib/validation";
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];

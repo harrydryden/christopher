@@ -12,8 +12,8 @@ import {
   completeLibraryImport, createDb, createLibraryImport, getLibraryImport, getLibraryImportForWorker,
   listOpenLibraryImports, pruneLibraryImports, resolveLibraryImport, schema,
   LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS, type Db,
-} from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+} from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";

@@ -7,9 +7,9 @@
  * in ten minutes and then give up for good — and that the sweep queues each company once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, readCompanyLogo, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { dedupeKeyFor } from "@ava/core";
+import { createDb, readCompanyLogo, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { dedupeKeyFor } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

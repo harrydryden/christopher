@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import type { Decision } from "@ava/db/schema";
+import type { Decision } from "@col/db/schema";
 import { Button, buttonLinkClass } from "@/components/Button";
 import { EmptyState } from "@/components/EmptyState";
 import { ReasonTagEditor } from "@/components/ReasonTagEditor";

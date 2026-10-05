@@ -1,5 +1,5 @@
-import { scanRunSummaries, type ScanRunSummary } from "@ava/db";
-import type { ScanRun } from "@ava/db/schema";
+import { scanRunSummaries, type ScanRunSummary } from "@col/db";
+import type { ScanRun } from "@col/db/schema";
 import { db } from "./db";
 
 function report(run: ScanRun, summary: ScanRunSummary, userId?: string) {

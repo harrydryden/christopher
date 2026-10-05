@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { appendProfile, createDb, enqueueStandard, lockAccountScoreInput, schema, syncCompanyStatus, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { appendProfile, createDb, enqueueStandard, lockAccountScoreInput, schema, syncCompanyStatus, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

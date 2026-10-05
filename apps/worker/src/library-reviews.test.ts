@@ -10,9 +10,9 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
   createDb, latestLibraryReviews, latestModelReviewsByEntry, libraryReviewsSignature, pruneLibraryReviews, schema,
   upsertLibraryReviews, type Db, type LibraryReviewUpsert,
-} from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { detectEvidenceMarks, normaliseLibraryReview, rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@ava/core";
+} from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { detectEvidenceMarks, normaliseLibraryReview, rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@col/core";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";

@@ -2,13 +2,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { prerenderToNodeStream } from "react-dom/static";
 import { expect, it, vi } from "vitest";
-import { createCvAssessment } from "@ava/core/cv-review";
-import { materialiseCv, type CvLibrary } from "@ava/core/cv";
+import { createCvAssessment } from "@col/core/cv-review";
+import { materialiseCv, type CvLibrary } from "@col/core/cv";
 import {
   cvTextItems,
   cvClaimItems,
   cvEvidenceItems,
-} from "@ava/core/cv-assessment";
+} from "@col/core/cv-assessment";
 import {
   rubricFixture,
   reviewFixture,

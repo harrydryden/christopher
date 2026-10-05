@@ -4,8 +4,8 @@
  * This deliberately uses the real verification handler, queue and Chromium renderer against a
  * private fixture server. It never needs an AI key or public network access.
  */
-import { createDb, enqueueTask, schema } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, schema } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { readFile, writeFile } from "node:fs/promises";
 import { createDeps } from "./context";

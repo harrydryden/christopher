@@ -3,11 +3,11 @@ import http from "node:http";
 import net from "node:net";
 import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { SourceFetchError } from "@ava/core";
-import { createDb, listHttpHostDaily } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { SourceFetchError } from "@col/core";
+import { createDb, listHttpHostDaily } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
-import { sha1 } from "@ava/core";
+import { sha1 } from "@col/core";
 import { ATS_API_DELAY_MS, decodeBody, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, HostBusyError, hostDelayMs, HttpTrafficLedger, MAX_HOST_WAIT_MS, parseRobots, PoliteFetcher, PrivateAddressError, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 

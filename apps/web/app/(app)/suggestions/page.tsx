@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { discoverySources, tasks } from "@ava/db/schema";
+import { discoverySources, tasks } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { DiscoverySources } from "@/components/DiscoverySources";

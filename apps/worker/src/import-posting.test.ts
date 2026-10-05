@@ -9,16 +9,16 @@
  * throws, because only a transport failure is worth retrying.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, enqueueTask, schema, subscribeToCompany, type Db, type User } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { dedupeKeyFor, normalisePostingUrl, sha1 } from "@ava/core";
+import { createDb, enqueueTask, schema, subscribeToCompany, type Db, type User } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { dedupeKeyFor, normalisePostingUrl, sha1 } from "@col/core";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
 import { handleImportPosting } from "./handlers/import-posting";
 import { handleFetchDescription } from "./handlers/description";
-import { reevaluateGate } from "@ava/db";
+import { reevaluateGate } from "@col/db";
 import { TaskQueue } from "./queue";
 import { ensureTestUser } from "./test-users";
 import { startTestServer, type TestServer } from "./test-server";

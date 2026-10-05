@@ -7,8 +7,8 @@
  * here checks it again.
  */
 import { desc, eq, sql } from "drizzle-orm";
-import { accountCanScore, cvLibraries, enqueueTask, lockAccountScoreInput } from "@ava/db";
-import { CvLibrarySchema, parseLibraryAdditions, retainArchivedEvidence, type CvLibrary } from "@ava/core";
+import { accountCanScore, cvLibraries, enqueueTask, lockAccountScoreInput } from "@col/db";
+import { CvLibrarySchema, parseLibraryAdditions, retainArchivedEvidence, type CvLibrary } from "@col/core";
 import type { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { UserFacingError } from "@/lib/validation";

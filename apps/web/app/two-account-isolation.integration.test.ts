@@ -10,13 +10,13 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { schema, subscribeToCompany, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { schema, subscribeToCompany, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { materialiseCv, type CvLibrary } from "@ava/core/cv";
+import { materialiseCv, type CvLibrary } from "@col/core/cv";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createTestDb>["pool"];

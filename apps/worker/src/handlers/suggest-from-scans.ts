@@ -5,8 +5,8 @@
  * postings kept in scan evidence (snapshot v2) and never calls a model. Runs per account once a
  * week, queued by the daily run for accounts whose companies it scanned, and on demand.
  */
-import { schema, type Task } from "@ava/db";
-import { suggestFromScans, type ScannedTitle, type TaskPayloads, type TermSuggestion } from "@ava/core";
+import { schema, type Task } from "@col/db";
+import { suggestFromScans, type ScannedTitle, type TaskPayloads, type TermSuggestion } from "@col/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { gunzipSync } from "node:zlib";
 import { rejectionCutoff } from "./learning";

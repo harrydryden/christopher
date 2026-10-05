@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { reserveHostTurn } from "./context";
 

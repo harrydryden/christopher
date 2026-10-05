@@ -6,7 +6,7 @@
  * and a test that ran as an administrator by default could not see an action that forgot to
  * refuse a member.
  */
-import { createUser, schema, type Db } from "@ava/db";
+import { createUser, schema, type Db } from "@col/db";
 import { eq } from "drizzle-orm";
 import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS } from "@/lib/session";
 

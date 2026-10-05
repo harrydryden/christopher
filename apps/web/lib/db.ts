@@ -1,5 +1,5 @@
 import { attachDatabasePool } from "@vercel/functions/db-connections";
-import { createDb, isTransactionPooledUrl } from "@ava/db/client";
+import { createDb, isTransactionPooledUrl } from "@col/db/client";
 export type Db = ReturnType<typeof createDb>["db"];
 let cached: Db | null = null;
 

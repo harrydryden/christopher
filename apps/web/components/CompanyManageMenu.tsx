@@ -18,7 +18,7 @@ import { useState } from "react";
 import { archiveCompany, pauseCompany, rediscoverCompany, refreshCompany, resumeCompany, unfollowCompany } from "@/app/actions/companies";
 import { Button } from "@/components/Button";
 import { useActionCall } from "@/components/useActionCall";
-import type { CompanySubscription } from "@ava/db/schema";
+import type { CompanySubscription } from "@col/db/schema";
 
 type MenuAction = "refresh" | "rediscover" | "pause" | "resume" | "archive" | "unfollow";
 

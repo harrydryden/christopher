@@ -1,4 +1,4 @@
-import type { ScoreJobInput } from "@ava/ai";
+import type { ScoreJobInput } from "@col/ai";
 
 type LocationInput = Pick<ScoreJobInput["job"], "location" | "locations" | "locationStatus">;
 

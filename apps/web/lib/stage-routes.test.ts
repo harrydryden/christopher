@@ -1,6 +1,6 @@
 /** The System settings table of stage routes: what it shows, and what a submitted form stores. */
 import { expect, it } from "vitest";
-import { STAGE_ROUTE_IDS } from "@ava/core";
+import { STAGE_ROUTE_IDS } from "@col/core";
 import { stageRouteRows, stageRoutesFromForm, stageRouteWarnings } from "./stage-routes";
 
 it("lists every stage, the CV build's first, with default where nothing is routed", () => {

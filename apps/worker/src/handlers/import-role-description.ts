@@ -1,7 +1,7 @@
 /** Read one private role description; confirmation and job creation belong to the web action. */
 import { and, eq } from "drizzle-orm";
-import { extractMainText, extractPostingFromPage, JS_SHELL_TEXT, stripHtml, type TaskPayloads } from "@ava/core";
-import { schema, type Db, type Task } from "@ava/db";
+import { extractMainText, extractPostingFromPage, JS_SHELL_TEXT, stripHtml, type TaskPayloads } from "@col/core";
+import { schema, type Db, type Task } from "@col/db";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { documentToText, DocumentReadError, tidyDocumentText } from "../document-text";
 import { HostBusyError, PrivateAddressError } from "../fetcher";

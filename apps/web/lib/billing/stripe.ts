@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { CV_TOPUPS, PLAN_CATALOG, type BillingPlan, type CvTopupKey } from "@ava/db";
+import { CV_TOPUPS, PLAN_CATALOG, type BillingPlan, type CvTopupKey } from "@col/db";
 
 let client: Stripe | null = null;
 

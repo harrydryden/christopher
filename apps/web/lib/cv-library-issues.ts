@@ -11,7 +11,7 @@
  * except short strings, truncated, and anything unreadable falls back to the index.
  */
 import type { z } from "zod";
-import { employmentKey } from "@ava/core/cv-helpers";
+import { employmentKey } from "@col/core/cv-helpers";
 
 /** The refusal core raises when two jobs in employment history are the same job. */
 const DUPLICATE_JOB = "This company, job title and date range already exist in employment history.";

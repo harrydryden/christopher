@@ -3,10 +3,10 @@ import {
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, listCvBuildSteps, schema, startCvBuildStep, type Task } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { AiEngine } from "@ava/ai";
-import { DEFAULT_CV_THEME } from "@ava/core/cv";
+import { createDb, listCvBuildSteps, schema, startCvBuildStep, type Task } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { AiEngine } from "@col/ai";
+import { DEFAULT_CV_THEME } from "@col/core/cv";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "./test-users";
 import { handleGenerateCv } from "./handlers/cv";
@@ -299,8 +299,8 @@ it("does not author a CV against a hallucinated requirement", async () => {
 });
 
 it("automatically fits an oversized saved draft before assessment, retaining its edited appearance and reporting stages", async () => {
-  const { materialiseCv, DEFAULT_CV_THEME } = await import("@ava/core/cv");
-  const { renderCvPdfWithReport } = await import("@ava/core/cv-pdf");
+  const { materialiseCv, DEFAULT_CV_THEME } = await import("@col/core/cv");
+  const { renderCvPdfWithReport } = await import("@col/core/cv-pdf");
   const { task, deps, draft } = await setup();
   const entries = Array.from({ length: 8 }, (_, i) => ({ ...library.entries[0]!, id: `role-${i}`, heading: `Director ${i}` }));
   const snapshot = { ...library, entries };

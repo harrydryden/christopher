@@ -1,4 +1,4 @@
-import type { StatementTotals } from "@ava/db";
+import type { StatementTotals } from "@col/db";
 import { Badge } from "@/components/Badge";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";

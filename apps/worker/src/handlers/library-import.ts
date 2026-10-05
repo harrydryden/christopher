@@ -35,15 +35,15 @@ import {
   usd,
   validateLibraryProposal,
   type TaskPayloads,
-} from "@ava/core";
-import { estimateLibraryImportUsd, type AiFailure } from "@ava/ai";
+} from "@col/core";
+import { estimateLibraryImportUsd, type AiFailure } from "@col/ai";
 import {
   completeLibraryImport,
   enqueueTask,
   getLibraryImportForWorker,
   type Db,
   type Task,
-} from "@ava/db";
+} from "@col/db";
 import { openAccountAiPass } from "../account-ai-pass";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { capDocumentText, DocumentReadError, documentToText, tidyDocumentText } from "../document-text";

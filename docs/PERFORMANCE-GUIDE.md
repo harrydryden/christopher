@@ -307,7 +307,7 @@ Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_bu
   - Backends are: 93 via PgBouncer plus the worker's 26 direct = 119 > 100 usable (103 − 3 reserved).
   - PgBouncer keeps server connections for `server_idle_timeout` (default 600 s [I: not exposed by Render]), so after a web burst a worker reconnect, migration or `psql` can fail with `sorry, too many clients already` for up to 10 minutes.
   - About 67 simultaneous web transactions (12 instances × 6) reach it [I]; observed live peak 8 [M HOSTED-CAPACITY].
-- Status: done [V] (commit d745150): `application_name` `ava-web` / `ava-worker` / `ava-web-cron` via pg's option (a URL value wins); `databaseBackends()` exported from `@ava/db` for 5.5; cap 60 and alert 80 in DEPLOY.md. Separate role not done (M, Render permission unverified).
+- Status: done [V] (commit d745150): `application_name` `ava-web` / `ava-worker` / `ava-web-cron` via pg's option (a URL value wins); `databaseBackends()` exported from `@col/db` for 5.5; cap 60 and alert 80 in DEPLOY.md. Separate role not done (M, Render permission unverified).
 - Impact: prevents an outage that hits every account at once. A scan that cannot connect is a failed scan, never a closure, because only a successful scan closes a role; but CV builds and claims stall.
 - Effort: S (tagging, alert), M (separate role). Risk → guard: a role limit fails web transactions first, which retry; `WEB_DB_POOL_MAX` stays the fast lever (DEPLOY.md step 5).
 

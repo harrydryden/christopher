@@ -70,7 +70,7 @@ test("the worker image runs under an init process as the image's unprivileged us
   assert.match(dockerfile, /^ENTRYPOINT \["\/usr\/bin\/tini", "--"\]$/m);
   // The worker compiled ahead of time by the build stage (apps/worker/build.mjs), not TypeScript
   // through tsx, with the tracing module preloaded before it as the source entry preloads src/otel.ts.
-  assert.match(dockerfile, /^RUN pnpm --filter @ava\/worker build$/m);
+  assert.match(dockerfile, /^RUN pnpm --filter @col\/worker build$/m);
   assert.match(dockerfile, /^CMD \["node", "--enable-source-maps", "--import", "\.\/dist\/otel\.mjs", "dist\/index\.mjs"\]$/m);
   const user = dockerfile.search(/^USER pwuser$/m);
   assert.ok(user > 0, "USER pwuser is set");

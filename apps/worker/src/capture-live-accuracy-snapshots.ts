@@ -1,5 +1,5 @@
 import { PoliteFetcher, userAgentFor } from "./fetcher";
-import { ats } from "@ava/core";
+import { ats } from "@col/core";
 
 const fetcher = new PoliteFetcher({
   userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),

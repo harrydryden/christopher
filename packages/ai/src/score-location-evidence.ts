@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { evaluateLocation } from "@ava/core";
+import { evaluateLocation } from "@col/core";
 import { wrap } from "./prompts";
 
 /** Maximum UTF-8 bytes devoted to the employer's location evidence in one A5 role. */

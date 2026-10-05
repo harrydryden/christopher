@@ -5,7 +5,7 @@
  * Pure: the rows come from `readCvProgress` in lib/queries/cv.ts (one query) or from what the page
  * has already read.
  */
-import type { CvBuildCheckpoint, CvBuildFailure } from "@ava/core";
+import type { CvBuildCheckpoint, CvBuildFailure } from "@col/core";
 import { stepToWire, type CvJournalStep } from "./cv-build-journal";
 import { CV_PROGRESS_STALE_MS, cvBuildState, cvWorkFlags, cvWorkVersion, type CvBuildDraft, type CvBuildTask } from "./cv-build-state";
 import type { CvProgressReading } from "./cv-progress-types";

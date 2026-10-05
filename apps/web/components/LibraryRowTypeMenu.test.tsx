@@ -7,7 +7,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { EvidenceFacet } from "@ava/core/cv-helpers";
+import type { EvidenceFacet } from "@col/core/cv-helpers";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

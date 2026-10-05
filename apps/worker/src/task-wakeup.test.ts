@@ -3,8 +3,8 @@
  * moment its enqueue commits, and picks up what was enqueued while its listener was away.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, enqueueTask, schema, type Db } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
+import { createDb, enqueueTask, schema, type Db } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
 import { testDatabaseUrl } from "./test-users";
 import { createDeps, type WorkerDeps } from "./context";

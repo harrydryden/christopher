@@ -1,5 +1,5 @@
-import { schema, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, requestLocationEnrichment, type Task, type ViewUpdate } from "@ava/db";
-import { ats, extractMainText, sha1, stripHtml, type AppSettings } from "@ava/core";
+import { schema, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, requestLocationEnrichment, type Task, type ViewUpdate } from "@col/db";
+import { ats, extractMainText, sha1, stripHtml, type AppSettings } from "@col/core";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { makeFetchContext } from "../context";
@@ -239,7 +239,7 @@ export function sliceBetweenAnchors(rawText: string, startsWith: string, endsWit
 }
 
 /**
- * Moved to @ava/core (`posting-page.ts`), where the same reading serves a posting a
+ * Moved to @col/core (`posting-page.ts`), where the same reading serves a posting a
  * follower pastes the URL of. Re-exported so the worker's own callers keep their import.
  */
 export { extractMainText };

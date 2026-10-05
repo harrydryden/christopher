@@ -122,7 +122,7 @@ the same learning loop.
    from pg_stat_activity where backend_type = 'client backend' group by 1 order by 2 desc;
    ```
 
-   `databaseBackends()` in `@ava/db` reads the same figures, with the usable ceiling, for monitoring.
+   `databaseBackends()` in `@col/db` reads the same figures, with the usable ceiling, for monitoring.
 
    That is why the interface's pool is 6 wide on the pooled endpoint and 3 on the direct one
    (`apps/web/lib/db.ts`). A full render of the Roles page issues about 14 statements, most of them
@@ -775,7 +775,7 @@ nothing to serialise: away from the scheduled run time, with no CV build running
 Running tasks), and with registration closed. What remains is a window in which two model calls
 could both pass an account's budget check, a bounded overspend. The same applies to any later
 release that changes a lock key; keep lock keys stable otherwise. `pnpm-lock.yaml` already names
-the `@ava/*` packages, so frozen installs are unaffected.
+the `@col/*` packages, so frozen installs are unaffected.
 
 ### Roll out
 
@@ -957,7 +957,7 @@ image runs `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs` (
 deployed slot counts, the idle process measured 161–236 MB from source and 117–118 MB compiled (one
 outlier at 205 MB). The tests, the CLI and the drills still run from source through `tsx`, so the
 compiled entry point is exercised by the `worker-image` CI job, which boots the image on every pull
-request; `pnpm --filter @ava/worker build` then `pnpm --filter @ava/worker start` reproduces it locally. The
+request; `pnpm --filter @col/worker build` then `pnpm --filter @col/worker start` reproduces it locally. The
 browser is closed after five idle minutes and launched again on the next render (about 100 MiB
 outside V8 between bursts, a second or two on the first render after a quiet spell).
 

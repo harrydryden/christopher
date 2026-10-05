@@ -16,12 +16,12 @@
  * therefore moves a row, and never adds or removes one.
  */
 import { createHash } from "node:crypto";
-import { enqueueStandard, notifyTaskWorkers, recordAiCall, schema, type Task } from "@ava/db";
+import { enqueueStandard, notifyTaskWorkers, recordAiCall, schema, type Task } from "@col/db";
 import {
   scoreBatchCustomId, scoreBatchHolds, scoreBatchPollDelayMs,
   SCORE_BATCH_HOLD_MINUTES, SCORE_BATCH_MAX_ITEMS, type ScoreBatchItem, type ScoreBatchRecord, type TaskPayloads,
-} from "@ava/core";
-import type { AiUsageRecord, BatchScoreRequest, ScoreJobResult } from "@ava/ai";
+} from "@col/core";
+import type { AiUsageRecord, BatchScoreRequest, ScoreJobResult } from "@col/ai";
 import { and, eq, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { budgetLimits, tryReserveAi, type AiHold } from "../budget";

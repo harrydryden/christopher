@@ -1,6 +1,6 @@
 "use client";
-import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries } from "@ava/core/cv-helpers";
-import type { CvLibrary, Employment } from "@ava/core/cv";
+import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries } from "@col/core/cv-helpers";
+import type { CvLibrary, Employment } from "@col/core/cv";
 import { inputClass } from "@/components/Field";
 import { TH, TR } from "@/components/table";
 import styles from "./EmploymentHistoryTable.module.css";

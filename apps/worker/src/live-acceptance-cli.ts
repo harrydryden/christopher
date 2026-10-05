@@ -7,8 +7,8 @@ import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
 import { resolveLiveAcceptanceConcurrency, resolveLiveAcceptanceDiscoveryBudget, runLiveAcceptanceCase, summariseLiveAcceptance, liveAcceptanceVerdict, type LiveAcceptanceResult } from "./live-acceptance";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import { BrowserRenderer } from "./browser";
-import { createAiEngine, type AiUsageRecord } from "@ava/ai";
-import { DEFAULT_SYSTEM_SETTINGS } from "@ava/core";
+import { createAiEngine, type AiUsageRecord } from "@col/ai";
+import { DEFAULT_SYSTEM_SETTINGS } from "@col/core";
 import { createLiveAcceptanceAiBudget } from "./live-acceptance-ai";
 
 function valueAfter(args: string[], flag: string): string | undefined {

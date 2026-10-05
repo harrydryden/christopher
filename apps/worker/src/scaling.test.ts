@@ -1,8 +1,8 @@
 import { beforeAll, beforeEach, afterAll, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { accountAiSpend, aiUsageByAccount, createDb, schema, totalAiSpend } from "@ava/db";
-import { runMigrations } from "@ava/db/migrate";
-import { aiBudgetWindowStart } from "@ava/core";
+import { accountAiSpend, aiUsageByAccount, createDb, schema, totalAiSpend } from "@col/db";
+import { runMigrations } from "@col/db/migrate";
+import { aiBudgetWindowStart } from "@col/core";
 import { sql } from "drizzle-orm";
 import { reserveAi } from "./budget";
 import { ensureTestUser, testDatabaseUrl } from "./test-users";

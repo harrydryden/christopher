@@ -8,16 +8,16 @@
  * comments route stop answering once the throttle has been reached.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, resolveCvShareComment as resolveCommentRow, schema, type Db } from "@ava/db";
+import { createDb, resolveCvShareComment as resolveCommentRow, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
-import { runMigrations } from "@ava/db/migrate";
+import { runMigrations } from "@col/db/migrate";
 import { desc, eq, isNull, sql } from "drizzle-orm";
 import { signInTestUser, ensureTestUser } from "@/test/auth";
-import { materialiseCv, type CvLibrary } from "@ava/core/cv";
-import { createCvAssessment } from "@ava/core/cv-review";
-import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@ava/core/cv-assessment";
+import { materialiseCv, type CvLibrary } from "@col/core/cv";
+import { createCvAssessment } from "@col/core/cv-review";
+import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@col/core/cv-assessment";
 import { rubricFixture, reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
-import type { User } from "@ava/db/schema";
+import type { User } from "@col/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];

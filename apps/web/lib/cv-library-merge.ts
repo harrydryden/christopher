@@ -16,7 +16,7 @@ import {
   employmentHeading,
   type CvLibrary,
   type Employment,
-} from "@ava/core/cv";
+} from "@col/core/cv";
 
 /** What a reload did with the text that was in the editor. */
 export interface CvLibraryMerge {

@@ -11,7 +11,7 @@ import {
   type EvaluatedRoutes,
   type StageRouteId,
   type StageRoutes,
-} from "@ava/core";
+} from "@col/core";
 
 /** What each prompt registry entry is called on the page; the CV build's stages come first. */
 const STAGE_LABELS: Record<string, string> = {

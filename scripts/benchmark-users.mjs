@@ -58,6 +58,18 @@ export function calibrated(perTabPerMinute, range = REFRESH_CALIBRATION) {
   return perTabPerMinute >= range.min && perTabPerMinute <= range.max;
 }
 
+/** An unchanged scan has no Roles-page version change; a changed role uses D's measured rate. */
+export function refreshRateFailure(mode, rate) {
+  if (mode === 'unchanged') return rate === 0 ? null : `${rate} refreshes per tab per minute, where unchanged scans require zero`;
+  if (mode === 'changed') return calibrated(rate) ? null : `${rate} refreshes per tab per minute, outside the ${REFRESH_CALIBRATION.min}-${REFRESH_CALIBRATION.max} measured in the browser`;
+  throw new Error(`unknown daily run mode ${mode}`);
+}
+
+/** A daily run finds a visible posting change on three of each four completed companies. */
+export function visibleChangesForScans(scansFinished) {
+  return scansFinished - Math.floor(scansFinished / 4);
+}
+
 /**
  * The requests of the two quiet phases, in time order. `idle` (no run in progress or due) has none.
  * `pre-scan` (a run due within the hour) has the banner alone, each tab from its own point in the
@@ -94,11 +106,34 @@ export function benchmarkShape(env = process.env) {
   const jobsPerCompany = whole('USERS_BENCHMARK_JOBS_PER_COMPANY', 50, 1, 200);
   const pollingTabs = Math.min(accounts, whole('USERS_POLLING_TABS', 100, 1, 2_000));
   const pollingSeconds = whole('USERS_POLLING_SECONDS', 60, 30, 600);
+  const burstRepeats = whole('USERS_BURST_REPEATS', 3, 1, 10);
   return {
-    accounts, companies, follows, jobsPerCompany, pollingTabs, pollingSeconds,
+    accounts, companies, follows, jobsPerCompany, pollingTabs, pollingSeconds, burstRepeats,
     // Ten active accounts each save one more Library version, record ten decisions and queue three tasks.
     expected: { users: accounts, userJobs: accounts * follows * jobsPerCompany, libraries: accounts + 10, cvs: accounts, applications: accounts, decisions: 100, queuedTasks: 30 },
   };
+}
+
+/** Finish one queued synthetic scan. The changed case edits a real, visible role in the same statement. */
+export async function finishSyntheticScan(pool, runId, jobsPerCompany, mode) {
+  if (mode !== 'unchanged' && mode !== 'changed') throw new Error(`unknown daily run mode ${mode}`);
+  const { rows: [result] } = await pool.query(`with done as (
+      update tasks set status='done',started_at=now(),finished_at=now() where id in (
+        select id from tasks where type='scan_company' and status='queued' and payload->>'scanRunId'=$1 order by run_after,id limit 1)
+      returning (payload->>'companyId')::uuid company_id),
+    recorded as (
+      insert into scans(scan_run_id,source_id,started_at,finished_at,status,fetch_method,postings_found)
+      select $1::uuid,cs.id,now(),now(),'ok','api',$2 from done join career_sources cs on cs.company_id=done.company_id
+      returning source_id),
+    changed as (
+      update jobs j set title=j.title||' (scan refreshed)',updated_at=clock_timestamp()
+      where $3::boolean and j.id=(select candidate.id from jobs candidate
+        join career_sources cs on cs.company_id=candidate.company_id
+        join recorded scan on scan.source_id=cs.id order by candidate.id limit 1)
+      returning j.id)
+    select (select count(*)::int from recorded) scans_finished,
+      (select count(*)::int from changed) roles_changed`, [runId, jobsPerCompany, mode === 'changed']);
+  return { scansFinished: result.scans_finished, rolesChanged: result.roles_changed };
 }
 
 /** Whether a work-status reading makes the tab render its page again: a version it has not shown. */
@@ -297,18 +332,24 @@ async function main() {
       requestsPerMinute: +(soakResults.length / soakSeconds * 60).toFixed(2), ...summarise(soakResults), failures: soakResults.filter(x => !x.ok).slice(0, 10) });
     resourcePhase = 'post-soak idle';
     await new Promise(r => setTimeout(r, idleSeconds * 1_000));
-    resourcePhase = 'hundred-user burst';
-    await deadline(reads(100, 600, 'hundred-user authenticated read burst'), 'hundred-user burst');
+    for (let burst = 1; burst <= shape.burstRepeats; burst++) {
+      resourcePhase = `hundred-user burst ${burst}`;
+      await deadline(reads(100, 600, `hundred-user authenticated read burst ${burst}`), `hundred-user burst ${burst}`);
+      if (burst < shape.burstRepeats) {
+        resourcePhase = 'between-burst idle';
+        await new Promise(r => setTimeout(r, idleSeconds * 1_000));
+      }
+    }
     resourcePhase = 'post-burst idle';
     await new Promise(r => setTimeout(r, idleSeconds * 1_000));
 
-    // The daily run's window, in the three states a tab sees it in. `idle`: no run in progress or due,
+    // The daily run's window, in the four states a tab sees it in. `idle`: no run in progress or due,
     // so no poller asks anything, and the phase asserts that. `pre-scan`: a run due within the hour,
     // so the banner alone asks, backing off. `run`: the scheduler has opened one shared run and one
     // scan_company task per company; each tab's Roles poller backs off and resets by lib/polling.ts
     // and refreshes its page (`RSC: 1`) on each version it has not shown, while the banner backs off
     // from thirty seconds. A stand-in worker finishes one company every twelve seconds, leaving a
-    // scan row, which is what moves the versions and the banner's summary.
+    // scan row. Only a run that changes a visible job moves the Roles-page version.
     const transactions = async () => Number((await pool.query(`select xact_commit+xact_rollback n from pg_stat_database where datname=current_database()`)).rows[0].n);
     const poll = async (path, cookie) => {
       const start = performance.now();
@@ -340,75 +381,75 @@ async function main() {
         failures: quietPolls.filter(x => !x.ok).slice(0, 10) });
     }
 
-    resourcePhase = 'daily-window run';
-    const { rows: [run] } = await pool.query(`insert into scan_runs(run_date,trigger,companies_total)
-      select to_char(now(),'YYYY-MM-DD'),'schedule',count(*)::int from companies returning id,companies_total`);
-    await pool.query(`insert into tasks(type,payload,dedupe_key,priority,run_after)
-      select 'scan_company',jsonb_build_object('companyId',c.id::text,'scanRunId',$1::text,'trigger','schedule'),'scan_company:'||c.id::text||':'||$1::text,5,
-        now()+(('x'||substr(replace(c.id::text,'-',''),1,8))::bit(32)::bigint/4294967295.0)*interval '60 minutes'
-      from companies c`, [run.id]);
-    let scansFinished = 0;
-    const finishScan = async () => {
-      const { rowCount } = await pool.query(`with done as (
-          update tasks set status='done',started_at=now(),finished_at=now() where id in (
-            select id from tasks where type='scan_company' and status='queued' and payload->>'scanRunId'=$1 order by run_after,id limit 1)
-          returning (payload->>'companyId')::uuid company_id)
-        insert into scans(scan_run_id,source_id,started_at,finished_at,status,fetch_method,postings_found)
-        select $1::uuid,cs.id,now(),now(),'ok','api',$2 from done join career_sources cs on cs.company_id=done.company_id`, [run.id, shape.jobsPerCompany]);
-      scansFinished += rowCount ?? 0;
-    };
-    const polls = [], renders = [];
-    const transactionsBefore = await transactions();
-    const windowStart = performance.now();
-    const endMs = shape.pollingSeconds * 1_000;
-    const worker = setInterval(() => { finishScan().catch(() => undefined); }, COMPANY_EVERY_MS);
-    // One tab: its Roles poller and its banner, each on its own backoff, from its own start.
-    const statusLoop = async tab => {
-      let at = Math.floor((tab * POLL_MODEL.firstMs) / shape.pollingTabs), wait = POLL_MODEL.firstMs, seen;
-      while (at < endMs) {
-        await sleepUntil(windowStart, at);
-        const reading = await poll(WORK_STATUS_PATH, cookies[tab]);
-        polls.push(reading);
-        const changed = needsRender(seen, reading);
-        if (reading.ok) seen = reading.version;
-        if (changed) renders.push(await request(refreshPathFor(tab), cookies[tab], { RSC: '1' }));
-        wait = nextPollDelay(wait, changed);
-        at = performance.now() - windowStart + wait;
-      }
-    };
-    const bannerLoop = async tab => {
-      let at = Math.floor((tab * POLL_MODEL.bannerFirstMs) / shape.pollingTabs), wait = POLL_MODEL.bannerFirstMs, last;
-      while (at < endMs) {
-        await sleepUntil(windowStart, at);
-        const reading = await poll(SCAN_STATUS_PATH, cookies[tab]);
-        polls.push(reading);
-        wait = nextPollDelay(wait, reading.ok && last !== undefined && reading.signature !== last, POLL_MODEL.bannerFirstMs, POLL_MODEL.longestMs);
-        if (reading.ok) last = reading.signature;
-        at = performance.now() - windowStart + wait;
-      }
-    };
-    try {
-      await deadline(Promise.all(Array.from({ length: shape.pollingTabs }, (_, tab) => [statusLoop(tab), bannerLoop(tab)]).flat()),
-        'daily-window run', shape.pollingSeconds + 60);
-    } finally { clearInterval(worker); }
-    const windowSeconds = (performance.now() - windowStart) / 1000;
-    const transactionCount = (await transactions()) - transactionsBefore;
-    const perTabMinute = n => +(n / shape.pollingTabs / (windowSeconds / 60)).toFixed(2);
-    const statusPolls = polls.filter(x => x.path === WORK_STATUS_PATH), bannerPolls = polls.filter(x => x.path === SCAN_STATUS_PATH);
-    phases.push({ label: `daily-window run (${shape.pollingTabs} tabs, ${shape.pollingSeconds}s)`, concurrency: shape.pollingTabs,
-      seconds: +windowSeconds.toFixed(2), companies: run.companies_total, scansFinished,
-      pollsPerSecond: +(polls.length / windowSeconds).toFixed(2), ...summarise(polls),
-      routes: Object.fromEntries([WORK_STATUS_PATH, SCAN_STATUS_PATH].map(p => [p, summarise(polls.filter(x => x.path === p))])),
-      perTabPerMinute: { statusPolls: perTabMinute(statusPolls.length), bannerPolls: perTabMinute(bannerPolls.length), refreshes: perTabMinute(renders.length),
-        requests: perTabMinute(polls.length + renders.length) },
-      followUpRenders: { ...summarise(renders), perTabPerMinute: perTabMinute(renders.length), calibration: REFRESH_CALIBRATION,
-        routes: Object.fromEntries(Object.values(REFRESH_PATHS).map(p => [p, summarise(renders.filter(x => x.path === p))])),
-        medianBytes: renders.length ? renders.map(r => r.bytes ?? 0).sort((a, b) => a - b)[Math.floor(renders.length / 2)] : null },
-      // Per hundred tabs, the figure the pool and PgBouncer are sized against.
-      projectionPer100Tabs: { requestsPerMinute: Math.round(perTabMinute(polls.length + renders.length) * 100), transactionsPerMinute: Math.round(transactionCount / shape.pollingTabs * 100 / (windowSeconds / 60)) },
-      databaseTransactionsPerSecond: +(transactionCount / windowSeconds).toFixed(1),
-      databaseTransactionsPerPoll: polls.length ? +(transactionCount / polls.length).toFixed(2) : null,
-      failures: [...polls, ...renders].filter(x => !x.ok).slice(0, 10) });
+    for (const mode of ['unchanged', 'changed']) {
+      resourcePhase = `daily-window run ${mode}`;
+      const { rows: [run] } = await pool.query(`insert into scan_runs(run_date,trigger,companies_total)
+        select to_char(now(),'YYYY-MM-DD'),'schedule',count(*)::int from companies returning id,companies_total`);
+      await pool.query(`insert into tasks(type,payload,dedupe_key,priority,run_after)
+        select 'scan_company',jsonb_build_object('companyId',c.id::text,'scanRunId',$1::text,'trigger','schedule'),'scan_company:'||c.id::text||':'||$1::text,5,
+          now()+(('x'||substr(replace(c.id::text,'-',''),1,8))::bit(32)::bigint/4294967295.0)*interval '60 minutes'
+        from companies c`, [run.id]);
+      let scansFinished = 0, rolesChanged = 0;
+      const polls = [], renders = [];
+      const transactionsBefore = await transactions();
+      const windowStart = performance.now();
+      const endMs = shape.pollingSeconds * 1_000;
+      const workerLoop = async () => {
+        for (let at = COMPANY_EVERY_MS; at < endMs; at += COMPANY_EVERY_MS) {
+          await sleepUntil(windowStart, at);
+          const changesVisible = mode === 'changed' && scansFinished % 4 !== 3;
+          const finished = await finishSyntheticScan(pool, run.id, shape.jobsPerCompany, changesVisible ? 'changed' : 'unchanged');
+          scansFinished += finished.scansFinished;
+          rolesChanged += finished.rolesChanged;
+        }
+      };
+      // One tab: its Roles poller and its banner, each on its own backoff, from its own start.
+      const statusLoop = async tab => {
+        let at = Math.floor((tab * POLL_MODEL.firstMs) / shape.pollingTabs), wait = POLL_MODEL.firstMs, seen;
+        while (at < endMs) {
+          await sleepUntil(windowStart, at);
+          const reading = await poll(WORK_STATUS_PATH, cookies[tab]);
+          polls.push(reading);
+          const changed = needsRender(seen, reading);
+          if (reading.ok) seen = reading.version;
+          if (changed) renders.push(await request(refreshPathFor(tab), cookies[tab], { RSC: '1' }));
+          wait = nextPollDelay(wait, changed);
+          at = performance.now() - windowStart + wait;
+        }
+      };
+      const bannerLoop = async tab => {
+        let at = Math.floor((tab * POLL_MODEL.bannerFirstMs) / shape.pollingTabs), wait = POLL_MODEL.bannerFirstMs, last;
+        while (at < endMs) {
+          await sleepUntil(windowStart, at);
+          const reading = await poll(SCAN_STATUS_PATH, cookies[tab]);
+          polls.push(reading);
+          wait = nextPollDelay(wait, reading.ok && last !== undefined && reading.signature !== last, POLL_MODEL.bannerFirstMs, POLL_MODEL.longestMs);
+          if (reading.ok) last = reading.signature;
+          at = performance.now() - windowStart + wait;
+        }
+      };
+      await deadline(Promise.all([workerLoop(), ...Array.from({ length: shape.pollingTabs }, (_, tab) => [statusLoop(tab), bannerLoop(tab)]).flat()]),
+        `daily-window run ${mode}`, shape.pollingSeconds + 60);
+      const windowSeconds = (performance.now() - windowStart) / 1000;
+      const transactionCount = (await transactions()) - transactionsBefore;
+      const perTabMinute = n => +(n / shape.pollingTabs / (windowSeconds / 60)).toFixed(2);
+      const statusPolls = polls.filter(x => x.path === WORK_STATUS_PATH), bannerPolls = polls.filter(x => x.path === SCAN_STATUS_PATH);
+      phases.push({ label: `daily-window run ${mode} (${shape.pollingTabs} tabs, ${shape.pollingSeconds}s)`, mode, concurrency: shape.pollingTabs,
+        seconds: +windowSeconds.toFixed(2), companies: run.companies_total, scansFinished, rolesChanged,
+        visibleChangePattern: mode === 'changed' ? 'first three of each four completed scans change a job title' : 'no visible job changes',
+        pollsPerSecond: +(polls.length / windowSeconds).toFixed(2), ...summarise(polls),
+        routes: Object.fromEntries([WORK_STATUS_PATH, SCAN_STATUS_PATH].map(p => [p, summarise(polls.filter(x => x.path === p))])),
+        perTabPerMinute: { statusPolls: perTabMinute(statusPolls.length), bannerPolls: perTabMinute(bannerPolls.length), refreshes: perTabMinute(renders.length),
+          requests: perTabMinute(polls.length + renders.length) },
+        followUpRenders: { ...summarise(renders), perTabPerMinute: perTabMinute(renders.length), expectedRate: mode === 'changed' ? REFRESH_CALIBRATION : { min: 0, max: 0 },
+          routes: Object.fromEntries(Object.values(REFRESH_PATHS).map(p => [p, summarise(renders.filter(x => x.path === p))])),
+          medianBytes: renders.length ? renders.map(r => r.bytes ?? 0).sort((a, b) => a - b)[Math.floor(renders.length / 2)] : null },
+        // Per hundred tabs, the figure the pool and PgBouncer are sized against.
+        projectionPer100Tabs: { requestsPerMinute: Math.round(perTabMinute(polls.length + renders.length) * 100), transactionsPerMinute: Math.round(transactionCount / shape.pollingTabs * 100 / (windowSeconds / 60)) },
+        databaseTransactionsPerSecond: +(transactionCount / windowSeconds).toFixed(1),
+        databaseTransactionsPerPoll: polls.length ? +(transactionCount / polls.length).toFixed(2) : null,
+        failures: [...polls, ...renders].filter(x => !x.ok).slice(0, 10) });
+    }
     const { rows: [counts] } = await pool.query(`select
       (select count(*)::int from users where email like '%@benchmark.invalid') users,(select count(*)::int from user_jobs) user_jobs,
       (select count(*)::int from cv_libraries) libraries,(select count(*)::int from cv_drafts) cvs,
@@ -423,9 +464,11 @@ async function main() {
       ...phases.filter(p => /^daily-window idle/.test(p.label) && p.requests !== 0).map(p => `${p.label}: ${p.requests} requests, where an idle tab makes none`),
       ...phases.filter(p => /^daily-window pre-scan/.test(p.label) && p.requests !== p.expectedRequests).map(p => `${p.label}: ${p.requests} requests, where the banner's backoff makes ${p.expectedRequests}`),
       ...phases.filter(p => p.followUpRenders).flatMap(p => [
+        ...(p.scansFinished === 0 ? [`${p.label}: synthetic worker finished no scans`] : []),
+        ...(p.rolesChanged !== (p.mode === 'changed' ? visibleChangesForScans(p.scansFinished) : 0) ? [`${p.label}: ${p.rolesChanged} visible roles changed for ${p.scansFinished} scans`] : []),
         ...(p.followUpRenders.errors ? [`${p.label}: ${p.followUpRenders.errors} follow-up render errors`] : []),
         ...(p.followUpRenders.p95Ms > TARGETS.refreshP95Ms ? [`${p.label}: refresh p95 ${p.followUpRenders.p95Ms}ms > ${TARGETS.refreshP95Ms}ms`] : []),
-        ...(calibrated(p.followUpRenders.perTabPerMinute) ? [] : [`${p.label}: ${p.followUpRenders.perTabPerMinute} refreshes per tab per minute, outside the ${REFRESH_CALIBRATION.min}-${REFRESH_CALIBRATION.max} measured in the browser`]),
+        ...(refreshRateFailure(p.mode, p.followUpRenders.perTabPerMinute) ? [`${p.label}: ${refreshRateFailure(p.mode, p.followUpRenders.perTabPerMinute)}`] : []),
       ]),
       ...(counts.users === shape.expected.users && counts.user_jobs === shape.expected.userJobs && counts.libraries === shape.expected.libraries && counts.cvs === shape.expected.cvs
         && counts.applications === shape.expected.applications && counts.decisions === shape.expected.decisions && counts.queued_tasks === shape.expected.queuedTasks ? [] : [`fixture/count mismatch: ${JSON.stringify(counts)}`]),
@@ -433,15 +476,15 @@ async function main() {
     const report = { at: new Date().toISOString(), passed: failures.length === 0, failures,
       environment: { node: process.version, cpu: cpus()[0]?.model, cpuCount: cpus().length, hostMemoryMiB: Math.round(totalmem() / 1048576), database: url.pathname.slice(1) },
       target: { registeredUsers: shape.accounts, companies: shape.companies, followsPerAccount: shape.follows, jobsPerCompany: shape.jobsPerCompany,
-        simultaneouslyActiveUsers: 10, pollingTabs: shape.pollingTabs, pollingSeconds: shape.pollingSeconds, soakSeconds, idleSeconds },
+        simultaneouslyActiveUsers: 10, burstRepeats: shape.burstRepeats, pollingTabs: shape.pollingTabs, pollingSeconds: shape.pollingSeconds, soakSeconds, idleSeconds },
       counts, expected: shape.expected, thresholds: TARGETS, pollModel: POLL_MODEL, refreshCalibration: REFRESH_CALIBRATION, phases, resources,
       limitations: ['Local single Next.js process and local PostgreSQL; short warm workload with no think time.',
         'CV archive/restore crosses the authenticated HTTP boundary. Decision, Library and queue fixtures use production tables directly; their browser form handling, queue-start latency and completed worker/model work are not measured.',
         'The local inspector used for heap samples adds small diagnostic overhead and is bound to loopback.',
         'Synthetic populated CV/Library/application data is smaller than p95 documents. No imports, public shares, Chromium, external providers or paid models run.',
         'This does not establish hosted connection, memory, network, serverless fan-out or sustained-soak headroom.',
-        'The daily window runs its three phases for USERS_POLLING_SECONDS each, with the pollers\' backoff imported from apps/web/lib/polling.ts. Its worker is a stand-in that finishes one company every twelve seconds and records a scan row for each; no scan, fetch or model work runs.',
-        'Database transactions per second are read from pg_stat_database, which every connection updates on its own schedule, and include the stand-in worker\'s one statement every ten seconds.'] };
+        'The daily window runs its four phases for USERS_POLLING_SECONDS each, with the pollers\' backoff imported from apps/web/lib/polling.ts. Its worker is a stand-in that finishes one company every twelve seconds and records a scan row. The changed phase edits a visible job title on the first three of each four completed scans; the fourth leaves visible roles unchanged. No scan, fetch or model work runs.',
+        'Database transactions per second are read from pg_stat_database, which every connection updates on its own schedule, and include the stand-in worker\'s one statement every twelve seconds.'] };
     await writeFile(process.env.USERS_REPORT_PATH ?? '/tmp/col-users-report.json', JSON.stringify(report, null, 2) + '\n');
     console.log(JSON.stringify({ passed: report.passed, counts, phases: phases.map(({ label, errors, p95Ms, seconds }) => ({ label, errors, p95Ms, seconds })), failures }));
     if (!report.passed) process.exitCode = 1;

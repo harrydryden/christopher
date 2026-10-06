@@ -12,7 +12,7 @@ Billing summaries now share a React request-scoped cache across the server layou
 
 ## Measured performance audit
 
-A production build on 6 October was measured using the full default `scripts/perf/run.mjs` audit, in the isolated local `ava_perf_check_20261006` database (100-account fixture, eight samples, two latency passes, five decisions). The initial comparison failed against the old baseline. Replaying that same report against the reviewed baseline passes. These are local measurements, not a new GitHub-run result.
+A production build on 6 October was measured using the full default `scripts/perf/run.mjs` audit, in the isolated local `ava_perf_check_20261006` database (100-account fixture, eight samples, two latency passes, five decisions). The initial comparison failed against the old baseline. Replaying that same report against the reviewed baseline passes. The subsequent full [GitHub audit](https://github.com/harrydryden/christopher/actions/runs/37478915053) also passed with the reviewed baseline. It confirmed Companies 15, Suggestions 12, Account 7 and Applications 9 statements; Learning/Health measured 3.7 round trips each.
 
 | Route | Scheduled SQL count | After optimisation | Original baseline |
 |---|---:|---:|---:|
@@ -41,3 +41,9 @@ Retained changes are attributable to features introduced since the original audi
 - The decision baseline moves from 29 to 32 statements, including the current recovery/queue protections and re-rendered shared shell; it still uses one HTTP request and its measured response fell from the original 92856 bytes to 57636.
 
 No baseline increases excuse the hundred-user latency failure; the capacity probe must independently meet its existing 2000ms target.
+
+## Local capacity replay
+
+The full default-shape local run completed with no request errors. Its three burst p95 samples were 1373/2131/1604ms. The second sample exceeded the unchanged 2000ms gate. The unchanged polling phase also failed its route p95 gates (work status 2002ms, scan status 1692ms); its medians were 13/15ms. The busier changed phase passed with 290 follow-up renders. Host free-memory samples were very low, so host contention is plausible but not established. The local report remains a failure; no thresholds were increased.
+
+The fixture behaviour is verified: four unchanged scans produced zero visible changes and zero refreshes. The mixed-change phase completed four scans, changed three visible roles (the explicit first-three-of-four schedule), and produced 2.91 refreshes per tab per minute, within the existing 2.3–3.3 range.

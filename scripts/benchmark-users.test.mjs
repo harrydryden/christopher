@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { assertDedicatedDatabase, backoffDelays, benchmarkShape, calibrated, needsRender, POLL_MODEL, quietSchedule, refreshPathFor, REFRESH_PATHS, SCAN_STATUS_PATH, seedAccounts, summarise, TARGETS, WORK_STATUS_PATH } from './benchmark-users.mjs';
+import { assertDedicatedDatabase, backoffDelays, benchmarkShape, calibrated, finishSyntheticScan, needsRender, POLL_MODEL, quietSchedule, refreshPathFor, refreshRateFailure, REFRESH_PATHS, SCAN_STATUS_PATH, seedAccounts, summarise, TARGETS, visibleChangesForScans, WORK_STATUS_PATH } from './benchmark-users.mjs';
 test('database guard accepts only the exact dedicated local database', () => {
   assert.equal(assertDedicatedDatabase('postgres://u:p@127.0.0.1:55439/christopher_users_benchmark').pathname, '/christopher_users_benchmark');
   for (const unsafe of ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@localhost/col_test','postgres://u:p@localhost/postgres'])
@@ -21,7 +21,9 @@ test('the default shape is the hundred-account fixture, and the thousand-account
   // An account cannot follow more companies than there are, nor open more tabs than there are accounts.
   assert.equal(benchmarkShape({ USERS_BENCHMARK_COMPANIES: '5' }).follows, 5);
   assert.equal(benchmarkShape({ USERS_BENCHMARK_ACCOUNTS: '10', USERS_POLLING_TABS: '50' }).pollingTabs, 10);
-  for (const unsafe of [{ USERS_BENCHMARK_ACCOUNTS: '5' }, { USERS_BENCHMARK_COMPANIES: '1.5' }, { USERS_POLLING_SECONDS: '10' }, { USERS_BENCHMARK_FOLLOWS: 'many' }])
+  assert.equal(small.burstRepeats, 3);
+  assert.equal(benchmarkShape({ USERS_BURST_REPEATS: '2' }).burstRepeats, 2);
+  for (const unsafe of [{ USERS_BENCHMARK_ACCOUNTS: '5' }, { USERS_BENCHMARK_COMPANIES: '1.5' }, { USERS_POLLING_SECONDS: '10' }, { USERS_BENCHMARK_FOLLOWS: 'many' }, { USERS_BURST_REPEATS: '0' }])
     assert.throws(() => benchmarkShape(unsafe), /must be a whole number/);
 });
 test('the poll model is the app\'s backoff: ten seconds, half as long again while nothing changes, a minute at most, ten again after a change', () => {
@@ -47,6 +49,26 @@ test('a refresh is the Shortlisted view for nine tabs in ten and Matched for the
   assert.ok(calibrated(2.3) && calibrated(2.8) && calibrated(3.3));
   assert.ok(!calibrated(2.29) && !calibrated(3.31));
   assert.equal(TARGETS.refreshP95Ms, 2_000);
+  assert.equal(refreshRateFailure('unchanged', 0), null);
+  assert.match(refreshRateFailure('unchanged', 1), /require zero/);
+  assert.equal(refreshRateFailure('changed', 2.8), null);
+  assert.match(refreshRateFailure('changed', 0), /outside/);
+  assert.throws(() => refreshRateFailure('other', 0), /unknown daily run mode/);
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 8].map(visibleChangesForScans), [0, 1, 2, 3, 3, 4, 6]);
+});
+test('synthetic scan records a scan, and only the changed mode edits a visible role', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => {
+    calls.push({ sql, params });
+    return { rows: [{ scans_finished: 1, roles_changed: params[2] ? 1 : 0 }] };
+  } };
+  assert.deepEqual(await finishSyntheticScan(pool, 'run-id', 50, 'unchanged'), { scansFinished: 1, rolesChanged: 0 });
+  assert.deepEqual(await finishSyntheticScan(pool, 'run-id', 50, 'changed'), { scansFinished: 1, rolesChanged: 1 });
+  assert.deepEqual(calls.map(call => call.params), [['run-id', 50, false], ['run-id', 50, true]]);
+  assert.match(calls[0].sql, /insert into scans/);
+  assert.match(calls[0].sql, /update jobs j set title=j.title\|\|.*updated_at=clock_timestamp\(\)/);
+  assert.match(calls[0].sql, /join recorded scan on scan.source_id=cs.id/);
+  await assert.rejects(finishSyntheticScan({ query: async () => { throw new Error('worker failed'); } }, 'run-id', 50, 'changed'), /worker failed/);
 });
 test('a tab renders again only for a version it has not shown, and never for its first reading or a failed one', () => {
   assert.equal(needsRender(undefined, { ok: true, version: 'a' }), false);
@@ -74,6 +96,19 @@ test('the shared account seed leaves the rows the shape expects, when an empty d
       (select count(*)::int from cv_drafts) cvs, (select count(*)::int from applications) applications`);
     assert.deepEqual(counts, { users: shape.expected.users, userJobs: shape.expected.userJobs, cvs: shape.expected.cvs, applications: shape.expected.applications });
     assert.equal(sessions.length, shape.accounts);
+    const { rows: [job] } = await client.query('select id,company_id,title,updated_at from jobs order by id limit 1');
+    const { rows: [run] } = await client.query(`insert into scan_runs(run_date,trigger,companies_total) values(current_date::text,'schedule',2) returning id`);
+    for (const mode of ['unchanged', 'changed']) {
+      await client.query(`insert into tasks(type,payload,dedupe_key) values('scan_company',jsonb_build_object('companyId',$1::text,'scanRunId',$2::text),$3)`,
+        [job.company_id, run.id, `fixture-${mode}`]);
+      assert.deepEqual(await finishSyntheticScan(client, run.id, shape.jobsPerCompany, mode),
+        { scansFinished: 1, rolesChanged: mode === 'changed' ? 1 : 0 });
+      const { rows: [current] } = await client.query('select title,updated_at from jobs where id=$1', [job.id]);
+      assert.equal(current.title, mode === 'changed' ? `${job.title} (scan refreshed)` : job.title);
+      if (mode === 'changed') assert.ok(current.updated_at > job.updated_at);
+      else assert.equal(current.updated_at.getTime(), job.updated_at.getTime());
+    }
+    assert.equal((await client.query('select count(*)::int n from scans where scan_run_id=$1', [run.id])).rows[0].n, 2);
   } finally {
     await client.query('rollback').catch(() => {});
     await client.end();

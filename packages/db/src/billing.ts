@@ -119,8 +119,9 @@ function effectivePlan(account: typeof billingAccounts.$inferSelect, now: Date):
 }
 
 export async function getBillingSummary(database: BillingWriter, userId: string, now = new Date()): Promise<BillingSummary> {
-  const [account] = await database.select().from(billingAccounts).where(eq(billingAccounts.userId, userId)).limit(1);
-  const rows = await database.execute<{
+  const [[account], rows] = await Promise.all([
+    database.select().from(billingAccounts).where(eq(billingAccounts.userId, userId)).limit(1),
+    database.execute<{
     monthly: number;
     welcome: number;
     purchased: number;
@@ -133,7 +134,8 @@ export async function getBillingSummary(database: BillingWriter, userId: string,
       coalesce(sum(g.remaining) filter (where g.source in ('topup', 'admin') and (g.expires_at is null or g.expires_at > ${now})), 0)::int as purchased,
       (select count(*)::int from credit_reservations r where r.user_id = ${userId}::uuid and r.status = 'reserved') as reserved,
       (select count(*)::int from company_subscriptions s where s.user_id = ${userId}::uuid and s.status = 'active') as active_companies
-    from credit_grants g where g.user_id = ${userId}::uuid`);
+    from credit_grants g where g.user_id = ${userId}::uuid`),
+  ]);
   const balances = rows.rows[0] ?? { monthly: 0, welcome: 0, purchased: 0, reserved: 0, active_companies: 0 };
   const stored = account ?? {
     userId,

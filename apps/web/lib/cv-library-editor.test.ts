@@ -165,14 +165,14 @@ it("keeps skill labels in a separate Library panel without appearance controls",
   expect(html).toContain('SQL, Python and reporting');
   expect(html).not.toContain('Page background');
   expect(html).not.toContain('Evidence blocks');
-  expect(html).toContain('aria-label="Library sections"');
+  expect(html).toContain('aria-label="Experience sections"');
   expect(html).toContain('id="library-panel-education" aria-labelledby="library-tab-education" hidden=""');
 });
 
 it("puts the Scoring guide in a fourth tab after Education, hidden until chosen, with nothing to fill in", () => {
   const library: CvLibrary = { name: "Example", contact: "", profile: "", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL" }] };
   const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
-  const strip = html.slice(html.indexOf('aria-label="Library sections"'));
+  const strip = html.slice(html.indexOf('aria-label="Experience sections"'));
   expect([...strip.slice(0, strip.indexOf("</div>")).matchAll(/role="tab" id="library-tab-(\w+)"[^>]*>([^<]*)</g)].map(match => [match[1], match[2]]))
     .toEqual([["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]]);
   expect(html).toContain('<button type="button" role="tab" id="library-tab-guide" aria-controls="library-panel-guide" aria-selected="false" tabindex="-1"');

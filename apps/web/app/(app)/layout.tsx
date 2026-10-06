@@ -24,7 +24,7 @@ const NAV_ITEMS: Array<{ href: string; label: string }> = [
   { href: "/", label: "Roles" },
   { href: "/companies", label: "Companies" },
   { href: "/applications", label: "Applications" },
-  { href: "/library", label: "Library" },
+  { href: "/library", label: "Experience" },
   { href: "/learning", label: "Learning" },
   { href: "/health", label: "Health" },
   { href: "/settings", label: "Settings" },

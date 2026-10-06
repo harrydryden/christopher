@@ -51,7 +51,7 @@ export default async function LibraryPage({ searchParams }: {
   // nothing on the screen to lose.
   return (
     <div className="max-w-6xl space-y-5">
-      <PageHeader title="Library" />
+      <PageHeader title="Experience" />
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
       {importProgress && <LibraryImportPoller pending={reading} signature={importProgress.signature} />}
       <CvLibraryEditor

@@ -47,3 +47,9 @@ No baseline increases excuse the hundred-user latency failure; the capacity prob
 The full default-shape local run completed with no request errors. Its three burst p95 samples were 1373/2131/1604ms. The second sample exceeded the unchanged 2000ms gate. The unchanged polling phase also failed its route p95 gates (work status 2002ms, scan status 1692ms); its medians were 13/15ms. The busier changed phase passed with 290 follow-up renders. Host free-memory samples were very low, so host contention is plausible but not established. The local report remains a failure; no thresholds were increased.
 
 The fixture behaviour is verified: four unchanged scans produced zero visible changes and zero refreshes. The mixed-change phase completed four scans, changed three visible roles (the explicit first-three-of-four schedule), and produced 2.91 refreshes per tab per minute, within the existing 2.3–3.3 range.
+
+## GitHub capacity replay
+
+The [corrected GitHub capacity run](https://github.com/harrydryden/christopher/actions/runs/37478919547) failed only the three hundred-user bursts: p95 **3621/3754/3741ms**, all above the unchanged 2000ms target. There were zero request errors. Ten-user reads (586ms p95), the steady soak (414ms), writes and all polling gates passed. Unchanged scans caused zero refreshes; changed scans produced 2.90 refreshes per tab per minute.
+
+This establishes a persistent burst-capacity shortfall on the GitHub runner, rather than only local noise. The fixture and query-efficiency fixes do not resolve that shortfall. Keep issue #103 open: the next investigation should profile CPU/event-loop, response rendering and database pool wait during the same burst before selecting further optimisations. No production scaling change or relaxed threshold is justified by this test alone. Issue #104's revised performance audit passes on GitHub; its scheduled post-merge run should confirm the result before closure.

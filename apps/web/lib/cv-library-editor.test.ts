@@ -556,14 +556,23 @@ it("keeps the exact unsaved draft after a conflicting reload and lets the person
     expect(posted().profile).toBe("My unsaved bio");
     await act(async () => button("Save Experience").click());
     expect(button("Reload and keep my text")).toBeTruthy();
-    await act(async () => { button("Reload and keep my text").click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await act(async () => button("Reload and keep my text").click());
+    // Conflict merging is lazy-loaded: wait for its observable result, not a machine-specific delay.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(posted().profile).toBe("Saved in another tab");
+    });
     expect(fetch).toHaveBeenCalledOnce();
     expect(posted().profile).toBe("Saved in another tab");
     expect(container.textContent).toContain("My unsaved bio");
     expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Original unsaved Experience draft"]')!.value).toContain("My unsaved bio");
     expect(button("Save Experience")).toBeUndefined();
     expect(container.textContent).toContain("Choose wording for 1 conflict before saving");
-    await act(async () => { button("Use my version").click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await act(async () => button("Use my version").click());
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(posted().profile).toBe("My unsaved bio");
+    });
     expect(posted().profile).toBe("My unsaved bio");
     expect(button("Save Experience").disabled).toBe(false);
     expect(button("Reload and keep my text")).toBeUndefined();

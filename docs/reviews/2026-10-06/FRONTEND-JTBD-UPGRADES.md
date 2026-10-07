@@ -56,4 +56,10 @@ Visual inspection identified and resolved two narrow-screen defects: shared sele
 
 The fresh production build, web typecheck, route JavaScript budgets, ten targeted UI regression tests and whitespace checks passed. The earlier integrated verification recorded 3,401 passing application tests, plus 126 passing release/performance script tests; those broader suites were not repeated for the final CSS and browser-harness adjustments.
 
-This verifies local implementation and browser behaviour. The changes have not been pushed, merged or deployed as part of these checks. Live paid-provider quality, Stripe checkout and moderated usability research remain unverified; the review's proposed four-of-five participant target has not been measured.
+This verifies local implementation and browser behaviour. Live paid-provider quality, Stripe checkout and moderated usability research remain unverified; the review's proposed four-of-five participant target has not been measured.
+
+### Release follow-up — 7 October 2026
+
+The implementation was committed and pushed to PR #107. Hosted browser journeys, Lighthouse, shuffled-order worker tests, the worker image and Vercel preview passed on the first implementation commit. Hosted CI exposed two additional issues: Linux bundle sizes narrowly exceeded the Experience and Add a role budgets, and the conflict-recovery test relied on a fixed 20ms delay for a lazy import. The follow-up defers the sampled performance observer while preserving once-per-load sampling, and waits for observable conflict-recovery results. All 32 focused tests pass; a fresh build, typecheck and unchanged bundle budgets also pass locally.
+
+Production merge is held: the strict release qualification requires a verified, published, passing live CV replay at prompt set `11ae22aed3fe`. The current reports are explicitly unverified, and the local evaluation environment lacks provider credentials. No production merge or deployment is claimed.

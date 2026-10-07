@@ -593,6 +593,11 @@ it("records the PDF finalising kept, rendering it no second time", async () => {
   expect(kept).toMatchObject({ draftId: draft!.id, userId: user.id });
   expect(kept!.bytes.subarray(0, 5).toString()).toBe("%PDF-");
 
+  // A later review release may no longer consider the old assessment current. The application
+  // still uses the exact document the person finalised.
+  const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+  await database.update(schema.cvDrafts).set({ assessment: { ...saved!.assessment!, version: "older-review" } }).where(eq(schema.cvDrafts.id, draft!.id));
+
   expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({ ok: true });
   expect(renders).toBe(1);
   const [recorded] = await applicationsOf();
@@ -604,7 +609,7 @@ it("records the PDF finalising kept, rendering it no second time", async () => {
   expect((await applicationsOf())[0]!.pdfBase64).toBe(recorded!.pdfBase64);
 });
 
-it("refuses to record a submitted CV whose draft changed while its PDF was rendered", async () => {
+it("refuses a finalised application when its approved PDF is missing", async () => {
   const { job } = await fixture();
   await saveLibrary();
   await expect(requestCv({ ok: true }, form({ jobId: job.id, description: DESCRIPTION }))).rejects.toThrow("redirect:/cv/");
@@ -613,31 +618,12 @@ it("refuses to record a submitted CV whose draft changed while its PDF was rende
   await database.update(schema.cvDrafts).set({ status: "ready", content }).where(eq(schema.cvDrafts.id, draft!.id));
   await completeAssessment(draft!.id);
 
-  // Recording copies the PDF finalising kept; with none kept it renders, which is where the window
-  // between reading the draft and locking it is widest, so that is the path these attempts take.
-  const forgetKeptPdf = () => database.delete(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft!.id));
-  await forgetKeptPdf();
-  // Finalised again from another tab while this one rendered: the bytes in hand are not of that revision.
-  rendering.during = async () => {
-    await database.update(schema.cvDrafts).set({ finalisedAt: new Date(Date.now() + 1_000) }).where(eq(schema.cvDrafts.id, draft!.id));
-  };
+  await database.delete(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft!.id));
+  rendering.during = async () => { throw new Error("A missing final PDF must never be rendered again."); };
   expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({
-    ok: false, error: "This CV changed while its PDF was being prepared. Record the application again.",
+    ok: false, error: "This final CV's saved PDF is unavailable. Create a new revision and finalise it before recording the application.",
   });
   const [unchanged] = await applicationsOf();
   expect(unchanged).toMatchObject({ status: "applying", pdfBase64: null });
-  await forgetKeptPdf();
-  // Assessed again from another tab while this one rendered: the same refusal.
-  rendering.during = async () => {
-    const [current] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
-    await database.update(schema.cvDrafts).set({ assessment: { ...current!.assessment!, assessedAt: new Date(Date.now() + 2_000).toISOString() } }).where(eq(schema.cvDrafts.id, draft!.id));
-  };
-  expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({
-    ok: false, error: "This CV changed while its PDF was being prepared. Record the application again.",
-  });
-  expect((await applicationsOf())[0]).toMatchObject({ status: "applying", pdfBase64: null });
-
-  // Pressed again, it renders the revision that is there now and records it.
   rendering.during = null;
-  expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({ ok: true });
 });

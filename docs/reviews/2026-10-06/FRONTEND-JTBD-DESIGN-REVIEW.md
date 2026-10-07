@@ -2,6 +2,8 @@
 
 6 October 2026 · source baseline `b5d6acb` on latest `origin/main`
 
+This document records the original audit. The subsequent implementation and its verification are tracked in [FRONTEND-JTBD-UPGRADES.md](FRONTEND-JTBD-UPGRADES.md).
+
 **The application can do considerably more than its interface makes easy. The largest improvement is to turn evidence collection and CV review into guided decisions, then reduce the controls and explanations surrounding them.** Retain the green identity, efficient desktop lists, evidence provenance and user control. Give the user's current task the most space and emphasis.
 
 This is an expert design evaluation, orchestrated by Astra with three independent Sol audits. It is not a new engineering-readiness score or a claim that the earlier 90-point targets have been verified. The six jobs in [UX-JOURNEYS.md](../../UX-JOURNEYS.md) remain the framework; that document's dated “Today” descriptions are historical, not a current defect list.

@@ -36,6 +36,15 @@ beforeEach(async () => {
 const form = (url: string) => { const data = new FormData(); data.set("kind", "link"); data.set("url", url); return data; };
 const description = "Lead service delivery across several sites, manage the operational budget and develop managers. Candidates must bring substantial experience in regulated operations.";
 
+it("refuses a link inline if verification expires while its form is open", async () => {
+  const user = (await database.select().from(schema.users))[0]!;
+  await database.update(schema.users).set({ emailVerifiedAt: null }).where(eq(schema.users.id, user.id));
+  const result = await startRoleImport({ ok: true }, form("https://jobs.example.com/role/42"));
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Confirm your email"), recovery: { href: "/account" } });
+  expect(await database.select().from(schema.roleImports)).toHaveLength(0);
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+});
+
 it("queues a safe link once and keeps its private input out of reads", async () => {
   const user = (await database.select().from(schema.users))[0]!;
   expect(await startRoleImport({ ok: true }, form("http://127.0.0.1/secret"))).toMatchObject({ ok: false });

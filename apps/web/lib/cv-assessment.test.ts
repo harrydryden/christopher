@@ -107,7 +107,7 @@ it("shows evidence questions and actual unsupported wording with a guided finali
   expect(html).toContain("Provide your actual budget ownership and scope.");
   expect(html).toContain("Owned a £10m budget");
   expect(html).not.toContain("claim: section:");
-  expect(html).toContain("Review flagged items");
+  expect(html).toContain("Review findings");
   expect(html).toContain("Nothing further to add");
   expect(html).toContain("Skip review and finalise anyway");
   expect(html).toContain("Finalise this CV");
@@ -115,7 +115,8 @@ it("shows evidence questions and actual unsupported wording with a guided finali
   expect(html).toContain("<em>Owned a £10m budget</em>");
   expect(html).toContain("Item");
   expect(html).not.toContain("<blockquote");
-  expect(html).not.toContain("<details");
+  expect(html).toContain("<details");
+  expect(html).toContain("View full assessment");
 });
 it("never displays a stale score as a current assessment", () => {
   const html = renderToStaticMarkup(
@@ -131,6 +132,17 @@ it("never displays a stale score as a current assessment", () => {
   );
   expect(html).toContain("Fit and assess saved revision");
   expect(html).not.toContain("/100");
+});
+
+it("gives a finalised CV with a stale assessment a truthful PDF or recovery state", () => {
+  const props = { id: "test", assessment: null, current: false, finalised: true, busy: false, hasContent: true, content };
+  const kept = renderToStaticMarkup(createElement(CvAssessmentPanel, { ...props, hasFinalPdf: true }));
+  expect(kept).toContain("Its saved PDF is still available");
+  expect(kept).not.toContain("Assessment required");
+  expect(kept).not.toContain("Fit and assess saved revision");
+  const missing = renderToStaticMarkup(createElement(CvAssessmentPanel, { ...props, hasFinalPdf: false }));
+  expect(missing).toContain("Create a new revision");
+  expect(missing).not.toContain("Assessment required");
 });
 
 it("retains finalisation for supported current assessments only", () => {

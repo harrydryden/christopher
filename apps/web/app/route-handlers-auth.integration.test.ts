@@ -59,6 +59,7 @@ const ROUTES: Record<string, Access> = {
   "api/cv/library/route.ts": "session",
   "api/cv/manage/route.ts": "session",
   "api/cv/preview/route.ts": "session",
+  "api/evidence/drafts/[id]/route.ts": "session",
   "api/export.csv/route.ts": "session",
   "api/health/route.ts": { public: "The platform's liveness check: the serving commit, and nothing about any account." },
   "api/newsletters/route.ts": { bearer: "NEWSLETTER_INGEST_SECRET" },

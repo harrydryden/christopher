@@ -88,6 +88,7 @@ import {
   finaliseCvDraft,
   assessCvDraft,
 } from "./cv";
+import { confirmEvidenceAnswerAsWritten, openEvidenceDrafts, skipEvidenceQuestion } from "./evidence";
 import {
   fetchRolePage,
   fetchRoleDetails,
@@ -596,6 +597,37 @@ describe("priority workflows", () => {
     form.set("version", "2"); form.set("library", JSON.stringify({ ...versions[1]!.content, employment: [] }));
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
     expect(await database.select().from(schema.cvLibraries)).toHaveLength(2);
+  });
+  it("saves a first job before evidence, then appends the exact reviewed answer once", async () => {
+    const jobId = crypto.randomUUID();
+    const content = { name: "Example", contact: "", profile: "", structuredExperience: true as const,
+      employment: [{ id: jobId, company: "Example Company", jobTitle: "Operations lead", startDate: "2022", endDate: "", current: true }],
+      entries: [] };
+    const form = new FormData(); form.set("version", "0"); form.set("library", JSON.stringify(content));
+    expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
+    const request = { source: "library", sourceId: null, questionId: `job:${jobId}:outcome`,
+      question: "What result did your work produce?", answer: "I helped the team reduce handover time by around 20%.",
+      destination: { kind: "employment", id: jobId }, baseVersion: 1, facet: "outcome" };
+    const exact = "Helped the team reduce handover time by around 20%.";
+    expect(await confirmEvidenceAnswerAsWritten(request, exact)).toEqual({ ok: true, version: 2 });
+    expect(await confirmEvidenceAnswerAsWritten(request, exact)).toEqual({ ok: true, version: 2 });
+    const versions = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
+    expect(versions).toHaveLength(2);
+    expect(versions[1]?.content.entries[0]?.details).toBe(exact);
+    expect(versions[1]?.content.entries[0]?.confirmedResponsibilities).toEqual([exact]);
+    expect(await openEvidenceDrafts("library")).toEqual([]);
+  });
+  it("remembers Nothing further for a saved question without queuing a model call", async () => {
+    const jobId = crypto.randomUUID();
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1,
+      content: { name: "Example", contact: "", profile: "", structuredExperience: true,
+        employment: [{ id: jobId, company: "Example Company", jobTitle: "Operations lead", startDate: "2022", endDate: "", current: true }], entries: [] } });
+    const request = { source: "library", sourceId: null, questionId: `job:${jobId}:outcome`,
+      question: "What result did your work produce?", destination: { kind: "employment", id: jobId },
+      baseVersion: 1, facet: "outcome" };
+    expect(await skipEvidenceQuestion(request)).toEqual({ ok: true });
+    expect((await openEvidenceDrafts("library"))[0]).toMatchObject({ status: "dismissed", questionId: request.questionId });
+    expect(await database.select().from(schema.tasks)).toHaveLength(0);
   });
   it("preserves canonical comma skills for old callers and parses only explicitly edited skills", async () => {
     const original = { name: "Test Candidate", contact: "London", profile: "Original bio", entries: [
@@ -1428,12 +1460,12 @@ it("carries library styling through generation, revision, matching preview/downl
   expect(preview.status).toBe(200);
   expect(download.status).toBe(200);
   expect(Number(preview.headers.get("x-cv-page-count"))).toBeLessThanOrEqual(2);
+  const approvedPdf = Buffer.from(await download.arrayBuffer());
   expect(streams(Buffer.from(await preview.arrayBuffer()))).toEqual(
-    streams(Buffer.from(await download.arrayBuffer())),
+    streams(approvedPdf),
   );
   const application = new FormData();
   application.set("appliedOn", "2026-09-11");
-  await completeAssessment(revised!.id);
   expect(
     await recordApplication(revised!.id, { ok: true }, application),
   ).toEqual({ ok: true });
@@ -1442,6 +1474,9 @@ it("carries library styling through generation, revision, matching preview/downl
   await expect(saveCvDraft(revised!.id, { ok: true }, edit)).rejects.toThrow(
     "redirect:/cv/",
   );
+  const [newRevision] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, revised!.id));
+  expect(newRevision?.finalisedAt).toBeNull();
+  expect((await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, revised!.id)))[0]?.bytes).toEqual(approvedPdf);
   const stored = await downloadApplication(
     new Request("http://localhost/api/applications/pdf"),
     { params: Promise.resolve({ id: frozen!.id }) },

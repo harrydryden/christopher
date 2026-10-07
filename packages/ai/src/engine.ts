@@ -24,6 +24,8 @@ import {
   type LibraryReviewPlan,
   type LibraryReviewPlanEntry,
   type LibraryRowReview,
+  type EvidenceDraftInput,
+  type EvidenceDraftPlan,
 } from "@col/core";
 import Anthropic, {
   APIConnectionError,
@@ -2049,6 +2051,18 @@ export class AiEngine {
       // and this is the backstop for a row written before that cap existed.
       user: P.wrap("document", P.truncate(document, 40_000)),
       ...(input.model ? { model: input.model } : {}),
+    }, ref);
+  }
+
+  /** A13: propose wording for one answer; the worker validates grounding before showing it. */
+  async draftEvidence(input: EvidenceDraftInput, ref: Ref = {}, model?: string): Promise<EvidenceDraftPlan | null> {
+    return this.run<EvidenceDraftPlan>(PROMPTS.A13, {
+      user: [
+        P.wrap("question", P.truncate(input.question, 400)),
+        P.wrap("answer", P.truncate(input.answer, 2000)),
+        P.wrap("job_details", JSON.stringify(input.job ?? null)),
+      ].join("\n\n"),
+      ...(model ? { model } : {}),
     }, ref);
   }
 

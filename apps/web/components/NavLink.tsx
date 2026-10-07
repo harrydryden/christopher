@@ -9,6 +9,7 @@ export function NavLink({
   children,
   count = null,
   countTitle,
+  secondary = false,
 }: {
   href: string;
   children: ReactNode;
@@ -16,6 +17,7 @@ export function NavLink({
   count?: number | null;
   /** What the figure counts, for whoever hovers or reads it out. */
   countTitle?: string;
+  secondary?: boolean;
 }) {
   const pathname = usePathname();
   // The sidebar is brand green: the lit entry is a light-green block with green text, the others
@@ -33,7 +35,7 @@ export function NavLink({
       href={href}
       aria-current={active ? "page" : undefined}
       aria-describedby={descriptionId}
-      className={`flex min-h-11 items-center justify-between gap-2 border-2 px-3 py-2 text-14 font-semibold no-underline ${
+      className={`flex min-h-11 items-center justify-between gap-2 border-2 px-3 py-2 no-underline ${secondary ? "text-13" : "text-14 font-semibold"} ${
         active ? "border-brand-ink bg-brand-ink text-brand" : "border-transparent text-brand-ink hover:bg-brand-hover"
       }`}
     >

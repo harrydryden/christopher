@@ -8,9 +8,9 @@ import {
 } from "react";
 
 const tabs = [
-  ["content", "Content"],
-  ["evaluation", "Evaluation"],
-  ["appearance", "Appearance and settings"],
+  ["content", "Write"],
+  ["evaluation", "Review"],
+  ["appearance", "Appearance"],
 ] as const;
 type CvTab = (typeof tabs)[number][0];
 const TabContext = createContext<{
@@ -80,7 +80,8 @@ export function CvWorkspace({
   children: ReactNode;
   description: ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const [selected, setSelected] = useState<CvTab>("content");
   const [focusRequest, setFocusRequest] = useState<{ id: string }>();
   function selectTab(tab: CvTab) {
@@ -164,13 +165,13 @@ export function CvWorkspace({
                     ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
                     [next]?.focus();
                 }}
-                className={`ds-pixel shrink-0 border-2 px-3 py-2 text-11 ${selected === tab ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken"}`}
+                className={`shrink-0 border-2 px-3 py-2 text-14 font-medium ${selected === tab ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken"}`}
               >
                 {label}
               </button>
             ))}
           </div>
-          <button
+          <div className="flex flex-wrap items-center gap-2"><button
             type="button"
             aria-expanded={open}
             aria-controls="cv-job-description"
@@ -179,6 +180,7 @@ export function CvWorkspace({
           >
             {open ? "Hide job description" : "Show job description"}
           </button>
+          {open && <label className="flex items-center gap-1.5 text-12"><input type="checkbox" checked={pinned} onChange={event => setPinned(event.target.checked)} /> Pin beside writing</label>}</div>
         </div>
         <div
           className={`grid items-start gap-5 ${open ? "lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.35fr)]" : "grid-cols-1"}`}
@@ -190,7 +192,7 @@ export function CvWorkspace({
             id="cv-job-description"
             hidden={!open}
             aria-labelledby="cv-job-description-title"
-            className="min-w-0 border border-line-muted bg-sunken lg:sticky lg:top-6"
+            className={`min-w-0 border border-line-muted bg-sunken ${pinned ? "lg:sticky lg:top-6" : ""}`}
           >
             <h2
               id="cv-job-description-title"

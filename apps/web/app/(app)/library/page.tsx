@@ -13,6 +13,7 @@ import { openStoredLibrary } from "@/lib/cv-library-open";
 import { getLibraryEvidence, getOwnCvLibrary, libraryReviewSignature } from "@/lib/queries/cv";
 import { libraryImportProgress, listLibraryImports } from "@/lib/queries/library-imports";
 import { requireUser } from "@/lib/auth";
+import { openEvidenceDrafts } from "@/app/actions/evidence";
 
 export const dynamic = "force-dynamic";
 
@@ -20,16 +21,17 @@ export const dynamic = "force-dynamic";
 const NEED_LIMIT = 300;
 
 export default async function LibraryPage({ searchParams }: {
-  searchParams: Promise<{ need?: string; job?: string }>;
+  searchParams: Promise<{ need?: string; job?: string; return?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
   const library = await getOwnCvLibrary(user.id);
-  const [evidence, writing, signature, imports] = await Promise.all([
+  const [evidence, writing, signature, imports, openDrafts] = await Promise.all([
     getLibraryEvidence(user.id, library),
     getCvWritingPreferences(user.id),
     library ? libraryReviewSignature(user.id, library.version) : Promise.resolve(""),
     listLibraryImports(user.id),
+    openEvidenceDrafts("library"),
   ]);
   // Documents still being read. The page watches for them below, and stops watching when the
   // refresh that lands the last proposal re-renders this without any.
@@ -44,6 +46,7 @@ export default async function LibraryPage({ searchParams }: {
 
   // The employment record a CV's evidence gap was about, if the link named one this account has.
   const job = (content?.employment ?? []).some(item => item.id === params.job) ? params.job ?? null : null;
+  const returnTo = /^\/cv\/[0-9a-f-]{36}(?:\?finding=[^#&]{1,180})?(?:#cv-guided-review)?$/i.test(params.return ?? "") ? params.return! : null;
 
   // The editor is not keyed on the version: a save revalidates this page, and rebuilding the
   // editor from the server would throw away its unsaved-changes state and the version it is
@@ -52,6 +55,8 @@ export default async function LibraryPage({ searchParams }: {
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Experience" />
+      {!library && <p className="ds-prose max-w-3xl text-16">Start with a CV or career document if you have one. You can also add a job below and build your Experience a question at a time.</p>}
+      {!library && <LibraryImportCard />}
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
       {importProgress && <LibraryImportPoller pending={reading} signature={importProgress.signature} />}
       <CvLibraryEditor
@@ -60,26 +65,32 @@ export default async function LibraryPage({ searchParams }: {
         evidence={evidence}
         need={(params.need ?? "").slice(0, NEED_LIMIT) || null}
         job={job}
+        returnTo={returnTo}
+        openDrafts={openDrafts}
+        scopeId={user.id}
       />
       {/* While a review is still to land, the page watches for it and refreshes itself. The
           refresh re-renders this server page around the editor, which keeps its unsaved text. */}
       {evidence.evaluating && library && (
         <LibraryEvidencePoller version={library.version} signature={signature} />
       )}
-      <LibraryImportCard />
-      <Card title="Writing preferences">
+      {library && <details className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 text-muted">Import another document</summary><div className="mt-3"><LibraryImportCard showTitle={false} /></div></details>}
+      <details className="border-t border-line-muted pt-3">
+        <summary className="cursor-pointer text-14 text-muted">Writing preferences</summary>
+        <div className="mt-3"><Card>
         <SettingsForm
           action={saveCvWritingPreferences}
           key={JSON.stringify(writing)}
           submitLabel="Save writing preferences"
           successMessage="Writing preferences saved."
-          secondaryActions={<span className="text-12 text-muted">{library ? `Library version ${library.version}` : "No library saved yet"}</span>}
+          secondaryActions={<span className="text-12 text-muted">{library ? `Experience version ${library.version}` : "No Experience saved yet"}</span>}
         >
           <input type="hidden" name="previousPreferences" value={JSON.stringify(writing)} />
           <label className={labelClass}>Writing style<textarea name="stylePreferences" rows={4} maxLength={4000} defaultValue={writing.stylePreferences} className={inputClass} /></label>
           <label className={labelClass}>Saved phrasing<textarea name="preferredWording" rows={5} maxLength={12000} defaultValue={writing.preferredWording} className={inputClass} /></label>
         </SettingsForm>
-      </Card>
+        </Card></div>
+      </details>
     </div>
   );
 }

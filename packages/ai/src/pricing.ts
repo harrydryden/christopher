@@ -288,6 +288,16 @@ export function estimateLibraryImportUsd(model: string, size: { documentBytes: n
   });
 }
 
+/** One short A13 answer and bounded proposal, with headroom for the complete response. */
+export function estimateEvidenceDraftUsd(model: string, answerBytes: number): number {
+  return estimateCostUsd(model, {
+    inputTokens: 900 + Math.min(2000, Math.max(0, answerBytes)) / 3,
+    outputTokens: 1200,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
+}
+
 /** Entries per A12 batch. Mirrors `LIBRARY_REVIEW_BATCH` in @col/core. */
 const LIBRARY_REVIEW_BATCH = 8;
 

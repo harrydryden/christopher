@@ -44,7 +44,7 @@ export function Badge({
   return (
     <span
       title={title}
-      className={`ds-pixel inline-flex items-center gap-1 border px-1.5 py-0.5 text-9 tracking-badge whitespace-nowrap ${TONE_CLASSES[tone]} ${className}`}
+      className={`inline-flex items-center gap-1 border px-1.5 py-0.5 text-12 font-medium whitespace-nowrap ${TONE_CLASSES[tone]} ${className}`}
     >
       {children}
     </span>

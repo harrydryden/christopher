@@ -8,6 +8,7 @@ import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvGapQuiz } from "@/components/CvLazyWidgets";
 import { gapQuizForm, gapQuizLibrary } from "@/lib/cv-gap-quiz-library";
 import { answerCvGapQuiz } from "@/app/actions/cv";
+import { openEvidenceDrafts } from "@/app/actions/evidence";
 import { CvBuildLive } from "@/components/CvBuildLive";
 import { cvBuildTotals, cvBuildTotalsLine } from "@/lib/cv-build-narrative";
 import { CvBuildFailureNotice } from "@/components/CvBuildFailureNotice";
@@ -25,7 +26,6 @@ import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary 
 import { CV_LIMITS } from "@col/core/cv-format";
 import type { CvAssessment } from "@col/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
-import { cvEditFormId } from "@/lib/cv-content-links";
 import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
@@ -34,10 +34,10 @@ import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { zUuid } from "@/lib/validation";
 import { recordApplication } from "@/app/actions/applications";
-import { buttonClass } from "@/components/Button";
 import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
+import { hasStoredFinalisedCvPdf } from "@/lib/cv-pdf-store";
 import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
 
 /**
@@ -48,8 +48,8 @@ import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
 
 /**
  * Why Finalise is unavailable, in the words `assertCvFinalisable` would have thrown, or null when
- * nothing is in the way. The same function the action, the download route and `recordApplication`
- * all re-run, so the page and the three gates can never disagree about this revision.
+ * nothing is in the way. Finalised revisions keep their stored PDF even if a later assessment
+ * version changes this check.
  */
 function finaliseObstacle(draft: {
   content: CvContent | null;
@@ -67,21 +67,25 @@ function finaliseObstacle(draft: {
   }
 }
 export const dynamic = "force-dynamic";
-// Server actions inherit their page's limit, and this page's `recordApplication` renders a PDF: 30 s, not the platform default of 300.
+// Server actions inherit their page's limit; finalisation renders a PDF before saving it.
 export const maxDuration = 30;
 export default async function CvDraftPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ finding?: string }>;
 }) {
   const user = await requireUser();
   const { id } = await params;
+  const requestedFinding = (await searchParams)?.finding;
+  const initialFindingId = typeof requestedFinding === "string" && requestedFinding.length <= 250 ? requestedFinding : null;
   if (!zUuid().safeParse(id).success) notFound();
   const draft = await getOwnCvDraft(user.id, id);
   if (!draft) notFound();
   // Everything below is read once the draft is known to be this account's, side by side.
   const now = new Date();
-  const [versions, progress, system, admin, latestLibrary, sharing, [application]] = await Promise.all([
+  const [versions, progress, system, admin, latestLibrary, sharing, [application], hasFinalPdf] = await Promise.all([
     dailyCvVersions(db(), [draft.id]),
     // The build's state, the queue row behind it and every motion of its ledger, in one read: the
     // same read the progress feed makes, so the page and the feed assemble the same token.
@@ -105,6 +109,7 @@ export default async function CvDraftPage({
       .from(applications)
       .where(and(eq(applications.cvId, id), eq(applications.userId, user.id)))
       .limit(1),
+    draft.finalisedAt ? hasStoredFinalisedCvPdf(user.id, id) : Promise.resolve(false),
   ]);
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
@@ -168,15 +173,16 @@ export default async function CvDraftPage({
         reviewDecision={draft.reviewDecision}
         current={current}
         finalised={!!draft.finalisedAt}
+        hasFinalPdf={hasFinalPdf}
         busy={busy}
         hasContent={!!content}
         content={content}
         library={draft.librarySnapshot}
         libraryDrift={drift}
-        rebuildFormId={content && !busy && !blocked ? cvEditFormId(id) : null}
         finaliseReason={finaliseReason}
         blocked={blocked}
         comments={sharing.comments}
+        initialFindingId={initialFindingId}
       />
       <CvShareComments
         draftId={id}
@@ -206,33 +212,11 @@ export default async function CvDraftPage({
             {totals && <> · {totals}</>}
           </>
         }
-        actions={
-          content &&
-          !busy && (
-            <>
-              <a
-                href={`/api/cv/${id}/pdf?preview=1`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={buttonClass("secondary", "md", "no-underline")}
-              >
-                Preview PDF
-              </a>
-              {draft.finalisedAt && (
-                <a
-                  href={`/api/cv/${id}/pdf`}
-                  className={buttonClass("primary", "md", "no-underline")}
-                >
-                  Download PDF
-                </a>
-              )}
-            </>
-          )
-        }
       />
       <CvNextAction id={id} next={cvNextAction({
         status: draft.status,
         finalised: !!draft.finalisedAt,
+        hasFinalPdf,
         hasContent: !!content,
         assessmentCurrent: current,
         factualConcerns: draft.assessment?.review.claims.filter(claim => claim.status !== "supported" &&
@@ -248,13 +232,13 @@ export default async function CvDraftPage({
             <p className="text-12 text-muted">
               The advert this CV was written against.
             </p>
-            <p className="whitespace-pre-wrap text-14 leading-relaxed">
+            <p className="ds-prose whitespace-pre-wrap text-14 leading-relaxed">
               {draft.jobDescription}
             </p>
             <CvDisclosure label="source and evidence details">
               <p className="my-2 text-14">
                 <a className="underline" href="/library">
-                  Open Library
+                  Open Experience
                 </a>{" "}
                 · The exact snapshot used for writing and scoring.{" "}
                 {(!draft.jobSource || draft.jobSource.method === "unknown") &&
@@ -291,7 +275,7 @@ export default async function CvDraftPage({
         )}
         {(!content || busy) && (
           <CvWorkspacePanel tab="appearance">
-            <h2 className="ds-pixel text-12">Appearance and CV settings</h2>
+            <h2 className="text-14 font-semibold">Appearance and CV settings</h2>
             <div className="mt-4 space-y-3">
               <fieldset disabled>
                 <CvAppearance
@@ -303,7 +287,7 @@ export default async function CvDraftPage({
 
 
               <Link prefetch={false} href="/library" className="text-14 underline">
-                Open Library
+                Open Experience
               </Link>
             </div>
           </CvWorkspacePanel>
@@ -316,11 +300,14 @@ export default async function CvDraftPage({
                 quiz={gapQuizForm(draft.gapQuiz, draft.librarySnapshot)}
                 library={gapQuizLibrary(draft.librarySnapshot)}
                 action={answerCvGapQuiz.bind(null, id)}
+                draftId={id}
+                scopeId={user.id}
+                openDrafts={await openEvidenceDrafts("cv_quiz", id)}
               />
             )}
             {draft.gapQuiz?.continuationDraftId && (
               <p className="border border-line-muted p-4 text-14">
-                Your answers were saved to the Library. <Link prefetch={false} className="underline" href={`/cv/${draft.gapQuiz.continuationDraftId}`}>Open the continuing CV build</Link>.
+                Your answers were saved to Experience. <Link prefetch={false} className="underline" href={`/cv/${draft.gapQuiz.continuationDraftId}`}>Open the continuing CV build</Link>.
               </p>
             )}
             {busy && build && (
@@ -356,6 +343,8 @@ export default async function CvDraftPage({
             theme={resolveCvTheme(content.theme)}
             librarySkillSections={librarySkillSections}
             blocked={blocked}
+            finalised={!!draft.finalisedAt}
+            hasFinalPdf={hasFinalPdf}
             commentCounts={commentCounts}
             // A link is of a finished, assessed revision (the action refuses anything else), so the
             // card is offered only then — or kept where links already exist, so they can be ended.
@@ -381,6 +370,8 @@ export default async function CvDraftPage({
                       <p className="text-14">
                         Finalise the CV to record an application.
                       </p>
+                    ) : !hasFinalPdf ? (
+                      <p className="text-14">The saved PDF is unavailable. Save this wording as a new revision, then review and finalise it before recording an application.</p>
                     ) : (
                       <SettingsForm
                         action={recordApplication.bind(null, id)}

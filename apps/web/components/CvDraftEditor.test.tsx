@@ -89,7 +89,7 @@ it("offers saved Library skills and visibly stops a section at ten", () => {
   act(() => root.render(<CvDraftEditor id="cv-1" content={skillContent} theme={DEFAULT_CV_THEME} librarySkillSections={[{ id: "library-tools", heading: "Tools", items: ["J", "K"] }]} />));
   expect(container.textContent).toContain("9/10 skills");
   expect(container.textContent).toContain("snapshot saved with this CV");
-  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Library to Tools"]')!;
+  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Experience to Tools"]')!;
   act(() => {
     picker.value = "J";
     picker.dispatchEvent(new Event("change", { bubbles: true }));
@@ -97,7 +97,7 @@ it("offers saved Library skills and visibly stops a section at ten", () => {
   expect(container.textContent).toContain("10/10 skills");
   expect(picker.disabled).toBe(true);
   expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Add skill")?.disabled).toBe(true);
-  const sectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Library"]')!;
+  const sectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')!;
   act(() => {
     sectionPicker.value = "library-tools";
     sectionPicker.dispatchEvent(new Event("change", { bubbles: true }));
@@ -111,11 +111,11 @@ it("shows eleven legacy pills as eleven skills, then allows saving after one is 
   act(() => root.render(<CvDraftEditor id="cv-1" content={legacy} theme={DEFAULT_CV_THEME} />));
   expect(container.textContent).toContain("11/10 skills");
   expect(container.querySelectorAll<HTMLInputElement>('[aria-label^="Skill "][aria-label$="in Tools"]')).toHaveLength(11);
-  expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Save Direct Edits")?.disabled).toBe(true);
+  expect([...container.querySelectorAll("button")].find((button) => button.textContent?.startsWith("Save "))?.disabled).toBe(true);
   expect(container.querySelector('[data-cv-editor-dirty="false"]')).not.toBeNull();
   act(() => container.querySelector<HTMLButtonElement>('[aria-label="Remove skill 11 from Tools"]')!.click());
   expect(container.textContent).toContain("10/10 skills");
-  expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Save Direct Edits")?.disabled).toBe(false);
+  expect([...container.querySelectorAll("button")].find((button) => button.textContent?.startsWith("Save "))?.disabled).toBe(false);
   expect(container.querySelector('[data-cv-editor-dirty="true"]')).not.toBeNull();
 });
 
@@ -123,7 +123,7 @@ it("shows each skill's character count and warns without truncating at 150", () 
   const withSkill = { ...content, sections: [{ entryId: "s-1", kind: "skill", heading: "Tools", bullets: ["SQL"], skillItems: ["SQL"] }] } as CvContent;
   act(() => root.render(<CvDraftEditor id="cv-1" content={withSkill} theme={DEFAULT_CV_THEME} />));
   const skill = container.querySelector<HTMLInputElement>('[aria-label="Skill 1 in Tools"]')!;
-  const save = () => [...container.querySelectorAll("button")].find(button => button.textContent === "Save Direct Edits")!;
+  const save = () => [...container.querySelectorAll("button")].find(button => button.textContent?.startsWith("Save "))!;
   expect(skill.hasAttribute("maxlength")).toBe(false);
   const type = (value: string) => act(() => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(skill, value);
@@ -165,14 +165,14 @@ it("keeps Library skill pickers within their source sections and splits a copied
     { id: "operations", heading: "Operations", items: ["Planning", "Delivery"] },
   ];
   act(() => root.render(<CvDraftEditor id="cv-1" content={withSkill} theme={DEFAULT_CV_THEME} librarySkillSections={sources} />));
-  const commercialPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Library to Commercial"]')!;
+  const commercialPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Experience to Commercial"]')!;
   expect([...commercialPicker.options].map(option => option.value)).toEqual(["", combined]);
   expect([...commercialPicker.options].map(option => option.value)).not.toContain("SQL");
-  const sectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Library"]')!;
+  const sectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')!;
   act(() => { sectionPicker.value = "technology"; sectionPicker.dispatchEvent(new Event("change", { bubbles: true })); });
   const added = JSON.parse(container.querySelector<HTMLInputElement>('[name="addedSkills"]')!.value);
   expect(added[0]).toMatchObject({ heading: "Technology", items: ["SQL", "Python"], sourceEntryId: "technology" });
-  const newSectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Library to new section"]')!;
+  const newSectionPicker = container.querySelector<HTMLSelectElement>('[aria-label="Add skill from Experience to new section"]')!;
   expect([...newSectionPicker.options].map(option => option.value)).toEqual([""]);
   act(() => { sectionPicker.value = "commercial"; sectionPicker.dispatchEvent(new Event("change", { bubbles: true })); });
   const split = container.querySelector<HTMLButtonElement>('[aria-label="Split skill 2 in new section into separate skills"]')!;
@@ -184,13 +184,13 @@ it("keeps Library skill pickers within their source sections and splits a copied
 it("asks which skills to take from a Library section larger than ten", () => {
   const items = Array.from({ length: 12 }, (_, index) => `Skill ${index + 1}`);
   act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} librarySkillSections={[{ id: "large", heading: "Large", items }]} />));
-  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Library"]')!;
+  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')!;
   act(() => { picker.value = "large"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
   expect(container.textContent).toContain("Choose up to 10 skills from Large");
   expect(container.querySelector<HTMLInputElement>('[name="addedSkills"]')?.value).toBe("[]");
   for (const index of [2, 11]) act(() => container.querySelector<HTMLInputElement>(`[aria-label="Select skill ${index + 1}: Skill ${index + 1} from Large"]`)!.click());
   expect(container.querySelector('[aria-label="Select skill 3: Skill 3 from Large"]')).not.toBeNull();
-  act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Add selected Library section")!.click());
+  act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Add selected Experience section")!.click());
   const added = JSON.parse(container.querySelector<HTMLInputElement>('[name="addedSkills"]')!.value);
   expect(added[0]).toMatchObject({ heading: "Large", items: ["Skill 3", "Skill 12"] });
 });

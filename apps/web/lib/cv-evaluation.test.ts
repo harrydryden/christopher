@@ -229,7 +229,7 @@ describe("closing a gap from the evaluation table", () => {
   });
 
   it("says when the Library has moved on since the build, and stays quiet when it has not", () => {
-    expect(libraryDriftSentence(7, 9)).toBe("Your Library changed since this build (v7 → v9).");
+    expect(libraryDriftSentence(7, 9)).toBe("Your Experience changed since this build (v7 → v9).");
     expect(libraryDriftSentence(9, 9)).toBeNull();
     expect(libraryDriftSentence(9, 7)).toBeNull();
     expect(libraryDriftSentence(null, 9)).toBeNull();

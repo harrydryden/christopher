@@ -28,6 +28,7 @@ export * from "./cv-gap-quiz";
 export * from "./evidence-rubric";
 export * from "./library-review";
 export * from "./library-import";
+export * from "./evidence-draft";
 
 export * from "./role-workflow";
 export * from "./stage-route-drift";

@@ -52,11 +52,14 @@ function SuggestionCardContent({ row }: { row: SuggestionRow }) {
       {typeof verification?.matchingRoles === "number" && <Badge tone="blue" title="From a sample of roles, not a complete count. A company can be worth following without a current match.">{verification.matchingRoles} matches in sample</Badge>}
       {verification?.careersSource && <a href={verification.careersSource.url} target="_blank" rel="noreferrer" className="text-fg underline">Careers page ↗</a>}
     </div>
-    {suggestion.evidence && <section className="bg-sunken p-3 text-14">
-      <h3 className="font-medium">Evidence from {suggestion.evidence.sourceName}</h3>
-      <div className="mt-2">{suggestion.evidence.url ? <a href={suggestion.evidence.url} target="_blank" rel="noreferrer" className="text-fg underline">{suggestion.evidence.title} ↗</a> : <p>{suggestion.evidence.title}</p>}
-        <blockquote className="mt-2 border-l-2 border-line-muted pl-3 text-muted">“{suggestion.evidence.quote}”</blockquote></div>
-    </section>}
+    {suggestion.evidence && <details className="border-t border-line-faint pt-2 text-14">
+      <summary className="min-h-11 cursor-pointer py-2 font-medium underline">Why this company?</summary>
+      <div className="bg-sunken p-3">
+        <p className="font-medium">Evidence from {suggestion.evidence.sourceName}</p>
+        <div className="mt-2">{suggestion.evidence.url ? <a href={suggestion.evidence.url} target="_blank" rel="noreferrer" className="text-fg underline">{suggestion.evidence.title} ↗</a> : <p>{suggestion.evidence.title}</p>}
+          <blockquote className="mt-2 border-l-2 border-line-muted pl-3 text-muted">“{suggestion.evidence.quote}”</blockquote></div>
+      </div>
+    </details>}
     {suggestion.rejectionReason && <p className="text-14 text-muted">Your reason: {suggestion.rejectionReason}</p>}
   </div>;
 }

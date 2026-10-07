@@ -7,6 +7,8 @@
  */
 import { verifyCvWorkspace } from "./smoke-cv.mjs";
 import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
+import { verifyApplicationsWorkspace } from "./smoke-applications.mjs";
+import { verifyEvidenceConversation } from "./smoke-evidence.mjs";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { disposableAdmin, startWeb } from "./lib/web.mjs";
@@ -35,17 +37,17 @@ const PAGES = [
   // The smoke account has no roles in either live tab, so Matched shows the first-use explanation.
   // The setup checklist explains the blank table: the smoke account has confirmed its address and
   // follows one company, and nothing else, so it reads "2 of 4 done" and cannot be hidden.
-  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "All setup steps", "2 of 4 done"], "Matched"],
+  ["/", ["Roles", "Review matches from the companies you follow.", "Add a role · Link or PDF", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "All setup steps", "2 of 4 done"], "Matched"],
   // The header carries the shared schedule: one scan a day for every follower.
   // Filters first: an account that has not chosen its gate is asked for it above the add form.
-  ["/companies", ["Companies", "next scheduled scan", "Choose your filters first"]],
+  ["/companies", ["Companies", "next scheduled scan", "Choose your filters first", "Roles to review", "Monitoring", "Manage"]],
   ["/suggestions", ["Discover companies", "Companies to review"]],
   ["/suggestions?view=sources", ["Add a source"]],
   ["/suggestions?view=history", ["Recently reviewed"]],
-  ["/learning", ["Learning"]],
-  // Health's attention list and the resolution on the item the smoke company raises: no source yet.
-  ["/health", ["Health", "Needs you", "No careers page to scan", "Re-discover"]],
-  ["/settings", ["Settings", "What work are you looking for?", "Writing preferences are on the"]],
+  ["/learning", ["Search profile", "Preference profile"]],
+  // The attention list and the resolution on the item the smoke company raises: no source yet.
+  ["/health", ["Needs attention", "Needs you", "No careers page to scan", "Re-discover"]],
+  ["/settings", ["Preferences", "What work are you looking for?", "Writing preferences are on the"]],
   ["/account", ["Account", "Sign-in methods"]],
   ["/admin", ["Admin", "Registration", "Accounts"]],
   ["/admin/settings", ["System settings", "Schedule"]],
@@ -53,12 +55,12 @@ const PAGES = [
   ["/admin/health", ["Operations"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
-  ["/library", ["Library", "Intro", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
+  ["/library", ["Experience", "About you", "Work history", "Education, skills and interests", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
     "Experience", "Education, skills and interests", "Scoring guide", "A strong row says",
     "Import a document", "Upload a CV", "Paste text", "Read your website",
     "Course of Life does not read LinkedIn itself.",
-    "Writing preferences", "Writing style", "Saved phrasing", "No library saved yet"]],
-  ["/applications", ["Applications", "Active", "Closed", "Roles by stage", "What the stages mean"]],
+    "Writing preferences", "Writing style", "Saved phrasing", "No Experience saved yet"]],
+  ["/applications", ["Applications", "Active", "Closed", "Due this week", "Stage breakdown", "What the stages mean"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
   ["/?view=auto-matched", ["Roles"], "Matched"],
   ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],
@@ -177,9 +179,9 @@ async function main() {
   else if (!(anon.headers.get("location") ?? "").includes("/login")) failures.push(`/ redirected to ${anon.headers.get("location")}, expected /login`);
 
   // The company page and its logo are per company, so they join the list once there is one.
-  // The company with no source shows the setup card; the header says when it was last scanned,
-  // when the next scan is due, and how many roles here this account is pursuing.
-  const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company", "next scheduled scan", "applications", "What has happened so far", "Nobody has looked for this"]]];
+  // The company with no source shows the setup card and scan schedule. With no applications yet,
+  // the header leaves that count out and keeps the work history in its own section.
+  const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company", "next scheduled scan", "What has happened so far", "Nobody has looked for this"]]];
 
   for (const [path, expected, selectedStatus] of pages) {
     let res;
@@ -293,9 +295,13 @@ async function main() {
   }
 
   try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
-  catch (error) { failures.push(`CV browser flow: ${error.message}`); }
+  catch (error) { failures.push(`CV browser flow: ${error.stack ?? error.message}`); }
   try { await verifyCvTailoringWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
-  catch (error) { failures.push(`CV tailoring browser flow: ${error.message}`); }
+  catch (error) { failures.push(`CV tailoring browser flow: ${error.stack ?? error.message}`); }
+  try { await verifyApplicationsWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  catch (error) { failures.push(`Applications browser flow: ${error.stack ?? error.message}`); }
+  try { await verifyEvidenceConversation(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  catch (error) { failures.push(`Evidence conversation browser flow: ${error.stack ?? error.message}`); }
 
   // The disposable account takes its sessions, settings and drafts with it, and the throwaway
   // company takes its subscription.

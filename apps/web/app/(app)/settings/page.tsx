@@ -1,7 +1,7 @@
 import { MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD } from "@col/core";
-import { CvAppearance } from "@/components/CvAppearance";
+import { DefaultCvAppearance } from "@/components/DefaultCvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
-import { saveCvModel, saveCvAppearance } from "@/app/actions/cv";
+import { saveCvModel } from "@/app/actions/cv";
 import { saveAiBudget, saveGate, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles, saveSeedProfileSetting } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
@@ -14,7 +14,7 @@ import { ModelSelect } from "@/components/ModelSelect";
 import { inputClass as fieldClass, labelClass as fieldLabelClass, selectClass } from "@/components/Field";
 import { getSettings } from "@/lib/settings";
 import { hasChosenGate } from "@/lib/queries/setup";
-import { GATE_EXAMPLE, GATE_SENTENCE } from "@/lib/setup";
+import { GATE_EXAMPLE, gateSentence } from "@/lib/setup";
 import { accountAiBudget } from "@/lib/queries/accounts";
 import { formatUsd, shortDate } from "@/lib/format";
 import { requireUser } from "@/lib/auth";
@@ -34,7 +34,7 @@ export default async function SettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Settings"
+        title="Preferences"
         actions={
           <form action={rescoreAllRoles}>
             <Button type="submit" variant="ghost" size="sm">Re-score all</Button>
@@ -47,7 +47,7 @@ export default async function SettingsPage() {
       <Card title="Keywords">
         {/* Filters first: an account that has never saved its gate is shown the example, not the
             word the defaults happen to carry, so nothing is ever scanned against a choice nobody made. */}
-        <p className="mb-3 text-14 text-muted">{GATE_SENTENCE}</p>
+        <p className="mb-3 text-14 text-muted">{gateSentence(settings.gate.matchFields, (settings.gate.seniorityKeywords ?? []).length > 0)}</p>
         {/* The Keywords and Location cards both save the gate. */}
         <SettingsForm successMessage="Saved." action={saveGate}>
           <label className={labelClass}>
@@ -125,11 +125,9 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
-      <SettingsForm successMessage="Saved." action={saveCvAppearance}>
-        <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
-      </SettingsForm>
+      <DefaultCvAppearance key={JSON.stringify(appearance)} value={appearance} />
 
-      <p className="text-14 text-muted">Writing preferences are on the <a href="/library" className="text-fg underline">Library</a> page.</p>
+      <p className="text-14 text-muted">Writing preferences are on the <a href="/library" className="text-fg underline">Experience</a> page.</p>
 
       <Card title="CV model">
         <SettingsForm successMessage="Saved." action={saveCvModel}>

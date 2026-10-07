@@ -25,15 +25,17 @@ const NAV_ITEMS: Array<{ href: string; label: string }> = [
   { href: "/companies", label: "Companies" },
   { href: "/applications", label: "Applications" },
   { href: "/library", label: "Experience" },
-  { href: "/learning", label: "Learning" },
-  { href: "/health", label: "Health" },
-  { href: "/settings", label: "Settings" },
+];
+const SECONDARY_ITEMS = [
+  { href: "/settings", label: "Preferences" },
+  { href: "/learning", label: "Search profile" },
+  { href: "/health", label: "Needs attention" },
 ];
 
 /** Attention leads straight to its resolution, without blocking the rest of the shell. */
 async function HealthNavLink({ userId, href, children }: { userId: string; href: string; children: ReactNode }) {
   const count = await countHealthItems(userId);
-  return <NavLink href={href} count={count} countTitle={`${count} ${count === 1 ? "item" : "items"} on Health need${count === 1 ? "s" : ""} you`}>{children}</NavLink>;
+  return <NavLink secondary href={href} count={count} countTitle={`${count} ${count === 1 ? "item needs" : "items need"} your attention`}>{children}</NavLink>;
 }
 
 async function ScanBanner({ userId }: { userId: string }) {
@@ -70,15 +72,18 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex flex-1 flex-col md:flex-row">
         <WorkspaceMenu mobilePlan={<Suspense fallback={null}><BillingReadout pending={billing} mobile /></Suspense>}>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
-            {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (
-              <Suspense key={item.href} fallback={<NavLink href={item.href}>{item.label}</NavLink>}>
-                <HealthNavLink userId={user.id} href={item.href}>{item.label}</HealthNavLink>
-              </Suspense>
-            ) : (
+            {NAV_ITEMS.map((item) => (
               <NavLink key={item.href} href={item.href}>
                 {item.label}
               </NavLink>
             ))}
+          </nav>
+          <nav aria-label="Workspace tools" className="mt-3 flex flex-wrap gap-0.5 border-t border-brand-ink-muted pt-3 md:block md:space-y-0.5">
+            {[...SECONDARY_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (
+              <Suspense key={item.href} fallback={<NavLink secondary href={item.href}>{item.label}</NavLink>}>
+                <HealthNavLink userId={user.id} href={item.href}>{item.label}</HealthNavLink>
+              </Suspense>
+            ) : <NavLink secondary key={item.href} href={item.href}>{item.label}</NavLink>)}
           </nav>
           <div className="mt-auto space-y-2 px-2 pt-4 text-13">
             <div className="hidden md:block"><Suspense fallback={null}><BillingReadout pending={billing} /></Suspense></div>

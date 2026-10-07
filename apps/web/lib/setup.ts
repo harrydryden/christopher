@@ -51,7 +51,13 @@ export interface SetupChecklist {
   libraryFilled: boolean;
 }
 
-export const GATE_SENTENCE = "A role is kept only when its title contains one of these words and it is in one of these places or remote.";
+export function gateSentence(fields: readonly ("title" | "department" | "description")[] = ["title"], hasSeniority = false): string {
+  // The title is always searched by compileGate, even when it is not selected in matchFields.
+  const extra = [fields.includes("department") ? "department" : null, fields.includes("description") ? "job description" : null].filter(Boolean);
+  const where = extra.length === 0 ? "the title" : extra.length === 1 ? `the title or ${extra[0]}` : `the title, department or job description`;
+  return `Include keywords match ${where}. ${hasSeniority ? "Seniority terms must also match the title. " : ""}Exclude keywords can remove a role; location and remote choices then apply.`;
+}
+export const GATE_SENTENCE = gateSentence();
 export const GATE_EXAMPLE = "e.g. operations, chief of staff, programme";
 export const CHOOSE_GATE_SENTENCE = "Choose your keywords and locations first, so the first scan runs against your filters.";
 export const GATE_NEEDS_KEYWORD_SENTENCE = "Enter at least one keyword.";

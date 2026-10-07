@@ -91,6 +91,18 @@ it("renders every row once on mount, so the probe sees them", () => {
   expect(new Set(rowsRenderedBy(() => act(() => root.render(<RolesTable key="again" rows={ROWS} companies={COMPANIES} keyboard emptyState={<p>Nothing</p>} />)))).size).toBe(50);
 });
 
+it("reads a narrow card from role identity through context to action and selection", () => {
+  const cells = [...container.querySelectorAll<HTMLTableCellElement>("tbody tr:first-child > td")];
+  expect(cells.map(cell => cell.className)).toEqual([
+    expect.stringContaining("roleTitle"), expect.stringContaining("roleCompany"),
+    expect.stringContaining("roleLocation"), expect.stringContaining("roleFit"),
+    expect.stringContaining("roleAction"), expect.stringContaining("roleSelect"),
+  ]);
+  expect(cells[2]?.textContent).toContain("Location:");
+  expect(cells[2]?.textContent).toContain("Matched: operations");
+  expect(cells[3]?.textContent).toContain("Fit:");
+});
+
 it("renders only the two rows whose highlight moved on each j and k", () => {
   expect(rowsRenderedBy(() => press("j")).sort()).toEqual([ROWS[0]!.id, ROWS[1]!.id].sort());
   expect(rowsRenderedBy(() => press("j")).sort()).toEqual([ROWS[1]!.id, ROWS[2]!.id].sort());

@@ -63,8 +63,8 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const user = await requireUser();
   return <div>
     <Suspense><WorkNotice userId={user.id} /></Suspense>
-    <PageHeader title="Roles" description="Add a job link or PDF, then build a CV."
-      actions={<Link prefetch={false} href="/roles/add" className={buttonLinkClass("primary")}>Add a role</Link>} />
+    <PageHeader title="Roles" description="Review matches from the companies you follow."
+      actions={<Link prefetch={false} href="/roles/add" className={buttonLinkClass("secondary")}>Add a role · Link or PDF</Link>} />
     <Suspense><Setup userId={user.id} /></Suspense>
     <Suspense><Suggestions userId={user.id} /></Suspense>
     <RoleWorkspace userId={user.id} searchParams={await searchParams} />

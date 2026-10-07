@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import { BANNER_FAILURES, BANNER_FIRST_MS, BANNER_RECHECK_MS, bannerPollDelay, nextPollDelay, LONGEST_POLL_MS, type ScanPollHint } from "@/lib/polling";
 import { scanActivity, scanStripItems, scanStripSignature, type ScanStripFacts } from "@/lib/scan-banner";
@@ -19,6 +20,7 @@ const MINUTE_MS = 60_000;
  * once a minute, which costs no request.
  */
 export function ScanStatusBanner({ initial }: { initial: Reading }) {
+  const pathname = usePathname();
   const [facts, setFacts] = useState<ScanStripFacts>(initial);
   const [stale, setStale] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -108,22 +110,28 @@ export function ScanStatusBanner({ initial }: { initial: Reading }) {
 
   const items = scanStripItems(facts, new Date(now));
   const activity = scanActivity(facts);
+  // Writing needs a quiet workspace. Monitoring exceptions still remain visible here, while the
+  // full readout stays available without another fetch or a second polling loop.
+  const focused = pathname.startsWith("/cv/") || pathname === "/library";
+  const readings = <>
+    {items.map((item, index) => <Fragment key={item.key}>
+      {index > 0 && <span className="text-muted" aria-hidden="true">·</span>}
+      <Link prefetch={false} href={item.href} title={item.title} className="underline decoration-dotted" suppressHydrationWarning={item.key === "last-scan"}>{item.text}</Link>
+    </Fragment>)}
+  </>;
   return (
-    <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-13">
-      {activity && <span className="ds-pixel text-10" role="status">
+    <div className={`flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 ${focused ? "text-12 text-muted" : "text-13"}`}>
+      {focused && <details>
+        <summary className="cursor-pointer">Monitoring status</summary>
+        <p className="flex flex-wrap gap-x-2 py-2">{readings}</p>
+      </details>}
+      {activity && <span role="status">
         {activity.href
-          ? <Link prefetch={false} href={activity.href} className="underline decoration-dotted">{activity.text}</Link>
+          ? <Link prefetch={false} href={activity.href} className={`underline decoration-dotted ${focused ? "text-warn" : ""}`}>{activity.text}</Link>
           : activity.text}
       </span>}
-      {items.map((item, index) => (
-        <Fragment key={item.key}>
-          {(index > 0 || activity) && <span className="text-muted" aria-hidden="true">·</span>}
-          <Link prefetch={false} href={item.href} title={item.title} className="underline decoration-dotted" suppressHydrationWarning={item.key === "last-scan"}>
-            {item.text}
-          </Link>
-        </Fragment>
-      ))}
+      {!focused && <>{activity && <span className="text-muted" aria-hidden="true">·</span>}{readings}</>}
       {stale && <span className="text-muted">· Live update unavailable</span>}
-    </p>
+    </div>
   );
 }

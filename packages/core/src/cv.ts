@@ -149,7 +149,8 @@ export const CvLibrarySchema = z.object({
    */
   facetedRows: z.literal(true).optional(),
   employment: z.array(EmploymentSchema).max(100).optional(),
-  entries: z.array(CvEntrySchema).min(1).max(100),
+  // A first job may be saved before its first answer; CV readiness still requires usable evidence.
+  entries: z.array(CvEntrySchema).max(100),
 }).superRefine((library, ctx) => {
   if (contactLine(library).length > CONTACT_LINE_LIMIT) ctx.addIssue({ code: "custom", path: ["contact"], message: `Shorten the contact details so they fit on one line of ${CONTACT_LINE_LIMIT} characters.` });
   if (library.employment) {

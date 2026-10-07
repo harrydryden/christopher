@@ -69,12 +69,15 @@ function statusAction(row: PipelineRow) {
   return null;
 }
 
-function StatusPanel({ row }: { row: PipelineRow }) {
+function StatusPanel({ row, guided = false, onSaved }: { row: PipelineRow; guided?: boolean; onSaved: () => void }) {
   const action = statusAction(row);
   const current = row.application?.status ?? null;
   const [status, setStatus] = useState<ApplicationStatus>(current ?? "applying");
   const [appliedOnValue, setAppliedOnValue] = useState(row.application?.appliedOn ?? "");
   const [appliedOnEdited, setAppliedOnEdited] = useState(false);
+  const [onValue, setOnValue] = useState("");
+  const [showNextStep, setShowNextStep] = useState(false);
+  const [showFull, setShowFull] = useState(!guided);
   const history = [...(row.application?.history ?? [])].reverse();
   // A row with no posting behind it is keyed by its company and role, which carries spaces; an
   // element id may not.
@@ -114,13 +117,17 @@ function StatusPanel({ row }: { row: PipelineRow }) {
   }, [formId, backwards]);
   return (
     <div className="space-y-3">
-      <h3 className="ds-label">Status</h3>
+      <h3 className="text-14 font-semibold">What happened?</h3>
       {action ? (
-        <SettingsForm id={formId} action={action} submitLabel="Save">
+        <SettingsForm id={formId} action={async (previous, form) => {
+          const result = await action(previous, form);
+          if (result.ok) onSaved();
+          return result;
+        }} submitLabel="Save update">
           <input type="hidden" name="confirm" defaultValue="" ref={confirmField} />
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1.5">
-              <span className={labelClass}>Where it stands</span>
+              <span className={labelClass}>Choose the update</span>
               <select
                 name="status"
                 value={status}
@@ -141,18 +148,16 @@ function StatusPanel({ row }: { row: PipelineRow }) {
             {/* The day this entry is about — the interview, the offer, the rejection — which the
                 save time cannot express. Applied has one already, the application date, and
                 Applying has nothing to date yet, so neither is asked twice. */}
-            {datesTheEntry && (
-              <label className="grid gap-1.5">
+            <label className="grid gap-1.5" hidden={!datesTheEntry} style={!datesTheEntry ? { display: "none" } : undefined}>
                 <span className={labelClass}>On (optional)</span>
-                <input type="date" name="on" defaultValue="" className={inputClass} />
-              </label>
-            )}
+                <input type="date" name="on" value={onValue} disabled={!datesTheEntry} onChange={event => setOnValue(event.target.value)} className={inputClass} />
+            </label>
           </div>
           {/* Outside the label on purpose: inside it, the sentence becomes part of the select's accessible name. */}
-          <p className="text-12 text-muted">Withdrawn also dismisses the role.</p>
+          {status === "withdrawn" && <p className="text-12 text-warn">Withdrawn also dismisses the role.</p>}
           {/* Only submission has a required date. A later status may be known without it. */}
           {status !== "applying" && (
-            <label className="grid gap-1.5">
+            <label className="grid gap-1.5" hidden={!showFull && status !== "applied"} style={!showFull && status !== "applied" ? { display: "none" } : undefined}>
               <span className={labelClass}>Application date{status === "applied" ? "" : " (optional)"}</span>
               <input
                 type="date"
@@ -165,7 +170,10 @@ function StatusPanel({ row }: { row: PipelineRow }) {
               {status !== "applied" && <span className="text-12 text-muted">Leave blank, or clear an incorrect date, if you do not know when you applied.</span>}
             </label>
           )}
-          <div className="grid gap-3 sm:grid-cols-2">
+          {!showFull && <button type="button" onClick={() => setShowNextStep(value => !value)} className="self-start min-h-11 text-13 font-medium underline">
+            {showNextStep ? "Hide next step" : row.application?.nextAction ? "Edit next step" : "Add next step"}
+          </button>}
+          <div hidden={!showNextStep && !showFull} style={!showNextStep && !showFull ? { display: "none" } : undefined} className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1.5">
               <span className={labelClass}>Next step</span>
               <input
@@ -182,11 +190,13 @@ function StatusPanel({ row }: { row: PipelineRow }) {
               <input type="date" name="nextActionOn" defaultValue={row.application?.nextActionOn ?? ""} className={inputClass} />
             </label>
           </div>
-          <p className="text-12 text-muted">Nothing is sent; it shows under the stage as a reminder.</p>
-          <label className="grid gap-1.5">
+          {(showNextStep || showFull) && <p className="text-12 text-muted">Nothing is sent; this stays in your application record.</p>}
+          {!showFull && <button type="button" onClick={() => setShowFull(true)} className="self-start min-h-11 text-13 underline">Full details</button>}
+          <label className="grid gap-1.5" hidden={!showFull} style={!showFull ? { display: "none" } : undefined}>
             <span className={labelClass}>Notes</span>
             <textarea name="notes" defaultValue={row.application?.notes ?? ""} maxLength={4000} rows={3} className={`resize-y ${inputClass}`} />
           </label>
+          <p className="text-13 text-muted">Saving as {APPLICATION_STATUS_LABELS[status]}{status === "applied" && appliedOnValue ? ` · applied ${appliedOnValue}` : datesTheEntry && onValue ? ` · on ${onValue}` : ""}.</p>
         </SettingsForm>
       ) : (
         <p className="text-14 text-muted">
@@ -194,8 +204,8 @@ function StatusPanel({ row }: { row: PipelineRow }) {
         </p>
       )}
       {history.length > 0 && (
-        <section>
-          <h4 className="ds-label">Status history</h4>
+        <details>
+          <summary className="min-h-11 cursor-pointer py-2 text-13 underline">Status history</summary>
           <ul className="mt-1 space-y-1 text-13">
             {history.map((entry, index) => (
               // "Interview · on 12 Sep · saved 10 Sep": the day it was about beside the day it was
@@ -206,7 +216,7 @@ function StatusPanel({ row }: { row: PipelineRow }) {
               </li>
             ))}
           </ul>
-        </section>
+        </details>
       )}
     </div>
   );
@@ -369,15 +379,31 @@ export function ApplicationsTable({
   }, []);
   // A `?job=` link, and the CV column's own Build CV, both open the row on its CV section.
   const [focusedCvKey, setFocusedCvKey] = useState<string | null>(openKey ?? null);
-  function openCv(key: string) { setExpandedKey(key); setFocusedCvKey(key); }
+  const [guidedKey, setGuidedKey] = useState<string | null>(null);
+  const dirtyKeys = useRef(new Set<string>());
+  function canLeaveCurrent(nextKey: string | null): boolean {
+    if (!expandedKey || expandedKey === nextKey || !dirtyKeys.current.has(expandedKey)) return true;
+    if (!window.confirm("Leave this application with unsaved changes? Your entries will be lost.")) return false;
+    dirtyKeys.current.delete(expandedKey);
+    return true;
+  }
+  function openCv(key: string) { if (!canLeaveCurrent(key)) return; setExpandedKey(key); setFocusedCvKey(key); setGuidedKey(null); }
+  function openUpdate(key: string) { if (!canLeaveCurrent(key)) return; setExpandedKey(key); setGuidedKey(key); setFocusedCvKey(null); }
+  function toggleDetails(key: string, expanded: boolean) {
+    if (!canLeaveCurrent(expanded ? null : key)) return;
+    setExpandedKey(expanded ? null : key);
+    setFocusedCvKey(null);
+    setGuidedKey(null);
+  }
   // Rows a CV action has just answered for, shown in place of what the page last rendered. The
   // next render from the server carries the same truth and clears them.
   const [patched, setPatched] = useState<Record<string, PipelineRow>>({});
   useEffect(() => { setPatched({}); }, [inputRows]);
   const rows = inputRows.map((row) => patched[row.key] ?? row);
   if (!rows.length) return <>{emptyState}</>;
-  const detailsFor = (row: PipelineRow) => <div className="grid gap-6 md:grid-cols-2">
-    <StatusPanel row={row} />
+  const detailsFor = (row: PipelineRow) => <div className="grid gap-6 md:grid-cols-2"
+    onInputCapture={() => dirtyKeys.current.add(row.key)} onChangeCapture={() => dirtyKeys.current.add(row.key)}>
+    <StatusPanel row={row} guided={guidedKey === row.key} onSaved={() => dirtyKeys.current.delete(row.key)} />
     <CvPanel row={row} focus={focusedCvKey === row.key} quotes={quotes} unverified={unverified}
       onPatched={(fresh) => setPatched((previous) => ({ ...previous, [fresh.key]: fresh }))} />
   </div>;
@@ -392,6 +418,7 @@ export function ApplicationsTable({
           <TH>Status</TH>
           <TH>CV</TH>
           <TH>Updated</TH>
+          <TH>Update</TH>
         </tr>
       </THead>
       <TBody>
@@ -413,7 +440,7 @@ export function ApplicationsTable({
                 <TD className="max-w-[22rem]">
                   <button
                     type="button"
-                    onClick={() => { setExpandedKey(expanded ? null : row.key); setFocusedCvKey(null); }}
+                    onClick={() => toggleDetails(row.key, expanded)}
                     aria-expanded={expanded}
                     aria-controls={`application-${row.key}`}
                     className="text-left font-semibold text-fg hover:underline"
@@ -438,7 +465,7 @@ export function ApplicationsTable({
                 </TD>
                 <TD className="max-w-[14rem]">
                   {row.cv ? (
-                    <Link prefetch={false} href={`/cv/${row.cv.id}`} className="underline">{cvLabel(row)}</Link>
+                    <><Link prefetch={false} href={`/cv/${row.cv.id}`} className="underline">Open CV</Link><span className="mt-1 block text-12 text-muted">{cvLabel(row)}</span></>
                   ) : row.jobId ? (
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="text-muted">—</span>
@@ -456,10 +483,11 @@ export function ApplicationsTable({
                   {/* A hint, not a reminder: nothing is sent, it only reads differently here. */}
                   {staleHints[row.key] && <span className="mt-1 block text-12 text-muted">{staleHints[row.key]}</span>}
                 </TD>
+                <TD><Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openUpdate(row.key)}>Update</Button></TD>
               </TR>
               {expanded && !isMobile && (
                 <tr id={`application-${row.key}`} className="bg-sunken">
-                  <td colSpan={5} className="p-4">
+                  <td colSpan={6} className="p-4">
                     {detailsFor(row)}
                   </td>
                 </tr>
@@ -480,7 +508,7 @@ export function ApplicationsTable({
                 <CompanyFavicon src={row.companyIcon?.src ?? null} domain={row.companyIcon?.domain} size={14} />
                 <span className="truncate">{row.companyName}</span>
               </Link> : <span className="block truncate text-13 text-muted">{row.companyName}</span>}
-              <button type="button" onClick={() => { setExpandedKey(expanded ? null : row.key); setFocusedCvKey(null); }}
+              <button type="button" onClick={() => toggleDetails(row.key, expanded)}
                 aria-expanded={expanded} aria-controls={`application-${row.key}`}
                 className="mt-1 block min-h-11 w-full text-left font-semibold leading-snug text-fg underline-offset-2 hover:underline">{row.jobTitle}</button>
             </div>
@@ -490,11 +518,12 @@ export function ApplicationsTable({
           {nextSteps[row.key] && <p className={`mt-2 text-13 ${nextSteps[row.key]!.overdue ? "text-warn" : "text-muted"}`}>{nextSteps[row.key]!.line}</p>}
           {staleHints[row.key] && <p className="mt-2 text-12 text-muted">{staleHints[row.key]}</p>}
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-13">
-            {row.cv ? <Link prefetch={false} href={`/cv/${row.cv.id}`} className="min-h-11 py-2 underline">CV: {cvLabel(row)}</Link>
+            {row.cv ? <span><Link prefetch={false} href={`/cv/${row.cv.id}`} className="inline-flex min-h-11 items-center py-2 underline">Open CV</Link><span className="ml-2 text-12 text-muted">{cvLabel(row)}</span></span>
               : row.jobId ? <Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openCv(row.key)}>Build CV</Button>
               : <span className="text-muted">No CV</span>}
             <time dateTime={new Date(row.updatedAt).toISOString()} className="text-12 text-muted">Updated {relativeTime(new Date(row.updatedAt))}</time>
           </div>
+          <Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openUpdate(row.key)}>Update</Button>
           {row.archivedCvId && <p className="text-12 text-muted">Previous CV archived</p>}
           {expanded && isMobile && <div id={`application-${row.key}`} className="mt-4 border-t border-line-faint pt-4">{detailsFor(row)}</div>}
         </article>;

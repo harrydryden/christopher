@@ -5,7 +5,8 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { companies, jobs, roleImports, tasks, userJobs, users } from "@col/db";
 import { assertPublicHttpUrl, ensureHttpUrl, extractDomain, normalisePostingUrl, normalizeTitle, sha1, UnsafeUrlError } from "@col/core";
-import { requireVerifiedUser } from "@/lib/auth";
+import { getCurrentUser, needsEmailConfirmation, requireVerifiedUser } from "@/lib/auth";
+import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { db } from "@/lib/db";
 import { recordDecisions } from "@/lib/decisions";
 import { enqueue } from "@/lib/enqueue";
@@ -65,7 +66,12 @@ async function prepare(form: FormData): Promise<Prepared> {
 
 /** Store the private input and its queue entry together; repeated submissions reuse the same row. */
 export async function startRoleImport(_previous: ActionResult, form: FormData): Promise<ActionResult> {
-  const user = await requireVerifiedUser();
+  // A session or verification change while the form is open must return an inline refusal, so
+  // SettingsForm retains the pasted link or selected PDF instead of navigating away with it.
+  const current = await getCurrentUser();
+  if (!current) throw new Error("Unauthorised");
+  const user = current.user;
+  if (needsEmailConfirmation(user)) return fail(VERIFY_SENTENCE, { href: "/account", label: "Confirm your email in a new tab" });
   let input: Prepared;
   try { input = await prepare(form); }
   catch (error) { return actionError(error, "That role could not be read from the form."); }

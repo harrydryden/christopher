@@ -86,7 +86,7 @@ export function libraryDriftSentence(
   latestVersion: number | null | undefined,
 ): string | null {
   if (!draftVersion || !latestVersion || latestVersion <= draftVersion) return null;
-  return `Your Library changed since this build (v${draftVersion} → v${latestVersion}).`;
+  return `Your Experience changed since this build (v${draftVersion} → v${latestVersion}).`;
 }
 
 

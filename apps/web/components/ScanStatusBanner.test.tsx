@@ -4,6 +4,8 @@ import { expect, it, vi } from "vitest";
 import type { ScanStatus } from "@/lib/scan-status";
 
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: ReactNode; href: string }) => <a href={href}>{children}</a> }));
+const route = vi.hoisted(() => ({ path: "/" }));
+vi.mock("next/navigation", () => ({ usePathname: () => route.path }));
 
 import { ScanStatusBanner } from "./ScanStatusBanner";
 
@@ -24,4 +26,15 @@ it("links a stopped or restarting unfinished scan to Health without claiming it 
   }
   expect(render("scanning")).toContain("Scanning now");
   expect(render("idle")).not.toContain("Scanning now");
+});
+
+it("keeps scan exceptions outside the collapsed monitoring details while writing", () => {
+  route.path = "/cv/example";
+  try {
+    const html = render("waiting");
+    expect(html).toContain("<details>");
+    expect(html.slice(html.indexOf("</details>"))).toContain("Scan waiting for monitoring");
+    expect(html).toContain("Following 1 company");
+    expect(html).not.toContain("<details open");
+  } finally { route.path = "/"; }
 });

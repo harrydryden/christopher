@@ -41,7 +41,7 @@ export function RebuildButton({ form, disabled = false }: { form?: string; disab
       variant="secondary"
       size="sm"
     >
-      Rebuild from Library
+      Rewrite from Experience · 1 credit
     </Button>
   );
 }
@@ -78,6 +78,8 @@ export function CvDraftEditor({
   commentCounts = {},
   buildLog,
   blocked = null,
+  finalised = false,
+  hasFinalPdf = false,
   librarySkillSections = [],
 }: {
   id: string;
@@ -98,6 +100,8 @@ export function CvDraftEditor({
   buildLog?: ReactNode;
   /** Why these actions are unavailable — an unverified account — or null when they are not. */
   blocked?: string | null;
+  finalised?: boolean;
+  hasFinalPdf?: boolean;
   /** Active, structured skill blocks in the Library snapshot used for this draft. */
   librarySkillSections?: LibrarySkillSection[];
 }) {
@@ -214,9 +218,10 @@ export function CvDraftEditor({
         <SettingsForm
           id={formId}
           action={saveCvDraft.bind(null, id)}
-          submitLabel="Save Direct Edits"
+          submitLabel={finalised ? "Save as new revision · free" : dirty ? "Save and check · free" : "Save as new revision · free"}
+          submitVariant={!finalised && dirty ? "primary" : "secondary"}
           submitDisabled={!!skillIssue}
-          secondaryActions={<RebuildButton disabled={!!skillIssue} />}
+          secondaryActions={<details className="text-12"><summary className="cursor-pointer">More options</summary><div className="mt-2"><RebuildButton disabled={!!skillIssue} /></div></details>}
         >
           {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
           {theme && (
@@ -226,29 +231,29 @@ export function CvDraftEditor({
           <input type="hidden" name="addedSkills" value={JSON.stringify(addedSkills)} />
         </SettingsForm>
       </fieldset>
-      {/* Direct edits are free. A fresh AI rewrite uses one CV credit. */}
-      <dl className="mt-2 space-y-1 text-12 text-muted">
-        <div>
-          <dt className="inline font-semibold text-fg">Save Direct Edits</dt>
-          <dd className="inline">
-            {" · keeps your wording, re-checks it · free"}
-          </dd>
-        </div>
-        <div>
-          <dt className="inline font-semibold text-fg">Rebuild from Library</dt>
-          <dd className="inline">
-            {" · plans and rewrites from the latest Library; includes one improvement pass if useful · 1 CV credit"}
-          </dd>
-        </div>
-      </dl>
+      <p className="mt-2 text-12 text-muted">Saving keeps your wording and checks a new revision. Rewriting uses the latest Experience evidence and one CV credit.</p>
       {blocked && (
         <p role="status" className="mt-2 border border-warn p-3 text-14 text-warn">
           {blocked}
         </p>
       )}
+      <section className="flex flex-wrap items-center gap-3 border-b border-line-muted pb-3 text-13" aria-label="CV preview">
+        {finalised && hasFinalPdf && !dirty
+          ? <a href={`/api/cv/${id}/pdf?preview=1`} target="_blank" rel="noopener noreferrer" className={buttonClass("secondary", "md", "no-underline")}>Preview final PDF</a>
+          : <button type="button" disabled={pending || !!blocked} onClick={updatePreview} className={buttonClass("secondary")}>
+              {pending ? "Rendering preview…" : "Preview current edits"}
+            </button>}
+        <span className="text-muted">{dirty ? "Preview includes unsaved edits; save and check before finalising." : finalised ? hasFinalPdf ? "The approved PDF is shown exactly as finalised." : "Preview this wording before saving a new revision." : "Preview of this saved revision."}</span>
+        {error && <p role="alert" className="w-full text-14 text-danger">{error}</p>}
+        {preview && !currentPreview && <p role="status" className="w-full text-12 text-muted">Edits changed since this preview. Refresh it to see the current wording.</p>}
+        {preview && currentPreview && <>
+          <a className="underline" href={preview.url} target="_blank" rel="noopener noreferrer">Open preview · {preview.pages} {preview.pages === 1 ? "page" : "pages"}</a>
+          <CvDisclosure label="preview on this page"><iframe title="Current CV PDF preview" src={preview.url} className="h-[650px] w-full border-2 border-line-muted bg-raised" /></CvDisclosure>
+        </>}
+      </section>
       <CvWorkspacePanel tab="appearance">
         <section className="border border-line-muted p-4">
-          <h2 className="ds-pixel text-12">Appearance and settings</h2>
+          <h2 className="text-14 font-semibold">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
             <CvAppearance value={theme} onChange={setTheme} />
           </div>
@@ -268,7 +273,7 @@ export function CvDraftEditor({
       </CvWorkspacePanel>
       <CvWorkspacePanel tab="content">
         <section className="space-y-3 border border-line-muted p-4">
-          <h2 className="ds-pixel text-12">Content</h2>
+          <h2 className="text-14 font-semibold">CV wording</h2>
           <p className="text-14">
             {content.name} · {content.contact}
             {content.linkedinUrl && (
@@ -299,7 +304,7 @@ export function CvDraftEditor({
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
               rows={5}
-              className={input}
+              className={`ds-prose ${input}`}
             />
           </label>
           {/* Beside the words it remembers, not two tabs away: it applies to whichever of the two
@@ -316,9 +321,9 @@ export function CvDraftEditor({
           </label>
           <p className="text-12 text-muted">
             Changed profile and bullet wording is kept as saved phrasing for the next CV. It adds no
-            facts to your Library.
+            facts to your Experience.
           </p>
-          {librarySkillSections.length > 0 && <p className="text-12 text-muted">Library choices come from the snapshot saved with this CV. Add each Library skill group as its own section; check your current Library for newer changes.</p>}
+          {librarySkillSections.length > 0 && <p className="text-12 text-muted">Experience choices come from the snapshot saved with this CV. Add each skill group as its own section; check your current Experience for newer changes.</p>}
           {skillIssue && <p className="text-12 text-danger" role="alert">{skillIssue}</p>}
           {cvDisplaySections(content).filter(({ section }) => !removedSkillIds.includes(section.entryId)).map(({ section, index }) => {
             const blockId = cvSectionBlockId(section.entryId);
@@ -351,12 +356,12 @@ export function CvDraftEditor({
                 <p className="text-12 text-muted">Paste a comma-separated list into one field, then choose “Split list into skills”. A saved label stays whole until you choose to split it.</p>
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" disabled={skillSlotsFull} className={buttonClass("secondary")} onClick={() => setRows((previous) => previous.map((row, i) => i === index ? row ? `${row}\n` : "" : row))}>Add skill</button>
-                  {librarySource && <select aria-label={`Add skill from Library to ${section.heading}`} className={inputClass} value="" disabled={skillSlotsFull || availableLibrarySkills.length === 0} onChange={(event) => {
+                  {librarySource && <select aria-label={`Add skill from Experience to ${section.heading}`} className={inputClass} value="" disabled={skillSlotsFull || availableLibrarySkills.length === 0} onChange={(event) => {
                     const selected = event.target.value;
                     if (selected) setRows((previous) => previous.map((row, i) => i === index ? row ? `${row}\n${selected}` : selected : row));
-                  }}><option value="">Add skill from Library</option>{availableLibrarySkills.map((item) => <option key={item} value={item}>{item}</option>)}</select>}
+                  }}><option value="">Add skill from Experience</option>{availableLibrarySkills.map((item) => <option key={item} value={item}>{item}</option>)}</select>}
                 </div>
-              </> : <textarea form={formId} id={blockId} name={`section-${index}`} value={rows[index]} onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? event.target.value : row))} rows={Math.max(3, section.bullets.length * 2)} className={input} />}
+              </> : <textarea form={formId} id={blockId} name={`section-${index}`} value={rows[index]} onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? event.target.value : row))} rows={Math.max(3, section.bullets.length * 2)} className={`ds-prose ${input}`} />}
             </div>;
           })}
           {addedSkills.map((section, sectionIndex) => <div key={section.entryId} className="space-y-2 border border-line-muted p-3 text-14">
@@ -377,15 +382,15 @@ export function CvDraftEditor({
               {(() => {
                 const source = librarySkillSections.find((item) => item.id === section.sourceEntryId);
                 const available = source?.items.filter((item) => !section.items.some((current) => current.trim().toLowerCase() === item.toLowerCase())) ?? [];
-                return source && <select aria-label="Add skill from Library to new section" className={inputClass} value="" disabled={section.items.length >= CV_LIMITS.skillsPerSection || available.length === 0} onChange={(event) => {
+                return source && <select aria-label="Add skill from Experience to new section" className={inputClass} value="" disabled={section.items.length >= CV_LIMITS.skillsPerSection || available.length === 0} onChange={(event) => {
                 const selected = event.target.value;
                 if (selected) setAddedSkills((previous) => previous.map((entry, i) => i === sectionIndex ? { ...entry, items: entry.items.length === 1 && !entry.items[0]?.trim() ? [selected] : [...entry.items, selected] } : entry));
-                }}><option value="">Add skill from Library</option>{available.map((item) => <option key={item} value={item}>{item}</option>)}</select>;
+                }}><option value="">Add skill from Experience</option>{available.map((item) => <option key={item} value={item}>{item}</option>)}</select>;
               })()}
             </div>
           </div>)}
           <button type="button" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} className={buttonClass("secondary")} onClick={() => setAddedSkills((previous) => [...previous, { entryId: `manual-skill-${crypto.randomUUID()}`, heading: "Skills", items: [""] }])}>Add skill section</button>
-          {librarySkillSections.length > 0 && <select aria-label="Add section from Library" className={inputClass} value="" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onChange={(event) => {
+          {librarySkillSections.length > 0 && <select aria-label="Add section from Experience" className={inputClass} value="" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onChange={(event) => {
             const selected = librarySkillSections.find((section) => section.id === event.target.value);
             if (!selected) return;
             if (selected.items.length > CV_LIMITS.skillsPerSection) {
@@ -394,7 +399,7 @@ export function CvDraftEditor({
             }
             setLibrarySectionChoice(null);
             setAddedSkills((previous) => [...previous, { entryId: `manual-skill-${crypto.randomUUID()}`, sourceEntryId: selected.id, heading: selected.heading, items: selected.items }]);
-          }}><option value="">Add section from Library</option>{librarySkillSections.map((section) => <option key={section.id} value={section.id}>{section.heading}</option>)}</select>}
+          }}><option value="">Add section from Experience</option>{librarySkillSections.map((section) => <option key={section.id} value={section.id}>{section.heading}</option>)}</select>}
           {librarySectionChoice && (() => {
             const source = librarySkillSections.find((section) => section.id === librarySectionChoice.sourceId);
             return source && <div className="space-y-2 border border-line-muted p-3 text-14">
@@ -404,61 +409,13 @@ export function CvDraftEditor({
               <div className="flex gap-2"><button type="button" className={buttonClass("secondary")} disabled={librarySectionChoice.selected.length === 0 || content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onClick={() => {
                 setAddedSkills((previous) => [...previous, { entryId: `manual-skill-${crypto.randomUUID()}`, sourceEntryId: source.id, heading: source.heading, items: source.items.filter((_, index) => librarySectionChoice.selected.includes(index)) }]);
                 setLibrarySectionChoice(null);
-              }}>Add selected Library section</button><button type="button" className={buttonClass("secondary")} onClick={() => setLibrarySectionChoice(null)}>Cancel</button></div>
+              }}>Add selected Experience section</button><button type="button" className={buttonClass("secondary")} onClick={() => setLibrarySectionChoice(null)}>Cancel</button></div>
             </div>;
           })()}
         </section>
-        <section className="space-y-3 border border-line-muted p-4">
-          <CvDisclosure label="PDF preview">
-
-            <button
-              type="button"
-              disabled={pending}
-              onClick={updatePreview}
-              className={buttonClass("primary")}
-            >
-              {pending ? "Rendering…" : "Preview current edits"}
-            </button>
-            {error && (
-              <p role="alert" className="text-14 text-danger">
-                {error}
-              </p>
-            )}
-            {preview && !currentPreview && (
-              <p role="status" className="text-14">
-                The content or appearance has changed. Refresh the preview to
-                see these edits.
-              </p>
-            )}
-            {preview && currentPreview && (
-              <>
-                <p className="text-14" role="status">
-                  {preview.pages} {preview.pages === 1 ? "page" : "pages"}
-                  {preview.pages > theme.maxPages
-                    ? ` — saving will automatically fit this wording into ${theme.maxPages} ${theme.maxPages === 1 ? "page" : "pages"} before assessment.`
-                    : ""}
-                  . {dirty ? "Unsaved preview." : "Current revision preview."}
-                </p>
-                <a
-                  className="text-14 underline"
-                  href={preview.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Open current preview
-                </a>
-                <iframe
-                  title="Current CV PDF preview"
-                  src={preview.url}
-                  className="h-[650px] w-full border-2 border-line-muted bg-raised"
-                />
-              </>
-            )}
-          </CvDisclosure>
-        </section>
         {share}
         {tracking}
-        {buildLog}
+        {buildLog && <CvDisclosure label="Build details">{buildLog}</CvDisclosure>}
       </CvWorkspacePanel>
     </>
   );

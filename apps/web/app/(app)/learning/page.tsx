@@ -52,7 +52,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Learning"
+        title="Search profile"
         actions={
           <>
             <SettingsForm action={resynthesizeNowSetting} submitLabel="Update preference profile" submitDisabled={unverified} />

@@ -44,12 +44,12 @@ export function CvShareCard({
   const live = shares.filter((share) => cvShareState(share, now) === "live");
   return (
     <section className="space-y-3 border border-line-muted p-4" aria-labelledby="cv-share-title">
-      <h2 id="cv-share-title" className="ds-pixel text-12">
+      <h2 id="cv-share-title" className="text-14 font-semibold">
         Share for comments
       </h2>
       <p className="text-14">
         A link shows this one revision, read-only, to anyone who has it. It carries no sign-in and
-        reaches nothing else in your account — not the advert, not your Library, not the
+        reaches nothing else in your account — not the advert, not your Experience, not the
         assessment. You can end it at any moment.
       </p>
       <CvShareCreateForm draftId={draftId}>

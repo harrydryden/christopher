@@ -37,14 +37,14 @@ export function CvShareComments({
   if (!comments.length) return null;
   return (
     <section className="space-y-3 border border-line-muted p-4" aria-labelledby="cv-share-comments-title">
-      <h2 id="cv-share-comments-title" className="ds-pixel text-12">
+      <h2 id="cv-share-comments-title" className="text-14 font-semibold">
         Comments from readers
       </h2>
       <p className="text-14">
         {openCount
           ? `${openCount} open ${pluralize(openCount, "note")} of ${comments.length}.`
           : `All ${comments.length} ${pluralize(comments.length, "note")} resolved.`}{" "}
-        Notes are what a reader typed. Nothing here is sent to a model or added to your Library.
+        Notes are what a reader typed. Nothing here is sent to a model or added to Experience.
       </p>
       <CvDisclosure label={`comments (${comments.length})`}>
         <ul className="divide-y divide-line-muted border border-line-muted">
@@ -58,7 +58,7 @@ export function CvShareComments({
                   {comment.authorName} · {relativeTime(comment.createdAt, now)}
                 </span>
               </div>
-              <p className="whitespace-pre-wrap text-14">{comment.body}</p>
+              <p className="ds-prose whitespace-pre-wrap text-14">{comment.body}</p>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CvContentBlockLink id={comment.anchor}>
                   Open {cvShareAnchorLabel(comment.anchor, content)}

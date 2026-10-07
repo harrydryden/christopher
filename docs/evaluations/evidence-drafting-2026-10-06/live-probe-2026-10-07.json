@@ -1,0 +1,95 @@
+{
+  "kind": "a13-live-probe",
+  "at": "2026-10-07T19:02:28.684Z",
+  "syntheticInputs": true,
+  "promptVersion": "083c863aae",
+  "model": "claude-fable-5-1",
+  "route": {
+    "model": "cvModel",
+    "effort": "low"
+  },
+  "results": [
+    {
+      "name": "no_metric",
+      "input": "I improved the weekly handover by writing a shared checklist and asking each shift to flag unresolved issues. Colleagues told me it made the handover clearer.",
+      "proposal": {
+        "wording": "I improved the weekly handover by writing a shared checklist and asking each shift to flag unresolved issues, which colleagues told me made the handover clearer.",
+        "quotes": [
+          "I improved the weekly handover by writing a shared checklist and asking each shift to flag unresolved issues.",
+          "Colleagues told me it made the handover clearer."
+        ]
+      },
+      "validatorPassed": true,
+      "expectedPassed": true,
+      "passed": true,
+      "error": null
+    },
+    {
+      "name": "contribution",
+      "input": "We redesigned the clinic rota. I helped test the new schedule and fed back problems to the team lead; I did not lead the project.",
+      "proposal": {
+        "wording": "We redesigned the clinic rota; I helped test the new schedule and fed back problems to the team lead, but did not lead the project.",
+        "quotes": [
+          "We redesigned the clinic rota.",
+          "I helped test the new schedule and fed back problems to the team lead",
+          "I did not lead the project."
+        ]
+      },
+      "validatorPassed": true,
+      "expectedPassed": true,
+      "passed": true,
+      "error": null
+    },
+    {
+      "name": "approximation",
+      "input": "I helped the team reduce handover time by around 20% after we introduced a shared checklist.",
+      "proposal": {
+        "wording": "Helped the team reduce handover time by around 20% after we introduced a shared checklist.",
+        "quotes": [
+          "I helped the team reduce handover time by around 20%",
+          "after we introduced a shared checklist"
+        ]
+      },
+      "validatorPassed": true,
+      "expectedPassed": true,
+      "passed": true,
+      "error": null
+    }
+  ],
+  "usage": [
+    {
+      "model": "claude-fable-5-1",
+      "inputTokens": 136,
+      "outputTokens": 116,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 671,
+      "costUsd": 0.015548,
+      "ok": true,
+      "promptId": "A13",
+      "promptVersion": "083c863aae"
+    },
+    {
+      "model": "claude-fable-5-1",
+      "inputTokens": 127,
+      "outputTokens": 99,
+      "cacheReadTokens": 671,
+      "cacheWriteTokens": 0,
+      "costUsd": 0.006388,
+      "ok": true,
+      "promptId": "A13",
+      "promptVersion": "083c863aae"
+    },
+    {
+      "model": "claude-fable-5-1",
+      "inputTokens": 114,
+      "outputTokens": 76,
+      "cacheReadTokens": 671,
+      "cacheWriteTokens": 0,
+      "costUsd": 0.005108,
+      "ok": true,
+      "promptId": "A13",
+      "promptVersion": "083c863aae"
+    }
+  ],
+  "passed": true
+}

@@ -1,11 +1,11 @@
 {
   "kind": "cv-replay",
-  "at": "2026-10-04T15:44:45.442Z",
-  "draftId": "c26ac074-6673-4be5-80d3-46b36482c890",
-  "promptSetVersion": "1a427aca0aab",
-  "unverified": true,
+  "at": "2026-10-07T19:00:32.789Z",
+  "draftId": "10931907-6974-4c76-b7cb-1c109ba72820",
+  "promptSetVersion": "11ae22aed3fe",
+  "unverified": false,
   "source": "recording",
-  "recording": "docs/evaluations/recordings/cv-replay-skill-length-2026-10-04.jsonl",
+  "recording": "docs/evaluations/recordings/cv-replay-live-2026-10-07.jsonl",
   "routes": {
     "cv.rubric": {
       "model": "cvModel",
@@ -42,19 +42,19 @@
   "outcome": "published",
   "error": null,
   "misses": [],
-  "costUsd": 0.3903,
+  "costUsd": 0.646848,
   "calls": 3,
   "byStage": {
     "author": {
       "calls": 1,
-      "costUsd": 0.172
+      "costUsd": 0.283438
     },
     "review": {
       "calls": 2,
-      "costUsd": 0.2183
+      "costUsd": 0.36341
     }
   },
-  "wallMs": 258,
+  "wallMs": 158,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",
@@ -62,7 +62,7 @@
     "availableEvidenceScore": 80,
     "pageCount": 2,
     "essentials": {
-      "r4": 1,
+      "r4": 0.5,
       "r5": 1,
       "r7": 1
     }
@@ -94,16 +94,14 @@
         "earnedWeight": 6,
         "availableWeight": 7,
         "basis": "stated_priorities",
-        "demonstratedEssential": 3,
+        "demonstratedEssential": 2,
         "totalEssential": 3
       },
       "evidencedOpportunityGap": {
-        "count": 1,
-        "weightedPoints": 1,
+        "count": 0,
+        "weightedPoints": 0,
         "essential": 0,
-        "requirementIds": [
-          "r6"
-        ]
+        "requirementIds": []
       },
       "unverifiedLogistics": {
         "count": 0,
@@ -119,9 +117,9 @@
         },
         "concision": {
           "kind": "heuristic_editorial_signal",
-          "score": 100,
-          "label": "Clear",
-          "note": "Profile and bullet lines are within the editing guide."
+          "score": 93,
+          "label": "Review",
+          "note": "1 line is over the editing guide of 32 words or 240 characters."
         },
         "summaryFocus": {
           "kind": "heuristic_editorial_signal",

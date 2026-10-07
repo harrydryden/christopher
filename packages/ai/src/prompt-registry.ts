@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CvRubricSchema, CvReviewPlanSchema } from "@col/core/cv-assessment";
-import { CvPlanSchema, CvTailoringPlanOutputSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@col/core";
+import { CvPlanSchema, CvTailoringPlanOutputSchema, EvidenceDraftPlanSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@col/core";
 import { CV_AUTHOR_PROMPT, CV_REVIEW_PROMPT, CV_RUBRIC_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import * as P from "./prompts";
 import * as S from "./schemas";
@@ -282,7 +282,7 @@ export function assertCacheLayout(id: string, layout: CacheLayout): void {
 }
 
 export type PromptId =
-  | "A1" | "A2" | "A3" | "A4" | "A5" | "A6" | "A7" | "A8" | "A9" | "A10" | "A10.sources" | "A11" | "A12"
+  | "A1" | "A2" | "A3" | "A4" | "A5" | "A6" | "A7" | "A8" | "A9" | "A10" | "A10.sources" | "A11" | "A12" | "A13"
   | "cv.rubric" | "cv.planning" | "cv.author" | "cv.improvement" | "cv.review" | "cv.review_candidate";
 
 export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
@@ -318,6 +318,8 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   A12: define({ id: "A12", callSite: "A12", stage: "review", system: P.A12_REVIEW_LIBRARY, schema: LibraryReviewPlanSchema,
     route: { model: "cvModel", effort: "low" }, maxTokens: 16_000, timeoutMs: 120_000, priority: "interactive",
     cacheLayout: { system: "5m", stable: ["5m"] }, expectedOutputTokens: 4_800 }),
+  A13: define({ id: "A13", callSite: "A13", stage: "draft", system: P.A13_DRAFT_EVIDENCE, schema: EvidenceDraftPlanSchema,
+    route: { model: "cvModel", effort: "low" }, maxTokens: 1200, timeoutMs: 90_000, priority: "interactive", expectedOutputTokens: 350 }),
 
   "cv.rubric": define({ id: "cv.rubric", callSite: "CV", stage: "rubric", system: CV_RUBRIC_PROMPT, schema: CvRubricSchema,
     // Thinking counts towards the ceiling; recorded rubrics reach 5.2k of the old 8k.

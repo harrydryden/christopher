@@ -53,7 +53,7 @@ test("every page the baseline holds is one the scripts measure", () => {
     if (typeof base.roundTrips === "number") assert.ok(timed.has(path), path);
   }
   assert.equal(baseline.pool, 6);
-  assert.equal(baseline.pages["/"].statements, 14);
+  assert.equal(baseline.pages["/"].statements, 13);
   assert.equal(baseline.pages["/companies/<id>"].roundTrips, 7.6);
 });
 
@@ -88,21 +88,25 @@ function atBaseline() {
 test("the baseline's own figures pass, and one statement, one round trip or 10 % more bytes fails", () => {
   assert.deepEqual(compareWithBaseline(baseline, atBaseline()).failures, []);
   const m = atBaseline();
-  m.pages["html /"].statements = 15;
-  m.roundTrips["/companies/<id>"].roundTrips = 8.6;
-  m.pages["rsc /library"].bytes = Math.ceil(26_362 * 1.1) + 1;
-  m.pages["html /account"].gzip = Math.floor(7_567 * 1.1);
-  m.decision.statements = 30;
+  const statementLimit = baseline.pages["/"].statements + 1;
+  const roundTripLimit = baseline.pages["/companies/<id>"].roundTrips + 1;
+  const byteLimit = Math.ceil(baseline.pages["/library"].rscBytes * 1.1);
+  const decisionLimit = baseline.decision.statements + 1;
+  m.pages["html /"].statements = statementLimit;
+  m.roundTrips["/companies/<id>"].roundTrips = roundTripLimit;
+  m.pages["rsc /library"].bytes = byteLimit + 1;
+  m.pages["html /account"].gzip = Math.floor(baseline.pages["/account"].htmlGzip * 1.1);
+  m.decision.statements = decisionLimit;
   const { failures } = compareWithBaseline(baseline, m);
   assert.deepEqual(failures, [
-    "/: 15 statements, baseline allows under 15",
-    "/companies/<id>: 8.6 round trips, baseline allows under 8.6",
-    "/library: 29000 RSC bytes, baseline allows under 28999",
-    "decision: 30 statements, baseline allows under 30",
+    `/: ${statementLimit} statements, baseline allows under ${statementLimit}`,
+    `/companies/<id>: ${roundTripLimit} round trips, baseline allows under ${roundTripLimit}`,
+    `/library: ${byteLimit + 1} RSC bytes, baseline allows under ${byteLimit}`,
+    `decision: ${decisionLimit} statements, baseline allows under ${decisionLimit}`,
   ]);
   // Half a round trip of noise is not a regression.
   const noisy = atBaseline();
-  noisy.roundTrips["/"].roundTrips = 5.3;
+  noisy.roundTrips["/"].roundTrips = baseline.pages["/"].roundTrips + 0.5;
   assert.deepEqual(compareWithBaseline(baseline, noisy).failures, []);
 });
 

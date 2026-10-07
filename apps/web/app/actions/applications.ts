@@ -1,13 +1,12 @@
 "use server";
-import { assertCvFinalisable } from "@col/core/cv-review";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, companies, cvDrafts, decisions, jobs, lockAccountScoreInput, type ApplicationStatus } from "@col/db";
 import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications";
-import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@col/core";
+import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, applicationStage, roleStageRank } from "@col/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { isRecordableDay } from "@/lib/application-dates";
-import { cvPdfFor } from "@/lib/cv-pdf-store";
+import { storedFinalisedCvPdf } from "@/lib/cv-pdf-store";
 import { lockRoleView, recordDecisions } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
@@ -246,16 +245,10 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
  * own rule, still finalisable. The reviewer's words about what is missing are written for the
  * person reading them.
  */
-function assertRecordable<T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "finalisedAt" | "assessment" | "jobDescription" | "librarySnapshot" | "reviewDecision">>(draft: T | undefined) {
+function assertRecordable<T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "finalisedAt">>(draft: T | undefined) {
   if (!draft || draft.status !== "ready" || !draft.content) throw new UserFacingError("Choose a completed, saved CV.");
   if (!draft.finalisedAt) throw new UserFacingError("Review the assessment and finalise this CV before recording an application.");
-  const recordable = { ...draft, content: draft.content };
-  try {
-    assertCvFinalisable(recordable);
-  } catch (error) {
-    throw new UserFacingError(error instanceof Error ? error.message : "This CV cannot be finalised yet.");
-  }
-  return recordable;
+  return { ...draft, content: draft.content };
 }
 
 /**
@@ -274,21 +267,17 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
     if (!isRecordableDay(appliedOn)) return fail("Enter a valid application date.");
     const notes = String(form.get("notes") ?? "").trim();
     if (notes.length > 4000) return fail("Keep notes under 4,000 characters.");
-    // Rendering is CPU-bound and can take seconds, so it happens before the transaction opens,
-    // from a read of the draft; the transaction then re-reads it under lock and writes only if it
-    // is still the revision that was rendered.
-    // Only what the check, the render and the comparison under lock read.
+    // Read the finalised revision and its saved PDF before opening the transaction. The locked
+    // re-read below confirms this is still the same revision before recording those exact bytes.
     const [rendered] = await db()
       .select({ status: cvDrafts.status, content: cvDrafts.content, finalisedAt: cvDrafts.finalisedAt, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot, reviewDecision: cvDrafts.reviewDecision })
       .from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id)));
     if (!rendered) throw new UserFacingError("Choose a completed, saved CV.");
-    // The bytes finalising kept, when they were drawn from exactly this content; otherwise a render,
-    // with pdfkit loaded only now. The comparison under the lock below holds either way.
+    // Use the PDF the person finalised, even if the review version has since moved on. A missing
+    // artefact needs a new revision; silently rendering a new document would change what was sent.
     const recordable = assertRecordable(rendered);
-    const { pdf } = await cvPdfFor(user.id, cvId, recordable.content, async (content) => {
-      const { renderCvPdf } = await import("@/lib/cv-pdf");
-      return renderCvPdf(CvContentSchema.parse(content));
-    });
+    const pdf = await storedFinalisedCvPdf(user.id, cvId);
+    if (!pdf) throw new UserFacingError("This final CV's saved PDF is unavailable. Create a new revision and finalise it before recording the application.");
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`application:${cvId}`}))`);
       // Only a row that already stores the submitted bytes is a duplicate; a row with a stage on
@@ -300,8 +289,8 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
       if (submitted.length) throw new UserFacingError("This CV revision already has an application record.");
       const [locked] = await tx.select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id))).for("share");
       const draft = assertRecordable(locked);
-      // The assessment covers the exact wording and appearance, as `finaliseCvDraft` relies on: the
-      // same assessment, finalisation and content are the revision that was rendered.
+      // The assessment covers the exact wording and appearance, as `finaliseCvDraft` relies on:
+      // the same assessment, finalisation and content identify the stored PDF's revision.
       if (draft.assessment?.inputHash !== rendered.assessment?.inputHash || draft.assessment?.assessedAt !== rendered.assessment?.assessedAt
         || draft.finalisedAt?.getTime() !== rendered.finalisedAt?.getTime() || JSON.stringify(draft.content) !== JSON.stringify(rendered.content)) {
         throw new UserFacingError("This CV changed while its PDF was being prepared. Record the application again.");

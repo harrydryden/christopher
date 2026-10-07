@@ -256,6 +256,13 @@ kbd {
   color: var(--fg-muted);
 }
 
+/* Narrative content is for reading; the brand and compact controls retain their own type. */
+@utility ds-prose {
+  font-family: Arial, Helvetica, sans-serif;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 /* A 2px dotted rule on a 4px pitch, drawn as a background so it can sit under
    a nav without a second element. */
 @utility ds-divider {

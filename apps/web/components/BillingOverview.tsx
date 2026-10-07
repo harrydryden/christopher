@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
+import { AccountDisclosure } from "@/components/AccountDisclosure";
 
 /** The read model supplied by billing; this component never reads payment state itself. */
 export interface BillingSummaryView {
@@ -86,6 +87,8 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
   return <div id="plan-and-credits" className="space-y-4 scroll-mt-4">
     <Card title="Plan and credits" actions={<div className="flex flex-wrap items-center gap-2">
       <Badge tone="green">{label}</Badge>
+      <a href="#top-ups" className="inline-flex min-h-11 items-center px-2 text-13 underline">Top up CV credits</a>
+      <a href="#plans" className="inline-flex min-h-11 items-center px-2 text-13 underline">Compare plans</a>
       {actions && billing.plan !== "free" && <form action={actions.openBillingPortal}>
         <Button type="submit" size="sm">Manage plan and payment</Button>
       </form>}
@@ -97,10 +100,11 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
         <div>
           <h3 className="font-semibold">CV credits</h3>
           <p className="mt-1 text-20 font-semibold tabular-nums">{billing.cv.available} available</p>
-          <p className="text-13 text-muted">
-            {billing.cv.welcome} welcome · {billing.cv.monthly} monthly · {billing.cv.purchased} purchased
-            {billing.cv.reserved > 0 && <> · {billing.cv.reserved} in use</>}
-          </p>
+          {billing.cv.reserved > 0 && <p className="text-13 text-muted">{billing.cv.reserved} reserved for a CV in progress</p>}
+          <details className="text-13 text-muted">
+            <summary className="cursor-pointer">Credit breakdown</summary>
+            <p>{billing.cv.welcome} welcome · {billing.cv.monthly} monthly · {billing.cv.purchased} purchased</p>
+          </details>
           {nextGrant && <p className="mt-1 text-12 text-muted">Next monthly credits: {nextGrant}.</p>}
         </div>
         <div>
@@ -126,8 +130,8 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
       <p className="mt-3 text-12 text-muted">One credit is used when a tailored CV is successfully saved. Paused companies do not use monitoring slots.</p>
     </Card>
 
-    <Card title="Plans" className="scroll-mt-4" bodyClassName="p-0">
-      <div id="plans" className="grid divide-y divide-line-faint sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+    <AccountDisclosure id="plans" title="Compare plans">
+      <div className="grid divide-y divide-line-faint sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         {PLANS.map(plan => <div key={plan.name} className="space-y-1 p-4 text-13">
           <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{plan.name}</h3>{plan.name === label && <Badge tone="green">Current</Badge>}</div>
           <p className="text-16 font-semibold">{plan.price}</p>
@@ -141,11 +145,12 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
         </div>)}
       </div>
       <p className="border-t border-line-faint p-4 text-12 text-muted">Search can add up to 50 more active companies in blocks of 10 for £1/month per block. Prices include VAT. {billing.plan !== "free" && "Pause the companies you do not want to keep before lowering your plan; if you remain over its allowance, the newest follows pause automatically. Change or cancel using Manage plan and payment above."}</p>
-    </Card>
+    </AccountDisclosure>
 
-    <Card title="CV top-ups" className="scroll-mt-4">
+    <AccountDisclosure id="top-ups" title="Top up CV credits">
+      <div className="p-4">
       <p className="mb-3 text-13 text-muted">Buy credits when you need more. Purchased credits do not expire.</p>
-      <ul id="top-ups" className="flex flex-wrap gap-3">
+      <ul className="flex flex-wrap gap-3">
         {TOP_UPS.map(pack => <li key={pack.credits} className="space-y-2 border border-line-muted px-3 py-2 text-13">
           <p><strong>{pack.credits} CV credits</strong> · {pack.price}</p>
           {actions && <form action={actions.startCreditCheckout}>
@@ -155,6 +160,7 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
           </form>}
         </li>)}
       </ul>
-    </Card>
+      </div>
+    </AccountDisclosure>
   </div>;
 }

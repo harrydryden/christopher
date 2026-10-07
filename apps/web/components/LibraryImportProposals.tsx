@@ -123,7 +123,7 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
                 pendingLabel="Dismissing…"
                 className="contents"
                 variant="ghost"
-                confirm="Dismiss this import? Nothing will be added to your Library."
+                confirm="Dismiss this import? Nothing will be added to Experience."
               />
             </div>
           )}

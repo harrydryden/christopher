@@ -15,7 +15,8 @@ vi.mock("web-vitals", () => ({
   onFCP: (cb: (m: Metric) => void) => callbacks.set("FCP", cb),
 }));
 
-import { resetVitalsForTests, startVitals } from "./NavigationMetrics";
+import { resetVitalsForTests, startVitals } from "./navigation-vitals";
+import { beginNavigationMetrics, resetNavigationSamplingForTests } from "./NavigationMetrics";
 import { readVitalsBeacon } from "@/lib/web-vitals";
 
 const beacon = vi.fn((_url: string, _body?: BodyInit | null) => true);
@@ -31,6 +32,7 @@ function hide() {
 
 beforeEach(() => {
   resetVitalsForTests();
+  resetNavigationSamplingForTests();
   callbacks.clear();
   beacon.mockClear();
   visibility = "visible";
@@ -40,6 +42,15 @@ beforeEach(() => {
   window.history.replaceState(null, "", `/companies/${crypto.randomUUID()}?view=auto-matched`);
 });
 afterEach(() => vi.restoreAllMocks());
+
+it("draws the field sample once per page load, even when an effect runs again", () => {
+  const random = vi.fn(() => 0.9);
+  beginNavigationMetrics(random);
+  beginNavigationMetrics(random);
+  beginNavigationMetrics(random);
+  expect(random).toHaveBeenCalledTimes(1);
+  expect(callbacks.size).toBe(0);
+});
 
 it("watches nothing, loads nothing and sends nothing on the three loads in four that are not sampled", async () => {
   expect(await startVitals(() => 0.25)).toBe(false);

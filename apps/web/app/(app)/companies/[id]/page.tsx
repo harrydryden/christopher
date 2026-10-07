@@ -204,22 +204,10 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
             </a>
             {/* The A9 profile, for every follower: it is what the company suggestions they are
                 asked to judge are built from. Refresh profile stays an administrator's. */}
-            {profile && (profile.oneLiner || profileFacts.length > 0 || profile.tags.length > 0) && (
-              <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-12 text-muted">
-                {profile.oneLiner && <span className="text-fg">{profile.oneLiner}</span>}
-                {profileFacts.length > 0 && <span>{profileFacts.join(" · ")}</span>}
-                {profile.tags.slice(0, 6).map((tag) => <Badge key={tag} tone="neutral">{tag}</Badge>)}
-              </span>
-            )}
-            <span className="block text-12">
-              {applications > 0 ? (
-                <Link prefetch={false} href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
-                  {applications} {applications === 1 ? "application" : "applications"}
-                </Link>
-              ) : (
-                <span className="text-muted">No applications here yet</span>
-              )}
-            </span>
+            {profile?.oneLiner && <span className="mt-1 block text-12 text-fg">{profile.oneLiner}</span>}
+            {applications > 0 && <span className="mt-1 block text-12"><Link prefetch={false} href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
+              {applications} {applications === 1 ? "application" : "applications"}
+            </Link></span>}
           </>
         }
         actions={<>
@@ -236,6 +224,14 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
           {unverified && <VerifyNotice className="w-full" />}
         </>}
       />
+
+      {(profileFacts.length > 0 || (profile?.tags.length ?? 0) > 0) && <details className="text-12 text-muted">
+        <summary className="min-h-11 cursor-pointer py-2 underline">Company profile details</summary>
+        <div className="flex flex-wrap items-center gap-2 pb-2">
+          {profileFacts.length > 0 && <span>{profileFacts.join(" · ")}</span>}
+          {profile?.tags.map(tag => <Badge key={tag} tone="neutral">{tag}</Badge>)}
+        </div>
+      </details>}
 
       {workerStatus && <LocationChecksCard checks={roleLocations} worker={workerStatus} now={now} unverified={unverified} companyOnly />}
 

@@ -74,6 +74,15 @@ describe("the prompt registry", () => {
     expect(LibraryReviewPlanSchema.safeParse({ entries: [{ entryId: "e", rows: [row], prompts: [] }] }).success).toBe(true);
     expect(PROMPTS.A12.expectedOutputTokens).toBe(4_800);
   });
+
+  it("keeps answer drafting bounded and separate from the CV build", () => {
+    expect(PROMPTS.A13.callSite).toBe("A13");
+    expect(PROMPTS.A13.route).toEqual({ model: "cvModel", effort: "low" });
+    expect(PROMPTS.A13.maxTokens).toBe(1200);
+    expect(PROMPTS.A13.system).toContain("Do not strengthen \"helped\" into \"led\"");
+    expect(PROMPTS.A13.system).toContain("exact verbatim quotes");
+    expect(CV_PROMPT_IDS).not.toContain("A13" as never);
+  });
 });
 
 describe("the output format", () => {

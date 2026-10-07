@@ -46,7 +46,7 @@ export default async function HealthPage({ searchParams }: { searchParams: Promi
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Health"
+        title="Needs attention"
         actions={user.role === "admin" ? <Link prefetch={false} href="/admin/health" className="text-13 underline">Operations</Link> : undefined}
       />
       <RefusalNotice sentence={sp.error} />

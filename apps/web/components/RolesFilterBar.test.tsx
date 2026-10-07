@@ -7,17 +7,21 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 import { RolesFilterBar } from "./RolesFilterBar";
 
-it("names the action and summarises applied filters while keeping phone controls in one disclosure", () => {
+it("names the action and keeps active filters and availability visible outside advanced controls", () => {
   const filters = { ...parseRolesFilters({ view: "auto-matched" }), company: "company-1", q: "Director",
     location: "London", minFit: 70, status: ["new" as const], sort: "fit" as const, dir: "desc" as const };
   const markup = renderToStaticMarkup(<RolesFilterBar filters={filters} companyOptions={[{ id: "company-1", name: "Meridian" }]}
     exportHref="/api/export.csv" />);
   const container = document.createElement("div");
   container.innerHTML = markup;
-  expect(container.querySelector('[aria-label="Active filters"]')?.textContent).toContain("Company: Meridian · Title: Director · Availability: Newly opened");
+  const applied = container.querySelector('[aria-label="Active filters"]');
+  expect(applied?.textContent).toContain("Company: Meridian");
+  expect(applied?.textContent).toContain("Title: Director");
+  expect(applied?.textContent).toContain("Availability: Newly opened");
   expect(container.querySelector('button[type="submit"]')?.textContent?.trim()).toBe("Update results");
   expect(container.querySelector('button[aria-controls="role-filter-fields"]')?.getAttribute("aria-expanded")).toBe("false");
   expect(container.querySelector('#role-filter-fields')?.className).toContain("hidden");
+  expect(container.querySelector('fieldset')?.closest('#role-filter-fields')).toBeNull();
   expect(container.querySelector('a[href="/?view=auto-matched#roles"]')?.textContent?.trim()).toBe("Clear filters");
 });
 
@@ -29,4 +33,14 @@ it("clears filters without escaping a company-scoped role view", () => {
   container.innerHTML = markup;
   expect(container.querySelector('a[href="/companies/company-1?view=user-shortlisted&company=company-1#roles"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Active filters"]')?.textContent).toContain("Decided: last 7 days");
+});
+
+it("does not show Clear filters when the view has no applied filter", () => {
+  const markup = renderToStaticMarkup(<RolesFilterBar filters={parseRolesFilters({ view: "auto-matched" })}
+    companyOptions={[]} exportHref="/api/export.csv" />);
+  const container = document.createElement("div");
+  container.innerHTML = markup;
+  expect(container.textContent).not.toContain("Clear filters");
+  expect(container.querySelector('button[aria-controls="role-filter-fields"]')?.textContent).toBe("Filters");
+  expect(container.querySelector('fieldset')?.closest('#role-filter-fields')).toBeNull();
 });

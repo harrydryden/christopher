@@ -95,7 +95,7 @@ export function CvBuildProgress({
             className={`border-2 p-3 text-14 ${i === index && !stopped ? "border-line bg-sunken text-fg" : "border-line-muted text-muted"}`}
           >
             <span
-              className={`ds-pixel mb-2 inline-flex size-6 items-center justify-center text-10 ${i <= index ? "bg-accent text-accent-fg" : "bg-track text-muted"}`}
+              className={`mb-2 inline-flex size-6 items-center justify-center text-12 font-semibold ${i <= index ? "bg-accent text-accent-fg" : "bg-track text-muted"}`}
               aria-hidden="true"
             >
               {i < index ? "✓" : i + 1}

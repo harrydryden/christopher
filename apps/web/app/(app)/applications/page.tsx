@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import { z } from "zod";
 import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@col/core";
@@ -65,6 +64,8 @@ export default async function ApplicationsPage({
     listPipeline(user.id, { filter, page, company: company ?? undefined, stage, focus, now }),
     getCvWorkStatus(user.id),
   ]);
+  const duePreview = !focus && !stage && result.due > 0
+    ? await listPipeline(user.id, { filter: "active", company: company ?? undefined, focus: "due", now }) : null;
   // The fixed credit cost and available balance stream into an open row's CV section.
   const unverified = needsEmailConfirmation(user);
   const quotes = unverified ? {} : pricedQuotes(user.id, result.rows);
@@ -107,24 +108,20 @@ export default async function ApplicationsPage({
         title={company ? `Applications at ${company.name}` : "Applications"}
         description={company ? <Link prefetch={false} href={`/applications?filter=${filter}`} className="underline">Show all companies</Link> : undefined}
       />
-      {/* Where everything stands, in one line, before the segments narrow it. A stage nothing has
-          reached is shown at zero rather than left out: the shape of the pipeline is the point. */}
-      <p className="text-13">
-        <span className="sr-only">Roles by stage: </span>
-        {STRIP_STAGES.map((stage, index) => (
-          <Fragment key={stage}>
-            {index > 0 && <span className="text-muted" aria-hidden="true"> · </span>}
-            <Link prefetch={false} href={linkTo({ filter: "all", stage })} aria-current={stage === requestedStage && !focus ? "page" : undefined}
-              className={`inline-flex min-h-11 items-center underline-offset-2 hover:underline ${result.stages[stage] ? "text-fg" : "text-muted"}`}>
-              {ROLE_STAGE_LABELS[stage]} <span className="tabular-nums">{result.stages[stage]}</span>
-            </Link>
-          </Fragment>
-        ))}
-      </p>
+      {duePreview && duePreview.rows.length > 0 && <section aria-labelledby="needs-action-heading" className="border-l-2 border-warn pl-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="needs-action-heading" className="font-semibold">Needs action · {result.due}</h2>
+          <Link prefetch={false} href={linkTo({ filter: "active", focus: "due" })} className="min-h-11 text-13 underline">See all due work</Link>
+        </div>
+        <ul className="space-y-1 text-13">{duePreview.rows.slice(0, 3).map(row => <li key={row.key}>
+          <Link prefetch={false} href={linkTo({ filter: "active", focus: "due", ...(row.jobId ? { job: row.jobId } : {}) })} className="underline">{row.jobTitle} · {row.companyName}</Link>
+          {nextStep(row, now) && <span className="text-muted"> · {nextStep(row, now)!.line}</span>}
+        </li>)}</ul>
+      </section>}
       {/* A hint, like the stale one: the product sends nothing, it only reads differently here. */}
       <nav aria-label="Next steps" className="flex flex-wrap gap-3 text-13">
-        <Link prefetch={false} href={linkTo({ filter: "all", focus: "due" })} aria-current={focus === "due" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Due this week ({result.due})</Link>
-        <Link prefetch={false} href={linkTo({ filter: "all", focus: "overdue" })} aria-current={focus === "overdue" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Overdue ({result.overdue})</Link>
+        <Link prefetch={false} href={linkTo({ filter: "active", focus: "due" })} aria-current={focus === "due" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Due this week ({result.due})</Link>
+        {result.overdue > 0 && <Link prefetch={false} href={linkTo({ filter: "active", focus: "overdue" })} aria-current={focus === "overdue" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Overdue ({result.overdue})</Link>}
         {(focus || stage) && <Link prefetch={false} href={linkTo({ filter })} className="inline-flex min-h-11 items-center underline">Clear view</Link>}
       </nav>
       {/* The same shape as the roles tabs: links, so the segment is in the URL and shareable. */}
@@ -140,6 +137,15 @@ export default async function ApplicationsPage({
           </Link>
         ))}
       </nav>
+      <details className="text-13 text-muted">
+        <summary className="min-h-11 cursor-pointer py-2 font-medium underline">Stage breakdown</summary>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {STRIP_STAGES.map((stage) => <Link key={stage} prefetch={false} href={linkTo({ filter: "all", stage })} aria-current={stage === requestedStage && !focus ? "page" : undefined}
+            className="inline-flex min-h-11 items-center underline-offset-2 hover:underline">
+            {ROLE_STAGE_LABELS[stage]} <span className="ml-1 tabular-nums">{result.stages[stage]}</span>
+          </Link>)}
+        </div>
+      </details>
       {/* A CV on this page is still being written: the cells follow it without a reload. */}
       {(building || improvingRows.length > 0) && (
         <AutoRefresh scope="cv" initialVersion={cvWork.version} message={building ? buildingMessage : improvingMessage} />

@@ -10,7 +10,7 @@
  *    follows which company, `user_jobs` holds one person's gate result, fit score and archive
  *    marker for a shared posting, and decisions, profiles, CVs and settings all carry a `user_id`.
  */
-import type { CvLibrary, CvContent, LibraryEntryReview } from "@col/core";
+import type { CvLibrary, CvContent, LibraryEntryReview, EvidenceDraftInput } from "@col/core";
 import type { CvAssessment, CvJobSource } from "@col/core/cv-assessment";
 import type { CvReviewDecision } from "@col/core/cv-review";
 import type { CvTailoringPlan } from "@col/core/cv-tailoring";
@@ -1348,6 +1348,29 @@ export const libraryImports = pgTable("library_imports", {
 ]);
 export type LibraryImport = typeof libraryImports.$inferSelect;
 export type NewLibraryImport = typeof libraryImports.$inferInsert;
+
+/** A person's answer and an optional model proposal, separate from confirmed Library evidence. */
+export const evidenceDrafts = pgTable("evidence_drafts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  fingerprint: text("fingerprint").notNull(),
+  input: jsonb("input").$type<EvidenceDraftInput>().notNull(),
+  status: text("status", { enum: ["queued", "drafted", "failed", "accepted", "dismissed"] }).notNull().default("queued"),
+  /** Incremented before an explicit retry; late workers may only finish their own attempt. */
+  attempt: integer("attempt").notNull().default(1),
+  wording: text("wording"),
+  supportingQuotes: jsonb("supporting_quotes").$type<string[] | null>(),
+  error: text("error"),
+  acceptedWording: text("accepted_wording"),
+  acceptedVersion: integer("accepted_version"),
+  createdAt: tsNow("created_at"),
+  updatedAt: tsNow("updated_at"),
+  resolvedAt: ts("resolved_at"),
+}, t => [
+  uniqueIndex("evidence_drafts_user_fingerprint_uidx").on(t.userId, t.fingerprint),
+  index("evidence_drafts_open_user_idx").on(t.userId, t.updatedAt.desc()).where(sql`${t.resolvedAt} is null`),
+]);
+export type EvidenceDraft = typeof evidenceDrafts.$inferSelect;
 
 /** A private, unconfirmed role description. Only a person's confirmation creates a job row. */
 export const roleImports = pgTable("role_imports", {

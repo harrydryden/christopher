@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildSetupChecklist, monitoringNotice, setupMilestones, type SetupFacts } from "./setup";
+import { buildSetupChecklist, gateSentence, monitoringNotice, setupMilestones, type SetupFacts } from "./setup";
+
+it("explains the selected keyword search fields", () => {
+  expect(gateSentence(["title"])).toContain("match the title");
+  expect(gateSentence(["department", "description"])).toContain("match the title, department or job description");
+  expect(gateSentence(["title"], true)).toContain("Seniority terms must also match the title");
+});
 
 const NOTHING: SetupFacts = {
   emailConfirmed: false, gateChosen: false, seedProfileWritten: false,

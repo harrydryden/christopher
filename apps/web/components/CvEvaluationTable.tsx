@@ -42,7 +42,6 @@ function Strength({ value }: { value: keyof typeof strengths }) {
 }
 export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
   const [filter, setFilter] = useState<CvChange | "All">("All");
-  const [visible, setVisible] = useState(true);
   const shown = rows
     .map((row, index) => ({ ...row, number: index + 1 }))
     .filter((row) => filter === "All" || row.change === filter);
@@ -61,9 +60,8 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
               aria-pressed={filter === value}
               onClick={() => {
                 setFilter(value);
-                setVisible(true);
               }}
-              className={`ds-pixel border-2 px-2.5 py-1.5 text-10 ${filter === value ? "border-accent bg-accent text-accent-fg" : "border-line-muted bg-raised text-muted hover:bg-sunken"}`}
+              className={`border-2 px-2.5 py-1.5 text-12 font-medium ${filter === value ? "border-accent bg-accent text-accent-fg" : "border-line-muted bg-raised text-muted hover:bg-sunken"}`}
             >
               {value}{" "}
               <span className="opacity-75">
@@ -74,17 +72,8 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          aria-expanded={visible}
-          aria-controls="cv-evaluation-table"
-          onClick={() => setVisible((value) => !value)}
-          className="border border-line-muted px-3 py-1.5 text-12 font-medium text-fg"
-        >
-          {visible ? "Hide" : "Show"} evaluation table
-        </button>
       </div>
-      <div id="cv-evaluation-table" hidden={!visible}>
+      <div id="cv-evaluation-table">
         <div
           role="region"
           aria-label="CV evaluation table"

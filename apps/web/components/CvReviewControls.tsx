@@ -9,22 +9,28 @@ import { CvContentBlockLink } from "./CvWorkspace";
 import type { ActionResult } from "@/lib/action-result";
 
 /** An assessment finding stays visible after dismissal; dismissal is a user choice, not verification. */
-export function CvReviewControls({ id, rows, decision, factualRowIds, assessmentHash, assessedAt, canFinalise }: {
+export function CvReviewControls({ id, rows, decision, factualRowIds, assessmentHash, assessedAt, initialFindingId = null, canFinalise }: {
   id: string;
   rows: CvEvaluationRow[];
   decision: CvReviewDecision | null;
   factualRowIds: string[];
   assessmentHash: string;
   assessedAt: string;
+  initialFindingId?: string | null;
   canFinalise: boolean;
 }) {
-  const findings = rows.filter((row) => row.change !== "None" && row.change !== "Comment");
-  const [selected, setSelected] = useState(0);
+  const findings = rows.filter((row) => row.change !== "None" && row.change !== "Comment")
+    .sort((a, b) => {
+      const rank = (row: CvEvaluationRow) => factualRowIds.includes(row.id) ? 0 : row.importance === "essential" && row.experience !== "Strong" ? 1 : 2;
+      return rank(a) - rank(b);
+    });
+  const [selected, setSelected] = useState(() => Math.max(0, findings.findIndex(row => row.id === initialFindingId)));
   const [dismissed, setDismissed] = useState<string[]>(decision?.dismissedRowIds ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const item = findings[Math.min(selected, findings.length - 1)];
   const remainingFacts = factualRowIds.filter((rowId) => !dismissed.includes(rowId));
+  const reviewedCount = findings.filter((row) => dismissed.includes(row.id)).length;
 
   async function dismiss() {
     if (!item || saving) return;
@@ -51,27 +57,21 @@ export function CvReviewControls({ id, rows, decision, factualRowIds, assessment
   return <div className="space-y-4" id="cv-guided-review" tabIndex={-1}>
     {findings.length > 0 && <section className="space-y-3 border border-warn p-4" aria-labelledby="cv-review-heading">
       <div>
-        <h3 id="cv-review-heading" className="ds-pixel text-11">Review flagged items</h3>
-        <p className="text-12 text-muted">Read each finding, edit the saved wording or evidence if you can, or choose “Nothing further to add”. Dismissed findings remain in the evaluation and do not become verified facts.</p>
-      </div>
-      <div role="group" aria-label="Choose a flagged item" className="flex flex-wrap gap-2">
-        {findings.map((row, index) => <button key={row.id} type="button" aria-pressed={index === selected}
-          onClick={() => setSelected(index)}
-          className={`border px-2 py-1 text-12 ${index === selected ? "border-accent bg-accent text-accent-fg" : "border-line-muted"}`}>
-          Item {index + 1} · {row.change}{dismissed.includes(row.id) ? " · Dismissed" : ""}
-        </button>)}
+        <h3 id="cv-review-heading" className="text-16 font-semibold">Review findings</h3>
+        <p className="text-12 text-muted">{reviewedCount} of {findings.length} marked “Nothing further to add”. Factual concerns come first, followed by essential gaps. You can edit wording, add evidence or leave a finding as it stands.</p>
       </div>
       {item && <div className="space-y-2 bg-sunken p-3" aria-live="polite">
-        <p className="text-12 font-semibold">Item {selected + 1} of {findings.length} · {item.change} · {item.requirement}</p>
-        {item.currentText.map((text, index) => <p key={index} className="text-14"><em>{text}</em></p>)}
+        <p className="text-12 font-semibold">Finding {selected + 1} of {findings.length} · {item.change}{dismissed.includes(item.id) ? " · Nothing further to add" : ""}</p>
+        <p className="text-14 font-medium">{item.requirement}</p>
+        {item.currentText.map((text, index) => <p key={index} className="ds-prose text-14"><em>{text}</em></p>)}
         <p className="text-14">{item.suggestion}</p>
         {item.sources.length > 0 && <p className="text-12 text-muted">Saved evidence: {item.sources.join(" · ")}</p>}
         <div className="flex flex-wrap items-center gap-3 text-12">
-          {item.contentLinks.length > 0 ? item.contentLinks.map((link) => <CvContentBlockLink key={link.id} id={link.id}>Edit {link.label}</CvContentBlockLink>) : <CvContentBlockLink>Open Content</CvContentBlockLink>}
-          {item.libraryHref && <a className="underline" href={item.libraryHref} onClick={(event) => {
+          {item.contentLinks.length > 0 ? item.contentLinks.map((link) => <CvContentBlockLink key={link.id} id={link.id}>Edit {link.label}</CvContentBlockLink>) : <CvContentBlockLink>Open Write</CvContentBlockLink>}
+          {item.libraryHref && <a className="underline" href={`${item.libraryHref}&return=${encodeURIComponent(`/cv/${id}?finding=${encodeURIComponent(item.id)}#cv-guided-review`)}`} onClick={(event) => {
             if (document.querySelector('[data-cv-editor-dirty="true"]')) {
               event.preventDefault();
-              setError("Save your CV edits before leaving for the Library.");
+              setError("Save your CV edits before leaving for Experience.");
             }
           }}>Add evidence for this</a>}
         </div>

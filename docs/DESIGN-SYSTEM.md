@@ -1,8 +1,8 @@
 # Course of Life design system
 
 Brand-green chrome, crisp white screens, black ink, deep-grey support text, four
-status hues. Silkscreen for brand headings,
-IBM Plex Mono for everything else. Radius 0, hard offset shadows, stepped
+status hues. Silkscreen for brand moments, IBM Plex Mono for navigation and controls,
+and the system sans face (`ds-prose`) for narrative answers and drafts. Radius 0, hard offset shadows on primary actions, stepped
 motion. The UI supports keyboard review and narrow-screen work, so the system is
 deliberately small — if you reach for a colour or a size that is not here, that
 is a signal to reuse something, not to add a token.
@@ -18,7 +18,9 @@ to write an arbitrary value.
 
 Functional labels, navigation, table headers and buttons use IBM Plex Mono at 13–14px or above. Keep the pixel face for brand headings rather than small action text. Shared buttons have a minimum 44px target. On phones, fields use 16px text to remain readable and avoid focus zoom; buttons and disclosure summaries have a 44px minimum height. Preserve visible keyboard focus on links, fields, summaries and editable text.
 
-The desktop sidebar becomes a labelled Menu disclosure on phones, with one navigation tree. Escape closes it and returns focus to its trigger. Health and Learning are direct destinations. Core work lists must keep the item and its actions together at 320px and 390px; evidence editing has one input per field rather than hidden duplicate required controls. Dense secondary metadata may remain smaller, but must not carry the primary action or only explanation.
+The desktop sidebar becomes a labelled Menu disclosure on phones, with one navigation tree. Escape closes it and returns focus to its trigger. Roles, Companies, Applications and Experience are primary destinations; Preferences, Search profile and Needs attention are a quieter secondary group. Account and the plan readout remain at the foot. Core work lists must keep the item and its actions together at 320px and 390px; evidence editing has one input per field rather than hidden duplicate required controls. Dense secondary metadata may remain smaller, but must not carry the primary action or only explanation.
+
+Ordinary cards and tables use a single faint border and quiet dividers. Reserve heavy outlines for alerts, focused controls and deliberate emphasis. Page titles, card titles and badges use readable functional type. This applies to the application's chrome, not the user's chosen CV document theme.
 
 ---
 

@@ -15,12 +15,12 @@ import { importLibraryDocument } from "@/app/actions/library-import";
  * Each says what is expected of it in one sentence, because the refusals behind them are specific
  * and a person should not have to discover a five-megabyte cap by hitting it.
  */
-export function LibraryImportCard() {
+export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean }) {
   return (
-    <Card title="Import a document">
+    <Card title={showTitle ? "Import a document" : undefined}>
       <div className="grid gap-5">
         <p className="text-14 text-muted">
-          Nothing is added to your Library until you tick it.
+          Nothing is added to Experience until you confirm it.
         </p>
 
         <section className="grid gap-2">

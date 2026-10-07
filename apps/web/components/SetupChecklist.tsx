@@ -5,13 +5,24 @@ import { setupMilestones, type SetupChecklist as Checklist } from "@/lib/setup";
 export function SetupChecklist({ checklist, variant }: { checklist: Checklist; variant: "explanation" | "card" }) {
   const explanation = variant === "explanation";
   const next = checklist.nextStep;
+  const firstUse = explanation && !checklist.steps.some(step => step.id === "companies" && step.done);
+  const monitoringStart = next?.id === "email" ? next : { href: checklist.notice.href, label: checklist.notice.action };
   return <section aria-label="Setup" className="mb-4 space-y-3 border-b-2 border-line-muted pb-4">
     {explanation && <div role="status" className="space-y-1">
       <h2 className="text-16 font-semibold">{checklist.notice.title}</h2>
       <p className="max-w-3xl text-14 text-muted">{checklist.notice.description}</p>
-      <a href={checklist.notice.href} className="inline-flex min-h-11 items-center text-14 font-semibold underline">{checklist.notice.action}</a>
+      {!firstUse && <a href={checklist.notice.href} className="inline-flex min-h-11 items-center text-14 font-semibold underline">{checklist.notice.action}</a>}
     </div>}
-    {explanation && <p className="text-13 text-muted">Your Free plan includes 25 active companies and your first 3 tailored CVs. <a href="/account#plan-and-credits" className="underline">See your plan and credits</a>.</p>}
+    {firstUse && <div className="grid gap-2 sm:grid-cols-2">
+      <a href={monitoringStart.href} className="flex min-h-11 flex-col justify-center border-2 border-line px-3 py-2 text-14 no-underline hover:bg-sunken">
+        <span className="font-semibold">Find roles at companies I follow</span>
+        <span className="text-12 text-muted">{monitoringStart.label}</span>
+      </a>
+      <a href="/roles/add" className="flex min-h-11 flex-col justify-center border-2 border-line-muted px-3 py-2 text-14 no-underline hover:bg-sunken">
+        <span className="font-semibold">I already have a role</span>
+        <span className="text-12 text-muted">Add a job link or PDF.</span>
+      </a>
+    </div>}
     {!checklist.complete && <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-14"><span className="font-semibold">{explanation ? "Start here" : "Monitoring setup"}</span> · {checklist.summary}</p>

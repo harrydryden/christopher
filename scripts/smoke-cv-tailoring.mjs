@@ -95,17 +95,19 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     assert.ok((await page.locator("main").innerText()).includes("Waiting for your evidence"));
 
     await page.goto(`${baseUrl}/cv/${answerId}`);
-    await page.getByRole("heading", { name: "Could your Library say more?", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Could your Experience say more?", exact: true }).waitFor();
     assert.match(await page.locator("main").innerText(), /Add only facts you know are accurate/);
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/optional-evidence-check.png", fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/optional-evidence-mobile.png", fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "the quiz must fit a phone viewport");
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole("textbox", { name: quiz.questions[0].prompt, exact: true }).fill("Launched the service in France and reached the first 40 customers.");
+    await page.getByRole("textbox", { name: "Your answer", exact: true }).fill("Launched the service in France and reached the first 40 customers.");
     const destination = page.getByRole("combobox", { name: "Save this evidence under", exact: true });
     await destination.selectOption("employment:tailoring-job");
-    await page.getByRole("checkbox", { name: /I confirm this wording is accurate/ }).check();
+    await page.getByRole("button", { name: "Use my answer as written", exact: true }).first().click();
+    assert.equal(await page.getByRole("textbox", { name: "Wording to save", exact: true }).inputValue(), "Launched the service in France and reached the first 40 customers.");
+    await page.getByRole("button", { name: "Confirm for Operations Director", exact: true }).click();
     await page.getByRole("button", { name: "Save evidence and continue", exact: true }).click();
     await page.waitForURL(url => url.pathname.startsWith("/cv/") && !url.pathname.endsWith(answerId));
     const continuationId = new URL(page.url()).pathname.split("/").pop();
@@ -134,7 +136,8 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
 
     // The newest Library renders the evidence and its tag as cells in the same row.
     await page.goto(`${baseUrl}/library`);
-    await page.getByRole("tab", { name: "Experience", exact: true }).click();
+    await page.getByRole("tab", { name: "Work history", exact: true }).click();
+    await page.getByText("Edit evidence rows directly · 2/20", { exact: true }).click();
     const evidenceInput = page.getByRole("textbox", { name: /Synthetic Works Operations Director evidence 2/ });
     await evidenceInput.waitFor();
     const evidenceRow = evidenceInput.locator("xpath=ancestor::tr");

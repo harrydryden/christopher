@@ -261,28 +261,6 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
   return (
     <>
       <TR highlighted={highlighted} className={`${styles.roleRow} ${selected ? "bg-sunken" : ""}`}>
-        <TD className={styles.roleSelect}>
-          <label className="inline-flex min-h-11 min-w-11 items-center">
-            <input
-            type="checkbox"
-            className="h-4 w-4 m-0 mt-0.5 align-middle"
-            aria-label={`Select ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`}
-            aria-checked={selected}
-            checked={selected}
-            disabled={groupBusy}
-            onChange={() => actions.toggleSelected(row.id)}
-            />
-          </label>
-        </TD>
-        {!hideCompany && <TD className={styles.roleCompany}>
-          {row.manual ? <span className="flex items-center gap-1.5">{row.companyName}</span> : <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
-            {/* The same icon the company page shows: the captured logo when there is one,
-                and the browser's own chain behind it. A bare <img> here is why Hims had a
-                logo on its company page and a blank square on its roles. */}
-            <CompanyFavicon src={company.iconSrc} domain={company.domain} size={14} />
-            <span className="max-w-[12rem] truncate">{row.companyName}</span>
-          </Link>}
-        </TD>}
         <TD id={`role-row-${row.id}`} className={`${styles.roleTitle} max-w-[22rem]`}>
           <span className="flex flex-wrap items-center gap-2">
             <button type="button" disabled={boxPending} onClick={() => actions.toggleExpanded(row.id)} aria-expanded={expanded} className="text-left font-semibold text-fg hover:underline">
@@ -295,8 +273,17 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
           </span>
           <p className="mt-1 text-12 text-muted"><span title={liveForTitle(row)}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
         </TD>
+        {!hideCompany && <TD className={styles.roleCompany}>
+          {row.manual ? <span className="flex items-center gap-1.5">{row.companyName}</span> : <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
+            {/* The same icon the company page shows: the captured logo when there is one,
+                and the browser's own chain behind it. A bare <img> here is why Hims had a
+                logo on its company page and a blank square on its roles. */}
+            <CompanyFavicon src={company.iconSrc} domain={company.domain} size={14} />
+            <span className="max-w-[12rem] truncate">{row.companyName}</span>
+          </Link>}
+        </TD>}
         <TD className={`${styles.roleLocation} max-w-[10rem]`}>
-          <span className="md:hidden text-muted">Location: </span>
+          <span className={`${styles.cardLabel} text-muted`}>Location: </span>
           <div className="flex flex-wrap items-center gap-1">
             {row.locations.length > 3 ? (
               <details>
@@ -309,9 +296,10 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
             {row.remote && <Badge tone="blue">Remote</Badge>}
             {!row.location && row.locations.length === 0 && !row.remote && <span className="text-muted">—</span>}
           </div>
+          {!row.manual && row.keywordTerms.length > 0 && <p className={styles.cardMatch}>Matched: {row.keywordTerms.join(", ")}</p>}
         </TD>
         <TD className={`${styles.roleFit} whitespace-nowrap`}>
-          <span className="block md:hidden text-muted">Fit: </span>
+          <span className={`${styles.cardLabel} text-muted`}>Fit: </span>
           {row.manual && row.fitScore === null
             ? <span className="text-muted">Not scored</span>
             : <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />}
@@ -330,13 +318,25 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
             {expanded ? "Close" : row.workflowStatus === "user-dismissed" ? "Reconsider" : "Review"}
           </Button>}
         </TD>
+        <TD className={styles.roleSelect}>
+          <label className="inline-flex min-h-11 min-w-11 items-center">
+            <input
+            type="checkbox"
+            className="h-4 w-4 m-0 mt-0.5 align-middle"
+            aria-label={`Select ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`}
+            aria-checked={selected}
+            checked={selected}
+            disabled={groupBusy}
+            onChange={() => actions.toggleSelected(row.id)}
+            />
+          </label>
+        </TD>
       </TR>
       {expanded && (
         <tr id={`role-review-${row.id}`} className={`${styles.reviewRow} bg-sunken`}>
           <td colSpan={hideCompany ? 5 : 6} className="p-4">
             <div className={`${styles.reviewBody} grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]`}>
               <div className="space-y-3">
-                <p className="text-14 font-semibold text-fg">{row.title}</p>
                 <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
                 {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
                 {row.manual ? <div>
@@ -371,8 +371,8 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                     <>
                       <div className={descriptionOpen || detail.details.description.length <= COLLAPSED_DESCRIPTION_CHARS ? "" : "max-h-32 overflow-hidden"}>
                         {looksMarkdown(detail.details.description)
-                          ? <SafeMarkdown markdown={detail.details.description} className="max-w-3xl" />
-                          : <div className="max-w-3xl space-y-2.5 text-14 leading-relaxed text-fg">
+                          ? <SafeMarkdown markdown={detail.details.description} className="ds-prose max-w-3xl" />
+                          : <div className="ds-prose max-w-3xl space-y-2.5 text-14 text-fg">
                               {detail.details.description.split(/\n{2,}/).map((paragraph, i) => <p key={i}>{paragraph.trim()}</p>)}
                             </div>}
                       </div>
@@ -397,8 +397,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 </div>
               </div>
               <div className="space-y-3">
-                <p className="text-14 font-semibold text-fg">{row.title}<span className="block text-13 font-normal text-muted">{row.companyName}</span></p>
-                <h3 className="ds-label">{ROLE_STATUS_LABELS[row.workflowStatus]}</h3>
+                <h3 className="ds-label">Decision</h3>
                 {boxed ? (
                   <ReasonBox key={boxed.opened} jobId={row.id} title={row.title} companyName={row.companyName} box={boxed} busy={busy} actions={actions} />
                 ) : row.decision ? (
@@ -1012,6 +1011,11 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       <Table>
         <THead>
           <tr>
+            <SortTH label="Role" sortKey="title" links={sortLinks} sort={sort} dir={dir} />
+            {!hideCompany && <SortTH label="Company" sortKey="company" links={sortLinks} sort={sort} dir={dir} />}
+            <SortTH label="Location" sortKey="location" links={sortLinks} sort={sort} dir={dir} />
+            <SortTH label="Fit" sortKey="fit" links={sortLinks} sort={sort} dir={dir} />
+            <TH>Action</TH>
             <TH className="w-8">
               <input
                 type="checkbox"
@@ -1024,11 +1028,6 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
                 onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map(row => row.id)))}
               />
             </TH>
-            {!hideCompany && <SortTH label="Company" sortKey="company" links={sortLinks} sort={sort} dir={dir} />}
-            <SortTH label="Role" sortKey="title" links={sortLinks} sort={sort} dir={dir} />
-            <SortTH label="Location" sortKey="location" links={sortLinks} sort={sort} dir={dir} />
-            <SortTH label="Fit" sortKey="fit" links={sortLinks} sort={sort} dir={dir} />
-            <TH>Action</TH>
           </tr>
         </THead>
         <TBody>
@@ -1059,10 +1058,13 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
         </TBody>
       </Table>
       {undoNotice}
-      {/* The shortcuts are the table's own caption, not a disclosure nobody opens. */}
-      {keyboard && <p className="mt-3 text-12 text-muted">
-        <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open · <kbd>enter</kbd> save
-      </p>}
+      {keyboard && <>
+        <p className="mt-3 hidden text-12 text-muted md:block"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open · <kbd>enter</kbd> save</p>
+        <details className="mt-3 text-12 text-muted md:hidden">
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold">Keyboard help</summary>
+          <p><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open · <kbd>enter</kbd> save</p>
+        </details>
+      </>}
     </div>
   );
 }

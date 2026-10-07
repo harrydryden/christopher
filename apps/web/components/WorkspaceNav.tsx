@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 // table on one page, so there is nothing for a section tab to move between.
 const groups = [
   [["/companies", "Following"], ["/suggestions", "Discover"]],
-  [["/settings", "Preferences"], ["/learning", "Learning"], ["/health", "Health"], ["/account", "Account"]],
+  [["/settings", "Preferences"], ["/learning", "Search profile"], ["/health", "Needs attention"], ["/account", "Account"]],
   [["/admin", "Accounts"], ["/admin/settings", "System settings"], ["/admin/catalogue", "Company catalogue"], ["/admin/health", "Operations"]],
 ];
 export function WorkspaceNav() {

@@ -19,6 +19,7 @@ import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
+import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 
 /** The real database while a test has somebody signed in; null while nobody is. */
 let signedIn: Db | null = null;
@@ -117,6 +118,10 @@ const GATES: Record<string, Record<string, Gate>> = {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
     saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", assessCvDraft: "verified",
     dismissCvReviewItem: "user", finaliseCvDraft: "user", rescoreLibrary: "verified", quoteCvBuild: "verified",
+  },
+  "actions/evidence.ts": {
+    requestEvidenceDraft: "verified", retryEvidenceDraft: "verified", confirmEvidenceAnswerAsWritten: "verified",
+    dismissEvidenceDraft: "user", skipEvidenceQuestion: "user", confirmEvidenceDraft: "user", openEvidenceDrafts: "user",
   },
   "actions/decisions.ts": {
     roleDetails: "user", decide: "user", decideWithUndoToken: "user", undoDecisionIfCurrent: "user",
@@ -315,7 +320,14 @@ describe("signed in", () => {
 
     it.each(gated("verified").map(({ module, name }) => [`${module} ${name}`, module, name]))("sends them to confirm before %s, reading nothing but the session", async (_label, module, name) => {
       const outcome = await call(module, name);
-      expect({ refused: refusedBy(outcome, "redirect:/account?verify=required"), beyond: beyondTheSession(), outcome }).toMatchObject({ refused: true, beyond: [] });
+      // This one form keeps an already entered link or PDF in place if confirmation expires.
+      // Check the exact refusal and recovery route; an arbitrary validation failure is not a gate.
+      if (module === "actions/role-import.ts" && name === "startRoleImport") {
+        expect(outcome).toMatchObject({ returned: { ok: false, error: VERIFY_SENTENCE, recovery: { href: "/account", label: "Confirm your email in a new tab" } } });
+      } else {
+        expect({ refused: refusedBy(outcome, "redirect:/account?verify=required"), outcome }).toMatchObject({ refused: true });
+      }
+      expect(beyondTheSession()).toEqual([]);
       expect(await workLeftBehind()).toEqual({ tasks: 0, calls: 0, holds: 0 });
     });
   });

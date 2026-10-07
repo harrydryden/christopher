@@ -1,6 +1,7 @@
 /* One semantic table and one set of controls. Cards follow the space available to
    the table, including when enlarged text makes the sidebar and filters wider. */
 .cards { container-type: inline-size; }
+.cardLabel, .cardMatch { display: none; }
 
 @container (max-width: 60em) {
   .cards :global(table),
@@ -23,13 +24,15 @@
     background: var(--bg);
   }
 
-  .roleRow > :global(td) { padding: 0.4rem 0.75rem; }
-  .roleSelect { order: 0; width: 50% !important; }
-  .roleAction { order: 1; width: 100% !important; text-align: right; }
-  .roleCompany { order: 2; }
-  .roleTitle { order: 3; max-width: none; }
-  .roleLocation { order: 4; width: 100% !important; max-width: none !important; overflow-wrap: anywhere; }
-  .roleFit { order: 5; width: 100% !important; overflow-wrap: anywhere; }
+  .roleRow > :global(td) { padding: 0.25rem 0.75rem; }
+  .roleTitle { order: 0; max-width: none; padding-top: 0.75rem !important; }
+  .roleCompany { order: 1; }
+  .roleLocation { order: 2; width: 100% !important; max-width: none !important; overflow-wrap: anywhere; }
+  .roleFit { order: 3; width: 100% !important; overflow-wrap: anywhere; }
+  .roleAction { order: 4; flex: 1; width: auto !important; text-align: left; padding-bottom: 0.5rem !important; }
+  .roleSelect { order: 5; width: auto !important; padding-bottom: 0.5rem !important; }
+  .cardLabel { display: inline; }
+  .cardMatch { display: block; margin-top: 0.25rem; color: var(--fg-muted); font-size: 0.75rem; }
   .roleFit :global([data-fit-steps]) { display: none; }
 
   .roleRow button,

@@ -1,15 +1,19 @@
 "use client";
 import { startTransition, useActionState, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
-import { EVIDENCE_FACET_PROMPTS, employmentCompanyGroups, employmentHeading, isActiveEvidence, responsibilityRows, rowFacets, type EvidenceFacet } from "@col/core/cv-helpers";
+import { EVIDENCE_FACET_PROMPTS, employmentHeading, isActiveEvidence, responsibilityRows, rowFacets, updateEmploymentIndustries, type EvidenceFacet } from "@col/core/cv-helpers";
 import type { CvLibrary, Employment } from "@col/core/cv";
 import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { cvJobReadiness, cvLibraryReadiness } from "@/lib/cv-ready";
 import type { OpenedCvLibrary } from "@/lib/cv-library-open";
 import type { CvLibraryConflict } from "@/lib/cv-library-merge";
-import { addJobRow, archivedBlocks, editableEmployment, jobEntry, jobRows, pendingRowKey, removeJob, removeJobRow, restoreBlock, restoreJob, setJobRows, tagRow, withArchivedEmployment } from "@/lib/cv-library-rows";
+import { addJobRow, archivedBlocks, editableEmployment, jobEntry, jobRows, pendingRowKey, removeJob, removeJobRow, restoreBlock, restoreJob, setJobRows, tagRow } from "@/lib/cv-library-rows";
 import { NO_EVIDENCE, evidenceByEntry, missingFacetLine, rowGuidance, rowsMovedOn, untaggedFacets, type EvidencePrompt, type LibraryEvidence } from "@/lib/cv-library-evidence";
-import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
+import { jobRemovalConfirm } from "./EmploymentHistoryTable";
+import type { EvidenceDraftView } from "@/app/actions/evidence";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import dynamic from "next/dynamic";
 import { EvidenceSummary } from "./EvidenceScore";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
 import { RowScoreButton } from "./RowScoreButton";
@@ -20,14 +24,16 @@ import { CV_LIMITS, cvSkillCharacterState } from "@col/core/cv-format";
 import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList, splitCvLibrarySkillItem } from "@/lib/cv-skill-list";
 
 const input = inputClass;
-const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]] as const;
+const EvidenceConversation = dynamic(() => import("./EvidenceConversation").then(module => module.EvidenceConversation),
+  { loading: () => <p className="text-14 text-muted">Opening question…</p> });
+const libraryTabs = [["experience", "Work history"], ["education", "Education & skills"], ["intro", "About you"]] as const;
 type LibraryTab = typeof libraryTabs[number][0];
 const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
 
 /** The rejection this editor can recover from, rather than asking for the work to be retyped. */
 const OBSOLETE = "The library changed. Reload before saving.";
-const LEAVE = "Leave and lose your unsaved Library changes?";
-const DISCARD = "Discard your unsaved Library changes?";
+const LEAVE = "Leave and lose your unsaved Experience changes?";
+const DISCARD = "Discard your unsaved Experience changes?";
 const clockOf = (at: Date) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 /** What a row is keyed by everywhere it is remembered: confirmations, types and reviews. */
 const rowKey = (text: string) => responsibilityRows(text)[0] ?? "";
@@ -43,7 +49,7 @@ type Recovery = {
 };
 const conflictText = (value: unknown) => value === null ? "Removed in your draft" : typeof value === "string" ? value : JSON.stringify(value, null, 2) ?? "(empty)";
 
-export function CvLibraryEditor({ library, version: storedVersion, evidence = NO_EVIDENCE, need = null, job = null }: {
+export function CvLibraryEditor({ library, version: storedVersion, evidence = NO_EVIDENCE, need = null, job = null, openDrafts = [], returnTo = null, scopeId }: {
   /** Opened on the server (`openStoredLibrary`); the type is how that is required. */
   library: OpenedCvLibrary | null;
   version: number;
@@ -53,8 +59,12 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   need?: string | null;
   /** The employment record that gap was about, when the link named one. */
   job?: string | null;
+  openDrafts?: EvidenceDraftView[];
+  returnTo?: string | null;
+  scopeId: string;
 }) {
-  const [tab, setTab] = useState<LibraryTab>(need || job ? "experience" : "intro");
+  const router = useRouter();
+  const [tab, setTab] = useState<LibraryTab>("experience");
   // `library` arrives opened: the page ran `openStoredLibrary` on it in the same request (see
   // app/(app)/library/page.tsx), and opening is idempotent, so it is held as sent rather than
   // parsed again here — which would put the CV schema and zod in this page's first load.
@@ -74,6 +84,13 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const [copyMessage, setCopyMessage] = useState("");
   const [focusRow, setFocusRow] = useState<{ job: string; index: number } | null>(null);
   const [needShown, setNeedShown] = useState(true);
+  const [lastRemovedEmpty, setLastRemovedEmpty] = useState<Employment | null>(null);
+  const [questionFor, setQuestionFor] = useState<Record<string, EvidenceFacet | null>>({});
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(() => {
+    const visible = editableEmployment(library ?? empty);
+    return visible.some(item => item.id === job) ? job : visible[0]?.id ?? null;
+  });
+  const [detailsJobId, setDetailsJobId] = useState<string | null>(storedVersion === 0 ? (job ?? library?.employment?.[0]?.id ?? null) : null);
   /**
    * The types a row added for a prompt is meant to serve, held against its position until there is
    * something to tag. Types are keyed by a row's exact text and an empty row has none.
@@ -111,6 +128,22 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
    * Archived jobs disclosure, which is the way back from the removal.
    */
   const jobs = useMemo(() => editableEmployment(value), [value]);
+  useEffect(() => {
+    if (job && jobs.some(item => item.id === job)) { setSelectedJobId(job); return; }
+    try {
+      const remembered = window.sessionStorage.getItem(`experience-selected:${scopeId}`);
+      if (remembered && jobs.some(item => item.id === remembered)) setSelectedJobId(remembered);
+    } catch { /* The first job remains selected. */ }
+  // The remembered selection is read once on mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeId]);
+  useEffect(() => {
+    if (selectedJobId && !jobs.some(item => item.id === selectedJobId)) setSelectedJobId(jobs[0]?.id ?? null);
+  }, [jobs, selectedJobId]);
+  function selectJob(id: string) {
+    setSelectedJobId(id);
+    try { window.sessionStorage.setItem(`experience-selected:${scopeId}`, id); } catch { /* This visit still keeps the selection. */ }
+  }
   /**
    * What was removed and can be put back: the jobs archived with their rows, and any block the
    * release before this one archived with its own control. Empty for almost everybody, and the
@@ -155,6 +188,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     setSavedAt(new Date());
     setNotice("");
     setRecovery(null);
+    setDetailsJobId(null);
     recoveryRef.current = null;
     choiceRevision.current++;
     submitted.current = null;
@@ -173,26 +207,10 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     setVersion(storedVersion);
   }, [library, storedVersion, dirty, baselineJson, recovery]);
 
-  /**
-   * Arriving from a CV's evidence gap: open the job the gap was about with an empty row waiting
-   * and the caret in it, so the answer can be typed straight in. Once only — a refresh from the
-   * evidence poller must not add a second row underneath what is being written.
-   */
   useEffect(() => {
     if (opened.current) return;
     opened.current = true;
-    const target = editableEmployment(value).find(item => item.id === job);
-    if (!target) return;
-    setTab("experience");
-    // A row already waiting to be typed into is the row to use; anything else gets a new one.
-    const existing = jobRows(value, target.id);
-    const last = existing.length - 1;
-    if (existing.length && !(existing[last] ?? "").trim()) return setFocusRow({ job: target.id, index: last });
-    const added = addJobRow(value, target);
-    setValue(added.library);
-    setFocusRow({ job: target.id, index: added.index });
-    // `value` is read once, on mount, which is exactly what this effect is for.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (job) setTab("experience");
   }, [job]);
 
   /**
@@ -227,7 +245,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   // A row added by the button is a row to type in, so the caret goes there.
   useEffect(() => {
     if (!focusRow) return;
-    document.getElementById(`responsibility-${focusRow.job}-${focusRow.index}`)?.focus();
+    const field = document.getElementById(`responsibility-${focusRow.job}-${focusRow.index}`);
+    field?.closest("details")?.setAttribute("open", "");
+    field?.focus();
     setFocusRow(null);
   }, [focusRow]);
 
@@ -256,7 +276,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       setVersion(stored.version);
       setNotice(merged.note);
     } catch {
-      setNotice("Could not read the saved library. Your text is still here; try again.");
+      setNotice("Could not read saved Experience. Your text is still here; try again.");
     }
   }
 
@@ -291,14 +311,14 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setCopyMessage("Original draft downloaded. Keep it until this Library is saved.");
+    setCopyMessage("Original draft downloaded. Keep it until this Experience is saved.");
   }
 
   async function copyOriginal() {
     if (!recovery) return;
     try {
       await navigator.clipboard.writeText(JSON.stringify(recovery.original, null, 2));
-      setCopyMessage("Original draft copied. Keep it until this Library is saved.");
+      setCopyMessage("Original draft copied. Keep it until this Experience is saved.");
     } catch {
       setCopyMessage("Clipboard unavailable. Open the original draft below and copy its text, or download it.");
     }
@@ -306,7 +326,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
 
   function revealInvalidField(event: FormEvent<HTMLDivElement>, panel: LibraryTab) {
     event.preventDefault();
-    flushSync(() => setTab(panel));
+    const jobId = (event.target as HTMLElement).closest<HTMLElement>("[data-job-id]")?.dataset.jobId;
+    flushSync(() => { setTab(panel); if (jobId) { selectJob(jobId); setDetailsJobId(jobId); } });
     (event.target as HTMLElement).focus();
   }
 
@@ -342,7 +363,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
 
   /** One line of the intro: every one of them the same control, at the same height. */
   function line(key: "name" | "email" | "phone" | "location" | "contact" | "linkedinUrl" | "websiteUrl", label: string, props: { type?: string; placeholder?: string; autoComplete?: string } = {}) {
-    return <label className="block min-w-0 space-y-1.5 text-14"><span className={labelClass}>{label}</span><input type={props.type ?? "text"} className={input} value={value[key] ?? ""} placeholder={props.placeholder} autoComplete={props.autoComplete} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
+    return <label className="block min-w-0 space-y-1.5 text-14"><span className={labelClass}>{label}</span><input required={key === "name"} type={props.type ?? "text"} className={input} value={value[key] ?? ""} placeholder={props.placeholder} autoComplete={props.autoComplete} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
   }
 
   /** Put back the library as it was last saved, after asking: this is the one control that loses typing. */
@@ -367,6 +388,13 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const bar = dirty || unreviewed || rescoring || !!notice || !!refused || !!recovery;
   return <form action={action} onSubmit={event => {
     if (recoveryPending || invalidSkills) { event.preventDefault(); return; }
+    const incomplete = editableEmployment(value).find(item => !item.company.trim() || !item.jobTitle.trim());
+    if (incomplete) {
+      event.preventDefault();
+      setTab("experience"); selectJob(incomplete.id); setDetailsJobId(incomplete.id);
+      window.setTimeout(() => document.getElementById(`job-content-${incomplete.id}`)?.querySelector<HTMLInputElement>("input[required]:invalid")?.focus(), 0);
+      return;
+    }
     const normalised = normaliseSubmittedLibrarySkills(value, editedSkillIds, baseline) as CvLibrary;
     // The hidden JSON field must reflect the normalised labels in this very submit event, even
     // when Save is clicked before the textarea has blurred.
@@ -378,29 +406,25 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         fold as soon as there is anything to save, and gone when there is not. Once a save has
         changed rows, the same place offers the re-score — never automatic, because it spends the
         account's AI budget. */}
-    {bar && <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b-2 border-line bg-bg py-3">
-      {dirty ? <>
-        <span className="ds-pixel text-12" aria-live="polite">Unsaved changes</span>
-        <button disabled={pending || recoveryPending || invalidSkills} className={buttonClass("primary")}>{pending ? "Saving…" : "Save library"}</button>
+    {(dirty || !!notice || !!recovery) && <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b-2 border-line bg-bg py-3">
+      {dirty && <>
+        <span className="text-14 font-semibold" aria-live="polite">Unsaved changes</span>
+        <button disabled={pending || recoveryPending || invalidSkills} className={buttonClass("primary")}>{pending ? "Saving…" : "Save Experience"}</button>
         <button type="button" disabled={pending} className={buttonClass("ghost")} onClick={discard}>Discard</button>
         {currentRefusal && !recovery && <span role="alert" className="text-14 text-danger">{state.error}</span>}
         {obsolete && <button type="button" className={buttonClass("secondary")} onClick={reloadAndKeep}>Reload and keep my text</button>}
-      </> : (unreviewed || rescoring) && <>
-        <span className="text-14" role="status">{savedAt ? `Saved ${clockOf(savedAt)}. ` : ""}{changedRows ? "Rows changed since the last review." : "Some rows have no full review yet."}</span>
-        <button type="button" disabled={rescoring} className={buttonClass("primary")} onClick={() => startTransition(() => rescore(new FormData()))}>{rescoring ? "Re-scoring…" : "Re-score"}</button>
       </>}
-      {refused && <span role="alert" className="text-14 text-danger">{refused}</span>}
       {notice && <span role="status" className="text-12 text-muted">{notice}</span>}
     </div>}
     {recovery && <section className="space-y-3 border-2 border-warn p-4" aria-labelledby="library-recovery-title">
-      <h2 id="library-recovery-title" ref={recoveryHeading} tabIndex={-1} className="ds-pixel scroll-mt-32 text-12 focus:outline-2 focus:outline-offset-2 focus:outline-line">Keep your original Library draft</h2>
-      <p className="text-14">Your complete local draft from before the reload is still here. Download or copy it, then choose the wording for each conflict. The latest saved version stays unchanged until you press Save library.</p>
+      <h2 id="library-recovery-title" ref={recoveryHeading} tabIndex={-1} className="text-16 font-semibold scroll-mt-32 focus:outline-2 focus:outline-offset-2 focus:outline-line">Keep your original Experience draft</h2>
+      <p className="text-14">Your complete local draft from before the reload is still here. Download or copy it, then choose the wording for each conflict. The latest saved version stays unchanged until you press Save Experience.</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={buttonClass("secondary")} onClick={downloadOriginal}>Download original draft</button>
         <button type="button" className={buttonClass("ghost")} onClick={() => void copyOriginal()}>Copy original draft</button>
       </div>
       {copyMessage && <p role="status" className="text-12 text-muted">{copyMessage}</p>}
-      <details><summary className="cursor-pointer text-12 underline">Show original draft text</summary><textarea readOnly aria-label="Original unsaved Library draft" className={`mt-2 w-full ${input}`} rows={8} value={JSON.stringify(recovery.original, null, 2)} /></details>
+      <details><summary className="cursor-pointer text-12 underline">Show original draft text</summary><textarea readOnly aria-label="Original unsaved Experience draft" className={`mt-2 w-full ${input}`} rows={8} value={JSON.stringify(recovery.original, null, 2)} /></details>
       {recovery.conflicts.map(conflict => <div key={conflict.key} className="space-y-2 border-t border-line-muted pt-3">
         <h3 className="text-14 font-semibold">{conflict.label}</h3>
         <div className="grid gap-2 md:grid-cols-2">
@@ -414,7 +438,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       </div>)}
       {unresolved > 0 && <p role="status" className="text-12 text-warn">Choose wording for {unresolved} {unresolved === 1 ? "conflict" : "conflicts"} before saving.</p>}
       {unresolved === 0 && recovery.valid && !dirty && <button type="button" className={buttonClass("secondary")} onClick={() => { recoveryRef.current = null; choiceRevision.current++; setRecovery(null); }}>Finish review</button>}
-      {!recovery.valid && <div className="space-y-2"><p role="alert" className="text-12 text-danger">These versions cannot be combined into a valid Library automatically. Your original draft remains above. Save a copy, then reapply its wording in the editor.</p><button type="button" className={buttonClass("secondary")} onClick={() => { if (window.confirm("Have you copied or downloaded your original draft? The editor will continue from the latest saved Library.")) { setValue(recovery.latest); setBaseline(recovery.latest); setVersion(recovery.version); recoveryRef.current = null; choiceRevision.current++; setRecovery(null); setNotice(""); } }}>Continue editing from saved version</button></div>}
+      {!recovery.valid && <div className="space-y-2"><p role="alert" className="text-12 text-danger">These versions cannot be combined into valid Experience automatically. Your original draft remains above. Save a copy, then reapply its wording in the editor.</p><button type="button" className={buttonClass("secondary")} onClick={() => { if (window.confirm("Have you copied or downloaded your original draft? The editor will continue from the latest saved Experience.")) { setValue(recovery.latest); setBaseline(recovery.latest); setVersion(recovery.version); recoveryRef.current = null; choiceRevision.current++; setRecovery(null); setNotice(""); } }}>Continue editing from saved version</button></div>}
     </section>}
     {/* A save that changed nothing to re-score leaves no bar behind; this says it landed. */}
     <span className="sr-only" aria-live="polite">{!dirty && savedAt ? `Saved ${clockOf(savedAt)}` : ""}</span>
@@ -422,18 +446,17 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         a note about the visit, not a thing to store. */}
     {asked && needShown && <div role="status" className="flex flex-wrap items-start justify-between gap-3 border-2 border-line bg-sunken p-3 text-14">
       <span>Add evidence for: {asked}</span>
+      {returnTo && <Link href={returnTo} className="text-12 underline">Return to CV</Link>}
       <button type="button" className="text-12 underline" onClick={() => setNeedShown(false)}>Dismiss</button>
     </div>}
     {/* What a CV can be built from today, by the rule generation itself applies. */}
-    <p className={`text-14 ${readiness.ready ? "text-ok" : "text-warn"}`} role="status">{readiness.line}</p>
-    {/* How well evidenced the whole history is, and how many jobs are holding it back. */}
-    {evidence.line && <p className="text-14" role="status">{evidence.line}</p>}
+    <p className={`text-14 ${readiness.ready ? "text-muted" : "text-warn"}`} role="status">{readiness.ready ? "Your confirmed evidence can be used in future CVs." : readiness.line.replace(/^Ready to build: no — /, "To build a CV, ")}</p>
     <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} /><input type="hidden" name="editedSkillIds" value={JSON.stringify(editedSkillIds)} />
-    <div role="tablist" aria-label="Library sections" className="flex flex-wrap gap-x-2 border-b border-line-muted">
+    <div role="tablist" aria-label="Experience sections" className="flex flex-wrap gap-x-2 border-b border-line-muted">
       {libraryTabs.map(([id, label]) => <button
         key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
         aria-selected={tab === id} tabIndex={tab === id ? 0 : -1}
-        className={`ds-pixel border-b-2 px-4 py-3 text-11 ${tab === id ? 'border-line text-fg' : 'border-transparent text-muted hover:text-fg'}`}
+        className={`border-b-2 px-4 py-3 text-14 font-semibold ${tab === id ? 'border-line text-fg' : 'border-transparent text-muted hover:text-fg'}`}
         onClick={() => setTab(id)} onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
@@ -462,38 +485,59 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     </label>
     </div>
     <div role="tabpanel" id="library-panel-experience" aria-labelledby="library-tab-experience" hidden={tab !== 'experience'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'experience')}>
-    <EmploymentHistoryTable
-      employment={jobs}
-      entries={value.entries}
-      onChange={employment => setValue({ ...value, employment: withArchivedEmployment(value, employment) })}
-      onRemove={removed => { setPendingFacets({}); setValue(removeJob(value, removed.id)); }}
-    />
-    <h2 className="ds-pixel text-12">Experience</h2>
-    {employmentCompanyGroups(jobs).map(group => <section key={group.company.toLowerCase()} className="space-y-3">
-      <h3 className="text-16 font-semibold">{group.company || "New company"}</h3>
-      {group.jobs.map(currentJob => {
+    <div className="space-y-2">
+      <h2 className="ds-pixel text-12">Work history</h2>
+      <p className="ds-prose text-14 text-muted">Keep the job details together with the work you can describe. Answer a question to review a draft, or edit rows directly.</p>
+      {version === 0 && <p className="text-14 text-muted">Add your name in About you and save your first job. Then you can answer a question to add evidence.</p>}
+      <button type="button" className={buttonClass("secondary")} onClick={() => { const id = crypto.randomUUID(); setValue(current => ({ ...current, employment: [...(current.employment ?? []), { id, company: "", jobTitle: "", startDate: "", endDate: "", current: false }] })); selectJob(id); setDetailsJobId(id); }}>Add job</button>
+      {lastRemovedEmpty && <button type="button" className="ml-3 text-14 underline" onClick={() => { setValue(current => ({ ...current, employment: [...(current.employment ?? []), lastRemovedEmpty] })); selectJob(lastRemovedEmpty.id); setDetailsJobId(lastRemovedEmpty.id); setLastRemovedEmpty(null); }}>Restore last removed job</button>}
+    </div>
+    {jobs.map(currentJob => {
         const entry = jobEntry(value, currentJob.id);
         const rows = jobRows(value, currentJob.id);
         const ready = cvJobReadiness(value, currentJob.id);
         const score = entry ? scores.get(entry.id) : undefined;
+        const jobNumber = jobs.findIndex(item => item.id === currentJob.id) + 1;
+        const confirmedFacets = new Set((entry?.confirmedResponsibilities ?? []).flatMap(row => rowFacets(entry!, row)));
+        const nextQuestion = !confirmedFacets.has("outcome") ? "outcome" : !confirmedFacets.has("problem") ? "problem" : null;
+        const activeQuestion = questionFor[currentJob.id] ?? nextQuestion;
         // What the six types say is missing, live from the tags on screen. Shown on its own only
         // when it is not already the line the stored review carries.
         const untagged = entry ? missingFacetLine(untaggedFacets(entry)) : "";
-        return <fieldset key={currentJob.id} className="min-w-0 space-y-3 border-2 border-line-muted p-4">
-          <legend className="px-1 text-14 font-semibold">{employmentHeading(currentJob) || "Complete this job in employment history"}</legend>
-          <p className="text-12 text-muted">Responsibilities and outcomes · {rows.length}/20</p>
+        const selected = selectedJobId === currentJob.id || (selectedJobId === null && jobNumber === 1);
+        return <section key={currentJob.id} data-job-id={currentJob.id} className="min-w-0 border-2 border-line-muted">
+          <button type="button" aria-expanded={selected} aria-controls={`job-content-${currentJob.id}`} className="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left hover:bg-sunken" onClick={() => selectJob(currentJob.id)}>
+            <span className="text-16 font-semibold">{employmentHeading(currentJob) || "New job"}</span>
+            <span className="text-12 text-muted">{ready.rows ? `${ready.confirmed} of ${ready.rows} confirmed` : "No evidence yet"} · {selected ? "Open" : "View job"}</span>
+          </button>
+          {selected && <div id={`job-content-${currentJob.id}`} className="space-y-4 border-t border-line-muted px-4 py-4">
+          <details open={detailsJobId === currentJob.id} onToggle={event => { if (event.currentTarget.open) setDetailsJobId(currentJob.id); else if (detailsJobId === currentJob.id) setDetailsJobId(null); }} className="border-b border-line-muted pb-3"><summary className="cursor-pointer text-14 text-muted">Edit job details</summary><div className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1"><span className={labelClass}>Company</span><input aria-label={`Job ${jobNumber} company`} required maxLength={160} className={input} value={currentJob.company} onChange={e => setValue(current => ({ ...current, employment: (current.employment ?? []).map(item => item.id === currentJob.id ? { ...item, company: e.target.value } : item) }))} /></label>
+            <label className="space-y-1"><span className={labelClass}>Job title</span><input aria-label={`Job ${jobNumber} title`} required maxLength={160} className={input} value={currentJob.jobTitle} onChange={e => setValue(current => ({ ...current, employment: (current.employment ?? []).map(item => item.id === currentJob.id ? { ...item, jobTitle: e.target.value } : item) }))} /></label>
+            <label className="space-y-1"><span className={labelClass}>Start date</span><input aria-label={`Job ${jobNumber} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={input} value={currentJob.startDate} onChange={e => setValue(current => ({ ...current, employment: (current.employment ?? []).map(item => item.id === currentJob.id ? { ...item, startDate: e.target.value } : item) }))} /></label>
+            <label className="space-y-1"><span className={labelClass}>End date</span><input aria-label={`Job ${jobNumber} end date`} placeholder={currentJob.current ? "Present" : "YYYY-MM"} disabled={currentJob.current} pattern="[0-9]{4}(-[0-9]{2})?" className={input} value={currentJob.endDate} onChange={e => setValue(current => ({ ...current, employment: (current.employment ?? []).map(item => item.id === currentJob.id ? { ...item, endDate: e.target.value } : item) }))} /></label>
+            <label className="flex items-center gap-2 text-14"><input aria-label={`Job ${jobNumber} current`} type="checkbox" checked={currentJob.current} onChange={e => setValue(current => ({ ...current, employment: (current.employment ?? []).map(item => item.id === currentJob.id ? { ...item, current: e.target.checked, endDate: e.target.checked ? "" : item.endDate } : item) }))} />Current job</label>
+          </div>
+          <details><summary className="cursor-pointer text-12 text-muted">Industry descriptions</summary><textarea aria-label={`${currentJob.company} ${currentJob.jobTitle} industry descriptions`} rows={2} maxLength={1200} className={`mt-2 ${input}`} value={currentJob.industryDescriptions ?? ""} onChange={e => setValue(current => ({ ...current, employment: updateEmploymentIndustries(current.employment ?? [], currentJob.id, e.target.value) }))} /></details>
+          <button type="button" title="Remove job" aria-label={`Remove ${currentJob.company} ${currentJob.jobTitle}`} className="text-12 text-muted underline" onClick={() => { if (rows.length && !window.confirm(jobRemovalConfirm(currentJob, rows.length))) return; if (!rows.length) setLastRemovedEmpty(currentJob); setPendingFacets({}); setValue(removeJob(value, currentJob.id)); selectJob(jobs.find(item => item.id !== currentJob.id)?.id ?? ""); }}>Remove job</button>
+          </div></details>
+          {rows.length > 0 && <div className="space-y-2"><p className="text-12 font-semibold">What you did and achieved</p><ul className="list-disc space-y-2 pl-5 ds-prose text-16">{rows.filter(Boolean).map((row, index) => <li key={`${index}-${row}`}>{row}</li>)}</ul></div>}
           {/* What this job still needs before a CV can use it, and one control that supplies it. */}
-          <p className={`flex flex-wrap items-center gap-3 text-12 ${ready.eligible ? "text-muted" : "text-warn"}`}>
-            <span>{ready.line}</span>
-            {entry && ready.rows > ready.confirmed && <button type="button" className="underline" onClick={() => setValue({ ...value, entries: value.entries.map(item => item.id === entry.id ? { ...item, confirmedResponsibilities: responsibilityRows(item.details) } : item) })}>Confirm all</button>}
-          </p>
+          {entry && ready.rows > ready.confirmed && <p className="flex flex-wrap items-center gap-3 text-12 text-warn"><span>{ready.line}</span><button type="button" className="underline" onClick={() => setValue({ ...value, entries: value.entries.map(item => item.id === entry.id ? { ...item, confirmedResponsibilities: responsibilityRows(item.details) } : item) })}>Confirm all</button></p>}
+          <div className="flex flex-wrap gap-3 text-14"><button type="button" className="underline" aria-pressed={activeQuestion === "outcome"} onClick={() => setQuestionFor(current => ({ ...current, [currentJob.id]: "outcome" }))}>Describe a result</button><button type="button" className="underline" aria-pressed={activeQuestion === "problem"} onClick={() => setQuestionFor(current => ({ ...current, [currentJob.id]: "problem" }))}>Describe how you worked</button></div>
+          {activeQuestion ? <EvidenceConversation key={`${currentJob.id}:${activeQuestion}:${version}`} question={activeQuestion === "problem" ? "What challenge did you face in this job, and how did you work through it?" : activeQuestion === "outcome" ? "What result did your work produce in this job, and what did you do to help achieve it?" : EVIDENCE_FACET_PROMPTS[activeQuestion]} questionId={`job:${currentJob.id}:${activeQuestion}`} destination={{ kind: "employment", id: currentJob.id }} destinationLabel={`${currentJob.jobTitle} at ${currentJob.company}`} scopeId={scopeId} baseVersion={version} source="library" facet={activeQuestion} disabled={dirty || pending} initialDraft={openDrafts.find(item => item.destination.kind === "employment" && item.destination.id === currentJob.id && item.questionId === `job:${currentJob.id}:${activeQuestion}` && item.baseVersion === version)} onConfirmed={() => { setQuestionFor(current => ({ ...current, [currentJob.id]: null })); setNotice("Evidence saved to Experience."); router.refresh(); }} /> : <p role="status" className="ds-prose text-14 text-muted">Done for now. Your result and way of working are both covered. You can add another example whenever you like.</p>}
+          {dirty && <p className="text-12 text-muted">Save the job details before answering a question.</p>}
+          <details className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-12 text-muted">Evidence guide and scores</summary>
           {entry && score && <EvidenceSummary
             evidence={score}
             refusal={evidence.refusal}
             stale={rowsMovedOn(entry, score.reviewedRows)}
-            onAddRow={(prompt: EvidencePrompt) => addRowFor(currentJob, prompt.facet)}
+            onAddRow={(prompt: EvidencePrompt) => setQuestionFor(current => ({ ...current, [currentJob.id]: prompt.facet ?? "outcome" }))}
           />}
           {entry && untagged && untagged !== score?.missingLine && <p className="text-12 text-muted">{untagged}</p>}
+          </details>
+          <details className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-12 text-muted">Edit evidence rows directly · {rows.length}/20</summary>
           {rows.length > 20 && <p role="alert" className="text-14 text-warn">Combine rows to 20 or fewer before saving.</p>}
           {rows.length > 0 && <div className="relative md:overflow-x-auto md:border-2 md:border-line"><table className="block w-full text-left text-14 md:table md:min-w-[820px]" aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibilities and outcomes`}>
             <thead className="hidden bg-sunken text-9 text-muted md:table-header-group"><tr><th scope="col" className="ds-pixel tracking-th w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="ds-pixel tracking-th border-b-2 border-line px-3 py-2">Narrative</th><th scope="col" className="ds-pixel tracking-th w-44 border-b-2 border-line px-3 py-2">Type</th><th scope="col" className="ds-pixel tracking-th w-32 border-b-2 border-line px-3 py-2">Score</th><th scope="col" className="ds-pixel tracking-th w-20 border-b-2 border-line px-3 py-2"><span className="sr-only">Actions</span></th></tr></thead>
@@ -549,9 +593,10 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
             })}</tbody>
           </table></div>}
           <button type="button" className="text-14 underline disabled:opacity-40" disabled={rows.length >= 20} onClick={() => addRowFor(currentJob, null)}>Add new responsibility or outcome</button>
-        </fieldset>;
+          </details>
+          </div>}
+        </section>;
       })}
-    </section>)}
     {/* The way back from a removal — and from the "Archive block" control the release before this
         one offered, whose blocks would otherwise be stored where nothing on the screen could reach
         them. Not a status control: it is invisible until something has been archived, and what it
@@ -559,13 +604,14 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {archived.length > 0 && <details className="border-2 border-line-muted px-3 py-2">
       <summary className="cursor-pointer text-12 text-muted">{`Archived jobs (${archived.length})`}</summary>
       <div className="mt-2 space-y-3 border-t-2 border-line-faint pt-2">
-        <p className="text-12 text-muted">A restore is unsaved; save the library to keep it.</p>
+        <p className="text-12 text-muted">A restore is unsaved; save Experience to keep it.</p>
         <ul className="space-y-2">{archived.map(block => <li key={block.entryId} className="flex flex-wrap items-center justify-between gap-3 text-14">
           {/* One string, so the heading and its row count are one line of text wherever this is
               read: on the page, by a screen reader, and by the smoke script. */}
           <span>{block.rows === null ? block.heading : `${block.heading} · ${block.rows} ${block.rows === 1 ? "row" : "rows"}`}</span>
           <button type="button" className="min-h-11 text-12 text-muted underline hover:text-fg" aria-label={`Restore ${block.heading}`} onClick={() => {
             setValue(block.employmentId ? restoreJob(value, block.employmentId) : restoreBlock(value, block.entryId));
+            if (block.employmentId) selectJob(block.employmentId);
           }}>Restore</button>
         </li>)}</ul>
       </div>
@@ -584,7 +630,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
           return normaliseSubmittedLibrarySkills(current, [entry.id], baseline) as CvLibrary;
         })} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
           <span className="block text-12 text-muted">These are compact CV skill pills, up to {CV_LIMITS.skillCharacters} characters each. Separate them with commas, semicolons or new lines. Use Details below for supporting context.</span>
-          <span className="block text-12 text-muted">New CV builds use the latest saved Library. Existing drafts keep their saved Library snapshot.</span>
+          <span className="block text-12 text-muted">New CV builds use your latest saved Experience. Existing drafts keep the version they started with.</span>
           <span className={`block text-12 ${parsed.length > 20 ? "text-danger" : "text-muted"}`} aria-live="polite">{parsed.length}/20 individual skills</span>
           {parsed.length > 0 && <span className="block text-12 text-muted">{parsed.map((item, index) => <span key={`${index}-${item}`} className="block">{item} — {cvSkillCharacterState(item).count}/{CV_LIMITS.skillCharacters} characters</span>)}</span>}
           {parsed.map((item, index) => cvSkillCharacterState(item).tooLong
@@ -592,7 +638,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
             : cvSkillCharacterState(item).approaching
               ? <span key={`warning-${index}`} className="block text-12 text-warn" role="status">Skill {index + 1} is approaching {CV_LIMITS.skillCharacters} characters.</span>
               : null)}
-          {parsed.length > 20 && <span className="block text-12 text-danger" role="alert">Keep up to 20 individual skills in this Library block.</span>}
+          {parsed.length > 20 && <span className="block text-12 text-danger" role="alert">Keep up to 20 individual skills in this block.</span>}
         </label>
           {(entry.skillItems ?? []).map((item, itemIndex) => {
             const split = splitCvLibrarySkillItem(entry.skillItems ?? [], itemIndex);
@@ -618,10 +664,14 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     </fieldset>)}
     <button type="button" className="mr-4 text-14 underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "active", heading: "", details: "" }] })}>Add education, skill or interest</button>
     </div>
-    {/* How rows and jobs are scored. Read-only: no field in it, so nothing invalid to reveal. */}
-    <div role="tabpanel" id="library-panel-guide" aria-labelledby="library-tab-guide" hidden={tab !== 'guide'} className="space-y-4">
-      <EvidenceGuide />
-    </div>
     </fieldset>
+    <details className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 font-semibold">Review evidence</summary>
+      <div className="mt-3 space-y-3">
+        {evidence.line && <p className="text-14 text-muted">{evidence.line}</p>}
+        {(unreviewed || rescoring) && <div className="flex flex-wrap items-center gap-3 text-14"><span>{changedRows ? "Some rows changed since the last review." : "Some rows have not been reviewed yet."}</span><button type="button" disabled={rescoring || dirty} className={buttonClass("secondary")} onClick={() => startTransition(() => rescore(new FormData()))}>{rescoring ? "Reviewing…" : "Re-score evidence"}</button></div>}
+        {refused && <p role="alert" className="text-14 text-danger">{refused}</p>}
+        <details><summary className="cursor-pointer text-12 text-muted">How evidence is scored</summary><div className="mt-3"><EvidenceGuide /></div></details>
+      </div>
+    </details>
   </form>;
 }

@@ -444,6 +444,24 @@ it("checks the PDF lays out before finalising, without holding the draft's row w
   expect((await draftRow(draft.id)).finalisedAt).not.toBeNull();
 });
 
+it("freezes one PDF with the finalised revision and keeps it when a new revision is saved", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const draft = await finalisableDraft();
+  expect(await finaliseCvDraft(draft.id, { ok: true }, reviewed())).toEqual({ ok: true });
+  const [approved] = await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft.id));
+  expect(approved?.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+  expect((await finaliseCvDraft(draft.id, { ok: true }, reviewed())).ok).toBe(false);
+  expect((await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft.id)))[0]?.bytes).toEqual(approved?.bytes);
+  const edit = new FormData();
+  edit.set("summary", "New revision wording");
+  edit.set("section-0", "Led a team");
+  await expect(saveCvDraft(draft.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
+  expect(child?.finalisedAt).toBeNull();
+  expect(await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, child!.id))).toHaveLength(0);
+  expect((await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft.id)))[0]?.bytes).toEqual(approved?.bytes);
+});
+
 it("records a dismissal against the current assessment and retains the factual finding", async () => {
   const draft = await finalisableDraft();
   const assessment = structuredClone(draft.assessment!);

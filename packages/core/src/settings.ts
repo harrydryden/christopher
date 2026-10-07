@@ -74,7 +74,7 @@ export type StageRoutes = Partial<Record<StageRouteId, StageRoute>>;
  * the registry's own test holds the two lists equal.
  */
 export const STAGE_ROUTE_IDS = [
-  "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A10.sources", "A11", "A12",
+  "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A10.sources", "A11", "A12", "A13",
   "cv.rubric", "cv.planning", "cv.author", "cv.improvement", "cv.review", "cv.review_candidate",
 ] as const;
 export type StageRouteId = (typeof STAGE_ROUTE_IDS)[number];

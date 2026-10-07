@@ -5,23 +5,16 @@ import { assessCvDraft } from "@/app/actions/cv";
 import { cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
 import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvLazyWidgets";
-import { RebuildButton } from "./CvDraftEditor";
 import { SettingsForm } from "./SettingsForm";
 import { CvReviewControls } from "./CvReviewControls";
 
-/**
- * The Library moved on after this revision was written, said where its evidence is judged.
- *
- * The control beside it is the editor's own Rebuild from Library, submitting the editor's form by
- * name: one rebuild in the product, offered in a second place rather than written twice. It is
- * absent when there is no editor on the page, because there is then nothing to rebuild from.
- */
-function LibraryDrift({ sentence, formId }: { sentence: string | null; formId: string | null }) {
+/** Explain source changes where the evidence is judged; rewriting stays in the Write controls. */
+function LibraryDrift({ sentence }: { sentence: string | null }) {
   if (!sentence) return null;
   return (
     <div role="status" className="flex flex-wrap items-center gap-3 border border-warn p-3 text-14">
       <p className="text-warn">{sentence}</p>
-      {formId && <RebuildButton form={formId} />}
+      <p>Use More options in Write if you want a new draft from the latest Experience.</p>
     </div>
   );
 }
@@ -31,21 +24,23 @@ export function CvAssessmentPanel({
   assessment,
   current,
   finalised,
+  hasFinalPdf = false,
   busy,
   hasContent,
   content,
   library = null,
   libraryDrift = null,
-  rebuildFormId = null,
   finaliseReason = null,
   blocked = null,
   comments = [],
+  initialFindingId = null,
   reviewDecision = null,
 }: {
   id: string;
   assessment: CvAssessment | null;
   current: boolean;
   finalised: boolean;
+  hasFinalPdf?: boolean;
   busy: boolean;
   hasContent: boolean;
   content: CvContent | null;
@@ -53,8 +48,6 @@ export function CvAssessmentPanel({
   library?: Pick<CvLibrary, "entries"> | null;
   /** "Your Library changed since this build (v7 → v9).", or null while the build is up to date. */
   libraryDrift?: string | null;
-  /** The editor form the Rebuild control submits, or null when this page has no editor. */
-  rebuildFormId?: string | null;
   /**
    * Why this revision cannot be finalised, in the sentence `assertCvFinalisable` would throw, or
    * null when it can be. Computed on the page with the same function the action re-runs, so the
@@ -68,21 +61,22 @@ export function CvAssessmentPanel({
    * opinion beside the reviewer's findings — and never change a score, a status or a rating.
    */
   comments?: CvCommentInput[];
+  initialFindingId?: string | null;
   reviewDecision?: CvReviewDecision | null;
 }) {
   if (!assessment || !current)
     return (
       <section className="border border-warn p-4 space-y-3">
-        <h2 className="ds-pixel text-12">Job match assessment</h2>
-        <p className="text-14">
-          {busy
-            ? "Assessment pending"
-            : "Assessment required"}
-        </p>
-        {!busy && finaliseReason && (
+        <h2 className="text-14 font-semibold">Job match assessment</h2>
+        <p className="text-14">{finalised
+          ? hasFinalPdf
+            ? "This finalised revision no longer has a current assessment. Its saved PDF is still available; create a new revision for a current review."
+            : "This finalised revision has no saved PDF available. Create a new revision, check it and finalise again."
+          : busy ? "Assessment pending" : "Assessment required"}</p>
+        {!busy && !finalised && finaliseReason && (
           <p className="text-14 text-warn">{finaliseReason}</p>
         )}
-        <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
+        {!finalised && <LibraryDrift sentence={libraryDrift} />}
         {!busy && !finalised && (
           <>
             <fieldset disabled={!!blocked} className="min-w-0">
@@ -120,7 +114,7 @@ export function CvAssessmentPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 id="cv-match-title" className="ds-pixel text-12">
+          <h2 id="cv-match-title" className="text-14 font-semibold">
             CV evaluation
           </h2>
           <p className="text-14 text-muted">
@@ -128,13 +122,9 @@ export function CvAssessmentPanel({
             {assessment.pageCount === 1 ? "page" : "pages"}
           </p>
         </div>
-        <div className="bg-accent px-4 py-3 text-accent-fg">
-          <strong className="ds-pixel text-24">{assessment.score}/100</strong>
-          <p className="text-12">CV match score</p>
-        </div>
       </div>
       <p className="text-14 text-muted">
-        Library evidence:{" "}
+        Match <strong>{assessment.score}/100</strong>{" · "}Experience evidence:{" "}
         <strong>{assessment.availableEvidenceScore}/100</strong>
         {" · "}
         {essentialGaps} essential requirements to review
@@ -142,10 +132,15 @@ export function CvAssessmentPanel({
         {flagged.length} factual {flagged.length === 1 ? "concern" : "concerns"}
 
       </p>
+      <LibraryDrift sentence={libraryDrift} />
+      {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise={!overPages} />}
+      <details className="border-t border-line-muted pt-3">
+        <summary className="cursor-pointer text-14 font-medium">View full assessment</summary>
+        <div className="mt-4 space-y-4">
       {quality && (
         <div className="space-y-3" aria-labelledby="cv-quality-title">
           <div>
-            <h3 id="cv-quality-title" className="ds-pixel text-11">Quality checks</h3>
+            <h3 id="cv-quality-title" className="text-14 font-semibold">Quality checks</h3>
             <p className="text-12 text-muted">Separate checks show what the match score alone cannot.</p>
           </div>
           <dl className="grid gap-px border border-line-muted bg-line-muted sm:grid-cols-2 lg:grid-cols-4">
@@ -162,7 +157,7 @@ export function CvAssessmentPanel({
             <div className="bg-raised p-3">
               <dt className="ds-label">Evidence ready to use</dt>
               <dd className="mt-1 text-16 font-semibold">{quality.evidencedOpportunityGap.count}</dd>
-              <dd className="text-12 text-muted">requirements with stronger evidence in the Library than this CV shows</dd>
+              <dd className="text-12 text-muted">requirements with stronger evidence in Experience than this CV shows</dd>
             </div>
             <div className="bg-raised p-3">
               <dt className="ds-label">Logistics to confirm</dt>
@@ -181,19 +176,18 @@ export function CvAssessmentPanel({
           </div>
         </div>
       )}
-      <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
-      {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} canFinalise={!overPages} />}
       <CvEvaluationTable rows={rows} />
+        </div>
+      </details>
       <div className="flex flex-wrap items-center gap-3 text-14">
         <a className="font-medium text-fg underline" href="/library">
-          Open Library
+          Open Experience
         </a>
 
       </div>
       {finalised ? (
         <p className="border border-ok p-3 text-14">
-          Finalised. Download this saved revision or create a new revision to
-          make changes.
+          {hasFinalPdf ? "Finalised. Download the saved PDF, or create a new revision to make changes." : "Finalised, but the saved PDF is unavailable. Create a new revision to make a downloadable document."}
         </p>
       ) : busy ? null : overPages ? (
         // Findings can be dismissed or explicitly overridden. Page overflow still needs a valid

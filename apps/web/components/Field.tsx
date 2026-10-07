@@ -5,11 +5,13 @@ import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTML
  * goes full-contrast on focus. Exported as class strings as well as components
  * because server components style raw inputs directly in several places.
  */
-export const inputClass =
-  "w-full border-2 border-line-muted bg-bg px-3 py-2 font-mono text-14 text-fg " +
+const fieldClass =
+  "w-full border-2 border-line-muted bg-bg py-2 font-mono text-14 text-fg " +
   "placeholder:text-faint focus:border-line focus:outline-none";
+export const inputClass = `${fieldClass} px-3`;
 
-export const selectClass = `${inputClass} ds-select`;
+// Reserve room for the CSS chevron without px-3 overriding its right padding.
+export const selectClass = `${fieldClass} pl-3 pr-8 ds-select`;
 
 /** Field labels are the one place small caps tracking is used. */
 export const labelClass = "ds-label";

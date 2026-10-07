@@ -64,7 +64,7 @@ export function CvBuildNarrative({ items }: { items: NarrativeItem[] }) {
         if (item.kind === "divider")
           return (
             <li key={item.key} className="text-14">
-              <p className="ds-divider ds-pixel mt-3 pb-2 text-10 text-muted">{item.label}</p>
+              <p className="ds-divider mt-3 pb-2 text-12 font-medium text-muted">{item.label}</p>
             </li>
           );
         if (item.kind === "line")

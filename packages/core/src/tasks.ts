@@ -86,6 +86,8 @@ export interface TaskPayloads {
    * dedupe key is the account and a burst of saves must run once, for what is there when it runs.
    */
   review_library: { userId: string; libraryVersion: number };
+  /** Draft one unconfirmed evidence row from a stored answer; the row never writes the Library. */
+  draft_evidence: { userId: string; evidenceDraftId: string; attempt: number };
   /**
    * One document on its way into an account's Library: a past CV, LinkedIn's own PDF of a
    * profile, a personal website or pasted text. The row carries the document; the task carries
@@ -124,7 +126,7 @@ export const GATE_REEVALUATION_VERSION = 2;
  * the lane cannot disagree about which types count.
  */
 export const INTERACTIVE_TASK_TYPES = [
-  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "import_library_document", "import_role_description",
+  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "draft_evidence", "import_library_document", "import_role_description",
 ] as const satisfies readonly TaskType[];
 
 /** The shared daily scan and its fan-out: the scan lane's own work. */
@@ -166,6 +168,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   // the version: the editor saves the whole library at once, so a person typing through five saves
   // would otherwise queue five passes over the same entries.
   review_library: { priority: 1, dedupe: (p) => `review_library:${p.userId}` },
+  draft_evidence: { priority: 1, dedupe: (p) => `draft_evidence:${p.evidenceDraftId}:${p.attempt}` },
   // Someone has just handed over their CV and is watching the page for what came of it. Keyed by
   // the import, not the account: two documents brought in the same minute are two extractions, and
   // re-reading one that failed is the same piece of work rather than a second one.
@@ -253,6 +256,7 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   import_posting: 4 * 60_000,
   // One batched model call per eight entries, each seeing the whole library from the cache.
   review_library: 4 * 60_000,
+  draft_evidence: 3 * 60_000,
   // A conversion or a page fetch, then one model call over a document of up to 40,000 characters.
   import_library_document: 4 * 60_000,
   import_role_description: 4 * 60_000,

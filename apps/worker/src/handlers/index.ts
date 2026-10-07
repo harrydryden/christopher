@@ -1,6 +1,7 @@
 import { handleGenerateCv } from "./cv";
 import { handleImportLibraryDocument } from "./library-import";
 import { handleReviewLibrary } from "./library-review";
+import { handleDraftEvidence } from "./evidence-draft";
 import type { HandlerMap } from "../queue";
 import { handleDiscover } from "./discover";
 import { handleRunDaily } from "./daily";
@@ -50,6 +51,7 @@ export const handlers: HandlerMap = {
   rescore_all: handleRescoreAll,
   reevaluate_gate: handleReevaluateGate,
   review_library: handleReviewLibrary,
+  draft_evidence: handleDraftEvidence,
   import_library_document: handleImportLibraryDocument,
   collect_score_batch: handleCollectScoreBatch,
   poll_score_batch: handlePollScoreBatch,

@@ -407,6 +407,13 @@
       "when": 1792922400000,
       "tag": "0059_cv_review_decision",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1793008800000,
+      "tag": "0060_evidence_drafts",
+      "breakpoints": true
     }
   ]
 }

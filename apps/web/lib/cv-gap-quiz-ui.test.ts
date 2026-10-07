@@ -41,7 +41,7 @@ it("hands the quiz only the destinations an answer can be saved under", () => {
 });
 
 it("offers the shaped destinations and starts each question on its suggestion", () => {
-  const html = renderToStaticMarkup(createElement(CvGapQuiz, { quiz: gapQuizForm(quiz, library), library: gapQuizLibrary(library), action: async () => ({ ok: true as const }) }));
+  const html = renderToStaticMarkup(createElement(CvGapQuiz, { quiz: gapQuizForm(quiz, library), library: gapQuizLibrary(library), draftId: "draft-1", scopeId: "user-1", action: async () => ({ ok: true as const }) }));
   const selects = html.match(/<select[\s\S]*?<\/select>/g)!;
   expect(selects).toHaveLength(2);
   for (const select of selects) {

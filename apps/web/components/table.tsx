@@ -2,7 +2,7 @@ import type { ReactNode, ThHTMLAttributes, TdHTMLAttributes } from "react";
 
 export function Table({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className="overflow-x-auto border-2 border-line">
+    <div className="overflow-x-auto border border-line-faint">
       <table className={`w-full min-w-[720px] border-collapse text-14 ${className}`}>{children}</table>
     </div>
   );
@@ -29,7 +29,7 @@ export function TR({ children, className = "", highlighted = false }: { children
 
 export function TH({ children, className = "", ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th scope="col" className={`border-b-2 border-line px-3 py-2 text-13 font-semibold text-muted ${className}`} {...rest}>
+    <th scope="col" className={`border-b border-line-muted px-3 py-2 text-13 font-semibold text-muted ${className}`} {...rest}>
       {children}
     </th>
   );
@@ -60,7 +60,7 @@ export function FitBar({ score, title, state }: { score: number | null; title?: 
   return (
     <span className="inline-flex max-w-full min-w-0 flex-wrap items-center gap-2 whitespace-normal">
       <span className="flex items-center gap-2" title={title}>
-        <span className="ds-pixel w-6 text-right text-10 text-fg">{score}</span>
+        <span className="w-6 text-right text-13 text-fg">{score}</span>
         <span className="flex gap-0.5" aria-hidden="true" data-fit-steps>
           {Array.from({ length: 10 }, (_, i) => (
             <span key={i} className={`h-2 w-1.5 ${i < filled ? tone : "bg-track"}`} />

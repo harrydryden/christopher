@@ -25,7 +25,7 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team\nBuilt tools", confirmedResponsibilities: ["Led a team"] }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 2 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 2 }));
   const checkboxes = html.match(/<input[^>]+aria-label="Confirm Acme Director entry \d+"[^>]*>/g)!;
   expect(checkboxes).toHaveLength(2);
   expect(checkboxes[0]).toContain('type="checkbox"');
@@ -33,9 +33,9 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   expect(checkboxes[1]).not.toContain('checked=""');
   expect(html).toContain('aria-label="Acme Director responsibilities and outcomes"');
   expect(html).toMatch(/<th[^>]*>#<\/th><th[^>]*>Confirmed<\/th><th[^>]*>Narrative<\/th><th[^>]*>Type<\/th><th[^>]*>Score<\/th>/);
-  expect(html).toContain('aria-label="Job 1 industry descriptions"');
+  expect(html).toContain('aria-label="Acme Director industry descriptions"');
   expect(html).toContain("Healthcare, SaaS");
-  expect(html).toMatch(/<th[^>]*>Company<\/th><th[^>]*>Industry descriptions<\/th><th[^>]*>Job title<\/th>/);
+  expect(html).toContain("What you did and achieved");
   expect(html).not.toMatch(/<th[^>]*>Entries<\/th>/);
   // What this job still needs before a CV can use it, beside the rows it is about. A job in
   // employment history is evidence of itself, so the sentence says nothing about a status.
@@ -43,18 +43,52 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   expect(html).toContain("Confirm all");
   // Nothing has changed, so there is nothing to save and no bar offering to: saving is the
   // person's own act, and the control for it appears once there is something to save.
-  expect(html).not.toContain("Save library");
+  expect(html).not.toContain("Save Experience");
   expect(html).not.toContain("sticky top-0");
-  expect(html).toContain("Ready to build: yes");
-  // The employment grid is a table above `md` and stacked cards below it.
-  expect(html).toContain("md:table-row");
+  expect(html).toContain("Your confirmed evidence can be used in future CVs.");
+  // The direct row table remains available as a secondary editing control.
+  expect(html).toContain("Edit evidence rows directly");
   expect(html.match(/aria-label="Job 1 company"/g)).toHaveLength(1);
-  expect(html.match(/aria-label="Job 1 industry descriptions"/g)).toHaveLength(1);
+  expect(html.match(/aria-label="Acme Director industry descriptions"/g)).toHaveLength(1);
   expect(html.match(/aria-label="Job 1 title"/g)).toHaveLength(1);
   expect(html.match(/aria-label="Job 1 start date"/g)).toHaveLength(1);
   expect(html.match(/aria-label="Job 1 end date"/g)).toHaveLength(1);
   expect(html.match(/aria-label="Job 1 current"/g)).toHaveLength(1);
   expect(html.match(/aria-label="Acme Director evidence 1"/g)).toHaveLength(1);
+});
+
+it("advances the guided question through confirmed result and method evidence", () => {
+  const base: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
+    employment: [{ id: "job", company: "Example", jobTitle: "Operations lead", startDate: "2020", endDate: "", current: true }],
+    entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Operations lead",
+      details: "Reduced handover time.\nWorked through a difficult handover.", confirmedResponsibilities: ["Reduced handover time."],
+      rowFacets: { "Reduced handover time.": ["outcome"], "Worked through a difficult handover.": ["problem"] } }] };
+  const first = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(base), version: 2 }));
+  expect(first).toMatch(/aria-pressed="true"[^>]*>Describe how you worked<\/button>/);
+  expect(first).toMatch(/aria-pressed="false"[^>]*>Describe a result<\/button>/);
+  const both = { ...base, entries: [{ ...base.entries[0]!, confirmedResponsibilities: ["Reduced handover time.", "Worked through a difficult handover."] }] };
+  const done = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(both), version: 3 }));
+  expect(done).toContain("Done for now. Your result and way of working are both covered.");
+  expect(done).not.toContain("Opening question…");
+});
+
+it("opens one compact job card at a time, with details behind an edit control", () => {
+  const library: CvLibrary = { name: "Example", contact: "", profile: "", structuredExperience: true,
+    employment: [
+      { id: "first", company: "Example Company", jobTitle: "Operations lead", startDate: "2022", endDate: "", current: true },
+      { id: "second", company: "Other Company", jobTitle: "Analyst", startDate: "2019", endDate: "2021", current: false },
+    ],
+    entries: [
+      { id: "one", kind: "experience", heading: "Operations lead", employmentId: "first", details: "Improved handovers.", confirmedResponsibilities: ["Improved handovers."] },
+      { id: "two", kind: "experience", heading: "Analyst", employmentId: "second", details: "Analysed demand.", confirmedResponsibilities: ["Analysed demand."] },
+    ] };
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 2 }));
+  expect(html).toContain('aria-controls="job-content-first"');
+  expect(html).toContain('aria-controls="job-content-second"');
+  expect(html).toContain('id="job-content-first"');
+  expect(html).not.toContain('id="job-content-second"');
+  expect(html).toContain("Edit job details</summary>");
+  expect(html).toContain("1 of 1 confirmed");
 });
 
 it("sets the evidence table's column heads in the pixel face's one weight, not a bold <th>", () => {
@@ -64,7 +98,7 @@ it("sets the evidence table's column heads in the pixel face's one weight, not a
   const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team" }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
   const table = html.slice(html.indexOf('aria-label="Acme Director responsibilities and outcomes"'));
   const head = table.slice(0, table.indexOf("</thead>"));
   const heads = head.match(/<th [^>]*>/g)!;
@@ -80,14 +114,14 @@ it("offers no state to set on a block and no way to archive one but removing its
       { id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] },
       { id: "two", kind: "skill", status: "active", heading: "Tools", details: "SQL and Power BI" },
     ] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 5 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 5 }));
   expect(html).not.toMatch(/aria-label="Status:/);
   expect(html).not.toContain("Archive block");
   expect(html).not.toContain("Draft — excluded from CVs");
   expect(html).not.toContain("Active — eligible for CVs");
   expect(html).not.toMatch(/activate/i);
   // Removing the job is the control that archives its evidence, and it is never disabled.
-  expect(html).toMatch(/<button[^>]*title="Remove job"[^>]*aria-label="Remove job 1"/);
+  expect(html).toMatch(/<button[^>]*title="Remove job"[^>]*aria-label="Remove Acme Director"/);
   expect(html).not.toContain("This job has an evidence block");
 });
 
@@ -95,8 +129,8 @@ it("says what a library with nothing confirmed still needs before a CV can be bu
   const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team", confirmedResponsibilities: [] }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 3 }));
-  expect(html).toContain("Ready to build: no — confirm Acme’s rows");
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 3 }));
+  expect(html).toContain("To build a CV, confirm Acme’s rows");
   expect(html).toContain("0 of 1 row confirmed");
 });
 
@@ -112,9 +146,9 @@ it("opens a library an earlier release stored, with its tag and its block intact
       rowFacets: { "Led a team": "responsibility", "Cut handovers by 40%": "metric" },
     }],
   };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(stored), version: 6 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(stored), version: 6 }));
   // The block is evidence of a job the person still lists: usable, and countable towards a build.
-  expect(html).toContain("Ready to build: yes");
+  expect(html).toContain("Your confirmed evidence can be used in future CVs.");
   expect(html).toContain("1 of 2 rows confirmed");
   // The stored tag reads as the one type it is, and the row that carries it says so.
   expect(html).toContain("Responsibilities");
@@ -130,7 +164,7 @@ it("tags every row with the types it serves and says what the job is still missi
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director",
       details: "Led a team\nCut handovers by 40% after the site moved", confirmedResponsibilities: ["Led a team"],
       rowFacets: { "Led a team": ["responsibility"], "Cut handovers by 40% after the site moved": ["problem", "outcome", "metric"] } }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 4 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 4 }));
   // One menu button per row, named by the row it belongs to, closed until it is opened.
   expect(html).toMatch(/<button type="button" aria-label="Type of row 1" aria-haspopup="menu" aria-expanded="false"/);
   expect(html).toMatch(/<button type="button" aria-label="Type of row 2" aria-haspopup="menu" aria-expanded="false"/);
@@ -152,33 +186,32 @@ it("prompts for a type on a row that has none", () => {
   const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team", confirmedResponsibilities: [] }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
   expect(html).toContain("Choose types");
   expect(html).toContain("No outcomes or metrics moved yet · 4 other types untagged");
 });
 
 it("keeps skill labels in a separate Library panel without appearance controls", () => {
   const library: CvLibrary = { name: "Example", contact: "", profile: "", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL, Python and reporting", skillItems: ["SQL", "Python"] }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
   expect(html).toContain('aria-label="Individual skills: Tools"');
   expect(html).toContain('SQL\nPython');
   expect(html).toContain('SQL, Python and reporting');
   expect(html).not.toContain('Page background');
   expect(html).not.toContain('Evidence blocks');
-  expect(html).toContain('aria-label="Library sections"');
+  expect(html).toContain('aria-label="Experience sections"');
   expect(html).toContain('id="library-panel-education" aria-labelledby="library-tab-education" hidden=""');
 });
 
-it("puts the Scoring guide in a fourth tab after Education, hidden until chosen, with nothing to fill in", () => {
+it("puts scoring guidance in a secondary disclosure after the three main sections", () => {
   const library: CvLibrary = { name: "Example", contact: "", profile: "", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL" }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
-  const strip = html.slice(html.indexOf('aria-label="Library sections"'));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
+  const strip = html.slice(html.indexOf('aria-label="Experience sections"'));
   expect([...strip.slice(0, strip.indexOf("</div>")).matchAll(/role="tab" id="library-tab-(\w+)"[^>]*>([^<]*)</g)].map(match => [match[1], match[2]]))
-    .toEqual([["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"], ["guide", "Scoring guide"]]);
-  expect(html).toContain('<button type="button" role="tab" id="library-tab-guide" aria-controls="library-panel-guide" aria-selected="false" tabindex="-1"');
-  const panel = html.slice(html.indexOf('id="library-panel-guide"'));
-  expect(panel).toMatch(/^id="library-panel-guide" aria-labelledby="library-tab-guide" hidden=""/);
-  const body = panel.slice(0, panel.indexOf("</form>"));
+    .toEqual([["experience", "Work history"], ["education", "Education &amp; skills"], ["intro", "About you"]]);
+  expect(html).toContain("Review evidence</summary>");
+  expect(html).toContain("How evidence is scored</summary>");
+  const body = html.slice(html.indexOf("How evidence is scored"), html.indexOf("</form>"));
   expect(body).toContain('<h2 class="ds-pixel text-12">Scoring guide</h2>');
   expect(body).toContain("A strong row says");
   expect(body).not.toMatch(/<(input|select|textarea|button)\b/);
@@ -190,7 +223,7 @@ it("shows the evidence a stored review reports, with a question and a control th
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director",
       details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
   const evidence = libraryEvidence(library, new Map(), { pending: true, refusal: null });
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1, evidence }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1, evidence }));
   expect(html).toContain("Evidence: None");
   expect(html).toContain("None");
   expect(html).toContain("Evaluating…");
@@ -211,9 +244,10 @@ it("offers the re-score once saved rows have changed since the last review, and 
   // No stored review describes these rows and no pass is running: the saved rows are scored from
   // the person's own tags, and the bar offers the full review.
   const evidence = libraryEvidence(library, new Map(), { pending: false, refusal: null });
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 3, evidence }));
-  expect(html).toMatch(/sticky top-0[^"]*border-b-2 border-line bg-bg[\s\S]*Rows changed since the last review\.[\s\S]*>Re-score</);
-  expect(html).not.toContain("Save library");
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 3, evidence }));
+  expect(html).toContain("Some rows changed since the last review.");
+  expect(html).toContain("Re-score evidence");
+  expect(html).not.toContain("Save Experience");
   expect(html).toContain("Scored from your own tags. Re-score for the full review.");
   // One score cell per row, scored against the row's own types: an untyped row asks for one, a
   // typed row is a button that opens what it is missing. No hover text: the guidance is a click.
@@ -223,19 +257,19 @@ it("offers the re-score once saved rows have changed since the last review, and 
   expect(html).not.toMatch(/<button[^>]*aria-label="Score [^"]*"[^>]*title=/);
 
   // Never saved: nothing to re-score.
-  expect(renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 0, evidence }))).not.toContain("Rows changed since the last review");
+  expect(renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 0, evidence }))).not.toContain("Rows changed since the last review");
 });
 
 it("gives each contact detail its own field, calls the overview a bio, and has no JSON import or export", () => {
   const library: CvLibrary = { name: "Rowan Mercer", contact: "Manchester, UK · rowan@example.test · +44 7700 900123", profile: "Operations leader", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL" }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 2 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 2 }));
   // Opened through the upgrade: the address and the number move to their fields, the rest stays.
   expect(html).toMatch(/<span class="ds-label">Email<\/span><input type="email"[^>]*value="rowan@example.test"/);
   expect(html).toMatch(/<span class="ds-label">Phone<\/span><input type="tel"[^>]*value="\+44 7700 900123"/);
   expect(html).toMatch(/<span class="ds-label">Location<\/span><input type="text"[^>]*value=""/);
   expect(html).toMatch(/<span class="ds-label">Other contact details<\/span><input type="text"[^>]*value="Manchester, UK"/);
   // Every intro line is the same control.
-  expect(html).toMatch(/<span class="ds-label">Name<\/span><input type="text"/);
+  expect(html).toMatch(/<span class="ds-label">Name<\/span><input[^>]*type="text"/);
   expect(html).toContain('<span class="ds-label">Bio</span>');
   expect(html).not.toMatch(/career overview/i);
   expect(html).not.toMatch(/Import library JSON|Export library/);
@@ -248,7 +282,7 @@ it("opens the Experience tab on a gap carried from a CV, with the requirement qu
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director",
       details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, {
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user",
     library: openStoredLibrary(library), version: 1, need: "Five years of experience leading operations in a regulated environment", job: "job",
   }));
   expect(html).toContain("Add evidence for: Five years of experience leading operations in a regulated environment");
@@ -257,7 +291,7 @@ it("opens the Experience tab on a gap carried from a CV, with the requirement qu
   expect(html).toContain('id="library-panel-intro" aria-labelledby="library-tab-intro" hidden=""');
 
   // An old draft can name a job that has since been deleted. The need is still worth showing.
-  const stale = renderToStaticMarkup(createElement(CvLibraryEditor, {
+  const stale = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user",
     library: openStoredLibrary(library), version: 1, need: "Five years leading operations", job: "a-job-that-went",
   }));
   expect(stale).toContain("Add evidence for: Five years leading operations");
@@ -276,7 +310,7 @@ it("shows neither a removed job nor the evidence archived with it", () => {
       { id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team", confirmedResponsibilities: [] },
       { id: "two", kind: "experience", status: "inactive", employmentId: "gone", heading: "Head of Operations", details: "Ran the estate", confirmedResponsibilities: ["Ran the estate"] },
     ] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 8 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 8 }));
   // Everything above the Archived jobs disclosure is the editor proper: employment history, the
   // rows tables, the readiness lines. The removed job is in none of it, and its wording is
   // nowhere on the page at all.
@@ -285,7 +319,7 @@ it("shows neither a removed job nor the evidence archived with it", () => {
   expect(onScreen(html)).not.toContain("Ran the estate");
   expect(editing).toContain("Acme");
   // Archived evidence is never counted, so this library is not ready on the strength of it.
-  expect(html).toContain("Ready to build: no — confirm Acme’s rows");
+  expect(html).toContain("To build a CV, confirm Acme’s rows");
   // It is still what the save will post, so the version that kept it keeps it.
   expect(html).toContain("&quot;Ran the estate&quot;");
 });
@@ -296,7 +330,7 @@ it("offers a way back from every removal, and nothing at all when nothing was re
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team", confirmedResponsibilities: [] }] };
   // Nothing is archived, so there is no disclosure: this is the way back from a removal, not a
   // state control, and it is invisible until there is something to come back from.
-  expect(renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(live), version: 1 }))).not.toContain("Archived jobs");
+  expect(renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(live), version: 1 }))).not.toContain("Archived jobs");
 
   const removed: CvLibrary = { ...live,
     employment: [
@@ -310,7 +344,7 @@ it("offers a way back from every removal, and nothing at all when nothing was re
       // education panel does not show either.
       { id: "three", kind: "skill", status: "inactive", heading: "Tools", details: "SQL and Power BI" },
     ] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(removed), version: 9 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(removed), version: 9 }));
   // One disclosure, counting everything it lists, collapsed until it is opened.
   expect(html).toContain("<summary class=\"cursor-pointer text-12 text-muted\">Archived jobs (2)</summary>");
   expect(html).not.toContain("<details open");
@@ -318,7 +352,7 @@ it("offers a way back from every removal, and nothing at all when nothing was re
   expect(html).toContain("Head of Operations · Globex · 2015 – 2019 · 2 rows");
   expect(html).toContain('aria-label="Restore Head of Operations · Globex · 2015 – 2019"');
   expect(html).toContain('aria-label="Restore Tools"');
-  expect(html).toContain("save the library to keep it");
+  expect(html).toContain("save Experience to keep it");
   // Restoring changes what is on the screen and nothing else: the block is still archived in what
   // the form would post until the person saves.
   expect(html).toContain("&quot;status&quot;:&quot;inactive&quot;");
@@ -349,7 +383,7 @@ it("tags an untyped row with the full review's reading when the person adopts it
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  act(() => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1, evidence })));
+  act(() => root.render(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1, evidence })));
   const posted = () => JSON.parse(container.querySelector<HTMLInputElement>('input[name="library"]')!.value) as CvLibrary;
   expect(posted().entries[0]!.rowFacets ?? {}).toEqual({});
 
@@ -377,8 +411,8 @@ it("does not let a landing evidence score change what the form will post", () =>
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director",
       details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
   const posted = (html: string) => html.match(/name="library" value="([^"]*)"/)![1];
-  const waiting = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1, evidence: libraryEvidence(library, new Map(), { pending: true, refusal: null }) }));
-  const landed = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1, evidence: libraryEvidence(library, new Map(), { pending: false, refusal: null }) }));
+  const waiting = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1, evidence: libraryEvidence(library, new Map(), { pending: true, refusal: null }) }));
+  const landed = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1, evidence: libraryEvidence(library, new Map(), { pending: false, refusal: null }) }));
   expect(posted(waiting)).toBe(posted(landed));
   expect(waiting).toContain("Evaluating…");
   expect(landed).not.toContain("Evaluating…");
@@ -392,7 +426,7 @@ it("counts pasted skills live, flags long labels, and normalises on submit witho
   const root = createRoot(container);
   vi.mocked(saveCvLibrary).mockResolvedValue({ ok: false, error: "Test save" });
   try {
-    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 })));
+    await act(async () => root.render(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 })));
     const textarea = container.querySelector<HTMLTextAreaElement>('[aria-label="Individual skills: Commercial"]')!;
     const type = async (text: string) => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, text);
@@ -404,7 +438,7 @@ it("counts pasted skills live, flags long labels, and normalises on submit witho
     expect(container.textContent).toContain("Skill 1 is approaching 150 characters.");
     await type("A".repeat(151));
     expect(container.textContent).toContain("Skill 1 is 151 characters; the limit is 150.");
-    expect([...container.querySelectorAll("button")].find(button => button.textContent === "Save library")?.disabled).toBe(true);
+    expect([...container.querySelectorAll("button")].find(button => button.textContent === "Save Experience")?.disabled).toBe(true);
     await type("Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support");
     const form = container.querySelector<HTMLFormElement>("form")!;
     await act(async () => form.requestSubmit());
@@ -428,7 +462,7 @@ it("preserves a canonical comma skill through focus, blur and unrelated Library 
   const root = createRoot(container);
   vi.mocked(saveCvLibrary).mockResolvedValue({ ok: false, error: "Test save" });
   try {
-    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 })));
+    await act(async () => root.render(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 })));
     const skills = container.querySelector<HTMLTextAreaElement>('[aria-label="Individual skills: Compliance"]')!;
     expect(container.textContent).toContain("2/20 individual skills");
     await act(async () => { skills.focus(); skills.blur(); });
@@ -464,7 +498,7 @@ it("splits a stored combined skill only on request and preserves its supporting 
   const root = createRoot(container);
   vi.mocked(saveCvLibrary).mockResolvedValue({ ok: false, error: "Test save" });
   try {
-    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 })));
+    await act(async () => root.render(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 })));
     const skills = container.querySelector<HTMLTextAreaElement>('[aria-label="Individual skills: Commercial"]')!;
     expect(container.textContent).toContain("1/20 individual skills");
     await act(async () => { skills.focus(); skills.blur(); });
@@ -495,7 +529,7 @@ it("shows why a combined Library skill cannot be split past the 20-label limit",
       ...Array.from({ length: 19 }, (_, index) => `Tool ${index + 1}`), "SQL, Python",
     ] },
   ] };
-  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
   expect(html).toContain("Splitting makes 21 skills; maximum 20. Remove some first.");
   expect(html).toMatch(/aria-label="Split skill 20 in Tools into separate skills"[^>]*disabled=""/);
 });
@@ -514,24 +548,33 @@ it("keeps the exact unsaved draft after a conflicting reload and lets the person
   const posted = () => JSON.parse(container.querySelector<HTMLInputElement>('input[name="library"]')!.value) as CvLibrary;
   const button = (label: string) => [...container.querySelectorAll("button")].find(item => item.textContent === label)!;
   try {
-    await act(async () => root.render(createElement(CvLibraryEditor, { library: openStoredLibrary(base), version: 1 })));
+    await act(async () => root.render(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(base), version: 1 })));
     const bio = container.querySelector<HTMLTextAreaElement>('#library-panel-intro textarea')!;
     // Use the prototype setter so React observes the same native input event as a person typing.
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bio, "My unsaved bio");
     await act(async () => bio.dispatchEvent(new Event("input", { bubbles: true })));
     expect(posted().profile).toBe("My unsaved bio");
-    await act(async () => button("Save library").click());
+    await act(async () => button("Save Experience").click());
     expect(button("Reload and keep my text")).toBeTruthy();
-    await act(async () => { button("Reload and keep my text").click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await act(async () => button("Reload and keep my text").click());
+    // Conflict merging is lazy-loaded: wait for its observable result, not a machine-specific delay.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(posted().profile).toBe("Saved in another tab");
+    });
     expect(fetch).toHaveBeenCalledOnce();
     expect(posted().profile).toBe("Saved in another tab");
     expect(container.textContent).toContain("My unsaved bio");
-    expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Original unsaved Library draft"]')!.value).toContain("My unsaved bio");
-    expect(button("Save library")).toBeUndefined();
+    expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Original unsaved Experience draft"]')!.value).toContain("My unsaved bio");
+    expect(button("Save Experience")).toBeUndefined();
     expect(container.textContent).toContain("Choose wording for 1 conflict before saving");
-    await act(async () => { button("Use my version").click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await act(async () => button("Use my version").click());
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(posted().profile).toBe("My unsaved bio");
+    });
     expect(posted().profile).toBe("My unsaved bio");
-    expect(button("Save library").disabled).toBe(false);
+    expect(button("Save Experience").disabled).toBe(false);
     expect(button("Reload and keep my text")).toBeUndefined();
   } finally {
     act(() => root.unmount());

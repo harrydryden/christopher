@@ -17,6 +17,7 @@ export function SettingsForm({
   id,
   children,
   submitLabel = "Save",
+  submitVariant = "primary",
   submitDisabled = false,
   submitDescribedBy,
   secondaryActions,
@@ -30,6 +31,7 @@ export function SettingsForm({
   ) => Promise<ActionResult>;
   children?: ReactNode;
   submitLabel?: string;
+  submitVariant?: "primary" | "secondary";
   submitDisabled?: boolean;
   submitDescribedBy?: string;
   secondaryActions?: ReactNode;
@@ -112,7 +114,7 @@ export function SettingsForm({
         {state.uncertain && <>{" "}<a href="" target="_blank" rel="noopener noreferrer" className="mt-1 flex min-h-11 items-center underline">Check saved work in a new tab before trying again.</a></>}
       </p>}
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" variant="primary" size="sm" disabled={isPending || submitDisabled} aria-describedby={submitDescribedBy}>
+        <Button type="submit" variant={submitVariant} size="sm" disabled={isPending || submitDisabled} aria-describedby={submitDescribedBy}>
           {isPending ? "Saving…" : submitLabel}
         </Button>
         {secondaryActions}

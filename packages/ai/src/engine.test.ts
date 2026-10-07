@@ -94,6 +94,20 @@ function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
   return { engine, calls, usage };
 }
 
+it("asks A13 for a grounded, editable row without persisting it", async () => {
+  const answer = "I helped the team reduce handover time by around 20%.";
+  const proposal = { wording: "Helped reduce handover time by around 20%.", quotes: [answer] };
+  const { engine, calls, usage } = engineWith(proposal);
+  const result = await engine.draftEvidence({ question: "What changed?", answer,
+    destination: { kind: "employment", id: "job-1" }, baseVersion: 2, source: "library",
+    questionId: "result", job: { company: "Example Company", title: "Operations lead", startDate: "2022", endDate: "", current: true } });
+  expect(result).toEqual(proposal);
+  expect(calls).toHaveLength(1);
+  expect(JSON.stringify(calls[0]?.params)).toContain(answer);
+  expect(JSON.stringify(calls[0]?.params)).toContain("Example Company");
+  expect(usage[0]).toMatchObject({ callSite: "A13", stage: "draft" });
+});
+
 describe("A4 description anchors", () => {
   it("answers with where the description starts and ends, not the description, and asks for nothing more", async () => {
     const { engine, calls } = engineWith({ startsWith: " Run our London site. ", endsWith: "Hybrid, three days a week.", salaryText: " ", remote: true });

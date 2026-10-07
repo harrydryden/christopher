@@ -40,6 +40,7 @@ export const AI_FEATURE_LABELS: Readonly<Record<string, string>> = {
   A10: "Company suggestions",
   A11: "Library document import",
   A12: "Library evidence review",
+  A13: "Evidence drafting",
 };
 
 /** A short product name for one call site; an unknown call site is reported as itself. */

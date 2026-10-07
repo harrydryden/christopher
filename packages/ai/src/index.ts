@@ -25,7 +25,7 @@ export {
   InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError,
 } from "@anthropic-ai/sdk";
 export { CV_AUDIT_BATCH_OUTPUT_TOKENS_LIBRARY_FIXED, cvAuditBatchOutputTokens, cvStageModel, estimateStage, type StageModels, type StageSizes } from "./pricing";
-export { BATCH_PRICE_MULTIPLIER, CACHE_WRITE_1H_MULTIPLIER, CACHE_WRITE_5M_MULTIPLIER, PRICING, SERVER_TOOL_USD, estimateBatchCostUsd, estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, priceFor, serverToolCostUsd, type LibraryReviewSize, type TokenUsage } from "./pricing";
+export { BATCH_PRICE_MULTIPLIER, CACHE_WRITE_1H_MULTIPLIER, CACHE_WRITE_5M_MULTIPLIER, PRICING, SERVER_TOOL_USD, estimateBatchCostUsd, estimateCostUsd, estimateCvBuildUsd, estimateEvidenceDraftUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, priceFor, serverToolCostUsd, type LibraryReviewSize, type TokenUsage } from "./pricing";
 export { canonicalEvidence, canonicalEvidenceBlock, canonicalEvidenceItems, evidenceBlockId } from "./evidence";
 export type { CanonicalEvidence, CanonicalEvidenceEntry, CanonicalEvidenceRow } from "./evidence";
 export { AiGovernor, BASE_PAUSE_MS, DEFAULT_MAX_STREAMS, MAX_PAUSE_MS, aiGovernorStats, defaultGovernor, maxStreamsFromEnv, retryAfterMs } from "./governor";

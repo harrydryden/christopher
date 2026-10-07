@@ -87,7 +87,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   return <section id="roles">
     <nav aria-label="Role status" className="mb-3 grid grid-cols-3 gap-1 md:mb-4 md:flex md:flex-wrap md:gap-2">
       {ROLE_TABS.map(status => <Link prefetch={false} key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
-        className={`min-h-11 min-w-0 border-2 px-0.5 py-1.5 text-center font-mono text-13 leading-tight no-underline [overflow-wrap:anywhere] md:px-3 md:py-2 ${status === view ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
+        className={`min-h-11 min-w-0 whitespace-nowrap border-2 px-0.5 py-1.5 text-center font-mono text-12 leading-tight no-underline md:px-3 md:py-2 md:text-13 ${status === view ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
         {ROLE_STATUS_LABELS[status]}{" "}<span className="block tabular-nums md:ml-1 md:inline">{counts[status]}</span>
         {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="hidden tabular-nums md:ml-1 md:inline">· {applied} applied</span>}
       </Link>)}

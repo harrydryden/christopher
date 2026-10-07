@@ -7,7 +7,7 @@ import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit } from "@col/db";
+import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, cvPdfs, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit } from "@col/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type AppSettings, type CvContent, type CvWritingPreferences } from "@col/core";
@@ -19,7 +19,7 @@ import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } f
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
 import { cvCreditOffer } from "@/lib/cv-credit";
-import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
+import { cvPdfContentHash } from "@/lib/cv-pdf-store";
 import { cvEvaluationRows } from "@/lib/cv-evaluation";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -860,9 +860,10 @@ export async function finaliseCvDraft(
     // Only what the check and the render read: the build checkpoint, gap quiz and the rest of the
     // row stay in the database. The locked re-read below is the whole row.
     const [read] = await db()
-      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot, reviewDecision: cvDrafts.reviewDecision })
+      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot, reviewDecision: cvDrafts.reviewDecision, finalisedAt: cvDrafts.finalisedAt })
       .from(cvDrafts)
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
+    if (read?.finalisedAt) throw new UserFacingError("This revision is already finalised. Create a new revision to make changes.");
     const checked = finalisable(read);
     // The render proves the revision lays out; it is seconds of work for a long CV, so it runs
     // before the transaction rather than holding the draft's row lock and a pooled connection.
@@ -877,13 +878,16 @@ export async function finaliseCvDraft(
         .from(cvDrafts)
         .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)))
         .for("update");
+      if (draft?.finalisedAt) throw new UserFacingError("This revision is already finalised. Create a new revision to make changes.");
       const current = finalisable(draft);
       // The assessment covers the exact wording and appearance, so an unchanged one is the
       // revision that was rendered; a draft re-assessed in between is not what was checked.
       if (current.assessment?.inputHash !== checked.assessment?.inputHash || current.assessment?.assessedAt !== checked.assessment?.assessedAt)
         throw new UserFacingError("This revision changed while it was being checked. Reload it before finalising.");
-      if (!current.finalisedAt)
-        await tx
+      // Save the exact bytes and the finalised timestamp together. A storage failure must not
+      // leave a revision claiming to be downloadable without its approved PDF.
+      await tx.insert(cvPdfs).values({ draftId: id, userId: user.id, contentHash: cvPdfContentHash(checked.content), bytes: pdf });
+      await tx
           .update(cvDrafts)
           .set({ finalisedAt: new Date(), ...(skipReview && current.assessment ? { reviewDecision: {
             inputHash: current.assessment.inputHash, assessedAt: current.assessment.assessedAt,
@@ -892,10 +896,6 @@ export async function finaliseCvDraft(
           } satisfies CvReviewDecision } : {}) })
           .where(eq(cvDrafts.id, id));
     });
-    // Kept under the hash of what was rendered, which the transaction has just confirmed is still
-    // the revision: the download serves these bytes instead of rendering again. Outside the
-    // transaction, and a failure to keep them only costs the download a render.
-    await storeCvPdf(user.id, id, cvPdfContentHash(checked.content), pdf);
   } catch (error) {
     return actionError(error, "Could not finalise the CV. Please try again.");
   }

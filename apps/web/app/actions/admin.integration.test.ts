@@ -134,3 +134,24 @@ it("checks a corrected homepage again while retaining the old source for confirm
   ]));
   expect((await database.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)))[0]!.status).toBe("active");
 });
+
+it("promotes a queued automatic retry to the corrected homepage", async () => {
+  const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme.example",
+    homepageUrl: "https://acme.example", discoveryRecoveryAttempts: 2,
+    discoveryRecoveryState: "idle" }).returning();
+  const [old] = await database.insert(schema.tasks).values({ type: "discover",
+    payload: { companyId: company!.id, homepageUrl: company!.homepageUrl, reason: "recovery" },
+    dedupeKey: `discover:${company!.id}`, priority: 6, status: "queued" }).returning();
+  const form = new FormData();
+  form.set("name", "Acme");
+  form.set("homepageUrl", "https://corrected.example/");
+
+  expect(await saveCatalogueCompany(company!.id, { ok: true }, form)).toEqual({ ok: true });
+  const [updated] = await database.select().from(schema.companies).where(eq(schema.companies.id, company!.id));
+  expect(updated).toMatchObject({ homepageUrl: "https://corrected.example/",
+    discoveryRecoveryAttempts: 0, discoveryRecoveryState: "idle", discoveryNextAttemptAt: null });
+  const queued = await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `discover:${company!.id}`));
+  expect(queued).toHaveLength(1);
+  expect(queued[0]).toMatchObject({ id: old!.id, status: "queued", priority: 1,
+    payload: { companyId: company!.id, homepageUrl: "https://corrected.example/", reason: "manual" } });
+});

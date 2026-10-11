@@ -7,7 +7,7 @@
  * query and no join. A capture clears the failure state and records where the bytes came from in
  * `favicon_url`, which stays the browser's fallback while nothing is stored.
  */
-import { and, asc, eq, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { logoRetryDelayMs, type LogoSource } from "@col/core";
 import type { Db } from "./client";
 import { companies, companyLogos } from "./schema";
@@ -87,8 +87,9 @@ export async function readCompanyLogo(db: Db, companyId: string): Promise<{ cont
 }
 
 /**
- * Companies whose logo should be captured now: never captured or captured long enough ago to be
- * stale, and not inside a retry backoff. Archived companies without any manual role are skipped.
+ * Companies whose logo should be captured now: a failed refresh is eligible when its backoff ends,
+ * even when the previous successful logo is still fresh. Otherwise capture missing or stale bytes.
+ * Only actively followed companies or those branding a private manual role are included.
  * Oldest attempt first — a company nobody has ever captured has the oldest attempt of all — so a
  * queue that cannot be drained in one pass still makes progress and a newly followed company gets
  * its logo before a retry that has already failed five times.
@@ -100,9 +101,19 @@ export async function companiesDueLogoCapture(db: Db, now = new Date(), limit = 
     .from(companies)
     .where(and(
       // An unfollowed company can still brand a private, manually imported role.
-      or(ne(companies.status, "archived"), sql`exists (select 1 from jobs j where j.company_id = ${companies.id} and j.origin = 'manual')`),
-      or(isNull(companies.logoFetchedAt), lt(companies.logoFetchedAt, stale)),
-      or(isNull(companies.logoNextAttemptAt), lte(companies.logoNextAttemptAt, now)),
+      or(
+        and(eq(companies.status, "active"), sql`exists (select 1 from company_subscriptions s where s.company_id = ${companies.id}
+          and s.status = 'active')`),
+        sql`exists (select 1 from jobs j where j.company_id = ${companies.id} and j.origin = 'manual')`,
+      ),
+      or(
+        and(gt(companies.logoAttempts, 0), lte(companies.logoNextAttemptAt, now)),
+        and(eq(companies.logoAttempts, 0),
+          or(isNull(companies.logoFetchedAt), lt(companies.logoFetchedAt, stale)),
+          or(isNull(companies.logoNextAttemptAt), lte(companies.logoNextAttemptAt, now))),
+      ),
+      sql`not exists (select 1 from tasks t where t.type = 'discover' and t.status in ('queued', 'running')
+        and t.payload->>'companyId' = ${companies.id}::text and t.payload->>'logoOnly' = 'true')`,
     ))
     .orderBy(sql`${companies.logoNextAttemptAt} asc nulls first`, sql`${companies.logoFetchedAt} asc nulls first`, asc(companies.addedAt))
     .limit(limit);

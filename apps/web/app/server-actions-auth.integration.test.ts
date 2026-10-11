@@ -131,7 +131,7 @@ const GATES: Record<string, Record<string, Gate>> = {
     saveDiscoverySource: "verified", updateDiscoverySource: "verified", checkDiscoverySource: "verified", importDiscoveryDocument: "verified",
   },
   "actions/health.ts": {
-    retryTask: "admin", retryLocationCheck: "verified", keepCurrentSource: "user",
+    retryTask: "admin", retryLocationCheck: "verified", retryDescriptionCheck: "verified", keepCurrentSource: "user",
     confirmHealthSource: "verified", useHealthCandidate: "verified", keepHealthCurrentSource: "user",
   },
   "actions/learning.ts": {

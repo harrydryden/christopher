@@ -24,7 +24,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { disableSource, markSourceConfirmed, pasteDiscoveryUrl, pauseCompany, rediscoverCompany, useDiscoveryCandidate } from "./companies";
-import { keepCurrentSource, retryLocationCheck, retryTask } from "./health";
+import { keepCurrentSource, retryDescriptionCheck, retryLocationCheck, retryTask } from "./health";
 import { countHealthItems, healthItems } from "@/lib/queries/health";
 
 const CANDIDATES = [
@@ -126,6 +126,36 @@ it("lets a verified follower restart a failed or backfilled Workday location che
   await expect(retryLocationCheck(privateJob!.id)).rejects.toThrow("redirect:/health?error=This+location+check+is+no+longer+available");
   session = outsider.cookie;
   await expect(retryLocationCheck(job!.id)).rejects.toThrow("redirect:/health?error=This+location+check+is+no+longer+available");
+});
+
+it("lets only the verified active owner retry a private description and coalesces double submissions", async () => {
+  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "description-owner@example.com", "member"));
+  const ownerSession = session;
+  const { company, source } = await fixture({ sourceStatus: "active" });
+  const [job] = await database.insert(schema.jobs).values({ companyId: company.id, sourceId: source!.id,
+    externalKey: "id:private-description", title: "Private role", normalizedTitle: "private role",
+    url: "https://jobs.lever.co/acme/private", shared: false, addedBy: user.id,
+    descriptionRetryAttempts: 6, descriptionLastError: "Posting page returned HTTP 404" }).returning();
+  await Promise.all([retryDescriptionCheck(job!.id), retryDescriptionCheck(job!.id)]);
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(1);
+  const [reset] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job!.id));
+  expect(reset).toMatchObject({ descriptionRetryAttempts: 0, descriptionLastError: null, descriptionNextAttemptAt: null });
+
+  await database.delete(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+  await database.update(schema.jobs).set({ descriptionRetryAttempts: 6, descriptionLastError: "detail failed" }).where(eq(schema.jobs.id, job!.id));
+  const outsider = await signInTestUser(database, process.env.SESSION_SECRET!, "description-outsider@example.com", "member");
+  await subscribeToCompany(database, outsider.user.id, company.id);
+  session = outsider.cookie;
+  await expect(retryDescriptionCheck(job!.id)).rejects.toThrow("redirect:/health?error=This+description+check+is+no+longer+available");
+  session = ownerSession;
+  await database.update(schema.companySubscriptions).set({ status: "paused" })
+    .where(and(eq(schema.companySubscriptions.companyId, company.id), eq(schema.companySubscriptions.userId, user.id)));
+  await expect(retryDescriptionCheck(job!.id)).rejects.toThrow("redirect:/health?error=This+source+is+no+longer+available");
+  await database.update(schema.companySubscriptions).set({ status: "active" })
+    .where(and(eq(schema.companySubscriptions.companyId, company.id), eq(schema.companySubscriptions.userId, user.id)));
+  await database.update(schema.users).set({ emailVerifiedAt: null }).where(eq(schema.users.id, user.id));
+  await expect(retryDescriptionCheck(job!.id)).rejects.toThrow();
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(0);
 });
 
 it("turns a pasted URL into a discovery task for that URL alone", async () => {

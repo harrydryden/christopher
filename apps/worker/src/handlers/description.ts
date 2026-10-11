@@ -1,11 +1,13 @@
 import { schema, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, requestLocationEnrichment, type Task, type ViewUpdate } from "@col/db";
-import { ats, extractMainText, sha1, stripHtml, type AppSettings } from "@col/core";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { ats, extractMainText, sha1, SourceFetchError, stripHtml, type AppSettings } from "@col/core";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { makeFetchContext } from "../context";
 import { loadUserSettingsMany } from "../settings";
 import { log } from "../log";
 import { admitScores } from "../score-admission";
+import { DESCRIPTION_RETRY_DELAYS_MS, MAX_DESCRIPTION_RETRY_ATTEMPTS } from "../description-retry";
+import { TaskDeferred } from "../queue";
 
 interface Payload {
   jobId: string;
@@ -23,14 +25,37 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
   const [job] = await deps.db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).limit(1);
   if (!job) return { skipped: "job not found" };
   if (!job.sourceId || !job.companyId || !job.url) return { skipped: "manual role has no source to fetch" };
+  if (job.status !== "open") return { skipped: "role is no longer open" };
+  if (!job.shared && !job.addedBy) return { skipped: "private role has no owner" };
+  const activeChecks = await deps.db.select({ id: schema.tasks.id }).from(schema.tasks)
+    .where(and(eq(schema.tasks.type, "fetch_description"), inArray(schema.tasks.status, ["queued", "running"]),
+      sql`${schema.tasks.payload}->>'jobId' = ${jobId}`))
+    .orderBy(schema.tasks.createdAt, schema.tasks.id);
+  const ownPosition = activeChecks.findIndex(check => check.id === task.id);
+  if (ownPosition > 0) return new TaskDeferred(new Date(deps.now().getTime() + 60_000),
+    { reason: "Waiting for an earlier description check" });
+  if (task.createdAt && job.descriptionFetchedAt && job.descriptionFetchedAt > task.createdAt)
+    return { skipped: "newer description evidence is already saved" };
   const companyId = job.companyId;
   const [source] = await deps.db.select().from(schema.careerSources).where(eq(schema.careerSources.id, job.sourceId)).limit(1);
-  if (!source) return { skipped: "source not found" };
+  if (!source || source.companyId !== companyId || !["active", "failing"].includes(source.status)) return { skipped: "source is not active" };
+  const [company] = await deps.db.select({ status: schema.companies.status }).from(schema.companies).where(eq(schema.companies.id, companyId)).limit(1);
+  if (company?.status !== "active") return { skipped: "company is not active" };
+  const [follower] = await deps.db.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
+    .where(and(eq(schema.companySubscriptions.companyId, companyId), eq(schema.companySubscriptions.status, "active"),
+      job.shared ? undefined : eq(schema.companySubscriptions.userId, job.addedBy!))).limit(1);
+  if (!follower) return { skipped: "company has no active followers" };
+  if (job.descriptionRetryAttempts >= MAX_DESCRIPTION_RETRY_ATTEMPTS) return { skipped: "description requires a new listing revision or manual retry" };
+  if (job.descriptionNextAttemptAt && job.descriptionNextAttemptAt > deps.now())
+    return new TaskDeferred(job.descriptionNextAttemptAt, { reason: "Waiting to retry this description" });
 
   const ctx = makeFetchContext(deps);
   let text: string | undefined;
   let descriptionSource: "direct" | "model" = "direct";
   let extra: Partial<typeof schema.jobs.$inferInsert> = {};
+  let adapterError: unknown;
+  let pageError: unknown;
+  let pageStatus: number | null = null;
 
   const adapterText = await ats
     .fetchDescriptionFor(
@@ -38,16 +63,17 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
       { title: job.title, url: job.url, externalId: job.externalKey.replace(/^id:/, "") },
       ctx,
     )
-    .catch(() => undefined);
+    .catch(error => { adapterError = error; return undefined; });
   if (adapterText) text = adapterText;
 
   if (!text) {
     try {
       const res = await ctx.fetchText(job.url);
+      pageStatus = res.status;
       if (res.status < 400) {
         const jsonLd = ats.extractJsonLdPostings(res.body, job.url).find((p) => p.descriptionText);
         text = jsonLd?.descriptionText ?? extractMainText(res.body);
-        if ((!text || text.length < 200) && deps.ai.enabled) {
+        if ((!text || text.length < 200) && deps.ai.enabled && job.descriptionRetryAttempts === 0) {
           const rawText = stripHtml(res.body).slice(0, 20_000);
           const cleaned = await deps.ai.cleanDescription({ title: job.title, rawText }, { refType: "job", refId: job.id });
           // The model chooses where the description starts and ends, and the text is the page's own
@@ -65,31 +91,58 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
         }
       }
     } catch (err) {
+      pageError = err;
       log.warn("description fetch failed", { jobId, url: job.url, error: (err as Error).message });
     }
   }
 
+  const safeFailure = (error: unknown) => error instanceof SourceFetchError
+    ? `${error.kind}${error.status ? ` (HTTP ${error.status})` : ""}`
+    : error instanceof Error ? error.name : "unknown error";
+  const failureReason = pageError ? `Posting page request failed: ${safeFailure(pageError)}`
+    : pageStatus !== null && pageStatus >= 400 ? `Posting page returned HTTP ${pageStatus}`
+    : adapterError ? `Board detail request failed: ${safeFailure(adapterError)}`
+    : "Careers detail page did not provide usable description text";
+
   const outcome = await deps.db.transaction(async (tx) => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
     const db = tx as unknown as WorkerDeps["db"];
+    const [currentSource] = await tx.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)).for("update").limit(1);
+    if (!currentSource || currentSource.companyId !== companyId || !["active", "failing"].includes(currentSource.status) || currentSource.type !== source.type ||
+        currentSource.url !== source.url || currentSource.apiUrl !== source.apiUrl ||
+        currentSource.atsSlug !== source.atsSlug || currentSource.atsSite !== source.atsSite)
+      return { jobId, skipped: "source changed during description fetch" };
+    const [currentCompany] = await tx.select({ status: schema.companies.status }).from(schema.companies)
+      .where(eq(schema.companies.id, companyId)).limit(1);
+    if (currentCompany?.status !== "active") return { jobId, skipped: "company is no longer active" };
     // The gates first, before anything is written: a settings save holds its gate row while it
     // re-evaluates that account's views, so taking the share locks after writing views here could
     // leave each waiting on the other.
     const followers = await tx.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
-      .where(and(eq(schema.companySubscriptions.companyId, companyId), ne(schema.companySubscriptions.status, "archived")));
+      .where(and(eq(schema.companySubscriptions.companyId, companyId), eq(schema.companySubscriptions.status, "active")));
+    if (!followers.some(follower => job.shared || follower.userId === job.addedBy))
+      return { jobId, skipped: "role has no active eligible follower" };
     const allSettings = await loadUserSettingsMany(db, followers.map(f => f.userId), { lockGates: true });
     // A location task may have resolved this posting while its description request was in flight.
     // Lock and use the current job after the gate locks, so late text cannot put its new view away.
     const [current] = await tx.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).for("update").limit(1);
-    if (!current || current.sourceId !== source.id || current.url !== job.url) return { jobId, skipped: "posting changed during description fetch" };
+    if (!current || current.sourceId !== source.id || current.url !== job.url || current.status !== "open" ||
+        current.descriptionInputRevision !== job.descriptionInputRevision || current.descriptionRetryAttempts >= MAX_DESCRIPTION_RETRY_ATTEMPTS ||
+        current.descriptionHash !== job.descriptionHash ||
+        (current.descriptionFetchedAt?.getTime() ?? 0) > (job.descriptionFetchedAt?.getTime() ?? 0))
+      return { jobId, skipped: "posting changed during description fetch" };
     const eligible = followers.map(f => f.userId).filter(id => current.shared || id === current.addedBy);
     const settings = new Map([...allSettings].filter(([id]) => eligible.includes(id)));
     if (!text) {
-      await tx.update(schema.jobs).set({ descriptionFetchedAt: deps.now() }).where(eq(schema.jobs.id, job.id));
+      const attempts = current.descriptionRetryAttempts + 1;
+      const delay = DESCRIPTION_RETRY_DELAYS_MS[attempts - 1];
+      const retryAt = delay ? new Date(deps.now().getTime() + delay) : null;
+      await tx.update(schema.jobs).set({ descriptionAttemptedAt: deps.now(), descriptionRetryAttempts: attempts,
+        descriptionNextAttemptAt: retryAt, descriptionLastError: failureReason }).where(eq(schema.jobs.id, job.id));
       // A new role's score waits for this task (the scan does not score what it is fetching text
       // for), so no text still means the gate runs and the role is scored on what there is.
-      await refreshFollowers(deps, db, deps.now(), current, settings, false);
-      return { jobId, stored: false };
+      if (attempts === 1) await refreshFollowers(deps, db, deps.now(), current, settings, false);
+      return { jobId, stored: false, attempts, retryAt };
     }
     const trimmed = text.slice(0, MAX_DESCRIPTION);
     const hash = sha1(trimmed);
@@ -97,7 +150,8 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
       .update(schema.jobs)
       .set({ ...extra,
           descriptionSource,
-          descriptionTruncated: text.length > MAX_DESCRIPTION, descriptionText: trimmed, descriptionHash: hash, descriptionFetchedAt: deps.now() })
+          descriptionTruncated: text.length > MAX_DESCRIPTION, descriptionText: trimmed, descriptionHash: hash, descriptionFetchedAt: deps.now(),
+          descriptionAttemptedAt: deps.now(), descriptionRetryAttempts: 0, descriptionNextAttemptAt: null, descriptionLastError: null })
       .where(eq(schema.jobs.id, job.id));
     const changed = hash !== current.descriptionHash;
     // A changed description invalidates every follower's score for the role, and with it the record
@@ -122,6 +176,8 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
   });
   // Idempotent and in a transaction of its own, like the scan's: once, for every follower.
   await archiveNonMatches(deps.db, { jobId });
+  if ("retryAt" in outcome && outcome.retryAt instanceof Date)
+    return new TaskDeferred(outcome.retryAt, { jobId, reason: failureReason, attempts: outcome.attempts });
   return outcome;
 }
 

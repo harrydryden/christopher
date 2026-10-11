@@ -3,7 +3,7 @@
 import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, asc, eq, sql } from "drizzle-orm";
-import { requestLocationEnrichment, type Db } from "@col/db";
+import { enqueueStandard, requestLocationEnrichment, type Db } from "@col/db";
 import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks } from "@col/db/schema";
 import { markSourceConfirmed, useDiscoveryCandidate } from "./companies";
 import { db } from "@/lib/db";
@@ -93,6 +93,39 @@ export async function retryLocationCheck(jobId: string): Promise<void> {
     throw error;
   });
   revalidate("/health", "/companies", `/companies/${outcome}`);
+}
+
+/** Restart a completed description check only for a role this active follower may see. */
+export async function retryDescriptionCheck(jobId: string): Promise<void> {
+  const user = await requireVerifiedUser();
+  const id = zUuid().parse(jobId);
+  const companyId = await db().transaction(async tx => {
+    const [job] = await tx.select().from(jobs).where(eq(jobs.id, id)).for("update");
+    if (!job?.companyId || !job.sourceId || !job.url || job.status !== "open" ||
+        (!job.shared && job.addedBy !== user.id))
+      throw new UserFacingError("This description check is no longer available.");
+    const [scope] = await tx.select({ companyStatus: companies.status, followStatus: companySubscriptions.status,
+      sourceStatus: careerSources.status, sourceCompanyId: careerSources.companyId })
+      .from(companies)
+      .innerJoin(companySubscriptions, and(eq(companySubscriptions.companyId, companies.id), eq(companySubscriptions.userId, user.id)))
+      .innerJoin(careerSources, eq(careerSources.id, job.sourceId))
+      .where(eq(companies.id, job.companyId)).limit(1);
+    if (!scope || scope.companyStatus !== "active" || scope.followStatus !== "active" ||
+        scope.sourceCompanyId !== job.companyId || !["active", "failing"].includes(scope.sourceStatus))
+      throw new UserFacingError("This source is no longer available. Refresh the company page.");
+    const [active] = await tx.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.type, "fetch_description"),
+      sql`${tasks.payload}->>'jobId' = ${id}`, sql`${tasks.status} in ('queued', 'running')`)).limit(1);
+    if (active) return job.companyId;
+    if (!job.descriptionLastError) throw new UserFacingError("There is no failed description check to retry.");
+    await tx.update(jobs).set({ descriptionRetryAttempts: 0, descriptionNextAttemptAt: null,
+      descriptionLastError: null, descriptionAttemptedAt: null }).where(eq(jobs.id, id));
+    await enqueueStandard(tx, "fetch_description", { jobId: id });
+    return job.companyId;
+  }).catch(error => {
+    if (isUserFacingError(error)) refuseOn("/health", error.message);
+    throw error;
+  });
+  revalidate("/health", "/companies", `/companies/${companyId}`);
 }
 
 /**

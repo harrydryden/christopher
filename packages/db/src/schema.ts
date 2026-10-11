@@ -303,6 +303,10 @@ export const companies = pgTable("companies", {
   /** Null means "capture whenever it is due"; a future time means "not before then". */
   logoNextAttemptAt: ts("logo_next_attempt_at"),
   logoError: text("logo_error"),
+  /** Automatic careers discovery after a sourceless result; manual discovery can reset the cycle. */
+  discoveryRecoveryAttempts: integer("discovery_recovery_attempts").notNull().default(0),
+  discoveryNextAttemptAt: ts("discovery_next_attempt_at"),
+  discoveryRecoveryState: text("discovery_recovery_state", { enum: ["idle", "waiting", "manual_required"] }).notNull().default("idle"),
   /** The account that put the company in the shared catalogue, when one did. */
   addedBy: uuid("added_by").references(() => users.id, { onDelete: "set null" }),
   /**
@@ -313,7 +317,10 @@ export const companies = pgTable("companies", {
   status: text("status", { enum: COMPANY_STATUSES }).notNull().default("active"),
   addedAt: tsNow("added_at"),
   archivedAt: ts("archived_at"),
-});
+}, (t) => [
+  index("companies_discovery_recovery_due_idx").on(t.discoveryNextAttemptAt)
+    .where(sql`${t.status} = 'active' and ${t.discoveryRecoveryState} = 'waiting' and ${t.discoveryNextAttemptAt} is not null`),
+]);
 
 /**
  * The company logo as bytes, captured once by the worker and served by the interface everywhere.
@@ -408,6 +415,9 @@ export const workdayLocationReadBudgets = pgTable("workday_location_read_budgets
 export const discoveryRuns = pgTable("discovery_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  /** The exact task and homepage this attempt read, for abandonment/revision fencing. */
+  taskId: uuid("task_id"),
+  homepageUrl: text("homepage_url"),
   startedAt: tsNow("started_at"),
   finishedAt: ts("finished_at"),
   status: text("status", { enum: ["running", "resolved", "needs_confirmation", "not_found", "failed"] }).notNull().default("running"),
@@ -415,7 +425,7 @@ export const discoveryRuns = pgTable("discovery_runs", {
   chosenSourceId: uuid("chosen_source_id"),
   log: jsonb("log").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
   error: text("error"),
-}, (t) => [index("discovery_runs_company_started_idx").on(t.companyId, t.startedAt.desc()), index("discovery_runs_started_idx").on(t.startedAt)]);
+}, (t) => [index("discovery_runs_company_started_idx").on(t.companyId, t.startedAt.desc()), index("discovery_runs_started_idx").on(t.startedAt), index("discovery_runs_task_idx").on(t.taskId)]);
 
 export const scanRuns = pgTable("scan_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -521,6 +531,11 @@ export const jobs = pgTable(
     descriptionTruncated: boolean("description_truncated").notNull().default(false),
     descriptionHash: text("description_hash"),
     descriptionFetchedAt: ts("description_fetched_at"),
+    descriptionAttemptedAt: ts("description_attempted_at"),
+    descriptionRetryAttempts: integer("description_retry_attempts").notNull().default(0),
+    descriptionNextAttemptAt: ts("description_next_attempt_at"),
+    descriptionLastError: text("description_last_error"),
+    descriptionInputRevision: text("description_input_revision"),
     /**
      * `scan` for a posting a source's listing produced, `user` for one a follower pasted the URL
      * of. A scan never closes a `user` row — it was never in a listing to go missing from — but a
@@ -547,6 +562,8 @@ export const jobs = pgTable(
     // Created by migration 0036: a pasted posting's importer, and a source's new roles by day.
     index("jobs_added_by_idx").on(t.addedBy).where(sql`${t.addedBy} is not null`),
     index("jobs_source_first_seen_idx").on(t.sourceId, t.firstSeenAt),
+    index("jobs_description_due_idx").on(t.descriptionNextAttemptAt)
+      .where(sql`${t.status} = 'open' and ${t.descriptionNextAttemptAt} is not null`),
   ],
 );
 

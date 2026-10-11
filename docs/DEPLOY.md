@@ -56,6 +56,15 @@ the same learning loop.
    published pages, pause the worker and roll forward if a fault appears; reverting worker code
    against an active published checkpoint needs a separately tested recovery procedure.
 
+   Apply migration `0061_discovery_and_description_recovery` **before deploying either the new
+   worker or interface**. It stores careers-discovery and role-description retry state, links
+   discovery runs to the task and homepage they read, and moves timestamps from legacy empty
+   descriptions out of `description_fetched_at` (which now means usable text was captured). The
+   migration arms a delayed check only for active, followed, sourceless companies; it does not
+   touch a company with any saved career source. Keep old and new app processes from writing
+   against different schema versions during rollout. Check the migration result in a disposable
+   database first; a preview build does not prove a runtime migration succeeded.
+
 4. Generate the secret the interface needs:
 
    ```bash
@@ -984,15 +993,50 @@ Migration 0029 adds `company_logos`, the logo retry columns on `companies`, `job
 the interface tolerates running ahead of it in the usual way — a company with no captured logo
 simply falls back to the browser's icon chain.
 
-Existing companies have no stored logo on the day the migration lands. They are captured by the
-worker's daily sweep, which takes **up to 200 companies a day**, oldest attempt first, so a
-deployment of a few hundred companies is fully captured within a day or two and a large one within
-a week. Anything urgent is captured on demand: **Refresh logo** in Catalogue diagnostics on the
-company page queues that one company immediately. A site that refuses is retried with a widening
-backoff rather than every day, and a stored logo is re-captured after 90 days.
+Existing companies have no stored logo on the day the migration lands. The scheduler checks for
+eligible captures at most once every five minutes, queues at most ten in one pass and at most 200
+automatic captures per UTC day. Actively followed companies and explicit manual-role exceptions
+are eligible for the sweep. **Refresh logo** in
+Catalogue diagnostics queues one company immediately. After a failed capture, the next automatic
+eligibility times are one hour, six hours, one day, three days, seven days and then 30 days apart;
+the scheduler and queue may start the work later. A previously captured logo remains visible while
+its refresh retries. A stored logo becomes eligible for routine refresh after 90 days. The company
+page shows whether a capture is queued or running and the next eligible time after failure.
 
 Nothing else needs doing. Roles added by URL and name suggestions are ordinary rows created by
 people using the interface; no backfill applies to them.
+
+### Company discovery and description recovery (migration 0061)
+
+Apply migration 0061 **before deploying either the new web app or worker**. It stores the discovery
+and description retry state, indexes due work and repairs legacy rows where a missing description
+had incorrectly been marked as fetched. Check the migration in an isolated database before the
+production rollout; neither a preview build nor a successful typecheck proves the live schema is
+ready. The migration backfills only actively followed, sourceless companies with a settled failed
+or not-found discovery. It does not reopen a disabled or blocked careers source.
+
+For an actively followed company with no saved careers source of any status, a settled unsuccessful
+discovery becomes eligible for another check after one day, then three days, then seven days. These
+are earliest eligibility times; the minute scheduler claims at most 25 due companies per pass and
+the queue may start them later. After three scheduled follow-ups, the company page asks for a
+manual **Re-discover** or corrected careers URL. A new source, inactive follow, archived company
+or confirmation decision prevents automatic recovery from reviving unwanted work. The latest
+discovery run retains its bounded log and candidates for diagnosis. An explicit new discovery can
+start a fresh cycle; simply viewing or re-following an already queued company does not.
+
+A partial role scan keeps the observed roles but never closes roles absent from that incomplete
+result. Daily scanning continues; the third consecutive partial scan queues one discovery check,
+and further partials do not repeatedly queue it. Manual **Rescan** can reuse a complete scan for
+30 minutes or a partial scan for five minutes, per source. A later failed scan is not reusable.
+
+When a role description read fails or yields no usable text, its own logical retry schedule allows
+six total attempts. The delays after the first five are one minute, five minutes, one hour, one
+day and three days. A minute sweep (at most 40 due rows per pass) repairs eligible due checks if
+their queue deferral was lost. Queue crash retries are separately bounded at three; a terminal
+queue failure or six exhausted description attempts needs the verified active follower's manual
+**Retry** on the company page, unless a meaningful listing revision supplies fresh evidence. The
+card shows the latest attempt, error and next eligible check. Paused or archived follows do not
+drive these background checks.
 
 ### External company discovery and emailed newsletters
 

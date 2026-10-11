@@ -10,6 +10,8 @@ import { closeAbandonedCvDraft, cvInterruptedFailure, onAbandon } from "./handle
 import { runMonitorSample } from "./handlers/monitor-sample";
 import { agePriorities, failSpentTasks, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
+import { sweepDueCompanyLogos, sweepDueDiscoveryRecovery } from "./periodic-company-recovery";
+import { queueDueDescriptionChecks } from "./description-retry-sweep";
 
 /**
  * The weekly company suggestions (A10) are skipped for an account that has this many still waiting
@@ -119,6 +121,24 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
     returning ds.id, due.suggestions`);
   await enqueueTasks(deps.db, due.rows.filter(source => suggestionsEnabled(source.suggestions))
     .map(source => taskRow("monitor_source", { sourceId: source.id }, { priority: 7 })));
+
+  // Sourceless followed companies get a bounded, persisted recovery cycle independent of the
+  // daily scan. Logo failures use their own backoff and a capped five-minute sweep.
+  if (stopped()) return;
+  await claimPeriodic(deps, "lastCompanyDiscoveryRecovery", 60, async () => {
+    const queued = await sweepDueDiscoveryRecovery(deps.db, now);
+    if (queued) log.info("scheduled careers discovery recovery", { queued });
+  });
+  if (stopped()) return;
+  await claimPeriodic(deps, "lastCompanyLogoSweep", 300, async () => {
+    const queued = await sweepDueCompanyLogos(deps.db, now);
+    if (queued) log.info("scheduled company logo captures", { queued });
+  });
+  if (stopped()) return;
+  await claimPeriodic(deps, "lastDescriptionRetrySweep", 60, async () => {
+    const queued = await queueDueDescriptionChecks(deps.db, now);
+    if (queued) log.info("scheduled due description checks", { queued });
+  });
 
   // Batch scoring: every `scoringBatchMinutes`, one collection of the roles waiting to be scored,
   // claimed across the deployment so two workers and the cron fallback make one batch, not three.

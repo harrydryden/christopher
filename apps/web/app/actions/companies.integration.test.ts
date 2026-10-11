@@ -25,7 +25,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { revalidatePath } from "next/cache";
-import { addCompanies, addCompaniesInline, archiveCompany, followCompany, importPosting, pasteDiscoveryUrl, pauseCompany, refreshCompany, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
+import { addCompanies, addCompaniesInline, archiveCompany, followCompany, importPosting, pasteDiscoveryUrl, pauseCompany, refreshCompany, refreshCompanyLogo, rediscoverCompany, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
 import { companyApplicationCount, companyScanTiming, listCompanies, searchCatalogue } from "@/lib/queries/companies";
 import { parseCompanySort } from "@/lib/company-sort";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
@@ -251,6 +251,15 @@ it("queues a logo capture for one company without disturbing its scan", async ()
   expect(await tasksOfType("scan_company")).toHaveLength(0);
 });
 
+it("requires an active follow before manually restarting discovery or logo work", async () => {
+  const company = await followedCompany();
+  await pauseCompany(company.id);
+  await expect(rediscoverCompany(company.id)).rejects.toThrow("Resume following this company before starting a check.");
+  await expect(refreshCompanyLogo(company.id)).rejects.toThrow("Resume following this company before starting a check.");
+  await expect(pasteDiscoveryUrl(company.id, urlForm("https://example.com/careers"))).rejects.toThrow("Resume following this company before starting a check.");
+  expect((await tasksOfType("discover")).filter(task => task.payload.reason === "manual" || task.payload.logoOnly === true)).toHaveLength(0);
+});
+
 // ---------------------------------------------------------------------------
 // What the company page reads: the scan schedule line, the per-company
 // applications link, and the counts the companies list shows per row.
@@ -310,16 +319,24 @@ it("reads when a company was last scanned and whether the last rescan was served
   const [source] = await database.insert(schema.careerSources)
     .values({ companyId: company.id, type: "html", url: "https://acme.example/jobs", status: "active" }).returning();
 
-  expect(await companyScanTiming(company.id)).toEqual({ lastGoodScanAt: null, rescanSkippedAt: null });
+  expect(await companyScanTiming(company.id)).toEqual({ lastGoodScanAt: null, rescanSkippedAt: null, lastScanKind: "incomplete" });
 
-  // A failed scan is not one a rescan could be served from; the newest ok or partial one is.
+  // A newer failed scan invalidates the older complete scan for reuse.
   const scanned = new Date(Date.now() - 12 * 60_000);
   await database.insert(schema.scans).values([
     { sourceId: source!.id, status: "ok", startedAt: scanned },
-    { sourceId: source!.id, status: "failed", startedAt: new Date(Date.now() - 60_000) },
+    { sourceId: source!.id, status: "failed", startedAt: new Date(Date.now() - 3 * 60_000) },
   ]);
-  expect((await companyScanTiming(company.id)).lastGoodScanAt?.getTime()).toBe(scanned.getTime());
-  expect((await companyScanTiming(company.id)).rescanSkippedAt).toBeNull();
+  const failedTiming = await companyScanTiming(company.id);
+  expect(failedTiming.lastScanKind).toBe("failed");
+  expect(failedTiming.rescanSkippedAt).toBeNull();
+  expect(scanTimingLine(failedTiming, "06:00", "Europe/London"))
+    .toContain("Last scan could not complete");
+
+  // A later complete scan supplies new evidence that a manual rescan can reuse.
+  const freshScan = new Date(Date.now() - 2 * 60_000);
+  await database.insert(schema.scans).values({ sourceId: source!.id, status: "ok", startedAt: freshScan });
+  expect((await companyScanTiming(company.id)).lastGoodScanAt?.getTime()).toBe(freshScan.getTime());
 
   // The worker finishes a manual rescan inside the reuse window by saying it did nothing.
   const skippedAt = new Date(Date.now() - 30_000);
@@ -329,7 +346,7 @@ it("reads when a company was last scanned and whether the last rescan was served
   });
   expect((await companyScanTiming(company.id)).rescanSkippedAt?.getTime()).toBe(skippedAt.getTime());
   expect(scanTimingLine(await companyScanTiming(company.id), "06:00", "Europe/London"))
-    .toBe("Rescan skipped: scanned 12m ago; a scan made in the last half hour is reused.");
+    .toBe("Rescan skipped: scanned 2m ago; a complete scan made in the last half hour is reused.");
 
   // A later scan that really ran is the newest finished task, so nothing claims a skip any more.
   await database.insert(schema.tasks).values({
@@ -338,7 +355,7 @@ it("reads when a company was last scanned and whether the last rescan was served
   });
   expect((await companyScanTiming(company.id)).rescanSkippedAt).toBeNull();
   expect(scanTimingLine(await companyScanTiming(company.id), "06:00", "Europe/London"))
-    .toBe("Scanned 12m ago · next scheduled scan at 06:00 Europe/London");
+    .toBe("Scanned 2m ago · next scheduled scan at 06:00 Europe/London");
 });
 
 it("gives each companies-list row its open, review and shortlisted counts and the source a scan reads", async () => {

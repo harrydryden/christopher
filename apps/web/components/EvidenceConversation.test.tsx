@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { EvidenceConversation } from "./EvidenceConversation";
 import { confirmEvidenceAnswerAsWritten, dismissEvidenceDraft, requestEvidenceDraft, skipEvidenceQuestion } from "@/app/actions/evidence";
@@ -29,6 +30,13 @@ function mount(overrides: Partial<ComponentProps<typeof EvidenceConversation>> =
 }
 
 afterEach(() => { vi.clearAllMocks(); window.sessionStorage.clear(); });
+
+it("keeps server-rendered answer controls disabled until browser storage is restored", () => {
+  const server = document.createElement("div");
+  server.innerHTML = renderToStaticMarkup(createElement(EvidenceConversation, props));
+  expect(server.querySelector("textarea")?.disabled).toBe(true);
+  expect([...server.querySelectorAll("button")].every(button => button.disabled)).toBe(true);
+});
 
 it("can review and save the person's answer without requesting a model draft", async () => {
   const ui = mount();

@@ -158,32 +158,32 @@ export function EvidenceConversation(props: Props) {
   return <section className="space-y-3 border-t border-line-muted pt-4" aria-label="Evidence question">
     <p className="ds-prose text-16 font-medium">{props.question}</p>
     {done ? <p role="status" className="text-14 text-ok">{props.source === "library" ? "Saved to Experience." : "Wording confirmed for this CV question. Save evidence and continue when ready."}</p>
-      : skipped ? <div className="space-y-2"><p role="status" className="text-14 text-muted">Nothing further for this question.</p><button type="button" className="text-14 underline" onClick={() => { setSkipped(false); window.setTimeout(() => answerRef.current?.focus(), 0); }}>Return to this question</button></div>
+      : skipped ? <div className="space-y-2"><p role="status" className="text-14 text-muted">Nothing further for this question.</p><button type="button" className="text-14 underline" disabled={!hydrated} onClick={() => { setSkipped(false); window.setTimeout(() => answerRef.current?.focus(), 0); }}>Return to this question</button></div>
       : <>
         <label className="block space-y-1.5"><span className="text-12 font-semibold">Your answer</span>
           <textarea ref={answerRef} rows={4} maxLength={2000} className={`ds-prose ${inputClass}`} value={answer}
-            disabled={!!displayDraft || busy || props.disabled} onChange={event => setAnswer(event.target.value)}
+            disabled={!hydrated || !!displayDraft || busy || props.disabled} onChange={event => setAnswer(event.target.value)}
             placeholder="Describe what happened, what you did, and the result in your own words." />
         </label>
         {!displayDraft ? <div className="flex flex-wrap items-center gap-3">
-          <button type="button" className={buttonClass("primary")} disabled={busy || props.disabled} onClick={() => void request()}>{busy ? "Preparing…" : "Review an evidence draft"}</button>
-          <button type="button" className="text-14 underline" disabled={busy || props.disabled || !answer.trim()} onClick={() => { wordingRevision.current++; setWording(answer); setManualMode(true); }}>Use my answer as written</button>
-          <button type="button" className="text-14 underline" disabled={busy} onClick={() => void dismiss()}>Nothing further</button>
-          {answer && <button type="button" className="text-14 text-muted underline" disabled={busy} onClick={() => { setAnswer(""); setError(""); }}>Discard answer</button>}
+          <button type="button" className={buttonClass("primary")} disabled={!hydrated || busy || props.disabled} onClick={() => void request()}>{busy ? "Preparing…" : "Review an evidence draft"}</button>
+          <button type="button" className="text-14 underline" disabled={!hydrated || busy || props.disabled || !answer.trim()} onClick={() => { wordingRevision.current++; setWording(answer); setManualMode(true); }}>Use my answer as written</button>
+          <button type="button" className="text-14 underline" disabled={!hydrated || busy} onClick={() => void dismiss()}>Nothing further</button>
+          {answer && <button type="button" className="text-14 text-muted underline" disabled={!hydrated || busy} onClick={() => { setAnswer(""); setError(""); }}>Discard answer</button>}
         </div> : <div className="space-y-3 border-l-2 border-accent pl-4">
           <div><p className="text-12 font-semibold">Proposed wording</p><p className="text-12 text-muted">Your original answer is above. Edit the wording before you confirm it.</p></div>
           {draft?.status === "queued" && <p role="status" className="text-14">Preparing a draft… You can use your answer as written now.</p>}
           {draft?.status === "failed" && <p role="status" className="text-14 text-warn">{draft.error ?? "A draft was unavailable."}</p>}
           <label className="block space-y-1.5"><span className="text-12 font-semibold">Wording to save</span>
             <textarea ref={wordingRef} rows={4} maxLength={2000} className={`ds-prose ${inputClass}`} value={wording}
-              onChange={event => { wordingRevision.current++; setWording(event.target.value); }} disabled={busy || props.disabled} />
+              onChange={event => { wordingRevision.current++; setWording(event.target.value); }} disabled={!hydrated || busy || props.disabled} />
           </label>
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" className={buttonClass("primary")} disabled={busy || props.disabled} onClick={() => void confirm()}>{busy ? "Saving…" : props.source === "library" ? `Confirm and save to ${props.destinationLabel ?? "Experience"}` : `Confirm for ${props.destinationLabel ?? "this CV question"}`}</button>
-            <button type="button" className="text-14 underline" disabled={busy || props.disabled} onClick={() => { wordingRevision.current++; setWording(answer); }}>Use my answer as written</button>
-            {draft?.status === "failed" && <button type="button" className="text-14 underline" disabled={busy || props.disabled} onClick={() => void retry()}>Retry draft</button>}
-            <button type="button" className="text-14 underline" disabled={busy} onClick={() => void editAnswer()}>Edit my answer</button>
-            <button type="button" className="text-14 underline" disabled={busy} onClick={() => void dismiss()}>Nothing further</button>
+            <button type="button" className={buttonClass("primary")} disabled={!hydrated || busy || props.disabled} onClick={() => void confirm()}>{busy ? "Saving…" : props.source === "library" ? `Confirm and save to ${props.destinationLabel ?? "Experience"}` : `Confirm for ${props.destinationLabel ?? "this CV question"}`}</button>
+            <button type="button" className="text-14 underline" disabled={!hydrated || busy || props.disabled} onClick={() => { wordingRevision.current++; setWording(answer); }}>Use my answer as written</button>
+            {draft?.status === "failed" && <button type="button" className="text-14 underline" disabled={!hydrated || busy || props.disabled} onClick={() => void retry()}>Retry draft</button>}
+            <button type="button" className="text-14 underline" disabled={!hydrated || busy} onClick={() => void editAnswer()}>Edit my answer</button>
+            <button type="button" className="text-14 underline" disabled={!hydrated || busy} onClick={() => void dismiss()}>Nothing further</button>
           </div>
         </div>}
       </>}

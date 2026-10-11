@@ -2141,11 +2141,16 @@ describe("what a scan asks for and when", () => {
     expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(2);
   }, 120_000);
 
-  it("keeps the fortnightly refresh for a feed that carries no updated_at", async () => {
-    // SmartRecruiters publishes no `updated_at`, so age is all there is to go on and the old rule
-    // stands: the saving above is taken only where the vendor answers the question for us.
+  it("refreshes successful descriptions after a fortnight on a feed with no updated_at", async () => {
+    // SmartRecruiters publishes no `updated_at`. Successful text uses the age fallback while
+    // empty detail reads keep their own bounded retry state.
     await setGate({});
-    server.setRoutes({ "api.smartrecruiters.com": smartRecruitersRoutes("small") });
+    server.setRoutes({ "api.smartrecruiters.com": {
+      ...smartRecruitersRoutes("small"),
+      "/v1/companies/orbital/postings/ops-1": { body: { jobAd: { sections: {
+        jobDescription: { text: "<p>Run Orbital operations in London.</p>" },
+      } } } },
+    } });
     const [company] = await db.insert(schema.companies).values({ name: "Orbital", domain: "orbital.example", homepageUrl: "https://www.orbital.example/" }).returning();
     await subscribeToCompany(db, user.id, company!.id);
     const [source] = await db.insert(schema.careerSources).values({
@@ -2157,14 +2162,20 @@ describe("what a scan asks for and when", () => {
     await queue.drain();
     const stored = await db.select().from(schema.jobs);
     expect(stored).toHaveLength(3);
-    expect(stored.every(job => job.descriptionFetchedAt !== null)).toBe(true);
+    const successful = stored.find(job => job.externalKey === "id:ops-1")!;
+    expect(successful).toMatchObject({ descriptionText: "Run Orbital operations in London.",
+      descriptionFetchedAt: now, descriptionRetryAttempts: 0, descriptionNextAttemptAt: null });
 
     await db.delete(schema.tasks);
     await _scanSourceForTests(deps, company!, await currentSource(source!.id), settings, null);
-    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(0);
+    const followUps = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(followUps).toHaveLength(1);
+    expect(followUps.every(task => (task.payload as { jobId: string }).jobId !== successful.id)).toBe(true);
     now = new Date(now.getTime() + 15 * 86_400_000);
     await _scanSourceForTests(deps, company!, await currentSource(source!.id), settings, null);
-    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(3);
+    const aged = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(aged).toHaveLength(3);
+    expect(aged.some(task => (task.payload as { jobId: string }).jobId === successful.id)).toBe(true);
   }, 120_000);
 
   it("refetches an unchanged first feed response when secondary indexes also shape the listing", async () => {
@@ -2626,6 +2637,7 @@ describe("a description arriving", () => {
 
   it("keeps the page's own text between the model's anchors, and nothing when an anchor is not on the page", async () => {
     const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
     const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing", status: "active" }).returning();
     const page = "<html><body><nav>Home Careers</nav><main><h1>Operations Lead</h1><p>Run our London site.</p><p>Hybrid, three days a week.</p></main><footer>Cookies</footer></body></html>";
     server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/jobs/lead": { body: page }, "/jobs/other": { body: page } } });
@@ -2649,7 +2661,8 @@ describe("a description arriving", () => {
     expect(refused!.descriptionSource).not.toBe("model");
     expect(refused!.descriptionText ?? "").not.toContain("Robotics");
     expect(refused!.salaryText).toBeNull();
-    expect(refused!.descriptionFetchedAt).not.toBeNull();
+    expect(refused!.descriptionFetchedAt).toBeNull();
+    expect(refused!.descriptionAttemptedAt).not.toBeNull();
   }, 60_000);
 
   it("slices the page between two anchors, whatever the spacing, case and punctuation", () => {

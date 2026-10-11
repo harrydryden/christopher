@@ -107,6 +107,9 @@ it("asks for the companies that are due and no others", async () => {
   const backingOff = await company({ domain: "backoff.test", logoNextAttemptAt: new Date(now.getTime() + 2 * 3_600_000), logoAttempts: 2 });
   const overdue = await company({ domain: "overdue.test", logoNextAttemptAt: new Date(now.getTime() - 2 * 3_600_000), logoAttempts: 2 });
   const archived = await company({ domain: "archived.test", status: "archived" });
+  const [follower] = await db.insert(schema.users).values({ email: `logo-follower-${crypto.randomUUID()}@example.test` }).returning();
+  await db.insert(schema.companySubscriptions).values([never, stale, fresh, backingOff, overdue]
+    .map(row => ({ companyId: row.id, userId: follower!.id, status: "active" as const })));
 
   const due = await companiesDueLogoCapture(db, now);
   const ids = due.map((row) => row.id);

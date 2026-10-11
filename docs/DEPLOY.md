@@ -1033,10 +1033,11 @@ When a role description read fails or yields no usable text, its own logical ret
 six total attempts. The delays after the first five are one minute, five minutes, one hour, one
 day and three days. A minute sweep (at most 40 due rows per pass) repairs eligible due checks if
 their queue deferral was lost. Queue crash retries are separately bounded at three; a terminal
-queue failure or six exhausted description attempts needs the verified active follower's manual
-**Retry** on the company page, unless a meaningful listing revision supplies fresh evidence. The
-card shows the latest attempt, error and next eligible check. Paused or archived follows do not
-drive these background checks.
+queue failure is not restarted by the due sweep. The card offers a verified active follower manual
+**Retry**, while a later ordinary eligible scan may enqueue another check within the logical
+attempt budget. Six exhausted logical attempts require manual Retry or a meaningful listing
+revision. The card shows the latest attempt, error and next eligible check. Paused or archived
+follows do not drive these background checks.
 
 ### External company discovery and emailed newsletters
 

@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBillingSummary } from "@/lib/billing/service";
-import { planPriceId, stripeClient, stripeConfigured, topupPriceId } from "@/lib/billing/stripe";
+import { planPriceId, stripeCheckoutConfigured, stripeClient, stripeConfigured, topupPriceId } from "@/lib/billing/stripe";
 import { emailLinkOrigin } from "@/lib/origin";
 import { applyCompanyCapacityQuote } from "@/lib/billing/company-capacity";
 
@@ -25,7 +25,7 @@ export async function startPlanCheckout(form: FormData): Promise<void> {
   const user = await requireUser();
   const plan = String(form.get("plan") ?? "");
   if (plan !== "search" && plan !== "intensive") redirect("/account?billing=unknown_plan#plan-and-credits");
-  if (!stripeConfigured()) redirect("/account?billing=setup_required#plan-and-credits");
+  if (!stripeCheckoutConfigured()) redirect("/account?billing=setup_required#plan-and-credits");
   const price = planPriceId(plan);
   if (!price) redirect("/account?billing=setup_required#plan-and-credits");
   const summary = await getBillingSummary(user.id);
@@ -53,7 +53,7 @@ export async function startCreditCheckout(form: FormData): Promise<void> {
   const user = await requireUser();
   const pack = String(form.get("pack") ?? "") as CvTopupKey;
   if (!(pack in CV_TOPUPS)) redirect("/account?billing=unknown_pack#plan-and-credits");
-  if (!stripeConfigured()) redirect("/account?billing=setup_required#plan-and-credits");
+  if (!stripeCheckoutConfigured()) redirect("/account?billing=setup_required#plan-and-credits");
   const price = topupPriceId(pack);
   if (!price) redirect("/account?billing=setup_required#plan-and-credits");
   const summary = await getBillingSummary(user.id);

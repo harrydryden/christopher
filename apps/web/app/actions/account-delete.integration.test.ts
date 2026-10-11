@@ -75,3 +75,20 @@ it("deletes a member with their sessions and CV version rows", async () => {
 it("never lets an administrator delete themselves here", async () => {
   await expect(deleteUser(admin.id)).rejects.toThrow(/your own account/);
 });
+
+it("keeps an account while a Stripe subscription is still attached", async () => {
+  const { user: member } = await signInTestUser(database, process.env.SESSION_SECRET!, "paying@example.com", "member");
+  await database.update(schema.billingAccounts).set({
+    plan: "search",
+    status: "active",
+    stripeCustomerId: `cus_${member.id}`,
+    stripeSubscriptionId: `sub_${member.id}`,
+  }).where(eq(schema.billingAccounts.userId, member.id));
+  await expect(deleteUser(member.id)).rejects.toThrow(/still has a Stripe subscription/);
+  expect(await database.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.id, member.id)))
+    .toHaveLength(1);
+  // A verified terminal webhook clears the subscription ID; deletion can then proceed.
+  await database.update(schema.billingAccounts).set({ status: "cancelled", stripeSubscriptionId: null })
+    .where(eq(schema.billingAccounts.userId, member.id));
+  await expect(deleteUser(member.id)).resolves.toBeUndefined();
+});

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   CV_TOPUPS,
   PLAN_CATALOG,
@@ -15,7 +15,7 @@ import {
   type BillingWriter,
   type CvTopupKey,
 } from "@col/db";
-import { billingAccounts } from "@col/db/schema";
+import { billingAccounts, billingEvents } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { companyBlockPriceId, packForPrice, planForPrice, stripeClient } from "@/lib/billing/stripe";
 
@@ -42,6 +42,39 @@ function subscriptionShape(subscription: Stripe.Subscription) {
     periodEnd: dateOf(base?.current_period_end),
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
   };
+}
+
+type PaidInvoiceLine = {
+    proration?: boolean;
+    price?: { id?: string } | null;
+    pricing?: { price_details?: { price?: string } } | null;
+    period?: { start?: number; end?: number };
+    parent?: { subscription_item_details?: { proration?: boolean } } | null;
+};
+
+function grantFromInvoiceLine(line: PaidInvoiceLine) {
+  if (line.proration || line.parent?.subscription_item_details?.proration) return null;
+  const plan = planForPrice(line.pricing?.price_details?.price ?? line.price?.id);
+  const start = dateOf(line.period?.start);
+  const end = dateOf(line.period?.end);
+  return plan && start && end && end > start ? { plan, start, end } : null;
+}
+
+/** Invoice lines prove the plan and period actually paid for, even after a later plan change. */
+async function paidInvoiceGrant(invoice: Stripe.Invoice) {
+  for (const line of invoice.lines?.data ?? []) {
+    const grant = grantFromInvoiceLine(line as PaidInvoiceLine);
+    if (grant) return grant;
+  }
+  // Stripe embeds only the first page in a webhook. Search the rest before deciding
+  // that this was an add-on or proration-only invoice.
+  if (invoice.lines?.has_more) {
+    for await (const line of stripeClient().invoices.listLineItems(invoice.id, { limit: 100 })) {
+      const grant = grantFromInvoiceLine(line as PaidInvoiceLine);
+      if (grant) return grant;
+    }
+  }
+  return null;
 }
 
 /** Keep the metered add-on compatible with the plan even after a Portal plan change. */
@@ -117,8 +150,16 @@ export async function POST(request: Request) {
 
   if (subscription && subscription.status !== "canceled") subscription = await normaliseCompanyBlocks(subscription);
 
+  const invoiceGrant = event.type === "invoice.paid" ? await paidInvoiceGrant(event.data.object) : null;
+
   await db().transaction(async tx => {
     if (!(await recordBillingEvent(tx, event.id, event.type))) return;
+
+    // Serialise checkout fulfilment and its refund/dispute across webhook workers. A
+    // marker read without this lock can race a refund that sees no grant yet.
+    const checkoutId = (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded")
+      && event.data.object.metadata?.purchase === "cv_topup" ? event.data.object.id : refundedCheckoutId;
+    if (checkoutId) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`topup:${checkoutId}`}, 0))`);
 
     if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
       const session = event.data.object;
@@ -130,6 +171,9 @@ export async function POST(request: Request) {
         if (!(pack in CV_TOPUPS)) return;
         const expected = CV_TOPUPS[pack].priceGbp * 100;
         if (session.currency !== "gbp" || session.amount_total !== expected) return;
+        const [voided] = await tx.select({ eventId: billingEvents.eventId }).from(billingEvents)
+          .where(eq(billingEvents.eventId, `topup-void:${session.id}`)).limit(1);
+        if (voided) return;
         await grantCvCredits(tx, {
           userId,
           source: "topup",
@@ -205,8 +249,12 @@ export async function POST(request: Request) {
         }
         return;
       }
-      if (!shape.plan || shape.status !== "active") return;
-      const accepted = await updateBillingAccountFromStripe(tx, userId, event.created, {
+      const paidGrant = invoiceGrant;
+      if (!shape.plan || shape.status !== "active") {
+        if (paidGrant) await grantMonthlyCredits(tx, userId, paidGrant.plan, subscription.id, paidGrant.start, paidGrant.end);
+        return;
+      }
+      await updateBillingAccountFromStripe(tx, userId, event.created, {
         plan: shape.plan,
         status: shape.status,
         stripeCustomerId: customerId,
@@ -217,9 +265,10 @@ export async function POST(request: Request) {
         cancelAtPeriodEnd: shape.cancelAtPeriodEnd,
         graceEndsAt: null,
       });
-      if (accepted && shape.periodStart && shape.periodEnd) await grantMonthlyCredits(tx, userId, shape.plan, subscription.id, shape.periodStart, shape.periodEnd);
+      if (paidGrant) await grantMonthlyCredits(tx, userId, paidGrant.plan, subscription.id, paidGrant.start, paidGrant.end);
     }
     if (refundedCheckoutId && (event.type === "charge.refunded" || event.type === "charge.dispute.created")) {
+      await recordBillingEvent(tx, `topup-void:${refundedCheckoutId}`, "topup.voided");
       await revokeCvGrant(tx, refundedCheckoutId, event.type === "charge.refunded" ? "CV top-up refunded" : "CV top-up payment disputed");
     }
   });

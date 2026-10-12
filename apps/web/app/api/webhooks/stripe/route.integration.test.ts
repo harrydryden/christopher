@@ -124,6 +124,7 @@ it("grants monthly credits only after payment and ignores an older cancellation 
 
     const paid = eventPayload(`evt_invoice_${id}`, "invoice.paid", 300, {
       id: `in_${id}`, object: "invoice", customer: sub.customer,
+      lines: { data: [{ pricing: { price_details: { price: "price_search_test" } }, period: { start: 1_799_900_000, end: 1_802_500_000 } }] },
       parent: { type: "subscription_details", quote_details: null, subscription_details: { subscription: sub, metadata: { userId: id } } },
     });
     expect((await POST(await signedRequest(paid))).status).toBe(200);
@@ -134,6 +135,130 @@ it("grants monthly credits only after payment and ignores an older cancellation 
     expect(await getBillingSummary(database, id)).toMatchObject({ plan: "search", status: "active" });
   } finally {
     currentSubscription.mockRestore();
+    await database.delete(schema.users).where(eq(schema.users.id, id));
+  }
+});
+
+it("grants a late paid invoice without reviving a subsequently cancelled subscription", async () => {
+  const id = randomUUID();
+  await database.insert(schema.users).values({ id, email: `stripe-late-${id}@example.com`, claimedAt: new Date() });
+  const { stripeClient } = await import("@/lib/billing/stripe");
+  const currentSubscription = vi.spyOn(stripeClient().subscriptions, "retrieve").mockResolvedValue(subscription(id, "canceled") as never);
+  try {
+    const { POST } = await import("./route");
+    const sub = subscription(id);
+    const current = eventPayload(`evt_current_${id}`, "customer.subscription.deleted", 800, subscription(id, "canceled"));
+    expect((await POST(await signedRequest(current))).status).toBe(200);
+    const paid = eventPayload(`evt_late_paid_${id}`, "invoice.paid", 700, {
+      id: `in_late_${id}`, object: "invoice", customer: sub.customer,
+      lines: { data: [{ pricing: { price_details: { price: "price_search_test" } }, period: { start: 1_797_300_000, end: 1_799_900_000 } }] },
+      parent: { subscription_details: { subscription: sub, metadata: { userId: id } } },
+    });
+    expect((await POST(await signedRequest(paid))).status).toBe(200);
+    const grants = await database.select().from(schema.creditGrants).where(eq(schema.creditGrants.userId, id));
+    const monthly = grants.filter(grant => grant.source === "monthly");
+    expect(monthly).toHaveLength(1);
+    expect(monthly[0]?.externalRef).toBe(`${sub.id}:${new Date(1_797_300_000_000).toISOString()}`);
+    expect(await getBillingSummary(database, id)).toMatchObject({ plan: "free", status: "cancelled" });
+  } finally {
+    currentSubscription.mockRestore();
+    await database.delete(schema.users).where(eq(schema.users.id, id));
+  }
+});
+
+it("does not grant monthly credits for an add-on or proration-only paid invoice", async () => {
+  const id = randomUUID();
+  await database.insert(schema.users).values({ id, email: `stripe-addon-${id}@example.com`, claimedAt: new Date() });
+  const sub = subscription(id);
+  try {
+    const { POST } = await import("./route");
+    const paid = eventPayload(`evt_addon_${id}`, "invoice.paid", 700, {
+      id: `in_addon_${id}`, object: "invoice", customer: sub.customer,
+      lines: { data: [
+        { pricing: { price_details: { price: "price_company_block_test" } }, period: { start: 1_799_900_000, end: 1_802_500_000 } },
+        { pricing: { price_details: { price: "price_search_test" } }, proration: true, period: { start: 1_799_900_000, end: 1_802_500_000 } },
+      ] },
+      parent: { subscription_details: { subscription: sub, metadata: { userId: id } } },
+    });
+    expect((await POST(await signedRequest(paid))).status).toBe(200);
+    expect((await getBillingSummary(database, id)).cv.monthly).toBe(0);
+  } finally {
+    await database.delete(schema.users).where(eq(schema.users.id, id));
+  }
+});
+
+it("finds the paid plan line beyond the invoice webhook's embedded page", async () => {
+  const id = randomUUID();
+  await database.insert(schema.users).values({ id, email: `stripe-lines-${id}@example.com`, claimedAt: new Date() });
+  const sub = subscription(id);
+  const { stripeClient } = await import("@/lib/billing/stripe");
+  const list = vi.spyOn(stripeClient().invoices, "listLineItems").mockReturnValue((async function* () {
+    yield { pricing: { price_details: { price: "price_search_test" } }, period: { start: 1_799_900_000, end: 1_802_500_000 } };
+  })() as never);
+  try {
+    const { POST } = await import("./route");
+    const paid = eventPayload(`evt_lines_${id}`, "invoice.paid", 700, {
+      id: `in_lines_${id}`, object: "invoice", customer: sub.customer,
+      lines: { has_more: true, data: [{ pricing: { price_details: { price: "price_company_block_test" } } }] },
+      parent: { subscription_details: { subscription: sub, metadata: { userId: id } } },
+    });
+    expect((await POST(await signedRequest(paid))).status).toBe(200);
+    expect(list).toHaveBeenCalledWith(`in_lines_${id}`, { limit: 100 });
+    expect((await getBillingSummary(database, id)).cv.monthly).toBe(10);
+  } finally {
+    list.mockRestore();
+    await database.delete(schema.users).where(eq(schema.users.id, id));
+  }
+});
+
+it("keeps a fully refunded top-up void when its checkout event arrives later", async () => {
+  const id = randomUUID();
+  await database.insert(schema.users).values({ id, email: `stripe-early-refund-${id}@example.com`, claimedAt: new Date() });
+  await ensureFreeEntitlement(database, id);
+  const checkoutId = `cs_refunded_first_${id}`;
+  const { stripeClient } = await import("@/lib/billing/stripe");
+  const sessions = vi.spyOn(stripeClient().checkout.sessions, "list").mockResolvedValue({ data: [{ id: checkoutId }] } as never);
+  try {
+    const { POST } = await import("./route");
+    const refund = eventPayload(`evt_early_refund_${id}`, "charge.refunded", 900, {
+      id: `ch_${id}`, object: "charge", amount: 500, amount_refunded: 500, payment_intent: `pi_${id}`,
+    });
+    expect((await POST(await signedRequest(refund))).status).toBe(200);
+    const checkout = eventPayload(`evt_late_checkout_${id}`, "checkout.session.completed", 700, {
+      id: checkoutId, object: "checkout.session", client_reference_id: id, customer: `cus_${id}`,
+      amount_total: 500, currency: "gbp", metadata: { userId: id, purchase: "cv_topup", pack: "cv5" },
+      mode: "payment", payment_status: "paid", status: "complete", subscription: null,
+    });
+    expect((await POST(await signedRequest(checkout))).status).toBe(200);
+    expect((await getBillingSummary(database, id)).cv).toMatchObject({ available: 3, purchased: 0 });
+  } finally {
+    sessions.mockRestore();
+    await database.delete(schema.users).where(eq(schema.users.id, id));
+  }
+});
+
+it("serialises a checkout and refund delivered at the same time", async () => {
+  const id = randomUUID();
+  await database.insert(schema.users).values({ id, email: `stripe-racing-refund-${id}@example.com`, claimedAt: new Date() });
+  await ensureFreeEntitlement(database, id);
+  const checkoutId = `cs_racing_${id}`;
+  const { stripeClient } = await import("@/lib/billing/stripe");
+  const sessions = vi.spyOn(stripeClient().checkout.sessions, "list").mockResolvedValue({ data: [{ id: checkoutId }] } as never);
+  try {
+    const { POST } = await import("./route");
+    const refund = eventPayload(`evt_racing_refund_${id}`, "charge.refunded", 900, {
+      id: `ch_${id}`, object: "charge", amount: 500, amount_refunded: 500, payment_intent: `pi_${id}`,
+    });
+    const checkout = eventPayload(`evt_racing_checkout_${id}`, "checkout.session.completed", 700, {
+      id: checkoutId, object: "checkout.session", client_reference_id: id, customer: `cus_${id}`,
+      amount_total: 500, currency: "gbp", metadata: { userId: id, purchase: "cv_topup", pack: "cv5" },
+      mode: "payment", payment_status: "paid", status: "complete", subscription: null,
+    });
+    const responses = await Promise.all([POST(await signedRequest(refund)), POST(await signedRequest(checkout))]);
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    expect((await getBillingSummary(database, id)).cv).toMatchObject({ available: 3, purchased: 0 });
+  } finally {
+    sessions.mockRestore();
     await database.delete(schema.users).where(eq(schema.users.id, id));
   }
 });

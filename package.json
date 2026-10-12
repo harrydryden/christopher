@@ -27,7 +27,9 @@
     "acceptance:live": "node scripts/live-acceptance.mjs",
     "recovery:drill": "node scripts/recovery-drill.mjs",
     "capacity:worker": "pnpm --filter @col/worker exec tsx src/capacity-recovery-drill.ts",
-    "check:operations": "node scripts/verify-operational-status.mjs"
+    "check:operations": "node scripts/verify-operational-status.mjs",
+    "check:launch-config": "node scripts/check-launch-config.mjs",
+    "check:stripe-catalogue": "node --import tsx apps/web/scripts/check-stripe-catalogue.ts"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",
@@ -38,10 +40,11 @@
   },
   "pnpm": {
     "overrides": {
-      "postcss": "8.5.28"
+      "postcss": "8.5.28",
+      "source-map-js": "1.2.2"
     },
     "patchedDependencies": {
-      "next@15.5.25": "patches/next@15.5.25.patch"
+      "next@15.5.27": "patches/next@15.5.27.patch"
     }
   }
 }

@@ -4,7 +4,7 @@ import { billingAccounts } from "@col/db/schema";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getBillingSummary } from "./service";
-import { companyBlockPriceId, stripeClient, stripeConfigured } from "./stripe";
+import { companyBlockPriceId, stripeCheckoutConfigured, stripeClient } from "./stripe";
 
 const QUOTE_TTL_SECONDS = 10 * 60;
 
@@ -62,7 +62,7 @@ export function verifyCapacityQuoteToken(token: string, userId: string, nowSecon
 }
 
 export async function getCompanyCapacityQuote(userId: string): Promise<CompanyCapacityQuote | null> {
-  if (!stripeConfigured()) return null;
+  if (!stripeCheckoutConfigured()) return null;
   const summary = await getBillingSummary(userId);
   if (summary.plan !== "search" || summary.status !== "active" || !summary.stripeCustomerId || summary.companies.paidBlocks >= 5) return null;
   const [account] = await db().select({ subscriptionId: billingAccounts.stripeSubscriptionId })
@@ -108,7 +108,7 @@ export async function applyCompanyCapacityQuote(userId: string, token: string): 
   const payload = verifyCapacityQuoteToken(token, userId);
   if (!payload) return "expired";
   const blockPrice = companyBlockPriceId();
-  if (!blockPrice || !stripeConfigured()) return "changed";
+  if (!blockPrice || !stripeCheckoutConfigured()) return "changed";
   const stripe = stripeClient();
   const subscription = await stripe.subscriptions.retrieve(payload.subscriptionId);
   const item = subscription.items.data.find(candidate => candidate.price.id === blockPrice);

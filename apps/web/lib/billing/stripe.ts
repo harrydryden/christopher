@@ -7,6 +7,11 @@ export function stripeConfigured(): boolean {
   return Boolean(process.env.STRIPE_SECRET_KEY?.trim());
 }
 
+/** Require a webhook signing secret before offering a new charge. */
+export function stripeCheckoutConfigured(): boolean {
+  return stripeConfigured() && Boolean(process.env.STRIPE_WEBHOOK_SECRET?.trim());
+}
+
 export function stripeClient(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY?.trim();
   if (!key) throw new Error("STRIPE_SECRET_KEY is not configured");

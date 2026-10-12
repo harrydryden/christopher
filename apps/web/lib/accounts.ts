@@ -8,7 +8,7 @@
  */
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, lockAccountScoreInput, normaliseEmail, promoteIfEntitled, type CreateUserResult, type Db } from "@col/db";
-import { authAccounts, authTokens, cvVersions, sessions, users, type User } from "@col/db/schema";
+import { authAccounts, authTokens, billingAccounts, cvVersions, sessions, users, type User } from "@col/db/schema";
 import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@col/core";
 import { consumeAuthTokenIn, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
@@ -268,6 +268,11 @@ export async function deleteAccount(callerId: string, targetId: string): Promise
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
     const [caller] = await tx.select({ role: users.role, claimedAt: users.claimedAt }).from(users).where(eq(users.id, callerId));
     if (caller?.role !== "admin" || !caller.claimedAt) throw new UserFacingError("You are no longer an administrator.");
+    const [billing] = await tx.select({ subscriptionId: billingAccounts.stripeSubscriptionId }).from(billingAccounts)
+      .where(eq(billingAccounts.userId, targetId)).limit(1).for("update");
+    if (billing?.subscriptionId) throw new UserFacingError(
+      "This account still has a Stripe subscription. Cancel it in the billing portal and wait for the cancellation to appear before deleting the account.",
+    );
     await tx.delete(sessions).where(eq(sessions.userId, targetId));
     // The account's CV rows cascade; the per-day version numbers are keyed by role rather than by
     // account, so they are removed by the account prefix of that key.

@@ -586,8 +586,8 @@ ratios are an assumption until a run at the new effort has been measured.
 | Anthropic API, 30 companies in steady state | ~$3–10/month |
 
 Every account has its own monthly AI budget, $25 to start, and it is the only budget the product
-has. Each person sets their own on **Settings**; an administrator sets anyone's in
-**Admin › Accounts**, which shows what each account has spent this month and can start an account's
+has. Each person can raise their own limit to $100 on **Settings**; an administrator can set anyone's
+limit higher in **Admin › Accounts**, which shows what each account has spent this month and can start an account's
 month again with Reset spend. The budget runs on the calendar month in UTC and starts again on the
 1st; a reset moves the window the spend is counted in rather than deleting anything, so
 **Admin › Operations** still reports every call made, by account, feature and model, and totals the
@@ -600,7 +600,10 @@ spends anything, naming the budget, what is left and what its calls in flight ar
 Work no account asked for — extraction, discovery — is charged to no budget. `DAILY_AI_BUDGET_USD`
 and `DISCOVERY_AI_BUDGET_USD` in the worker's environment are the safety valves for the deployment
 as a whole: unlimited unless set, they cap a day's spend and a day's discovery spend across every
-account, and they refuse any call, a CV build included, so leave them unset unless you want that.
+account, and they refuse any call, a CV build included. The account limits measure provider spend,
+not paid-plan revenue or CV-credit liability. Before taking paid customers, choose operational caps
+against the expected number of accounts and monitor their effect; leaving both unset permits the
+sum of all customer-set budgets plus uncapped extraction and discovery costs.
 
 ### Batch scoring
 

@@ -94,7 +94,7 @@ jobs:
   # workspace through Playwright. Runs beside `check`, not after it.
   browser-and-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -138,7 +138,15 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      - run: pnpm --filter @col/worker exec playwright install --with-deps chromium
+      # Playwright invokes apt for system libraries. Bound a stalled Ubuntu mirror so the
+      # browser, smoke and bundle gates cannot all disappear behind a job timeout.
+      - name: Bound apt mirror waits
+        run: |
+          printf 'Acquire::Retries "2";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' |
+            sudo tee /etc/apt/apt.conf.d/99-col-ci-timeouts >/dev/null
+      - name: Install Chromium and system dependencies
+        timeout-minutes: 6
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @col/worker exec playwright install --with-deps chromium
       - run: pnpm --filter @col/worker exec vitest run src/browser.test.ts
         env:
           COL_DISABLE_BROWSER: "0"

@@ -85,6 +85,7 @@ it("retries a discovery whose only board could not be verified for now, and reco
   // Nothing was found only because the host asked us to come back: that is not "not found".
   expect(first).toMatchObject({ status: "failed" });
   expect(first!.error).toContain("retrying: greenhouse/acme could not be verified for now");
+  expect(first!.log.length).toBeGreaterThan(0);
 
   const outcome = await handleDiscover(discoverTask(acme.id, 3), deps()) as { outcome: string };
   expect(outcome.outcome).toBe("not_found");
@@ -135,6 +136,22 @@ it("discards a source found on a homepage corrected while discovery was in fligh
   expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"))).toHaveLength(0);
 });
 
+it("rearms a stale queued recovery against the corrected homepage without reading the old site", async () => {
+  const acme = await company();
+  const user = await ensureTestUser(db, "recovery@example.com");
+  await db.insert(schema.companySubscriptions).values({ companyId: acme.id, userId: user.id, status: "active" });
+  await db.update(schema.companies).set({ homepageUrl: "https://www.corrected.test/",
+    discoveryRecoveryAttempts: 1, discoveryRecoveryState: "idle", discoveryNextAttemptAt: null })
+    .where(eq(schema.companies.id, acme.id));
+  const task = { ...discoverTask(acme.id), payload: { companyId: acme.id, homepageUrl: acme.homepageUrl, reason: "recovery" } } as Task;
+
+  expect(await handleDiscover(task, deps())).toEqual({ skipped: "homepage changed" });
+  expect(requested).toEqual([]);
+  const [updated] = await db.select().from(schema.companies).where(eq(schema.companies.id, acme.id));
+  expect(updated).toMatchObject({ discoveryRecoveryAttempts: 1, discoveryRecoveryState: "waiting",
+    discoveryNextAttemptAt: new Date(now.getTime() + 3 * 86_400_000) });
+});
+
 it("never leaves a run running when its result cannot be recorded", async () => {
   routes[GH_JOBS] = { body: { jobs: [{ id: 1, title: "Operations Lead", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/1", location: { name: "London" } }] } };
   routes["https://boards-api.greenhouse.io/v1/boards/acme"] = { body: { name: "Acme" } };
@@ -168,11 +185,18 @@ it("fails the runs an abandoned attempt left running, and orphans older than any
   expect(closed).toMatchObject({ status: "failed", error: "discovery did not finish" });
 
   // The abandonment hook fails what this task's attempts left running, and nothing of another company's.
-  const [left] = await db.insert(schema.discoveryRuns).values({ companyId: acme.id, status: "running", startedAt: now }).returning();
-  await onDiscoverAbandoned(discoverTask(acme.id, 3), deps(), "deadline exceeded");
+  const oldTask = discoverTask(acme.id, 3);
+  const [left] = await db.insert(schema.discoveryRuns).values({ companyId: acme.id, taskId: oldTask.id,
+    homepageUrl: acme.homepageUrl, status: "running", startedAt: now }).returning();
+  const [newer] = await db.insert(schema.discoveryRuns).values({ companyId: acme.id,
+    taskId: "00000000-0000-4000-8000-000000000002", homepageUrl: acme.homepageUrl,
+    status: "running", startedAt: new Date(now.getTime() + 1000) }).returning();
+  await onDiscoverAbandoned(oldTask, deps(), "deadline exceeded");
   const [abandoned] = await db.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, left!.id));
   expect(abandoned!.status).toBe("failed");
   expect(abandoned!.error).toContain("deadline exceeded");
+  const [stillRunning] = await db.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, newer!.id));
+  expect(stillRunning!.status).toBe("running");
   const [untouched] = await db.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, elsewhere!.id));
   expect(untouched!.status).toBe("running");
 });

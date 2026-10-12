@@ -1,6 +1,6 @@
 /**
  * The logo as a piece of work the worker does: the task that captures one company's icon, and the
- * daily sweep that decides which companies are due one.
+ * periodic sweep that decides which companies are due one.
  *
  * What matters here is that a failure is a backoff rather than a failed task — an icon is
  * decoration, and a site that is down for an afternoon must not spend the queue's three attempts
@@ -14,7 +14,7 @@ import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handleDiscover } from "./handlers/discover";
-import { handleRunDaily } from "./handlers/daily";
+import { sweepDueCompanyLogos } from "./periodic-company-recovery";
 import { startTestServer, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
@@ -86,14 +86,6 @@ const logoTask = (subject: { id: string; homepageUrl: string }) => ({
   attempts: 1,
 } as never);
 
-const dailyTask = (trigger: "schedule" | "manual") => ({
-  id: "00000000-0000-0000-0000-000000000002",
-  type: "run_daily",
-  payload: { trigger },
-  result: null,
-  attempts: 1,
-} as never);
-
 it("stores the icon a homepage declares, and says what it captured", async () => {
   const subject = await company({ logoAttempts: 4, logoError: "was failing", logoNextAttemptAt: new Date(now.getTime() - DAY) });
 
@@ -150,14 +142,16 @@ it("leaves a company alone when its homepage changed while the capture was in fl
   expect(await readCompanyLogo(db, subject.id)).toBeNull();
 });
 
-it("sweeps the companies that are due a logo into the daily run, once each", async () => {
+it("sweeps the actively followed companies due a logo into periodic work, once each", async () => {
   const never = await company({ domain: "logo.test" });
   const stale = await company({ domain: "stale.test", logoFetchedAt: new Date(now.getTime() - 120 * DAY) });
   const fresh = await company({ domain: "fresh.test", logoFetchedAt: new Date(now.getTime() - DAY) });
   const backingOff = await company({ domain: "backoff.test", logoAttempts: 2, logoNextAttemptAt: new Date(now.getTime() + 6 * 3_600_000) });
+  const [follower] = await db.insert(schema.users).values({ email: `logo-follower-${crypto.randomUUID()}@example.test` }).returning();
+  await db.insert(schema.companySubscriptions).values([never, stale, fresh, backingOff]
+    .map(row => ({ companyId: row.id, userId: follower!.id, status: "active" as const })));
 
-  const first = await handleRunDaily(dailyTask("manual"), deps) as { logosQueued: number };
-  expect(first.logosQueued).toBe(2);
+  expect(await sweepDueCompanyLogos(db, now)).toBe(2);
 
   const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "discover"));
   const companiesQueued = queued.map(t => (t.payload as { companyId: string }).companyId).sort();
@@ -171,14 +165,12 @@ it("sweeps the companies that are due a logo into the daily run, once each", asy
 
   // An hour later, with the first sweep's tasks still queued: the dedupe key adds nothing.
   now = new Date(now.getTime() + 3_600_000);
-  const second = await handleRunDaily(dailyTask("manual"), deps) as { logosQueued: number };
-  expect(second.logosQueued).toBe(0);
+  expect(await sweepDueCompanyLogos(db, now)).toBe(0);
   expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "discover"))).toHaveLength(2);
 
   // And once a failing company's backoff has passed, the sweep asks for it again.
   now = new Date(now.getTime() + 12 * 3_600_000);
-  const third = await handleRunDaily(dailyTask("manual"), deps) as { logosQueued: number };
-  expect(third.logosQueued).toBe(1);
+  expect(await sweepDueCompanyLogos(db, now)).toBe(1);
   const all = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "discover"));
   expect(all.map(t => (t.payload as { companyId: string }).companyId)).toContain(backingOff.id);
 });

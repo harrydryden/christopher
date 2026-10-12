@@ -38,17 +38,23 @@ async function requireFollowed(userId: string, companyId: string, options: { liv
 }
 
 /** The preamble of every action that starts shared work on one followed company: a confirmed address and a live follow. */
-async function liveFollow(companyId: string): Promise<{ user: User; id: string }> {
+async function liveFollow(companyId: string): Promise<{ user: User; id: string; subscription: CompanySubscription }> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id, { live: true });
-  return { user, id };
+  const subscription = await requireFollowed(user.id, id, { live: true });
+  return { user, id, subscription };
+}
+
+async function activeFollow(companyId: string): ReturnType<typeof liveFollow> {
+  const followed = await liveFollow(companyId);
+  if (followed.subscription.status !== "active") throw new UserFacingError("Resume following this company before starting a check.");
+  return followed;
 }
 
 /** A company nobody followed for a while may have no usable source any more: find one. */
 async function discoverIfSourceless(tx: Pick<ReturnType<typeof db>, "select" | "insert" | "execute">, companyId: string): Promise<void> {
   const sources = await tx.select({ status: careerSources.status }).from(careerSources).where(eq(careerSources.companyId, companyId));
-  if (!sources.some(s => s.status === "active" || s.status === "failing" || s.status === "needs_confirmation")) {
+  if (sources.length === 0) {
     await enqueue("discover", { companyId, reason: "added" }, tx);
   }
 }
@@ -250,7 +256,7 @@ export async function archiveCompany(companyId: string): Promise<void> {
 
 /** Refresh uses existing sources first; discovery is recovery, not a separate routine action. */
 export async function refreshCompany(companyId: string): Promise<void> {
-  const { id } = await liveFollow(companyId);
+  const { id } = await activeFollow(companyId);
   const review = await db().transaction(async tx => {
     const [company] = await tx.select({ status: companies.status, homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).for("update");
     if (!company || company.status !== "active") return false;
@@ -272,13 +278,13 @@ export async function refreshCompany(companyId: string): Promise<void> {
 
 /** A scan is shared: the worker serves a rescan from a result made in the last half hour. */
 export async function rescanCompany(companyId: string): Promise<void> {
-  const { id } = await liveFollow(companyId);
+  const { id } = await activeFollow(companyId);
   await enqueue("scan_company", { companyId: id, trigger: "manual" });
   revalidate("/companies", `/companies/${id}`);
 }
 
 export async function rediscoverCompany(companyId: string): Promise<void> {
-  const { id } = await liveFollow(companyId);
+  const { id } = await activeFollow(companyId);
   await enqueue("discover", { companyId: id, reason: "manual" });
   revalidate("/companies", `/companies/${id}`);
 }
@@ -352,7 +358,7 @@ export async function suggestCompanyName(companyId: string, _previous: ActionRes
 
 /** Capture this company's logo again: the same shared task the daily sweep queues. */
 export async function refreshCompanyLogo(companyId: string): Promise<void> {
-  const { id } = await liveFollow(companyId);
+  const { id } = await activeFollow(companyId);
   const [company] = await db().select({ homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).limit(1);
   if (!company) return;
   await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl: company.homepageUrl });
@@ -484,7 +490,7 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
 }
 
 export async function pasteDiscoveryUrl(companyId: string, formData: FormData): Promise<void> {
-  const { id } = await liveFollow(companyId);
+  const { id } = await activeFollow(companyId);
   const url = zUrlString().parse(String(formData.get("url") ?? ""));
   const unsafe = unsafeUrlRefusal(url);
   if (unsafe) throw new UserFacingError(unsafe);

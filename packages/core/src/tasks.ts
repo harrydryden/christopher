@@ -22,7 +22,7 @@ export interface TaskPayloads {
    * the draft still finds it.
    */
   generate_cv: { draftId: string; userId?: string; mode?: "assess" | "improve"; rubric?: unknown; improvements?: string[] };
-  discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "shrunk" | "pasted" };
+  discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "partial" | "suspect_empty" | "shrunk" | "pasted" | "recovery" | "logo_sweep" };
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };
@@ -286,6 +286,8 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
  * not import `apps/worker`.
  */
 export const MANUAL_RESCAN_INTERVAL_MS = 30 * 60_000;
+/** A partial listing may be tried again sooner, but never in a hot manual loop. */
+export const PARTIAL_MANUAL_RESCAN_INTERVAL_MS = 5 * 60_000;
 
 /**
  * A source is marked `failing`, and re-discovery queued, after this many consecutive failed scans

@@ -23,6 +23,7 @@ import { _scanSourceForTests, handleScanCompany } from "./handlers/scan";
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { handleScoreJob, handleTagReason } from "./handlers/learning";
 import { handleFetchDescription, sliceBetweenAnchors } from "./handlers/description";
+import { queueDueDescriptionChecks } from "./description-retry-sweep";
 import { handleDiscover } from "./handlers/discover";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskDeferred, TaskQueue } from "./queue";
@@ -1435,6 +1436,43 @@ describe("HTML extraction completion", () => {
     const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
     expect(scan!.error).toContain("explicit next page outside this source");
   });
+  it("uses the latest scan's own manual cooldown, including a newer partial after an OK", async () => {
+    const { company, source } = await htmlFixture();
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<main><a href="/jobs/new">Operations Manager</a></main>' } } });
+    await db.insert(schema.scans).values([
+      { sourceId: source.id, status: "ok", startedAt: new Date(now.getTime() - 20 * 60_000) },
+      { sourceId: source.id, status: "partial", startedAt: new Date(now.getTime() - 10 * 60_000) },
+    ]);
+    const firstId = await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" });
+    const [first] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, firstId!));
+    expect((await handleScanCompany(first!, deps) as { skipped?: string }).skipped).not.toBe("scanned recently");
+    await db.delete(schema.tasks).where(eq(schema.tasks.id, firstId!));
+    const secondId = await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" });
+    const [second] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, secondId!));
+    expect(await handleScanCompany(second!, deps)).toMatchObject({ skipped: "scanned recently" });
+  }, 60_000);
+  it("escalates the third incomplete listing once while preserving every observed role", async () => {
+    const { company, source } = await htmlFixture();
+    await db.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id,
+      title: "Previously seen role", normalizedTitle: "previously seen role", url: "https://www.acme.example/jobs/old",
+      externalKey: "url:https://www.acme.example/jobs/old" });
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<head><link rel="next" href="https://outside.example/jobs?page=2"></head><main><a href="/jobs/new">Operations Manager</a></main>' },
+    } });
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      now = new Date(now.getTime() + 86_400_000);
+      expect((await _scanSourceForTests(deps, company, source, await deps.settings(), null)).status).toBe("partial");
+      const [old] = await db.select().from(schema.jobs).where(eq(schema.jobs.sourceId, source.id));
+      expect(old).toMatchObject({ status: "open", missingScans: 0 });
+      const discoveries = await db.select().from(schema.tasks).where(and(eq(schema.tasks.type, "discover"),
+        sql`${schema.tasks.payload}->>'reason' = 'partial'`));
+      expect(discoveries).toHaveLength(attempt >= 3 ? 1 : 0);
+    }
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
+    expect(current).toMatchObject({ status: "active", consecutiveFailures: 0, nextScanAt: null });
+  }, 60_000);
   it("keeps a model-extracted listing partial when an external next page is not traversable", async () => {
     const { company, source } = await htmlFixture();
     await db.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, title: "Previous role", normalizedTitle: "previous role",
@@ -2084,18 +2122,35 @@ describe("what a scan asks for and when", () => {
     expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(0);
 
     // The board edits one role. That, and only that, is what re-reads a description.
+    const oldTaskId = await enqueueTask(db, "fetch_description", { jobId: manager!.id });
+    await db.update(schema.tasks).set({ status: "running", startedAt: now, lockedAt: now, lockedBy: "old-reader" })
+      .where(eq(schema.tasks.id, oldTaskId!));
     setJobs([{ ...JOB_OPERATIONS_MANAGER, updated_at: "2026-09-19T09:00:00Z" }, JOB_ENGINEER, JOB_OPS_NEW_YORK]);
     await _scanSourceForTests(deps, company, await currentSource(source!.id), settings, null);
     const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
-    expect(queued).toHaveLength(1);
-    expect((queued[0]!.payload as { jobId: string }).jobId).toBe(manager!.id);
+    expect(queued).toHaveLength(2);
+    expect(queued.filter(task => task.status === "queued")).toHaveLength(1);
+    expect(queued.every(task => (task.payload as { jobId: string }).jobId === manager!.id)).toBe(true);
+    const waiting = queued.find(task => task.status === "queued")!;
+    await db.update(schema.tasks).set({ startedAt: now, runAfter: new Date(now.getTime() + 3 * 86_400_000) })
+      .where(eq(schema.tasks.id, waiting.id));
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, updated_at: "2026-09-20T09:00:00Z" }, JOB_ENGINEER, JOB_OPS_NEW_YORK]);
+    await _scanSourceForTests(deps, company, await currentSource(source!.id), settings, null);
+    const [advanced] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, waiting.id));
+    expect(advanced!.runAfter.getTime()).toBeLessThanOrEqual(now.getTime());
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(2);
   }, 120_000);
 
-  it("keeps the fortnightly refresh for a feed that carries no updated_at", async () => {
-    // SmartRecruiters publishes no `updated_at`, so age is all there is to go on and the old rule
-    // stands: the saving above is taken only where the vendor answers the question for us.
+  it("refreshes successful descriptions after a fortnight on a feed with no updated_at", async () => {
+    // SmartRecruiters publishes no `updated_at`. Successful text uses the age fallback while
+    // empty detail reads keep their own bounded retry state.
     await setGate({});
-    server.setRoutes({ "api.smartrecruiters.com": smartRecruitersRoutes("small") });
+    server.setRoutes({ "api.smartrecruiters.com": {
+      ...smartRecruitersRoutes("small"),
+      "/v1/companies/orbital/postings/ops-1": { body: { jobAd: { sections: {
+        jobDescription: { text: "<p>Run Orbital operations in London.</p>" },
+      } } } },
+    } });
     const [company] = await db.insert(schema.companies).values({ name: "Orbital", domain: "orbital.example", homepageUrl: "https://www.orbital.example/" }).returning();
     await subscribeToCompany(db, user.id, company!.id);
     const [source] = await db.insert(schema.careerSources).values({
@@ -2107,14 +2162,20 @@ describe("what a scan asks for and when", () => {
     await queue.drain();
     const stored = await db.select().from(schema.jobs);
     expect(stored).toHaveLength(3);
-    expect(stored.every(job => job.descriptionFetchedAt !== null)).toBe(true);
+    const successful = stored.find(job => job.externalKey === "id:ops-1")!;
+    expect(successful).toMatchObject({ descriptionText: "Run Orbital operations in London.",
+      descriptionFetchedAt: now, descriptionRetryAttempts: 0, descriptionNextAttemptAt: null });
 
     await db.delete(schema.tasks);
     await _scanSourceForTests(deps, company!, await currentSource(source!.id), settings, null);
-    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(0);
+    const followUps = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(followUps).toHaveLength(1);
+    expect(followUps.every(task => (task.payload as { jobId: string }).jobId !== successful.id)).toBe(true);
     now = new Date(now.getTime() + 15 * 86_400_000);
     await _scanSourceForTests(deps, company!, await currentSource(source!.id), settings, null);
-    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(3);
+    const aged = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(aged).toHaveLength(3);
+    expect(aged.some(task => (task.payload as { jobId: string }).jobId === successful.id)).toBe(true);
   }, 120_000);
 
   it("refetches an unchanged first feed response when secondary indexes also shape the listing", async () => {
@@ -2463,6 +2524,59 @@ async function countingQueries(pattern: RegExp, body: () => Promise<unknown>): P
 }
 
 describe("a description arriving", () => {
+  it("bounds failed detail reads, records a safe reason, and repairs a missing due task once", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing", status: "active" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [job] = await db.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id,
+      externalKey: "url:/jobs/missing", title: "Operations Lead", normalizedTitle: "operations lead",
+      url: "https://www.acme.example/jobs/missing" }).returning();
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/jobs/missing": { status: 404, body: "No longer listed" } } });
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      const result = await handleFetchDescription({ payload: { jobId: job!.id } } as never, deps);
+      const [saved] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, job!.id));
+      expect(saved!.descriptionRetryAttempts).toBe(attempt);
+      expect(saved!.descriptionFetchedAt).toBeNull();
+      expect(saved!.descriptionLastError).toBe("Posting page returned HTTP 404");
+      if (attempt < 6) {
+        expect(result).toBeInstanceOf(TaskDeferred);
+        now = new Date((result as TaskDeferred).until.getTime() + 1);
+        if (attempt === 1) {
+          expect(await queueDueDescriptionChecks(db, now)).toBe(1);
+          expect(await queueDueDescriptionChecks(db, now)).toBe(0);
+          const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+          expect(queued).toHaveLength(1);
+          await db.delete(schema.tasks).where(eq(schema.tasks.id, queued[0]!.id));
+        }
+      } else {
+        expect(result).toMatchObject({ stored: false, retryAt: null });
+        expect(saved!.descriptionNextAttemptAt).toBeNull();
+      }
+    }
+    expect(await queueDueDescriptionChecks(db, new Date(now.getTime() + 86_400_000))).toBe(0);
+  }, 60_000);
+  it("defers a duplicate detail task behind an already deferred read without making another request", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing", status: "active" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [job] = await db.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id,
+      externalKey: "url:/jobs/retry", title: "Operations Lead", normalizedTitle: "operations lead",
+      url: "https://www.acme.example/jobs/retry", descriptionRetryAttempts: 1,
+      descriptionNextAttemptAt: new Date(now.getTime() + 60_000), descriptionLastError: "detail failed" }).returning();
+    const firstId = await enqueueTask(db, "fetch_description", { jobId: job!.id });
+    await db.update(schema.tasks).set({ startedAt: now, runAfter: new Date(now.getTime() + 60_000) })
+      .where(eq(schema.tasks.id, firstId!));
+    const secondId = await enqueueTask(db, "fetch_description", { jobId: job!.id });
+    const [first] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, firstId!));
+    await db.update(schema.tasks).set({ createdAt: new Date(first!.createdAt.getTime() + 1000) })
+      .where(eq(schema.tasks.id, secondId!));
+    const [second] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, secondId!));
+    const requestsBefore = server.requests.length;
+    expect(await handleFetchDescription(second!, deps)).toBeInstanceOf(TaskDeferred);
+    expect(server.requests).toHaveLength(requestsBefore);
+    expect((await db.select().from(schema.jobs).where(eq(schema.jobs.id, job!.id)))[0]!.descriptionRetryAttempts).toBe(1);
+  }, 60_000);
   async function follow(companyId: string, n: number, gate: Record<string, unknown>) {
     const follower = await ensureTestUser(db, `follower-${n}@example.com`, "member");
     await db.insert(schema.userSettings).values({ userId: follower.id, key: "gate", value: { excludeKeywords: [], locationTerms: [], includeRemote: true, ...gate } });
@@ -2523,6 +2637,7 @@ describe("a description arriving", () => {
 
   it("keeps the page's own text between the model's anchors, and nothing when an anchor is not on the page", async () => {
     const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
     const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing", status: "active" }).returning();
     const page = "<html><body><nav>Home Careers</nav><main><h1>Operations Lead</h1><p>Run our London site.</p><p>Hybrid, three days a week.</p></main><footer>Cookies</footer></body></html>";
     server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/jobs/lead": { body: page }, "/jobs/other": { body: page } } });
@@ -2546,7 +2661,8 @@ describe("a description arriving", () => {
     expect(refused!.descriptionSource).not.toBe("model");
     expect(refused!.descriptionText ?? "").not.toContain("Robotics");
     expect(refused!.salaryText).toBeNull();
-    expect(refused!.descriptionFetchedAt).not.toBeNull();
+    expect(refused!.descriptionFetchedAt).toBeNull();
+    expect(refused!.descriptionAttemptedAt).not.toBeNull();
   }, 60_000);
 
   it("slices the page between two anchors, whatever the spacing, case and punctuation", () => {

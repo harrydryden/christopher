@@ -16,7 +16,11 @@ it("says when the next scan is due, whether or not this company has ever been sc
 it("says a rescan was skipped only while a rescan would still be served from that scan", () => {
   const scanned = minutesAgo(12);
   expect(scanTimingLine({ lastGoodScanAt: scanned, rescanSkippedAt: minutesAgo(1) }, "06:00", "Europe/London", NOW))
-    .toBe("Rescan skipped: scanned 12m ago; a scan made in the last half hour is reused.");
+    .toBe("Rescan skipped: scanned 12m ago; a complete scan made in the last half hour is reused.");
+  expect(scanTimingLine({ lastGoodScanAt: minutesAgo(4), rescanSkippedAt: minutesAgo(1), lastScanKind: "partial" }, "06:00", "Europe/London", NOW))
+    .toBe("Rescan skipped: scanned 4m ago; a partial scan made in the last five minutes is reused.");
+  expect(scanTimingLine({ lastGoodScanAt: minutesAgo(6), rescanSkippedAt: minutesAgo(1), lastScanKind: "partial" }, "06:00", "Europe/London", NOW))
+    .toBe("Scanned 6m ago · next scheduled scan at 06:00 Europe/London");
 
   // Past the reuse window the skip is history: pressing Rescan now would really run one.
   const stale = new Date(NOW.getTime() - MANUAL_RESCAN_INTERVAL_MS - 60_000);

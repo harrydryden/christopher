@@ -21,6 +21,7 @@ import {
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { CompanyNotepad } from "@/components/CompanyNotepad";
 import { LocationChecksCard } from "@/components/LocationChecksCard";
+import { DescriptionChecksCard } from "@/components/DescriptionChecksCard";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { CompanySetupSummary, CompanySetupTimeline } from "@/components/CompanySetupTimeline";
 import { Badge, companyStatusTone, discoveryStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
@@ -42,6 +43,7 @@ import {
   companyScanTiming,
   companySetupRows,
   getCompany,
+  getCompanyLogoTaskState,
   getCompanyProfile,
   getCompanyScans,
   getCompanySources,
@@ -118,7 +120,7 @@ type LoadedCompany = NonNullable<Awaited<ReturnType<typeof getCompany>>>;
 async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date) {
   const id = company.id;
   const admin = user.role === "admin";
-  const [sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, timing, applications, system, setup, roleLocations] = await Promise.all([
+  const [sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, timing, applications, system, setup, roleLocations, logoTaskState] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
     // The scan history and the discovery log are shown only in an administrator's diagnostics.
@@ -135,6 +137,7 @@ async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date)
     getSystemSettings(),
     companySetupRows(user.id, id),
     locationChecks(user.id, id, 20),
+    getCompanyLogoTaskState(id),
   ]);
   const workerStatus = roleLocations.total ? await getWorkerStatus(now) : null;
 
@@ -178,7 +181,7 @@ async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date)
     ].filter((fact): fact is string => !!fact)
     : [];
 
-  return { admin, now, sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts, roleLocations, workerStatus };
+  return { admin, now, sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts, roleLocations, workerStatus, logoTaskState };
 }
 
 type CompanyDetails = Awaited<ReturnType<typeof loadCompanyDetails>>;
@@ -212,7 +215,7 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
         }
         actions={<>
           <form action={rescanCompany.bind(null, company.id)}>
-            <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : "A scan made in the last half hour is reused rather than repeated"}>
+            <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : "A complete scan made in the last 30 minutes, or a partial scan made in the last 5 minutes, is reused."}>
               Rescan
             </Button>
           </form>
@@ -234,6 +237,7 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
       </details>}
 
       {workerStatus && <LocationChecksCard checks={roleLocations} worker={workerStatus} now={now} unverified={unverified} companyOnly />}
+      {subscription.status === "active" && <DescriptionChecksCard companyId={company.id} unverified={unverified} />}
 
       {competing && latestRun && (
         <div className="flex flex-wrap items-center gap-2 border-2 border-line-muted px-3 py-2 text-12 text-muted">
@@ -273,11 +277,20 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
                     ? "Looking for the careers page. Paste the URL if you know it."
                     : latestRun?.status === "needs_confirmation" && candidates.length > 0
                       ? `Discovery found ${candidates.length} ${candidates.length === 1 ? "candidate" : "candidates"}; pick one below or paste the URL.`
-                      : latestRun?.status === "not_found"
-                        ? "No careers page found. Paste its careers or board URL, or re-discover."
+                      : latestRun?.status === "not_found" || latestRun?.status === "failed"
+                        ? "No careers page confirmed. Paste its careers or board URL, or re-discover."
                         : "No careers page confirmed yet. Paste its careers or board URL, or pick a candidate."}
                 </p>
-                {latestRun?.status === "not_found" && !discoveryState && (
+                {!discoveryState && company.discoveryRecoveryState === "waiting" && company.discoveryNextAttemptAt && (
+                  <p className="text-12 text-muted">An automatic check is eligible {relativeTime(company.discoveryNextAttemptAt, now)} ({company.discoveryRecoveryAttempts} of 3 follow-up checks used). The queue may start it later if busy.</p>
+                )}
+                {!discoveryState && company.discoveryRecoveryState === "manual_required" && (
+                  <p className="text-12 text-muted">Automatic checks have finished. Paste a careers URL or use Re-discover to start a new check.</p>
+                )}
+                {admin && latestRun?.status === "failed" && latestRun.error && (
+                  <p className="text-12 text-muted">Last discovery error: {latestRun.error}</p>
+                )}
+                {(latestRun?.status === "not_found" || latestRun?.status === "failed" || company.discoveryRecoveryState === "manual_required") && !discoveryState && (
                   <form action={rediscoverCompany.bind(null, company.id)}>
                     <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Re-discover</Button>
                   </form>
@@ -349,7 +362,7 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
 
 /** Below the roles: adding a posting by hand, the notepad and the administrator's diagnostics. */
 async function CompanyMore({ company, details }: { company: LoadedCompany; details: Promise<CompanyDetails> }) {
-  const { admin, now, sources, latestRun, scans, discoveryLog, profile, imports, ungated, subscription, unverified } = await details;
+  const { admin, now, sources, latestRun, scans, discoveryLog, profile, imports, ungated, subscription, unverified, logoTaskState } = await details;
   return (
     <>
       <Card title="Add a role">
@@ -553,10 +566,13 @@ async function CompanyMore({ company, details }: { company: LoadedCompany; detai
               </div>
               <p className="text-14 text-muted">
                 {company.logoFetchedAt
-                  ? <>Captured {relativeTime(company.logoFetchedAt, now)} from {company.faviconUrl ?? "the company site"}.</>
-                  : company.logoAttempts > 0
-                    ? <>Not captured. {company.logoAttempts} {company.logoAttempts === 1 ? "attempt" : "attempts"}{company.logoNextAttemptAt ? `, next ${relativeTime(company.logoNextAttemptAt, now)}` : ""}{company.logoError ? `. Last error: ${company.logoError}` : "."}</>
-                    : <>Not captured yet. The daily sweep takes up to 200 companies a day, oldest first.</>}
+                  ? <>Captured {relativeTime(company.logoFetchedAt, now)} from {company.faviconUrl ?? "the company site"}. </>
+                  : <>No logo captured yet. </>}
+                {logoTaskState === "running" ? "A logo check is running." : logoTaskState === "queued" ? "A logo check is queued." : company.logoAttempts > 0
+                  ? <>The last check failed ({company.logoAttempts} {company.logoAttempts === 1 ? "attempt" : "attempts"}). {company.logoNextAttemptAt && company.logoNextAttemptAt > now
+                    ? `Eligible for another automatic check ${relativeTime(company.logoNextAttemptAt, now)}.`
+                    : "Eligible for the next automatic sweep."}{company.logoError ? ` Last error: ${company.logoError}` : ""}</>
+                  : <>Eligible when missing or 90 days old; the five-minute sweep is capped at 200 logos a day.</>}
               </p>
             </section>
 

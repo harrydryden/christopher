@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { latestApplicationFor, roleStageSql, roleStatusSql } from "@col/db";
-import { MANUAL_RESCAN_INTERVAL_MS } from "@col/core";
+import { MANUAL_RESCAN_INTERVAL_MS, PARTIAL_MANUAL_RESCAN_INTERVAL_MS } from "@col/core";
 import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns, ilike, or, type SQL } from "drizzle-orm";
 import { DEFAULT_COMPANY_SORT, type CompanySort, type CompanySortKey } from "@/lib/company-sort";
 import {
@@ -266,6 +266,16 @@ export async function getCompanySources(companyId: string): Promise<CareerSource
   return db().select().from(careerSources).where(eq(careerSources.companyId, companyId)).orderBy(asc(careerSources.createdAt));
 }
 
+/** Logo work is separate from careers discovery and is not part of the account's work spinner. */
+export async function getCompanyLogoTaskState(companyId: string): Promise<"queued" | "running" | null> {
+  const [row] = await db().select({ status: tasks.status }).from(tasks)
+    .where(and(eq(tasks.type, "discover"), inArray(tasks.status, ["queued", "running"]),
+      sql`${tasks.payload}->>'companyId' = ${companyId}`,
+      sql`${tasks.payload}->>'logoOnly' = 'true'`))
+    .orderBy(desc(tasks.createdAt)).limit(1);
+  return row?.status === "queued" || row?.status === "running" ? row.status : null;
+}
+
 /** A company's newest discovery run as the page shows it: everything but the step-by-step log. */
 export type LatestDiscoveryRun = Omit<DiscoveryRun, "log">;
 
@@ -362,27 +372,48 @@ export interface CompanyScanTiming {
    * the reuse window. Null otherwise, because no line reports an older skip.
    */
   rescanSkippedAt: Date | null;
+  /** Only present when the newest per-source observation is not a complete scan. */
+  lastScanKind?: "partial" | "failed" | "incomplete";
+  /** Earliest expiry across each source's own 30-minute OK or five-minute partial window. */
+  reuseUntilAt?: Date;
+  mixedScanWindows?: boolean;
 }
 
 /**
  * A scan is shared, so a follower's Rescan can finish having done nothing: the worker serves it
- * from a scan made in the last half hour and says so in the task's result. Both readings are of
- * the catalogue, not of one account — the company is scanned once for everyone.
+ * from complete scans inside 30 minutes or partial scans inside five. Read the newest observation
+ * for every active source, as the worker does; an older complete scan cannot hide a newer partial
+ * or failed one.
  *
  * The last scan comes from `scans`, a few rows per source. Finished tasks are consulted only
  * inside the half hour after that scan, the only time a skip can be reported, and only those that
  * finished after it; the rest of the page's life never walks the retained task history.
  */
 export async function companyScanTiming(companyId: string, now = new Date()): Promise<CompanyScanTiming> {
-  const [scanRow] = await db()
-    .select({ startedAt: scans.startedAt })
-    .from(scans)
-    .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
-    .where(and(eq(careerSources.companyId, companyId), inArray(scans.status, ["ok", "partial"])))
-    .orderBy(desc(scans.startedAt))
-    .limit(1);
-  const lastGoodScanAt = scanRow?.startedAt ?? null;
-  if (!lastGoodScanAt || now.getTime() - lastGoodScanAt.getTime() >= MANUAL_RESCAN_INTERVAL_MS) return { lastGoodScanAt, rescanSkippedAt: null };
+  const latest = await db().execute<{ status: Scan["status"] | null; startedAt: Date | null }>(sql`
+    select last_scan.status, last_scan.started_at as "startedAt"
+    from career_sources source
+    left join lateral (
+      select scan.status, scan.started_at from scans scan where scan.source_id = source.id
+      order by scan.started_at desc, scan.id desc limit 1
+    ) last_scan on true
+    where source.company_id = ${companyId}::uuid and source.status in ('active', 'failing')`);
+  const observations = latest.rows.map(row => ({ ...row, startedAt: row.startedAt ? new Date(row.startedAt) : null }));
+  if (!observations.length) return { lastGoodScanAt: null, rescanSkippedAt: null };
+  const latestAt = observations.filter(row => row.startedAt).map(row => row.startedAt!);
+  const missing = observations.some(row => !row.startedAt);
+  const bad = observations.some(row => row.status === "failed" || row.status === "suspect_empty");
+  if (missing || bad) return { lastGoodScanAt: latestAt.length ? new Date(Math.max(...latestAt.map(at => at.getTime()))) : null,
+    rescanSkippedAt: null, lastScanKind: bad ? "failed" : "incomplete" };
+  // Each source keeps its own window. An OK source observed 20 minutes ago remains fresh even
+  // when another source's partial observation is only one minute old.
+  const lastGoodScanAt = new Date(Math.min(...latestAt.map(at => at.getTime())));
+  const partial = observations.some(row => row.status === "partial");
+  const reuseUntilAt = new Date(Math.min(...observations.map(row => row.startedAt!.getTime() +
+    (row.status === "partial" ? PARTIAL_MANUAL_RESCAN_INTERVAL_MS : MANUAL_RESCAN_INTERVAL_MS))));
+  const kind = partial ? { lastScanKind: "partial" as const, reuseUntilAt,
+    ...(observations.some(row => row.status === "ok") ? { mixedScanWindows: true } : {}) } : {};
+  if (now >= reuseUntilAt) return { lastGoodScanAt, rescanSkippedAt: null, ...kind };
   const [taskRow] = await db()
     .select({ finishedAt: tasks.finishedAt, result: tasks.result })
     .from(tasks)
@@ -396,7 +427,7 @@ export async function companyScanTiming(companyId: string, now = new Date()): Pr
     .limit(1);
   const result = taskRow?.result as { skipped?: unknown } | null | undefined;
   const skipped = !!result && typeof result === "object" && result.skipped === "scanned recently";
-  return { lastGoodScanAt, rescanSkippedAt: skipped ? taskRow?.finishedAt ?? null : null };
+  return { lastGoodScanAt, rescanSkippedAt: skipped ? taskRow?.finishedAt ?? null : null, ...kind };
 }
 
 /**

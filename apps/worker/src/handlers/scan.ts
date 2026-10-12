@@ -8,7 +8,7 @@
  * follower and posting, created only once the posting passes that follower's gate.
  */
 import { withSpan } from "../otel";
-import { schema, taskRow, enqueueTasks, enqueueStandard, enqueueTask, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, locationRevisionFor, type Task, type ViewUpdate } from "@col/db";
+import { schema, taskRow, enqueueTasks, enqueueStandard, enqueueTask, notifyTaskWorkers, archiveNonMatches, gateCompiler, gateWithRetainedLocations, inTableFor, newView, viewUpdate, viewVerdict, writeViewUpdates, locationRevisionFor, type Task, type ViewUpdate } from "@col/db";
 import {
   ats,
   classifyScan,
@@ -17,6 +17,7 @@ import {
   listingShrank,
   looksRemote,
   MANUAL_RESCAN_INTERVAL_MS,
+  PARTIAL_MANUAL_RESCAN_INTERVAL_MS,
   modeForScanStatus,
   normalisePostingUrl,
   normalizeTitle,
@@ -54,6 +55,7 @@ import { appendHtmlCheckpointPage, clearHtmlCheckpoint, htmlSourceFingerprint, H
 import { log } from "../log";
 import { listingCaptureCount, listingCaptures } from "../listing-captures";
 import { loadUserSettingsMany } from "../settings";
+import { descriptionInputRevision, MAX_DESCRIPTION_RETRY_ATTEMPTS } from "../description-retry";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 
@@ -62,7 +64,7 @@ type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
  * Re-exported from core, where the interface reads it too: it writes the same sentence into the
  * Refresh control, and `apps/web` may not import `apps/worker`.
  */
-export { MANUAL_RESCAN_INTERVAL_MS };
+export { MANUAL_RESCAN_INTERVAL_MS, PARTIAL_MANUAL_RESCAN_INTERVAL_MS };
 
 /**
  * The most outbound requests one scan of one source may make.
@@ -104,6 +106,13 @@ export const HTML_CLAIM_FETCH_BUDGET_MS = 100_000;
  * after its run began (spread across the hour, then queued), and the next run checks at its start.
  */
 const BACKOFF_MARGIN_MS = 12 * 3_600_000;
+
+/** A scan and the detail task agree on the exact advert/source identity being retried. */
+function descriptionRevisionFor(source: CareerSource, posting: RawPosting): string {
+  return descriptionInputRevision({ sourceId: source.id, sourceType: source.type, sourceUrl: source.url,
+    sourceApiUrl: source.apiUrl, sourceSlug: source.atsSlug, sourceSite: source.atsSite, postingUrl: posting.url,
+    title: posting.title, department: posting.department, vendorUpdatedAt: posting.updatedAt });
+}
 
 /** The adapters that read a structured feed rather than a page. */
 const PAGE_TYPES = new Set(["html", "jsonld", "rss"]);
@@ -171,9 +180,15 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
       .where(eq(schema.htmlScanGenerations.taskId, task.id));
     const stagedIds = new Set(staged.map(row => row.sourceId));
     const cutoff = new Date(deps.now().getTime() - MANUAL_RESCAN_INTERVAL_MS);
-    const recent = await deps.db.select({ sourceId: schema.scans.sourceId }).from(schema.scans)
-      .where(and(inArray(schema.scans.sourceId, sources.map(s => s.id)), sql`${schema.scans.startedAt} >= ${cutoff}`, inArray(schema.scans.status, ["ok", "partial"])));
-    const fresh = new Set(recent.map(r => r.sourceId));
+    const recent = await deps.db.select({ sourceId: schema.scans.sourceId, status: schema.scans.status, startedAt: schema.scans.startedAt }).from(schema.scans)
+      .where(and(inArray(schema.scans.sourceId, sources.map(s => s.id)), sql`${schema.scans.startedAt} >= ${cutoff}`))
+      .orderBy(desc(schema.scans.startedAt), desc(schema.scans.id));
+    const partialCutoff = new Date(deps.now().getTime() - PARTIAL_MANUAL_RESCAN_INTERVAL_MS);
+    const latest = new Map<string, (typeof recent)[number]>();
+    for (const scan of recent) if (!latest.has(scan.sourceId)) latest.set(scan.sourceId, scan);
+    const fresh = new Set([...latest.values()]
+      .filter(scan => scan.status === "ok" || (scan.status === "partial" && scan.startedAt >= partialCutoff))
+      .map(scan => scan.sourceId));
     const stale = sources.filter(s => stagedIds.has(s.id) || !fresh.has(s.id));
     if (stale.length === 0) return { skipped: "scanned recently", sources: sources.length };
     sources = stale;
@@ -734,6 +749,9 @@ async function scanSource(
       descriptionSource: schema.jobs.descriptionSource,
       descriptionTruncated: schema.jobs.descriptionTruncated,
       descriptionFetchedAt: schema.jobs.descriptionFetchedAt,
+      descriptionInputRevision: schema.jobs.descriptionInputRevision,
+      descriptionRetryAttempts: schema.jobs.descriptionRetryAttempts,
+      descriptionNextAttemptAt: schema.jobs.descriptionNextAttemptAt,
       descriptionHash: schema.jobs.descriptionHash,
       url: schema.jobs.url,
       locations: schema.jobs.locations,
@@ -785,6 +803,7 @@ async function scanSource(
     const key = deriveExternalKey(posting);
     return [key, locationStateFor(source, posting, sourceByKey.get(key), key, deps.now())] as const;
   }));
+  const observed = new Map(keyPostings(safePostings).keyed.map((p) => [p.externalKey, p]));
   if (publication.generation && followers.some(follower => needsDescription(follower.settings.gate))) {
     const withoutText = safePostings.filter(posting => !posting.descriptionText);
     const storedWithText = withoutText.length ? await deps.db.select({ externalKey: schema.jobs.externalKey })
@@ -813,6 +832,7 @@ async function scanSource(
   let newCount = 0;
   const scoreQueue: Array<{ userId: string; jobId: string }> = [];
   const descriptionQueue = new Set<string>();
+  const changedDescriptionInputs = new Set<string>();
   const locationQueue = new Map<string, string>();
   const viewInserts: Array<typeof schema.userJobs.$inferInsert> = [];
 
@@ -882,6 +902,7 @@ async function scanSource(
         descriptionTruncated: (insert.descriptionText?.length ?? 0) > 30_000,
         descriptionHash: insert.descriptionText ? sha1(insert.descriptionText.slice(0, 30_000)) : null,
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
+        descriptionInputRevision: descriptionRevisionFor(source, observed.get(insert.externalKey)!),
       });
   }
   type Admissible = { id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; locationResolution: LocationState["locationResolution"]; locationRevision: string | null; remote: boolean | null; descriptionText: string | null };
@@ -954,6 +975,11 @@ async function scanSource(
       status: "open",
       closedAt: null,
       ...fields,
+      descriptionInputRevision: descriptionRevisionFor(source, observed.get(insert.externalKey)!),
+      descriptionRetryAttempts: 0,
+      descriptionNextAttemptAt: null,
+      descriptionLastError: null,
+      descriptionAttemptedAt: null,
       normalizedTitle: normalizeTitle(insert.title),
       employmentType: insert.employmentType ?? job.employmentType,
       salaryText: insert.salaryText ?? job.salaryText,
@@ -979,7 +1005,6 @@ async function scanSource(
   }
 
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
-  const observed = new Map(keyPostings(safePostings).keyed.map((p) => [p.externalKey, p]));
   const updates: Array<Record<string, unknown>> = [];
   const descriptionWrites: Array<Record<string, unknown>> = [];
   // Rows whose description the listing gave again unchanged: their `description_fetched_at` moves
@@ -1016,6 +1041,8 @@ async function scanSource(
     const job = row;
     const posting = observed.get(job.externalKey)!;
     const locationState = locationByKey.get(job.externalKey);
+    const inputRevision = descriptionRevisionFor(source, posting);
+    const inputChanged = job.descriptionInputRevision !== inputRevision;
     const fields = {
       title: posting.title, url: posting.url,
       location: locationState ? locationState.location : posting.location ?? job.location,
@@ -1034,7 +1061,7 @@ async function scanSource(
     const changedFields: string[] = (Object.keys(fields) as Array<keyof typeof fields>).filter((key) => JSON.stringify(fields[key]) !== JSON.stringify(job[key]));
     // Written only when something moved. A role's row carries its description, up to 30,000
     // characters, and rewriting every observed role every day re-stored all of them for nothing.
-    if (changedFields.length) updates.push({ id: job.id, ...fields, normalizedTitle: normalizeTitle(fields.title) });
+    if (changedFields.length || inputChanged) updates.push({ id: job.id, ...fields, descriptionInputRevision: inputRevision, normalizedTitle: normalizeTitle(fields.title) });
     // Text this scan read for the role (the listing's own, or a detail page read for admission),
     // as opposed to stored text put back on the posting above to spare a fetch.
     const freshText = posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? posting.descriptionText.slice(0, 30_000) : undefined;
@@ -1080,14 +1107,16 @@ async function scanSource(
         viewInserts.push(newView(follower.userId, job.id, viewVerdict(verdict, true), false, deps.now()));
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else continue;
-      if (inTable && !textInHand && descriptionMoved) descriptionQueue.add(job.id);
+      if (inTable && !textInHand && descriptionMoved &&
+          (inputChanged || (job.descriptionRetryAttempts < MAX_DESCRIPTION_RETRY_ATTEMPTS &&
+            (!job.descriptionNextAttemptAt || job.descriptionNextAttemptAt <= deps.now())))) descriptionQueue.add(job.id);
     }
-    // A stored posting still without text, whose description was never attempted or whose last
-    // attempt is 14 days old, is queued again so a description gate is not deferred for ever.
-    // A posting whose text is already stored is not in `deferred` and costs nothing here. This one
-    // keeps the age rule whatever the feed says: a failed or empty read leaves no text but does
-    // move `description_fetched_at`, and `updated_at` will never move on our account.
-    if (deferred.has(posting.url) && descriptionAged) descriptionQueue.add(job.id);
+    // An empty detail stays queued through its bounded retry sequence. A daily scan must not
+    // restart that sequence after it reaches the terminal state for unchanged listing evidence.
+    if (deferred.has(posting.url) && (inputChanged ||
+      (job.descriptionRetryAttempts < MAX_DESCRIPTION_RETRY_ATTEMPTS &&
+        (!job.descriptionNextAttemptAt || job.descriptionNextAttemptAt <= deps.now())))) descriptionQueue.add(job.id);
+    if (inputChanged && descriptionQueue.has(job.id)) changedDescriptionInputs.add(job.id);
     if (job.status === "open") queueLocationIfPotential({ id: job.id, ...fields, descriptionText });
   }
   // Being seen is positive evidence in every mode that reconciles: a partial scan that lists a role
@@ -1107,10 +1136,13 @@ async function scanSource(
         await deps.db.execute(sql`update jobs j set last_seen_at=v."observedAt", missing_scans=0, first_missed_at=null
           from jsonb_to_recordset(${JSON.stringify(times)}::jsonb) as v(id uuid, "observedAt" timestamptz)
           where j.id=v.id`);
-        if (confirmed) await deps.db.update(schema.jobs).set({ descriptionFetchedAt: confirmed })
+        if (confirmed) await deps.db.update(schema.jobs).set({ descriptionFetchedAt: confirmed,
+          descriptionRetryAttempts: 0, descriptionNextAttemptAt: null, descriptionLastError: null, descriptionAttemptedAt: null })
           .where(inArray(schema.jobs.id, slice));
       } else {
-        await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null, ...(confirmed ? { descriptionFetchedAt: confirmed } : {}) })
+        await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null,
+          ...(confirmed ? { descriptionFetchedAt: confirmed, descriptionRetryAttempts: 0,
+            descriptionNextAttemptAt: null, descriptionLastError: null, descriptionAttemptedAt: null } : {}) })
           .where(inArray(schema.jobs.id, slice));
       }
     }
@@ -1120,15 +1152,22 @@ async function scanSource(
       location_resolution=v."locationResolution", location_label=v."locationLabel", location_revision=v."locationRevision",
       location_fetched_at=v."locationFetchedAt", location_error=v."locationError",
       department=v.department, employment_type=v."employmentType", remote=v.remote, salary_text=v."salaryText", posted_at=v."postedAt",
-      normalized_title=v."normalizedTitle", updated_at=${deps.now()}
+      normalized_title=v."normalizedTitle",
+      description_retry_attempts=case when j.description_input_revision is distinct from v."descriptionInputRevision" then 0 else j.description_retry_attempts end,
+      description_next_attempt_at=case when j.description_input_revision is distinct from v."descriptionInputRevision" then null else j.description_next_attempt_at end,
+      description_last_error=case when j.description_input_revision is distinct from v."descriptionInputRevision" then null else j.description_last_error end,
+      description_attempted_at=case when j.description_input_revision is distinct from v."descriptionInputRevision" then null else j.description_attempted_at end,
+      description_input_revision=v."descriptionInputRevision", updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v(id uuid, title text, url text, location text, locations jsonb,
         "locationResolution" text, "locationLabel" text, "locationRevision" text, "locationFetchedAt" timestamptz, "locationError" text,
-        department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "normalizedTitle" text)
+        department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "normalizedTitle" text, "descriptionInputRevision" text)
       where j.id=v.id`);
   }
   for (let offset = 0; offset < descriptionWrites.length; offset += 100) {
     await deps.db.execute(sql`update jobs j set description_text=v.text, description_hash=v.hash, description_source='direct',
-      description_truncated=v.truncated, description_fetched_at=${deps.now()}, updated_at=${deps.now()}
+      description_truncated=v.truncated, description_fetched_at=${deps.now()},
+      description_retry_attempts=0, description_next_attempt_at=null, description_last_error=null,
+      description_attempted_at=null, updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(descriptionWrites.slice(offset, offset + 100))}::jsonb) as v(id uuid, text text, hash text, truncated boolean, "prevFetchedAt" timestamptz)
       where j.id=v.id and date_trunc('milliseconds', j.description_fetched_at) is not distinct from v."prevFetchedAt"`);
   }
@@ -1150,7 +1189,26 @@ async function scanSource(
   const scoreSettings = new Map(followers.map(follower => [follower.userId, follower.settings] as const));
   for (let offset = 0; offset < scoreQueue.length; offset += 250)
     await admitScores(deps, scoreQueue.slice(offset, offset + 250), { db: deps.db, onlyUnscored: true, settings: scoreSettings });
-  await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
+  const descriptionIds = [...descriptionQueue];
+  const activeDescriptions = descriptionIds.length ? await deps.db.select({ jobId: sql<string>`${schema.tasks.payload}->>'jobId'`, status: schema.tasks.status })
+    .from(schema.tasks).where(and(eq(schema.tasks.type, "fetch_description"),
+      inArray(schema.tasks.status, ["queued", "running"]),
+      inArray(sql<string>`${schema.tasks.payload}->>'jobId'`, descriptionIds))) : [];
+  const alreadyQueued = new Set(activeDescriptions.filter(row => row.status === "queued").map(row => row.jobId));
+  const alreadyChecking = new Set(activeDescriptions.map(row => row.jobId));
+  await enqueueTasks(deps.db, descriptionIds.filter(jobId => !alreadyChecking.has(jobId) ||
+    (changedDescriptionInputs.has(jobId) && !alreadyQueued.has(jobId)))
+    .map(jobId => taskRow("fetch_description", { jobId })));
+  if (changedDescriptionInputs.size) {
+    // A deferred task has already started, so the ordinary enqueue promotion cannot touch it.
+    // Changed advert evidence makes its old wait obsolete; advance only queued rows, never a
+    // running lease. The handler's revision fence refuses an old result still in flight.
+    const advanced = await deps.db.update(schema.tasks).set({ runAfter: deps.now(), result: null })
+      .where(and(eq(schema.tasks.type, "fetch_description"), eq(schema.tasks.status, "queued"),
+        inArray(sql<string>`${schema.tasks.payload}->>'jobId'`, [...changedDescriptionInputs]),
+        sql`${schema.tasks.runAfter} > ${deps.now()}`)).returning({ id: schema.tasks.id });
+    if (advanced.length) await notifyTaskWorkers(deps.db);
+  }
   await enqueueTasks(deps.db, [...locationQueue].map(([jobId, locationRevision]) =>
     taskRow("fetch_locations", { jobId, locationRevision })));
   // A continuing publication has no coverage. Final coverage is computed from every page in the
@@ -1258,8 +1316,16 @@ async function scanSource(
   const persistentlyShrunk = settledShrink || (shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3);
-  if (!publication.staleCoverage && ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || terminalStatus === "suspect_empty" || persistentlyShrunk)) {
-    await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" });
+  // Count from saved scans, so restarts cannot forget repeated incomplete coverage. A fourth
+  // partial does not launch another discovery; an ok/failed/empty scan ends this streak.
+  const recentCoverage = terminalStatus === "partial" && !publication.staleCoverage
+    ? await deps.db.select({ status: schema.scans.status }).from(schema.scans)
+      .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt), desc(schema.scans.id)).limit(4)
+    : [];
+  const thirdPartial = recentCoverage.length >= 3 && recentCoverage.slice(0, 3).every(scan => scan.status === "partial")
+    && recentCoverage[3]?.status !== "partial";
+  if (!publication.staleCoverage && ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || terminalStatus === "suspect_empty" || persistentlyShrunk || thirdPartial)) {
+    await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : thirdPartial ? "partial" : "failing" });
   }
 
   log.info("source scanned", {

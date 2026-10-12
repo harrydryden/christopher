@@ -1,9 +1,10 @@
 import { withResourceLease } from "../lease";
 import { schema, enqueueStandard, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@col/db";
 import { captureCompanyLogo, deadlineMsFor, discovery, LogoCaptureError, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@col/core";
-import { and, eq, gte, lt, ne, sql } from "drizzle-orm";
+import { and, eq, lt, ne, sql } from "drizzle-orm";
 import { makeFetchContext, makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";
+import { settleAbandonedDiscovery, settleDiscoveryRecovery } from "../discovery-recovery";
 
 const AUTO_ACCEPT = 0.85;
 
@@ -32,16 +33,16 @@ export async function handleDiscover(task: Task, deps: WorkerDeps, runCtx?: RunC
 /**
  * Close off discovery runs of this company left `running` by an attempt that will never write its
  * own outcome: the process died, or the deadline or a lost lease stopped it. Only runs this task's
- * attempts could have started (from the task's first claim on) are touched, so a run another task
- * has in progress for the company is left alone.
+ * attempts started. A newer discovery for the same company may already be running; it must not
+ * be closed by this older task's abandonment hook.
  */
-async function failRunningRuns(db: Db, companyId: string, since: Date | null, error: string, now: Date): Promise<number> {
+async function failRunningRuns(db: Db, companyId: string, taskId: string, error: string, now: Date): Promise<number> {
   const rows = await db.update(schema.discoveryRuns)
     .set({ status: "failed", finishedAt: now, error: error.slice(0, 1000) })
     .where(and(
       eq(schema.discoveryRuns.companyId, companyId),
       eq(schema.discoveryRuns.status, "running"),
-      ...(since ? [gte(schema.discoveryRuns.startedAt, since)] : []),
+      eq(schema.discoveryRuns.taskId, taskId),
     ))
     .returning({ id: schema.discoveryRuns.id });
   return rows.length;
@@ -56,7 +57,8 @@ function careersPayload(task: Task): TaskPayloads["discover"] | null {
 export async function onDiscoverAbandoned(task: Task, deps: WorkerDeps, reason: string): Promise<void> {
   const payload = careersPayload(task);
   if (!payload) return;
-  const failed = await failRunningRuns(deps.db, payload.companyId, task.createdAt, `discovery abandoned: ${reason}`, deps.now());
+  const failed = await failRunningRuns(deps.db, payload.companyId, task.id, `discovery abandoned: ${reason}`, deps.now());
+  await settleAbandonedDiscovery(deps.db, payload.companyId, task.id, task.createdAt, payload.reason === "recovery", deps.now());
   if (failed) log.warn("discovery runs failed by an abandoned task", { taskId: task.id, companyId: payload.companyId, failed });
 }
 
@@ -64,7 +66,7 @@ export async function onDiscoverAbandoned(task: Task, deps: WorkerDeps, reason: 
 export async function onDiscoverInterrupted(task: Task, deps: WorkerDeps, info: { retryAt?: string }): Promise<void> {
   const payload = careersPayload(task);
   if (!payload) return;
-  await failRunningRuns(deps.db, payload.companyId, task.createdAt, `discovery interrupted${info.retryAt ? `; retrying at ${info.retryAt}` : ""}`, deps.now());
+  await failRunningRuns(deps.db, payload.companyId, task.id, `discovery interrupted${info.retryAt ? `; retrying at ${info.retryAt}` : ""}`, deps.now());
 }
 
 async function discoverCompany(task: Task, deps: WorkerDeps, runCtx?: RunContext): Promise<unknown> {
@@ -76,6 +78,23 @@ async function discoverCompany(task: Task, deps: WorkerDeps, runCtx?: RunContext
   if (payload.logoOnly) {
     if (payload.homepageUrl !== company.homepageUrl) return { skipped: "homepage changed" };
     return captureLogo(company, deps);
+  }
+  if (payload.homepageUrl && payload.homepageUrl !== company.homepageUrl) {
+    if (payload.reason === "recovery")
+      await settleAbandonedDiscovery(deps.db, company.id, task.id, task.createdAt, true, deps.now());
+    return { skipped: "homepage changed" };
+  }
+  if (payload.reason === "recovery") {
+    // The due sweep's decision may be stale by the time the task starts. A follower may pause,
+    // or a person may confirm/disable a source; neither should cause another network/model run.
+    const [eligible] = await deps.db.execute<{ eligible: boolean }>(sql`select
+      (${company.status} = 'active'
+        and exists (select 1 from company_subscriptions s where s.company_id = ${company.id}::uuid and s.status = 'active')
+        and not exists (select 1 from career_sources cs where cs.company_id = ${company.id}::uuid)) as eligible`).then(r => r.rows);
+    if (!eligible?.eligible) {
+      await settleDiscoveryRecovery(deps.db, company.id, { outcome: "resolved", automatic: true, now: deps.now() });
+      return { skipped: "recovery no longer eligible" };
+    }
   }
   // A direct ATS result must not skip branding. The separate task keeps image failures out of scans.
   await enqueueStandard(deps.db, "discover", { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl }, { priority: 6 });
@@ -92,16 +111,19 @@ async function discoverCompany(task: Task, deps: WorkerDeps, runCtx?: RunContext
 
   const [run] = await deps.db
     .insert(schema.discoveryRuns)
-    .values({ companyId: company.id, status: "running" })
+    .values({ companyId: company.id, taskId: task.id, homepageUrl: company.homepageUrl, status: "running" })
     .returning({ id: schema.discoveryRuns.id });
   if (!run) throw new Error("could not create a discovery run");
 
   // Whatever stops this attempt after the row exists, the row says so. Written outside the fenced
   // transaction: the run is this attempt's own, and a lost lease must not leave it `running`.
-  const failRun = async (error: string) => {
+  const observedLog: string[] = [];
+  const failRun = async (error: string, result?: DiscoveryResult) => {
     await deps.db
       .update(schema.discoveryRuns)
-      .set({ status: "failed", finishedAt: deps.now(), error: error.slice(0, 1000) })
+      .set({ status: "failed", finishedAt: deps.now(), error: error.slice(0, 1000),
+        log: (result?.log ?? observedLog).slice(-100).map(line => line.slice(0, 500)),
+        candidates: result?.candidates.map(serialiseCandidate) ?? [] })
       .where(and(eq(schema.discoveryRuns.id, run.id), eq(schema.discoveryRuns.status, "running")))
       .catch((err: unknown) => log.warn("could not fail a discovery run", { runId: run.id, error: (err as Error).message }));
   };
@@ -109,27 +131,32 @@ async function discoverCompany(task: Task, deps: WorkerDeps, runCtx?: RunContext
   try {
     // The account that asked for this company, when the task says, so the model calls are theirs.
     const userId = (payload as { userId?: string }).userId;
-    const ctx = { ...makeDiscoveryContext(deps), signal: runCtx?.signal, aiRef: { refType: "company", refId: company.id, userId } };
+    const baseContext = makeDiscoveryContext(deps);
+    const ctx = { ...baseContext, signal: runCtx?.signal, aiRef: { refType: "company", refId: company.id, userId },
+      log: (line: string) => { if (observedLog.length < 100) observedLog.push(line.slice(0, 500)); baseContext.log?.(line); } };
     const result = payload.url
       ? await discovery.probeUrlAsSource(payload.url, ctx)
       : await discovery.discoverCareersSources(company.homepageUrl, ctx);
     if (result.retry && result.outcome !== "resolved" && task.attempts < task.maxAttempts) {
-      await failRun(`retrying: ${result.retry}`);
+      await failRun(`retrying: ${result.retry}`, result);
       throw new DiscoveryRetryError(result.retry);
     }
-    return await recordResult(deps, company, run.id, result);
+    const recorded = await recordResult(deps, company, run.id, result, payload.reason === "recovery");
+    if (payload.reason === "recovery" && (recorded as { skipped?: string }).skipped === "homepage changed")
+      await settleAbandonedDiscovery(deps.db, company.id, task.id, task.createdAt, true, deps.now());
+    return recorded;
   } catch (err) {
     await failRun((err as Error).message);
     throw err;
   }
 }
 
-async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$inferSelect, runId: string, result: DiscoveryResult): Promise<unknown> {
+async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$inferSelect, runId: string, result: DiscoveryResult, automatic: boolean): Promise<unknown> {
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as Db);
   // Discovery can spend minutes on the network. An administrator may correct this shared
   // company's homepage meanwhile; a result found on the old site must never become its source.
-  const [current] = await tx.select({ homepageUrl: schema.companies.homepageUrl,
+  const [current] = await tx.select({ homepageUrl: schema.companies.homepageUrl, status: schema.companies.status,
     name: schema.companies.name, domain: schema.companies.domain }).from(schema.companies)
     .where(eq(schema.companies.id, company.id)).for("update").limit(1);
   if (!current || current.homepageUrl !== company.homepageUrl) {
@@ -137,6 +164,20 @@ async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$
       .set({ status: "failed", finishedAt: deps.now(), error: "Company homepage changed during discovery; the new homepage will be checked separately" })
       .where(eq(schema.discoveryRuns.id, runId));
     return { skipped: "homepage changed" };
+  }
+  if (automatic) {
+    const [stillEligible] = await tx.execute<{ eligible: boolean }>(sql`select
+      (${current.status} = 'active'
+        and exists (select 1 from company_subscriptions s where s.company_id = ${company.id}::uuid and s.status = 'active')
+        and not exists (select 1 from career_sources cs where cs.company_id = ${company.id}::uuid)) as eligible`).then(r => r.rows);
+    if (!stillEligible?.eligible) {
+      await tx.update(schema.discoveryRuns)
+        .set({ status: "failed", finishedAt: deps.now(), error: "Automatic recovery is no longer eligible",
+          log: result.log.slice(-100), candidates: result.candidates.map(serialiseCandidate) })
+        .where(eq(schema.discoveryRuns.id, runId));
+      await settleDiscoveryRecovery(tx as unknown as Db, company.id, { outcome: "resolved", automatic, now: deps.now() });
+      return { skipped: "recovery no longer eligible" };
+    }
   }
   // Replace a placeholder name (the raw domain or its label) with the first real one we learn,
   // from the homepage title or the verified careers feed. A name the site gave us is kept.
@@ -176,6 +217,7 @@ async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$
     .update(schema.discoveryRuns)
     .set({ status, finishedAt: deps.now(), candidates, chosenSourceId, log: result.log })
     .where(eq(schema.discoveryRuns.id, runId));
+  await settleDiscoveryRecovery(tx as unknown as Db, company.id, { outcome: status, automatic, now: deps.now() });
 
   log.info("discovery finished", { company: company.name, outcome: status, fetches: result.fetches, best: result.best?.method });
   return { outcome: status, candidates: candidates.length, fetches: result.fetches, sourceId: chosenSourceId };

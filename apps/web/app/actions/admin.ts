@@ -4,7 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { retireSourceRoles } from "@col/db";
-import { careerSources, companies, companyNameSuggestions } from "@col/db/schema";
+import { careerSources, companies, companyNameSuggestions, tasks } from "@col/db/schema";
 import { ensureHttpUrl, extractDomain } from "@col/core";
 import { requireAdmin } from "@/lib/auth";
 import { applySuggestedName, enqueueCompanyNameRescores, normaliseCompanyName } from "@/lib/company-names";
@@ -48,11 +48,18 @@ export async function saveCatalogueCompany(companyId: string, _previous: ActionR
     if (!locked) return;
     const changed = locked.homepageUrl !== homepageUrl;
     await tx.update(companies)
-      .set({ homepageUrl, domain, ...(changed ? { faviconUrl: null } : {}), ...(name ? { name } : {}) })
+      .set({ homepageUrl, domain, ...(changed ? { faviconUrl: null, discoveryRecoveryAttempts: 0,
+        discoveryRecoveryState: "idle" as const, discoveryNextAttemptAt: null } : {}), ...(name ? { name } : {}) })
       .where(eq(companies.id, id));
     if (name && name !== locked.name) await enqueueCompanyNameRescores(tx, id);
     if (changed) {
       await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl }, tx);
+      // A queued automatic retry shares the manual discovery dedupe key. Replace its stale
+      // homepage before promotion so this explicit correction checks the new site immediately.
+      await tx.update(tasks).set({ payload: { companyId: id, homepageUrl, reason: "manual" } })
+        .where(and(eq(tasks.type, "discover"), eq(tasks.status, "queued"),
+          eq(tasks.dedupeKey, `discover:${id}`), sql`${tasks.startedAt} is null`,
+          sql`${tasks.payload}->>'reason' = 'recovery'`));
       // A running discovery may still hold the former homepage. Its completion fence refuses
       // that result; this queued follow-up checks the corrected one after it has finished.
       await enqueue("discover", { companyId: id, homepageUrl, reason: "manual" }, tx);

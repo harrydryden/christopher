@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -52,8 +52,48 @@ it("reports a skip served from a scan still inside the reuse window", async () =
   reads.n = 0;
   const timing = await companyScanTiming(id, now);
   expect(timing).toEqual({ lastGoodScanAt: minutesAgo(12), rescanSkippedAt: minutesAgo(1) });
-  expect(scanTimingLine(timing, "06:00", "Europe/London", now)).toBe("Rescan skipped: scanned 12m ago; a scan made in the last half hour is reused.");
+  expect(scanTimingLine(timing, "06:00", "Europe/London", now)).toBe("Rescan skipped: scanned 12m ago; a complete scan made in the last half hour is reused.");
   expect(reads.n).toBe(2);
+});
+
+it("uses the newest partial observation's five-minute window, not an older complete scan", async () => {
+  const id = await companyScannedAt(minutesAgo(12));
+  const [source] = await database.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, id));
+  await database.insert(schema.scans).values({ sourceId: source!.id, status: "partial",
+    startedAt: minutesAgo(4), finishedAt: minutesAgo(4) });
+  await skippedRescan(id, minutesAgo(1));
+  const timing = await companyScanTiming(id, now);
+  expect(timing).toEqual({ lastGoodScanAt: minutesAgo(4), rescanSkippedAt: minutesAgo(1),
+    lastScanKind: "partial", reuseUntilAt: new Date(now.getTime() + 60_000) });
+  expect(scanTimingLine(timing, "06:00", "Europe/London", now))
+    .toBe("Rescan skipped: scanned 4m ago; a partial scan made in the last five minutes is reused.");
+  expect((await companyScanTiming(id, new Date(now.getTime() + 2 * 60_000))).rescanSkippedAt).toBeNull();
+});
+
+it("treats each source's complete or partial reuse window separately", async () => {
+  const id = await companyScannedAt(minutesAgo(20));
+  const [partialSource] = await database.insert(schema.careerSources).values({
+    companyId: id, type: "greenhouse", url: "https://boards.greenhouse.io/acme",
+  }).returning();
+  await database.insert(schema.scans).values({ sourceId: partialSource!.id, status: "partial",
+    startedAt: minutesAgo(1), finishedAt: minutesAgo(1) });
+  await skippedRescan(id, minutesAgo(0.5));
+  const timing = await companyScanTiming(id, now);
+  expect(timing.rescanSkippedAt).toEqual(minutesAgo(0.5));
+  expect(timing.mixedScanWindows).toBe(true);
+  expect(scanTimingLine(timing, "06:00", "Europe/London", now))
+    .toBe("Rescan skipped: complete and partial sources are still within their 30-minute and five-minute reuse windows.");
+});
+
+it("does not report reuse when a newer scan failed after a complete one", async () => {
+  const id = await companyScannedAt(minutesAgo(12));
+  const [source] = await database.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, id));
+  await database.insert(schema.scans).values({ sourceId: source!.id, status: "failed",
+    startedAt: minutesAgo(3), finishedAt: minutesAgo(3) });
+  await skippedRescan(id, minutesAgo(1));
+  const timing = await companyScanTiming(id, now);
+  expect(timing.rescanSkippedAt).toBeNull();
+  expect(timing.lastScanKind).toBe("failed");
 });
 
 it("reads no tasks once the last good scan is older than the reuse window", async () => {

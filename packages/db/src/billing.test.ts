@@ -13,6 +13,7 @@ import {
   consumeCvCredit,
   ensureFreeEntitlement,
   getBillingSummary,
+  grantAdminCvGift,
   grantCvCredits,
   releaseCvCredit,
   reserveCvCredit,
@@ -20,9 +21,9 @@ import {
   transferCvCredit,
   updateBillingAccount,
 } from "./billing";
-import { companies, companySubscriptions, users } from "./schema";
+import { companies, companySubscriptions, creditGrants, creditLedger, creditReservations, users } from "./schema";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 1 });
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test", { max: 3 });
 beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
 
@@ -36,6 +37,48 @@ async function account() {
 }
 
 describe("CV credits", () => {
+  it("applies one audited gift for concurrent retries and rejects changed request details", async () => {
+    const actor = await account(), recipient = await account(), another = await account();
+    const requestId = randomUUID();
+    const input = { actorId: actor.id, userId: recipient.id, units: 2, requestId, reason: "Support" };
+    try {
+      const results = await Promise.all([grantAdminCvGift(db, input), grantAdminCvGift(db, input)]);
+      expect(results.map(result => result.alreadyApplied).sort()).toEqual([false, true]);
+      expect(results[0]!.grantId).toBe(results[1]!.grantId);
+      const grants = await db.select().from(creditGrants).where(eq(creditGrants.externalRef, `admin-gift:${requestId}`));
+      expect(grants).toHaveLength(1);
+      const ledger = await db.select().from(creditLedger).where(eq(creditLedger.grantId, grants[0]!.id));
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0]).toMatchObject({ delta: 2, note: `Admin gift by ${actor.id}: Support` });
+      for (const changed of [
+        { ...input, userId: another.id }, { ...input, units: 3 },
+        { ...input, reason: "Trial" }, { ...input, actorId: another.id },
+      ]) await expect(grantAdminCvGift(db, changed)).rejects.toThrow("different details");
+      expect((await getBillingSummary(db, recipient.id)).cv).toMatchObject({ available: 5, welcome: 3, gifted: 2, purchased: 0 });
+      await grantCvCredits(db, { userId: recipient.id, source: "topup", units: 5, externalRef: `gift-test-topup:${requestId}` });
+      expect((await getBillingSummary(db, recipient.id)).cv).toMatchObject({ available: 10, gifted: 2, purchased: 5 });
+      expect((await grantAdminCvGift(db, { ...input, requestId: randomUUID() })).alreadyApplied).toBe(false);
+      expect((await getBillingSummary(db, recipient.id)).cv).toMatchObject({ available: 12, gifted: 4, purchased: 5 });
+      const draft = randomUUID();
+      for (let n = 0; n < 3; n++) await reserveCvCredit(db, recipient.id, randomUUID());
+      await reserveCvCredit(db, recipient.id, draft);
+      const [held] = await db.select().from(creditReservations).where(eq(creditReservations.draftId, draft));
+      // Top-ups are spent before gifts; once those are consumed, the gift is spendable too.
+      expect(held?.grantId).not.toBe(grants[0]!.id);
+      expect((await getBillingSummary(db, recipient.id)).cv.available).toBe(8);
+      await releaseCvCredit(db, draft, "retry");
+      expect((await getBillingSummary(db, recipient.id)).cv.available).toBe(9);
+      for (let n = 0; n < 5; n++) await reserveCvCredit(db, recipient.id, randomUUID());
+      const giftDraft = randomUUID();
+      await reserveCvCredit(db, recipient.id, giftDraft);
+      const [giftHold] = await db.select().from(creditReservations).where(eq(creditReservations.draftId, giftDraft));
+      expect(giftHold?.grantId).toBe(grants[0]!.id);
+      await releaseCvCredit(db, giftDraft, "retry");
+      expect((await getBillingSummary(db, recipient.id)).cv).toMatchObject({ gifted: 4, purchased: 0 });
+    } finally {
+      await recipient.cleanup(); await actor.cleanup(); await another.cleanup();
+    }
+  });
   it("grants the first three builds once and reserves atomically", async () => {
     const user = await account();
     try {

@@ -16,6 +16,7 @@ export interface BillingSummaryView {
     monthly: number;
     welcome: number;
     purchased: number;
+    gifted: number;
     nextGrantAt: Date | string | null;
   };
   companies: {
@@ -103,7 +104,7 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
           {billing.cv.reserved > 0 && <p className="text-13 text-muted">{billing.cv.reserved} reserved for a CV in progress</p>}
           <details className="text-13 text-muted">
             <summary className="cursor-pointer">Credit breakdown</summary>
-            <p>{billing.cv.welcome} welcome · {billing.cv.monthly} monthly · {billing.cv.purchased} purchased</p>
+            <p>{billing.cv.welcome} welcome · {billing.cv.monthly} monthly · {billing.cv.purchased} purchased · {billing.cv.gifted} gifted</p>
           </details>
           {nextGrant && <p className="mt-1 text-12 text-muted">Next monthly credits: {nextGrant}.</p>}
         </div>

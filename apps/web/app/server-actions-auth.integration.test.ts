@@ -96,7 +96,7 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/account.ts": {
     changePassword: "user", signOutEverywhere: "user", resendVerification: "user", updateProfile: "user",
     setUserRole: "admin", deleteUser: "admin", createResetLink: "admin", listAccounts: "admin", accountCount: "admin",
-    setAccountAiBudget: "admin", resetAccountAiSpend: "admin",
+    setAccountAiBudget: "admin", resetAccountAiSpend: "admin", giftAccountCvCredits: "admin",
   },
   "actions/admin.ts": {
     saveCatalogueCompany: "admin", applyNameSuggestion: "admin", dismissNameSuggestion: "admin",
@@ -342,11 +342,17 @@ describe("signed in", () => {
     await database.insert(schema.userJobs).values({ userId: admin.user.id, jobId: job!.id, inTable: true });
     const resetFor = new FormData();
     resetFor.set("userId", admin.user.id);
+    const giftFor = new FormData();
+    giftFor.set("userId", member.id);
+    giftFor.set("requestId", crypto.randomUUID());
+    giftFor.set("credits", "100");
+    giftFor.set("reason", "Unauthorised attempt");
 
     // A reset link for the administrator would be an account takeover; so would promoting oneself.
     expect(await call("actions/account.ts", "createResetLink", [{ ok: true }, resetFor])).toEqual({ threw: "Forbidden" });
     expect(await call("actions/account.ts", "setUserRole", [member.id, "admin"])).toEqual({ threw: "Forbidden" });
     expect(await call("actions/account.ts", "deleteUser", [admin.user.id])).toEqual({ threw: "Forbidden" });
+    expect(await call("actions/account.ts", "giftAccountCvCredits", [giftFor])).toEqual({ threw: "Forbidden" });
     // Removing a shared company cascades to every follower's views.
     expect(await call("actions/admin.ts", "removeCatalogueCompany", [company!.id])).toEqual({ threw: "Forbidden" });
     expect(await call("actions/admin.ts", "removeCatalogueSource", [source!.id])).toEqual({ threw: "Forbidden" });
@@ -355,6 +361,7 @@ describe("signed in", () => {
     const roles = await database.select({ id: schema.users.id, role: schema.users.role }).from(schema.users).where(sql`${schema.users.id} in (${admin.user.id}, ${member.id})`);
     expect(Object.fromEntries(roles.map((row) => [row.id, row.role]))).toEqual({ [admin.user.id]: "admin", [member.id]: "member" });
     expect(await database.select().from(schema.authTokens).where(eq(schema.authTokens.userId, admin.user.id))).toEqual([]);
+    expect(await database.select().from(schema.creditGrants).where(eq(schema.creditGrants.source, "admin"))).toEqual([]);
     expect((await database.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id)))[0]!.status).toBe("active");
     expect(await database.select().from(schema.userJobs).where(eq(schema.userJobs.userId, admin.user.id))).toHaveLength(1);
   });

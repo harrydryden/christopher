@@ -103,3 +103,15 @@ const budgetForMonth = cache(async (userId: string, monthStart: number): Promise
 export async function accountAiBudget(userId: string, now: Date = new Date()): Promise<AccountAiBudget> {
   return budgetForMonth(userId, aiBudgetWindowStart(now, null).getTime());
 }
+
+/** Available CV credits for the account rows on one admin page. */
+export async function accountCvCredits(userIds: string[], now = new Date()): Promise<Map<string, number>> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return new Map();
+  const idArray = sql`array[${sql.join(ids.map(id => sql`${id}`), sql`, `)}]::uuid[]`;
+  const result = await db().execute<{ user_id: string; available: number }>(sql`
+    select user_id, sum(remaining)::int as available from credit_grants
+    where user_id = any(${idArray}) and (expires_at is null or expires_at > ${now})
+    group by user_id`);
+  return new Map(result.rows.map(row => [row.user_id, Number(row.available)]));
+}

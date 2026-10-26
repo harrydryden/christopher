@@ -56,6 +56,7 @@ export interface BillingSummary {
     monthly: number;
     welcome: number;
     purchased: number;
+    gifted: number;
     nextGrantAt: Date | null;
   };
   companies: {
@@ -125,18 +126,20 @@ export async function getBillingSummary(database: BillingWriter, userId: string,
     monthly: number;
     welcome: number;
     purchased: number;
+    gifted: number;
     reserved: number;
     active_companies: number;
   }>(sql`
     select
       coalesce(sum(g.remaining) filter (where g.source = 'monthly' and (g.expires_at is null or g.expires_at > ${now})), 0)::int as monthly,
       coalesce(sum(g.remaining) filter (where g.source = 'welcome' and (g.expires_at is null or g.expires_at > ${now})), 0)::int as welcome,
-      coalesce(sum(g.remaining) filter (where g.source in ('topup', 'admin') and (g.expires_at is null or g.expires_at > ${now})), 0)::int as purchased,
+      coalesce(sum(g.remaining) filter (where g.source = 'topup' and (g.expires_at is null or g.expires_at > ${now})), 0)::int as purchased,
+      coalesce(sum(g.remaining) filter (where g.source = 'admin' and (g.expires_at is null or g.expires_at > ${now})), 0)::int as gifted,
       (select count(*)::int from credit_reservations r where r.user_id = ${userId}::uuid and r.status = 'reserved') as reserved,
       (select count(*)::int from company_subscriptions s where s.user_id = ${userId}::uuid and s.status = 'active') as active_companies
     from credit_grants g where g.user_id = ${userId}::uuid`),
   ]);
-  const balances = rows.rows[0] ?? { monthly: 0, welcome: 0, purchased: 0, reserved: 0, active_companies: 0 };
+  const balances = rows.rows[0] ?? { monthly: 0, welcome: 0, purchased: 0, gifted: 0, reserved: 0, active_companies: 0 };
   const stored = account ?? {
     userId,
     plan: "free" as const,
@@ -157,7 +160,7 @@ export async function getBillingSummary(database: BillingWriter, userId: string,
   const maximumBlocks = Math.max(0, Math.floor((definition.maxCompanies - definition.includedCompanies) / COMPANY_BLOCK_SIZE));
   const paidBlocks = plan === "free" ? 0 : Math.min(maximumBlocks, Math.max(0, stored.companyBlocks));
   const capacity = Math.min(definition.maxCompanies, definition.includedCompanies + paidBlocks * COMPANY_BLOCK_SIZE);
-  const available = Number(balances.monthly) + Number(balances.welcome) + Number(balances.purchased);
+  const available = Number(balances.monthly) + Number(balances.welcome) + Number(balances.purchased) + Number(balances.gifted);
   let active = Number(balances.active_companies);
   if (stored.status === "past_due" && stored.graceEndsAt && stored.graceEndsAt <= now && active > capacity) {
     await reconcileCompanyCapacity(database, userId, capacity);
@@ -179,6 +182,7 @@ export async function getBillingSummary(database: BillingWriter, userId: string,
       monthly: Number(balances.monthly),
       welcome: Number(balances.welcome),
       purchased: Number(balances.purchased),
+      gifted: Number(balances.gifted),
       nextGrantAt: plan === "free" ? null : stored.currentPeriodEnd,
     },
     companies: {
@@ -334,6 +338,33 @@ export async function grantCvCredits(
   )).limit(1);
   if (!existing) throw new Error("Credit grant could not be created.");
   return existing.id;
+}
+
+/** A single operator request can be retried safely, including after an unknown network outcome. */
+export async function grantAdminCvGift(
+  writer: BillingWriter,
+  input: { actorId: string; userId: string; units: number; requestId: string; reason: string },
+): Promise<{ grantId: string; alreadyApplied: boolean }> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => grantAdminCvGift(tx, input));
+  if (!Number.isInteger(input.units) || input.units < 1 || input.units > 100) throw new Error("Gift credits must be an integer from 1 to 100.");
+  const reason = input.reason.trim();
+  if (!reason || reason.length > 300) throw new Error("A gift reason of 1 to 300 characters is required.");
+  const ref = `admin-gift:${input.requestId}`;
+  const note = `Admin gift by ${input.actorId}: ${reason}`;
+  // The request lock serialises concurrent submissions even when they disagree about recipient.
+  await writer.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ref}, 0))`);
+  const [existing] = await writer.select({ id: creditGrants.id, userId: creditGrants.userId, units: creditGrants.units, expiresAt: creditGrants.expiresAt })
+    .from(creditGrants).where(and(eq(creditGrants.source, "admin"), eq(creditGrants.externalRef, ref))).limit(1);
+  if (existing) {
+    const [entry] = await writer.select({ note: creditLedger.note }).from(creditLedger)
+      .where(and(eq(creditLedger.grantId, existing.id), eq(creditLedger.kind, "grant"))).limit(1);
+    if (existing.userId !== input.userId || existing.units !== input.units || existing.expiresAt !== null || entry?.note !== note) {
+      throw new Error("This gift request was already used with different details.");
+    }
+    return { grantId: existing.id, alreadyApplied: true };
+  }
+  const grantId = await grantCvCredits(writer, { userId: input.userId, source: "admin", units: input.units, externalRef: ref, note });
+  return { grantId, alreadyApplied: false };
 }
 
 export async function updateBillingAccount(

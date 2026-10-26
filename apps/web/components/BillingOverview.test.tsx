@@ -5,7 +5,7 @@ import { BillingOverview, PlanReadout, type BillingSummaryView } from "./Billing
 const free: BillingSummaryView = {
   plan: "free",
   status: "active",
-  cv: { available: 2, reserved: 1, monthly: 0, welcome: 2, purchased: 0, nextGrantAt: null },
+  cv: { available: 2, reserved: 1, monthly: 0, welcome: 2, purchased: 0, gifted: 0, nextGrantAt: null },
   companies: { active: 18, included: 25, paidBlocks: 0, capacity: 25, technicalMax: 200 },
   renewalAt: null,
   paymentNeedsAttention: false,
@@ -20,8 +20,9 @@ describe("plan and credit readout", () => {
   });
 
   it("explains the account's actual allowances and the available packs", () => {
-    const html = renderToStaticMarkup(<BillingOverview billing={free} />);
-    expect(html).toContain("2 available");
+    const html = renderToStaticMarkup(<BillingOverview billing={{ ...free, cv: { ...free.cv, gifted: 2, available: 4 } }} />);
+    expect(html).toContain("4 available");
+    expect(html).toContain("0 purchased · 2 gifted");
     expect(html).toContain("18 of 25 active");
     expect(html).toContain("First 3 CVs");
     expect(html).toContain("£5");
@@ -74,7 +75,7 @@ describe("plan and credit readout", () => {
       ...free,
       plan: "search",
       monthlyPriceGbp: 30,
-      cv: { available: 7, reserved: 0, monthly: 5, welcome: 0, purchased: 2, nextGrantAt: new Date("2026-11-02T00:00:00Z") },
+      cv: { available: 7, reserved: 0, monthly: 5, welcome: 0, purchased: 2, gifted: 0, nextGrantAt: new Date("2026-11-02T00:00:00Z") },
       companies: { active: 105, included: 100, paidBlocks: 1, capacity: 110, technicalMax: 200 },
       renewalAt: new Date("2026-11-02T00:00:00Z"),
       paymentNeedsAttention: true,

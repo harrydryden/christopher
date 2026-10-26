@@ -1,12 +1,12 @@
 "use server";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { MAX_ACCOUNT_AI_BUDGET_USD, passwordProblem } from "@col/core";
 import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "@col/db/schema";
-import { isPlaceholderEmail } from "@col/db";
+import { grantAdminCvGift, isPlaceholderEmail } from "@col/db";
 import { changePassword as changeStoredPassword, deleteAccount, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
 import { emailLinkOrigin } from "@/lib/origin";
 import { clientAddress, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
@@ -145,6 +145,44 @@ export async function accountCount(): Promise<number> {
   await requireAdmin();
   const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(users);
   return row?.n ?? 0;
+}
+
+export type GiftCreditsResult = { ok: true; alreadyApplied: boolean } | { ok: false; error: string; code?: "conflict" };
+
+/** Gift CV credits without a payment; the ledger stores both the operator and their reason. */
+export async function giftAccountCvCredits(form: FormData): Promise<GiftCreditsResult> {
+  const actor = await requireAdmin();
+  const target = zUuid().safeParse(String(form.get("userId") ?? ""));
+  const request = zUuid().safeParse(String(form.get("requestId") ?? ""));
+  const rawUnits = String(form.get("credits") ?? "").trim();
+  const units = Number(rawUnits);
+  const reason = String(form.get("reason") ?? "").trim();
+  if (!target.success || !request.success || !/^[1-9][0-9]*$/.test(rawUnits) || !Number.isInteger(units) || units > 100 || !reason || reason.length > 300) {
+    return { ok: false, error: "Enter 1 to 100 whole credits, a reason of up to 300 characters, and retry the form." };
+  }
+  try {
+    const result = await db().transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+      // The role-changing action locks administrator rows in id order; use that order here too.
+      const accounts = await tx.select({ id: users.id, role: users.role, claimedAt: users.claimedAt }).from(users)
+        .where(inArray(users.id, [actor.id, target.data])).orderBy(asc(users.id)).for("share");
+      const operator = accounts.find(account => account.id === actor.id);
+      if (operator?.role !== "admin" || !operator.claimedAt) throw new UserFacingError("You are no longer an administrator.");
+      const account = accounts.find(account => account.id === target.data);
+      if (!account) return null;
+      return grantAdminCvGift(tx, { actorId: actor.id, userId: account.id, units, requestId: request.data, reason });
+    });
+    if (!result) return { ok: false, error: "This account no longer exists. No credits were gifted." };
+    revalidatePath("/admin");
+    revalidatePath("/account");
+    return { ok: true, alreadyApplied: result.alreadyApplied };
+  } catch (error) {
+    if (error instanceof UserFacingError) return { ok: false, error: error.message };
+    if (error instanceof Error && error.message === "This gift request was already used with different details.") {
+      return { ok: false, code: "conflict", error: "This request was already used with different gift details. Check the account and start a new gift if needed." };
+    }
+    return { ok: false, error: "Could not confirm the gift. Retry with the same details in this tab; it will not be applied twice." };
+  }
 }
 
 /** A budget is money, so it is bounded on the way in as well as on the way out of settings. */

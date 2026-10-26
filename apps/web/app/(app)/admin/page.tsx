@@ -7,7 +7,8 @@ import { adminEmails } from "@/lib/accounts";
 import { isPlaceholderEmail } from "@col/db";
 import { MAX_ACCOUNT_AI_BUDGET_USD } from "@col/core";
 import { getSystemSettings } from "@/lib/settings";
-import { accountAiBudgets, defaultAccountAiBudget } from "@/lib/queries/accounts";
+import { accountAiBudgets, accountCvCredits, defaultAccountAiBudget } from "@/lib/queries/accounts";
+import { GiftCreditsForm } from "@/components/GiftCreditsForm";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -33,7 +34,10 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
   const page = Math.min(pageNumber(params.page), pages);
   // One page of accounts from the database, then one statement for that page's budgets.
   const shown = await listAccounts(page, ACCOUNTS_PER_PAGE);
-  const budgets = await accountAiBudgets(shown.map((account) => account.id), now);
+  const [budgets, credits] = await Promise.all([
+    accountAiBudgets(shown.map(account => account.id), now),
+    accountCvCredits(shown.map(account => account.id), now),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -71,6 +75,7 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
               <TH>Created</TH>
               <TH>Last sign-in</TH>
               <TH title="Ready builds on file">CVs produced</TH>
+              <TH>CV credits</TH>
               <TH title="Company job boards this account follows">Companies</TH>
               <TH>AI budget</TH>
               <TH />
@@ -91,6 +96,10 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
                 <TD className="whitespace-nowrap">{relativeTime(account.createdAt, now)}</TD>
                 <TD className="whitespace-nowrap">{account.lastLoginAt ? relativeTime(account.lastLoginAt, now) : "never"}</TD>
                 <TD>{account.cvsProduced}</TD>
+                <TD>
+                  <span className="tabular-nums">{credits.get(account.id) ?? 0} available</span>
+                  <GiftCreditsForm actorId={admin.id} userId={account.id} email={account.email} />
+                </TD>
                 <TD>{account.companies}</TD>
                 <TD>
                   <span className="whitespace-nowrap text-fg">{formatUsd(budget.spentUsd)} of {formatUsd(budget.limitUsd)} this month</span>

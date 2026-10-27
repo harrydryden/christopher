@@ -332,6 +332,13 @@ export function failureWayForward(
             ...done,
           }
         : { links: [], note: "Ask an administrator to check this deployment's model access.", ...done };
+    case "check_provider_request":
+      return context.admin
+        ? { links: [{ label: "Open Operations", href: "/admin/health" }],
+            note: "The detailed provider error is in internal AI call records. Check and correct the request before starting another CV from the role.",
+            retry: false, retryNote: null }
+        : { links: [], note: "Ask an administrator to check the internal provider error and correct the request before starting another CV from the role.",
+            retry: false, retryNote: null };
     case "choose_model":
       return { links: [{ label: "Choose a different CV model", href: "/settings" }], note: null, ...done };
     case "retry":

@@ -43,6 +43,8 @@ it("says what a model call that produced nothing usable was doing, in the reader
     .toBe("The model stopped responding while checking the CV against your evidence: the answer was still unfinished after 15 minutes.");
   expect(callFailureMessage("model_access", RUBRIC_CALL, 403))
     .toBe("The CV model could not be reached while extracting the role's requirements (HTTP 403). Check model access and usage in Health, then retry.");
+  expect(callFailureMessage("request_invalid", REVIEW_CALL, 400))
+    .toBe("The model provider rejected the request while checking the CV against your evidence (HTTP 400). Ask an administrator to check the internal provider error before starting another CV from the role.");
   expect(callFailureMessage("output_limit", AUTHOR_CALL, undefined, "(attempt 2 of 3)"))
     .toBe("The model ran out of room for its answer while writing the CV (attempt 2 of 3).");
   expect(callFailureMessage("refused", AUTHOR_CALL))
@@ -50,6 +52,14 @@ it("says what a model call that produced nothing usable was doing, in the reader
   // Anything else is named by the step it happened in rather than guessed at.
   expect(callFailureMessage("output_invalid", REVIEW_CALL))
     .toBe("The model's answer to the assessment step could not be used.");
+});
+
+it("keeps an invalid provider request out of automatic retries and private diagnostics out of the message", () => {
+  const failure = cvBuildFailureFor(new CvBuildStop("request_invalid", callFailureMessage("request_invalid", REVIEW_CALL, 400),
+    { cause: "private request text from provider" }), attempts);
+  expect(failure).toMatchObject({ kind: "request_invalid", resolvedBy: "user", retryable: false, action: "check_provider_request" });
+  expect(failure.message).not.toContain("private request text");
+  expect(failure.cause).toBe("private request text from provider");
 });
 
 it("takes a failure that knows its own kind at its word, and keeps its figures", () => {

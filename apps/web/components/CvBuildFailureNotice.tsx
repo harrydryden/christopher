@@ -71,7 +71,7 @@ export function CvBuildFailureNotice({
           {blocked && <p className="text-14 text-warn">{blocked}</p>}
         </div>
       )}
-      {footnote && <p className="text-14 text-muted">{footnote}</p>}
+      {footnote && build.action !== "check_provider_request" && <p className="text-14 text-muted">{footnote}</p>}
     </div>
   );
 }

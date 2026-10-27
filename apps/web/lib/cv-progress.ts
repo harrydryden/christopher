@@ -42,6 +42,12 @@ export function cvLedgerLive(rows: Pick<CvProgressRows, "draft" | "anyTaskActive
   return rows.steps.some((step) => step.status === "running" && now.getTime() - step.startedAt.getTime() < CV_PROGRESS_STALE_MS);
 }
 
+/** Provider diagnostics stay in the stored record; the CV page and progress feed are member-facing. */
+function publicFailure<T extends CvBuildFailure>(failure: T): T {
+  const { cause: _cause, ...visible } = failure;
+  return visible as T;
+}
+
 export function cvProgressReading(rows: CvProgressRows, now: Date = new Date(), timeZone = "UTC"): CvProgressReading {
   const { draft, task } = rows;
   const active = draft.status === "queued" || draft.status === "generating";
@@ -52,7 +58,7 @@ export function cvProgressReading(rows: CvProgressRows, now: Date = new Date(), 
     live: cvLedgerLive(rows, now),
     version: cvWorkVersion(draft, cvWorkFlags(draft, task, now)),
     phase: state?.phase ?? draft.status,
-    failure: draft.failure ?? null,
+    failure: draft.failure ? publicFailure(draft.failure) : null,
     status: draft.status,
     stage: draft.buildStage,
     createdAt: draft.createdAt.toISOString(),
@@ -70,6 +76,9 @@ export function cvProgressReading(rows: CvProgressRows, now: Date = new Date(), 
         }
       : null,
     signature: rows.signature,
-    steps: rows.steps.map(stepToWire),
+    steps: rows.steps.map((step) => {
+      const wire = stepToWire(step);
+      return { ...wire, failure: wire.failure ? publicFailure(wire.failure) : null };
+    }),
   };
 }

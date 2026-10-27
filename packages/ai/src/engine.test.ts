@@ -1034,7 +1034,8 @@ describe("named failures", () => {
     ["a bad key", new AuthenticationError(401, body("authentication_error"), undefined, headers()), "model_access", 401],
     ["a forbidden key", new PermissionDeniedError(403, body("permission_error"), undefined, headers()), "model_access", 403],
     ["an unknown model", new NotFoundError(404, body("not_found_error"), undefined, headers()), "model_access", 404],
-    ["a rejected request", new BadRequestError(400, body("invalid_request_error"), undefined, headers()), "model_access", 400],
+    ["a rejected request", new BadRequestError(400, body("invalid_request_error"), undefined, headers()), "request_invalid", 400],
+    ["an inaccessible model named in a bad request", new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "This workspace does not have access to the model" } }, undefined, headers()), "model_access", 400],
     ["a status we have no name for", new APIError(418, body("teapot"), undefined, headers()), "unknown", 418],
   ])("names %s", async (_label, error, kind, status) => {
     const { engine, usage } = raise(error);
@@ -1097,11 +1098,14 @@ describe("named failures", () => {
         new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 250000 tokens > 200000 maximum" } }, undefined, headers()),
         new RateLimitError(429, body("rate_limit_error"), undefined, headers()),
       ]) {
-        const { engine, counts } = tripped(error, { t: 0 });
+        const { engine, counts, usage } = tripped(error, { t: 0 });
         await engine.analyseCvJob("Must lead operations");
         await engine.analyseCvJob("Must lead operations");
         expect(counts().sent).toBe(2);
         expect(engine.breakerStats()).toEqual({ open: [], last: null });
+        if (error instanceof BadRequestError) expect(usage.map(record => record.failure)).toEqual([
+          { kind: "request_invalid", status: 400 }, { kind: "request_invalid", status: 400 },
+        ]);
       }
     });
 

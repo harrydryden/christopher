@@ -105,6 +105,8 @@ export function callFailureMessage(kind: CvFailureKind, doing: CvCallDoing, stat
       return `The model stopped responding${where}: ${cvStallSentence(stall)}.`;
     case "model_access":
       return `The CV model could not be reached${where}${status ? ` (HTTP ${status})` : ""}. Check model access and usage in Health, then retry.`;
+    case "request_invalid":
+      return `The model provider rejected the request${where}${status ? ` (HTTP ${status})` : ""}. Ask an administrator to check the internal provider error before starting another CV from the role.`;
     case "output_limit":
       return `The model ran out of room for its answer${where}${note ? ` ${note}` : ""}.`;
     case "refused":

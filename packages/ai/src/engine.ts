@@ -65,6 +65,7 @@ export type AiFailureKind =
   | "overloaded"
   | "connection"
   | "model_access"
+  | "request_invalid"
   | "stalled"
   | "refused"
   | "output_limit"
@@ -147,7 +148,7 @@ export interface Ref {
   /**
    * Told why the call produced nothing, when it failed as a call (not recorded). A method returns
    * null for every failure, and some callers must act differently on some: scoring leaves a role
-   * unscored and retries after a `model_access` failure instead of marking it scored.
+   * unscored and retries after model-access or invalid-request failures instead of marking it scored.
    */
   onFailure?: (failure: AiFailure) => void;
 }
@@ -656,8 +657,9 @@ export function classifyAiFailure(error: unknown): AiFailure | null {
   if (error instanceof RateLimitError) return { kind: "rate_limited", status: error.status };
   if (error instanceof InternalServerError) return { kind: "overloaded", status: error.status };
   if (error instanceof APIConnectionError) return { kind: "connection" };
-  if (error instanceof AuthenticationError || error instanceof PermissionDeniedError ||
-      error instanceof NotFoundError || error instanceof BadRequestError)
+  if (error instanceof BadRequestError)
+    return { kind: isModelAccessFailure(error.status, error.message) ? "model_access" : "request_invalid", status: error.status };
+  if (error instanceof AuthenticationError || error instanceof PermissionDeniedError || error instanceof NotFoundError)
     return { kind: "model_access", status: error.status };
   if (error instanceof APIError) return { kind: "unknown", status: error.status };
   return { kind: "unknown" };

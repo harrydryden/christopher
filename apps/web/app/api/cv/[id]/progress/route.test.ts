@@ -102,6 +102,29 @@ it("answers the page's own token and signature, from one query beside the sessio
   expect(body.steps[0]!.taskId).toMatch(/^[0-9a-f-]{36}$/);
 });
 
+it("keeps private provider diagnostics out of the member feed and initial page reading", async () => {
+  const { draft } = await seed();
+  const privateDetail = "PRIVATE PROVIDER REQUEST EXCERPT";
+  const failure = {
+    kind: "request_invalid", resolvedBy: "user", retryable: false, action: "check_provider_request",
+    message: "The provider rejected the request.", cause: privateDetail,
+  };
+  await database.execute(sql`update cv_drafts set status = 'failed', error = ${failure.message}, failure = ${JSON.stringify(failure)}::jsonb where id = ${draft.id}`);
+  await database.execute(sql`update cv_build_steps set status = 'failed', error = ${failure.message}, failure = ${JSON.stringify(failure)}::jsonb where draft_id = ${draft.id} and seq = 3`);
+
+  const rows = await readCvProgress(user.id, draft.id);
+  const fullDraft = await getOwnCvDraft(user.id, draft.id);
+  const pageReading = cvProgressReading({ ...rows!, draft: fullDraft! });
+  const { status, body } = await read(draft.id);
+  expect(status).toBe(200);
+  for (const reading of [pageReading, body]) {
+    expect(reading.failure).toMatchObject({ kind: "request_invalid", message: failure.message });
+    expect(reading.failure).not.toHaveProperty("cause");
+    expect(reading.steps[2]!.failure).not.toHaveProperty("cause");
+    expect(JSON.stringify(reading)).not.toContain(privateDetail);
+  }
+});
+
 it("returns only what moved since the reader's last look", async () => {
   const { draft } = await seed();
   const { body: first } = await read(draft.id);

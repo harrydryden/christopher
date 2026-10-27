@@ -292,6 +292,20 @@ it("offers each failure the page that fixes it, and the retry only where it woul
     links: [],
     note: "Ask an administrator to check this deployment's model access.",
   });
+  expect(failureWayForward("check_provider_billing", { admin: true, canRetry: true })).toMatchObject({
+    links: [{ label: "Open Anthropic Plans & Billing", href: "https://platform.claude.com/settings/billing" }],
+    note: expect.stringContaining("app CV credits are separate"), retry: true,
+  });
+  expect(failureWayForward("check_provider_billing", { admin: false, canRetry: true })).toMatchObject({
+    links: [], note: expect.stringContaining("Ask an administrator"), retry: true,
+  });
+  expect(failureWayForward("check_provider_billing", { admin: false, canRetry: false }).retry).toBe(false);
+  expect(failureWayForward("check_provider_request", { admin: true, canRetry: true })).toMatchObject({
+    links: [{ label: "Open Operations", href: "/admin/health" }], retry: false, retryNote: null,
+  });
+  expect(failureWayForward("check_provider_request", { admin: false, canRetry: true })).toMatchObject({
+    links: [], note: expect.stringContaining("internal provider error"), retry: false, retryNote: null,
+  });
   expect(failureWayForward("choose_model").links).toEqual([{ label: "Choose a different CV model", href: "/settings" }]);
   // The retry is a form over `assessCvDraft`, which refuses a finalised or still-building draft.
   expect(failureWayForward("retry", { canRetry: false }).retry).toBe(false);

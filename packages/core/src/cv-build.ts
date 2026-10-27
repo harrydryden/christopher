@@ -186,6 +186,8 @@ export const CV_FAILURE_KINDS = [
   "page_limit_unfittable",
   "description_unusable",
   "model_access",
+  "provider_billing_exhausted",
+  "request_invalid",
   "refused",
   // The system resolves these by trying again, resuming from what the build already has.
   "rate_limited",
@@ -207,6 +209,8 @@ export type CvFailureAction =
   | "shorten_or_raise_pages"
   | "paste_description"
   | "check_model_access"
+  | "check_provider_billing"
+  | "check_provider_request"
   | "choose_model"
   | "retry";
 
@@ -227,6 +231,8 @@ export const CV_FAILURE_POLICIES: Record<CvFailureKind, CvFailurePolicy> = {
   page_limit_unfittable: { resolvedBy: "user", retryable: false, title: "The CV cannot fit your page limit", action: "shorten_or_raise_pages" },
   description_unusable: { resolvedBy: "user", retryable: false, title: "The job description cannot be used", action: "paste_description" },
   model_access: { resolvedBy: "user", retryable: false, title: "The CV model cannot be reached", action: "check_model_access" },
+  provider_billing_exhausted: { resolvedBy: "user", retryable: false, title: "The model provider account needs credit", action: "check_provider_billing" },
+  request_invalid: { resolvedBy: "user", retryable: false, title: "The model provider rejected this request", action: "check_provider_request" },
   refused: { resolvedBy: "user", retryable: false, title: "The model declined this request", action: "retry" },
   rate_limited: { resolvedBy: "system", retryable: true, title: "The model provider asked us to slow down" },
   overloaded: { resolvedBy: "system", retryable: true, title: "The model provider is overloaded" },

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
+import { ModelAccessBreaker } from "./breaker";
 import {
   createAiEngine, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, OUTPUT_LIMIT_ERROR, SCHEMA_ERROR_PREFIX,
   type AiClientLike, type AiUsageRecord,
@@ -51,12 +52,62 @@ function sdkEngine(respond: (attempt: number) => Response) {
     },
   });
   const usage: AiUsageRecord[] = [];
-  const engine = createAiEngine({ client: client as unknown as AiClientLike, getModel: () => "claude-sonnet-5", onUsage: record => { usage.push(record); } });
+  const engine = createAiEngine({ client: client as unknown as AiClientLike, getModel: () => "claude-sonnet-5", onUsage: record => { usage.push(record); }, breaker: new ModelAccessBreaker() });
   return { engine, bodies, usage };
 }
 
 const JOB = { profileMarkdown: "", decisionDigest: "", job: { title: "Operations Manager", company: "Acme" } };
 const settle = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const reviewInput = {
+  rubric: { requirements: [{ id: "r1", label: "Operations", quote: "Lead operations", importance: "essential" as const, category: "experience" as const }], caveats: [] },
+  cv: [{ id: "profile", text: "Operations leader" }],
+  claims: [{ id: "profile", text: "Operations leader" }],
+  evidence: [{ id: "source:profile", text: "Operations leader" }],
+};
+
+function badRequest(message: string) {
+  return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message } }), {
+    status: 400, headers: { "content-type": "application/json" },
+  });
+}
+
+it("classifies a rejected CV review request separately from model access, keeping provider details in usage", async () => {
+  const privateDetail = "messages: invalid cached context, private request excerpt";
+  const { engine, bodies, usage } = sdkEngine(() => badRequest(privateDetail));
+  const first = await engine.assessCvBatches(reviewInput);
+  const second = await engine.assessCvBatches(reviewInput);
+  expect(first.batches[0]).toMatchObject({ status: "failed", failure: { kind: "request_invalid", status: 400 } });
+  expect(second.batches[0]).toMatchObject({ status: "failed", failure: { kind: "request_invalid", status: 400 } });
+  expect(bodies).toHaveLength(2);
+  expect(bodies[0]).toMatchObject({ model: "claude-sonnet-5", max_tokens: 24_000, output_config: { effort: "high" } });
+  expect((bodies[0]!.output_config as { format: { type: string } }).format.type).toBe("json_schema");
+  expect(usage[0]!.error).toContain(privateDetail);
+  expect(engine.breakerStats().open).toHaveLength(0);
+});
+
+it("keeps a genuine model-access HTTP 400 under the access breaker", async () => {
+  const { engine, bodies, usage } = sdkEngine(() => badRequest("This workspace does not have access to the model"));
+  const first = await engine.assessCvBatches(reviewInput);
+  const second = await engine.assessCvBatches(reviewInput);
+  expect(first.batches[0]).toMatchObject({ status: "failed", failure: { kind: "model_access", status: 400 } });
+  expect(second.batches[0]).toMatchObject({ status: "failed", failure: { kind: "model_access", status: 400 } });
+  expect(bodies).toHaveLength(1);
+  expect(usage[1]!.error).toContain("Model unreachable with this key; not sent");
+});
+
+it("names an unfunded Anthropic API account separately and pauses repeat calls without cost", async () => {
+  const message = "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.";
+  const { engine, bodies, usage } = sdkEngine(() => badRequest(message));
+  const first = await engine.assessCvBatches(reviewInput);
+  const second = await engine.assessCvBatches(reviewInput);
+  expect(first.batches[0]).toMatchObject({ status: "failed", failure: { kind: "provider_billing_exhausted", status: 400 } });
+  expect(second.batches[0]).toMatchObject({ status: "failed", failure: { kind: "provider_billing_exhausted", status: 400 } });
+  expect(bodies).toHaveLength(1);
+  expect(usage[0]!.error).toContain(message);
+  expect(usage[1]).toMatchObject({ costUsd: 0, failure: { kind: "provider_billing_exhausted", status: 400 } });
+  expect(engine.breakerStats().open).toHaveLength(1);
+});
 
 describe("streamed answers through the SDK", () => {
   it("returns a valid answer, sending the schema without a parser the SDK would run", async () => {

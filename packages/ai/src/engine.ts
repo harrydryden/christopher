@@ -48,7 +48,7 @@ import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./clai
 import { AiGovernor, abortableSleep, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
 import { scoreLocationEvidence } from "./score-location-evidence";
-import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, type BreakerStats } from "./breaker";
+import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, isProviderBillingFailure, type BreakerStats } from "./breaker";
 
 export type { Effort } from "./prompt-registry";
 
@@ -65,6 +65,8 @@ export type AiFailureKind =
   | "overloaded"
   | "connection"
   | "model_access"
+  | "provider_billing_exhausted"
+  | "request_invalid"
   | "stalled"
   | "refused"
   | "output_limit"
@@ -147,7 +149,7 @@ export interface Ref {
   /**
    * Told why the call produced nothing, when it failed as a call (not recorded). A method returns
    * null for every failure, and some callers must act differently on some: scoring leaves a role
-   * unscored and retries after a `model_access` failure instead of marking it scored.
+   * unscored and retries after model-access or invalid-request failures instead of marking it scored.
    */
   onFailure?: (failure: AiFailure) => void;
 }
@@ -410,6 +412,7 @@ function breakerFor(client: AiClientLike): ModelAccessBreaker {
 
 /** The error a call refused by an open model-access breaker records, ahead of the provider's message. */
 export const MODEL_ACCESS_BREAKER_ERROR_PREFIX = "Model unreachable with this key; not sent:";
+export const PROVIDER_BILLING_BREAKER_ERROR_PREFIX = "Anthropic API account needs credit; not sent:";
 
 /** An engine given a client shares one governor with every engine given the same client. */
 const clientGovernors = new WeakMap<object, AiGovernor>();
@@ -656,8 +659,10 @@ export function classifyAiFailure(error: unknown): AiFailure | null {
   if (error instanceof RateLimitError) return { kind: "rate_limited", status: error.status };
   if (error instanceof InternalServerError) return { kind: "overloaded", status: error.status };
   if (error instanceof APIConnectionError) return { kind: "connection" };
-  if (error instanceof AuthenticationError || error instanceof PermissionDeniedError ||
-      error instanceof NotFoundError || error instanceof BadRequestError)
+  if (error instanceof BadRequestError)
+    return { kind: isProviderBillingFailure(error.status, error.message) ? "provider_billing_exhausted"
+      : isModelAccessFailure(error.status, error.message) ? "model_access" : "request_invalid", status: error.status };
+  if (error instanceof AuthenticationError || error instanceof PermissionDeniedError || error instanceof NotFoundError)
     return { kind: "model_access", status: error.status };
   if (error instanceof APIError) return { kind: "unknown", status: error.status };
   return { kind: "unknown" };
@@ -1166,10 +1171,11 @@ export class AiEngine {
     // leaves costs nothing and names the failure, so a caller can tell it from a model that answered badly.
     const open = this.breaker.refuse(model);
     if (open) {
-      const failure: AiFailure = { kind: "model_access", ...(open.status !== undefined ? { status: open.status } : {}) };
+      const providerBilling = isProviderBillingFailure(open.status, open.message);
+      const failure: AiFailure = { kind: providerBilling ? "provider_billing_exhausted" : "model_access", ...(open.status !== undefined ? { status: open.status } : {}) };
       const record: AiUsageRecord = {
         callSite, model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, durationMs: 0,
-        ok: false, error: `${MODEL_ACCESS_BREAKER_ERROR_PREFIX} ${open.message}`.slice(0, 500), failure, ...identity,
+        ok: false, error: `${providerBilling ? PROVIDER_BILLING_BREAKER_ERROR_PREFIX : MODEL_ACCESS_BREAKER_ERROR_PREFIX} ${open.message}`.slice(0, 500), failure, ...identity,
       };
       await this.record(record);
       call.onRecord?.(record);
@@ -1271,7 +1277,8 @@ export class AiEngine {
           { ok: false, error: (err as Error).message.slice(0, 500), failure: classifyAiFailure(err) ?? undefined });
         note = [`${callSite} failed`, err];
         const cause = err instanceof CallCutOff ? err.reason : err;
-        if (record.failure?.kind === "model_access" && cause instanceof APIError && isModelAccessFailure(cause.status, cause.message)
+        if ((record.failure?.kind === "model_access" || record.failure?.kind === "provider_billing_exhausted") && cause instanceof APIError
+          && (isModelAccessFailure(cause.status, cause.message) || isProviderBillingFailure(cause.status, cause.message))
           && this.breaker.trip(model, cause.message, cause.status))
           this.log(`model access breaker open for ${model} for ${MODEL_ACCESS_BREAKER_MS / 60_000} minutes`, { status: cause.status, message: cause.message });
       }

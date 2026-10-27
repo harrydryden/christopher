@@ -75,6 +75,8 @@ function unansweredMessage(failure: AiFailure | undefined): string {
       return "Reading that document ran past the longest answer the model may give, so nothing was proposed. Your document is kept: try this import again, or paste the part of it that covers your career.";
     case "model_access":
       return "Course of Life cannot reach its model at the moment, so the document was not read. Your document is kept: try this import again later.";
+    case "provider_billing_exhausted":
+      return "The Anthropic API account needs credit, so the document was not read. Your document is kept: ask an administrator to restore provider billing before trying again.";
     case "request_invalid":
       return "The model provider rejected the request to read this document. Your document is kept: ask an administrator to check the internal provider error before trying again.";
     default:

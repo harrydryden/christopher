@@ -332,6 +332,13 @@ export function failureWayForward(
             ...done,
           }
         : { links: [], note: "Ask an administrator to check this deployment's model access.", ...done };
+    case "check_provider_billing":
+      return context.admin
+        ? { links: [{ label: "Open Anthropic Plans & Billing", href: "https://platform.claude.com/settings/billing" }],
+            note: "Restore the Anthropic API credit balance, then allow up to 10 minutes for temporarily paused model calls before retrying this CV. Your app CV credits are separate.",
+            ...done }
+        : { links: [], note: "Ask an administrator to restore the Anthropic API credit balance. Model calls may remain paused for up to 10 minutes afterwards; then retry this CV. Your CV credits are separate.",
+            ...done };
     case "check_provider_request":
       return context.admin
         ? { links: [{ label: "Open Operations", href: "/admin/health" }],

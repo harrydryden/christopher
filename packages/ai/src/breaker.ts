@@ -96,6 +96,11 @@ export function isModelAccessFailure(status: number | undefined, message: string
     && !/prompt is too long|max_tokens|too many tokens/i.test(message);
 }
 
+/** Anthropic has refused calls because its API account, rather than an app CV balance, is unfunded. */
+export function isProviderBillingFailure(status: number | undefined, message: string): boolean {
+  return status === 400 && /\b(?:credit balance is too low|insufficient (?:api )?credits?|api credits? (?:exhausted|depleted))\b/i.test(message);
+}
+
 let processBreaker: ModelAccessBreaker | undefined;
 
 /** The breaker every engine in this process shares when it built its own client. */

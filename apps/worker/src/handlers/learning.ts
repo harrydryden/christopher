@@ -333,6 +333,14 @@ export class InvalidModelRequestError extends Error {
   }
 }
 
+/** The provider API account has no credit; bounded task retries preserve the unscored role. */
+export class ProviderBillingError extends Error {
+  constructor(readonly failure: AiFailure) {
+    super(`A5 Anthropic API account needs credit${failure.status ? ` (HTTP ${failure.status})` : ""}; the role stays unscored`);
+    this.name = "ProviderBillingError";
+  }
+}
+
 export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, jobId } = task.payload as unknown as TaskPayloads["score_job"];
   const prep = await prepareScoreJob(deps, userId, jobId);
@@ -349,6 +357,7 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   // The key could not reach the model: nothing was asked, so the role is not "scored without a
   // result", which a scan would never queue again. It stays unscored and the task retries.
   if (!result && failure?.kind === "model_access") throw new ModelAccessError(failure);
+  if (!result && failure?.kind === "provider_billing_exhausted") throw new ProviderBillingError(failure);
   if (!result && failure?.kind === "request_invalid") throw new InvalidModelRequestError(failure);
   if (!result) {
     return deps.db.transaction(async tx => {

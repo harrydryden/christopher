@@ -21,6 +21,7 @@ import {
   prepareScoreJob,
   ModelAccessError,
   InvalidModelRequestError,
+  ProviderBillingError,
   handleTagReason,
   handleSuggestFilters,
   handleSynthesizeProfile,
@@ -284,6 +285,21 @@ it("leaves a role unscored when the provider rejects the scoring request", async
     await expect(handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).rejects.toBeInstanceOf(InvalidModelRequestError);
     expect(create).toHaveBeenCalledTimes(2);
     expect((await viewOf(job.id)).scoredAt).toBeNull();
+  } finally {
+    await engine.close();
+  }
+});
+
+it("leaves a role unscored when the Anthropic API account has no credit", async () => {
+  const create = vi.fn().mockRejectedValue(new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits." } }, undefined, new Headers()));
+  const engine = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0, aiClient: { messages: { create } } });
+  try {
+    const { job } = await seedRole();
+    const withRealEngine = { ...engine, assertOwnership: undefined } as WorkerDeps;
+    await expect(handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).rejects.toBeInstanceOf(ProviderBillingError);
+    await expect(handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).rejects.toBeInstanceOf(ProviderBillingError);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(await viewOf(job.id)).toMatchObject({ scoreState: null, scoredAt: null, fitScore: null });
   } finally {
     await engine.close();
   }

@@ -96,6 +96,19 @@ it("keeps a genuine model-access HTTP 400 under the access breaker", async () =>
   expect(usage[1]!.error).toContain("Model unreachable with this key; not sent");
 });
 
+it("names an unfunded Anthropic API account separately and pauses repeat calls without cost", async () => {
+  const message = "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.";
+  const { engine, bodies, usage } = sdkEngine(() => badRequest(message));
+  const first = await engine.assessCvBatches(reviewInput);
+  const second = await engine.assessCvBatches(reviewInput);
+  expect(first.batches[0]).toMatchObject({ status: "failed", failure: { kind: "provider_billing_exhausted", status: 400 } });
+  expect(second.batches[0]).toMatchObject({ status: "failed", failure: { kind: "provider_billing_exhausted", status: 400 } });
+  expect(bodies).toHaveLength(1);
+  expect(usage[0]!.error).toContain(message);
+  expect(usage[1]).toMatchObject({ costUsd: 0, failure: { kind: "provider_billing_exhausted", status: 400 } });
+  expect(engine.breakerStats().open).toHaveLength(1);
+});
+
 describe("streamed answers through the SDK", () => {
   it("returns a valid answer, sending the schema without a parser the SDK would run", async () => {
     const { engine, bodies, usage } = sdkEngine(() => streamed('{"score":80,"verdict":"strong","rationale":"Fits.","flags":[]}', { reason: "end_turn" }));

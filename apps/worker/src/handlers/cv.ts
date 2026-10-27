@@ -357,7 +357,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           // Each saved revision carries its own page limit in its theme.
           const reusedContent = !!saved && savedPages! <= cvMaxPages(saved.theme);
           step.add({
-            roles: counted("experience"), qualifications: counted("education"), skillBlocks: counted("skill"),
+            roles: counted("experience"), qualifications: counted("education") + counted("training"), skillBlocks: counted("skill"),
             reusedRubric: !!reused, reusedContent,
           });
           return { library, saved, reusedContent, fromCheckpoint, savedPages };
@@ -1024,14 +1024,14 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
             }
             const omitted = library.entries.filter(entry =>
-              (entry.kind === "experience" || entry.kind === "education") &&
+              (entry.kind === "experience" || entry.kind === "education" || entry.kind === "training") &&
               !plan.sections.some(section => section.entryId === entry.id));
             if (omitted.length)
-              throw new CvBuildStop("output_invalid", "The optional revision omitted employment or education.");
+              throw new CvBuildStop("output_invalid", "The optional revision omitted employment or qualifications.");
             // The optional pass strengthens role evidence. Preserve the already checked qualification
-            // wording, so retaining an education block cannot conceal the loss of one qualification.
+            // wording, so retaining a block cannot conceal the loss of one qualification.
             const baselineQualifications = new Map(CvStoredPlanSchema.parse(args.baselineContent).sections
-              .filter(section => library.entries.some(entry => entry.id === section.entryId && entry.kind === "education"))
+              .filter(section => library.entries.some(entry => entry.id === section.entryId && (entry.kind === "education" || entry.kind === "training")))
               .map(section => [section.entryId, section]));
             plan.sections = plan.sections.map(section => baselineQualifications.get(section.entryId) ?? section);
             // One author call only. Deterministic fitting may remove whole lower-value bullets; an

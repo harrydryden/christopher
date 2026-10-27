@@ -1,4 +1,5 @@
 import { handleGenerateCv } from "./cv";
+import { handleSuggestCvSkills } from "./cv-skill-suggestions";
 import { handleImportLibraryDocument } from "./library-import";
 import { handleReviewLibrary } from "./library-review";
 import { handleDraftEvidence } from "./evidence-draft";
@@ -32,6 +33,7 @@ export const handlers: HandlerMap = {
   verify_company: handleVerifyCompany,
   monitor_source: handleMonitorSource,
   generate_cv: handleGenerateCv,
+  suggest_cv_skills: handleSuggestCvSkills,
   discover: handleDiscover,
   run_daily: handleRunDaily,
   scan_company: handleScanCompany,

@@ -92,14 +92,14 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
 
                 {view.proposal.education.length > 0 && (
                   <fieldset className="grid gap-2 border-2 border-line-muted p-3">
-                    <legend className="ds-label px-1">Qualifications</legend>
+                    <legend className="ds-label px-1">Education and training</legend>
                     {view.proposal.education.map(item => (
                       <Checkbox
                         key={item.id}
                         name="accept"
                         value={item.id}
                         defaultChecked
-                        label={<span className="text-14"><span className="font-semibold">{item.heading}</span> · {item.detail}</span>}
+                        label={<span className="text-14"><span className="font-semibold">{item.heading}</span> · {item.kind === "training" ? "Training" : "Education"} · {item.detail}</span>}
                       />
                     ))}
                   </fieldset>

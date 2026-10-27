@@ -34,7 +34,7 @@ beforeEach(async () => { vi.restoreAllMocks();
       batches.push(result ? { index, status: "done" as const, result, usage: [] } : { index, status: "failed" as const, usage: [] });
     }
     return { pass: options?.pass ?? "draft", total: slices.length, batches, review: null };
-  }); await client.db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations`);
+  }); await client.db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_skill_suggestion_runs, cv_drafts, ai_calls, ai_reservations`);
   await client.db.update(schema.users).set({ role: "admin", emailVerifiedAt: new Date() }).where(eq(schema.users.id, userId));
 });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });

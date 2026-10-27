@@ -235,7 +235,7 @@ it("adds the ticked items with their rows unconfirmed, through the Library's own
   }));
 
   expect(result).toMatchObject({ ok: true, message: expect.stringContaining("They arrive with their rows unconfirmed") });
-  expect((result as { message: string }).message).toContain("Added 1 job, 2 responsibilities and 1 qualification");
+  expect((result as { message: string }).message).toContain("Added 1 job, 2 responsibilities and 1 education or training item");
   const saved = await latestLibrary();
   expect(saved!.version).toBe(1);
   const library = saved!.content;

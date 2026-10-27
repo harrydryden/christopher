@@ -35,16 +35,18 @@ it("honours an explicit palette and disabled profile card", async () => {
   // The profile card is optional; legacy false skillPills flags cannot disable required skill pills.
   expect(rounded).toHaveBeenCalled();
 });
-it("shows distinct skill headings and removes repeated qualification labels", async () => {
+it("keeps each qualification heading above its own detail", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   await renderCvPdf(fixture);
   const labels = draw.mock.calls.map((call) => call[0]);
   expect(labels).not.toContain("Skill");
   expect(labels).toContain("Internal evidence label");
-  expect(labels).not.toContain("BSc Economics · Example University");
+  expect(labels).toContain("BSc Economics · Example University");
   expect(labels).toContain("BSc Economics, Example University. Distinction.");
   expect(labels).toContain("Project qualification");
   expect(labels).toContain("Completed practical training.");
+  expect(labels.indexOf("BSc Economics · Example University")).toBeLessThan(labels.indexOf("BSc Economics, Example University. Distinction."));
+  expect(labels.indexOf("Project qualification")).toBeLessThan(labels.indexOf("Completed practical training."));
 });
 it("labels continued jobs even when the saved draft has no theme", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
@@ -53,7 +55,7 @@ it("labels continued jobs even when the saved draft has no theme", async () => {
   expect(draw.mock.calls.some(
       (call) => call[0] === "Director · Example (continued)")).toBe(true);
 });
-it("groups Education and Skills beneath one parent heading and retains legacy pills", async () => {
+it("groups present education and skills in that order and retains legacy pills", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
   await renderCvPdf(fixture);
@@ -62,10 +64,59 @@ it("groups Education and Skills beneath one parent heading and retains legacy pi
   expect(labels).toContain("Skills");
   expect(labels).toContain("Internal evidence label");
   expect(labels.filter((label) => label === "EDUCATION AND SKILLS")).toHaveLength(1);
-  expect(labels.indexOf("EDUCATION AND SKILLS")).toBeLessThan(labels.indexOf("Skills"));
+  expect(labels.indexOf("EDUCATION AND SKILLS")).toBeLessThan(labels.indexOf("Education"));
+  expect(labels.indexOf("Education")).toBeLessThan(labels.indexOf("Skills"));
   expect(labels.indexOf("Skills")).toBeLessThan(labels.indexOf("Internal evidence label"));
-  expect(labels.indexOf("Internal evidence label")).toBeLessThan(labels.indexOf("Education"));
   expect(rounded.mock.calls.length).toBeGreaterThan(1);
+});
+it("names only present subsections in Education, Training, Skills and Interests order", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  await renderCvPdf({ ...fixture, sections: [
+    { entryId: "interest", kind: "interest", heading: "Volunteering", bullets: ["Community mentoring."] },
+    { entryId: "training", kind: "training", heading: "PRINCE2 Practitioner", bullets: ["APMG International, 2019."] },
+    ...fixture.sections,
+  ] });
+  const labels = draw.mock.calls.map(call => call[0]);
+  expect(labels.filter(label => label === "EDUCATION, TRAINING, SKILLS AND INTERESTS")).toHaveLength(1);
+  expect(labels.indexOf("Education")).toBeLessThan(labels.indexOf("Training"));
+  expect(labels.indexOf("Training")).toBeLessThan(labels.indexOf("Skills"));
+  expect(labels.indexOf("Skills")).toBeLessThan(labels.indexOf("Interests"));
+  expect(labels.indexOf("PRINCE2 Practitioner")).toBeLessThan(labels.indexOf("APMG International, 2019."));
+  vi.restoreAllMocks();
+  const onlyTraining = vi.spyOn(PDFDocument.prototype, "text");
+  await renderCvPdf({ ...fixture, sections: [{ entryId: "training", kind: "training", heading: "Safeguarding", bullets: ["Completed 2024."] }] });
+  const single = onlyTraining.mock.calls.map(call => call[0]);
+  expect(single.filter(label => label === "TRAINING")).toHaveLength(1);
+  expect(single).not.toContain("Education");
+  expect(single).not.toContain("Skills");
+});
+it("omits the supporting group when a CV has only work experience", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  await renderCvPdf({ ...fixture, sections: [{ entryId: "job", kind: "experience", heading: "Director · Example", bullets: ["Led operations."] }] });
+  const labels = draw.mock.calls.map(call => call[0]);
+  expect(labels).toContain("WORK EXPERIENCE");
+  expect(labels).not.toContain("EDUCATION");
+  expect(labels).not.toContain("TRAINING");
+  expect(labels).not.toContain("SKILLS");
+  expect(labels).not.toContain("INTERESTS");
+});
+it("keeps a qualification heading with its first detail at a page break", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const pages = vi.spyOn(PDFDocument.prototype, "addPage");
+  const report = await renderCvPdfWithReport({ ...fixture, sections: [
+    { entryId: "long-role", kind: "experience", heading: "Director · Example", bullets: Array.from({ length: 6 }, () => "Led operational delivery across regional teams. ".repeat(12)) },
+    { entryId: "first", kind: "education", heading: "BSc Economics", bullets: ["BSc Economics, Example University, 2014."] },
+    { entryId: "second", kind: "training", heading: "PRINCE2 Practitioner", bullets: ["APMG International, 2019."] },
+  ] });
+  expect(report.pageCount).toBeGreaterThan(1);
+  const pageAt = (label: string) => {
+    const index = draw.mock.calls.findIndex(call => call[0] === label);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const order = draw.mock.invocationCallOrder[index]!;
+    return pages.mock.invocationCallOrder.filter(pageOrder => pageOrder < order).length;
+  };
+  expect(pageAt("BSc Economics")).toBe(pageAt("BSc Economics, Example University, 2014."));
+  expect(pageAt("PRINCE2 Practitioner")).toBe(pageAt("APMG International, 2019."));
 });
 it("places each bold section pill first in its full-width skill group", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
@@ -94,7 +145,7 @@ it("places each bold section pill first in its full-width skill group", async ()
   expect(Number(skillPills[0]![1])).toBeLessThan(Number(labelCalls[0]![2]));
   expect(Number(skillPills[11]![1])).toBeLessThan(Number(labelCalls[1]![2]));
   expect(Number(labelCalls[1]![2])).toBeGreaterThan(Number(skillPills[9]![1]));
-  expect(draw.mock.calls.map(call => call[0]).filter(label => label === "Skills")).toHaveLength(1);
+  expect(draw.mock.calls.map(call => call[0]).filter(label => label === "SKILLS")).toHaveLength(1);
 });
 it("repeats the section pill when an oversized block continues on another page", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
@@ -145,11 +196,11 @@ it("fits three skill sections of ten readable pills within half a page", async (
   });
   const labels = draw.mock.calls.map((call) => call[0]);
   expect(report.pageCount).toBe(1);
-  expect(labels.filter((label) => label === "Skills")).toHaveLength(2);
+  expect(labels.filter((label) => label === "Skills")).toHaveLength(1);
   for (const section of sections) expect(labels).toContain(section.heading);
   const skillPills = rounded.mock.calls.filter((call) => call[2] !== undefined);
   expect(skillPills).toHaveLength(35);
-  const parentHeading = draw.mock.calls.find((call) => call[0] === "EDUCATION AND SKILLS");
+  const parentHeading = draw.mock.calls.find((call) => call[0] === "SKILLS");
   expect(parentHeading).toBeDefined();
   const last = skillPills[skillPills.length - 1]!;
   expect(Number(last[1]) + Number(last[3]) - Number(parentHeading![2])).toBeLessThan(420);

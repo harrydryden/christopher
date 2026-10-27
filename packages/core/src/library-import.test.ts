@@ -101,6 +101,19 @@ describe("validateLibraryProposal", () => {
     expect(proposedItemIds(proposal)).toEqual(["job-0", "job-0-row-0", "job-0-row-1", "education-0", "skill-0", "skill-1"]);
   });
 
+  it("keeps an anchored course as Training and reads older proposals without a kind", () => {
+    const document = `${DOCUMENT}\nPRINCE2 Practitioner, APMG International, 2019`;
+    const { proposal } = validateLibraryProposal(document, plan({ education: [
+      { kind: "training", heading: "PRINCE2 Practitioner", detail: "PRINCE2 Practitioner, APMG International, 2019" },
+    ] }));
+    expect(proposal.education[0]).toMatchObject({ kind: "training", heading: "PRINCE2 Practitioner" });
+    const accepted = proposalToLibraryAdditions(null, proposal, ["education-0"], { prefix: "training", name: "Jane Okafor" });
+    expect(accepted.library.entries).toMatchObject([{ kind: "training", heading: "PRINCE2 Practitioner" }]);
+    const legacy = StoredLibraryProposalSchema.parse({ employment: [], education: [{ id: "education-0", heading: "University of Leeds", detail: "MSc Operations Management", quote: "MSc Operations Management" }], skills: [] });
+    expect(legacy.education[0]?.kind).toBeUndefined();
+    expect(proposalToLibraryAdditions(null, legacy, ["education-0"], { prefix: "older", name: "Jane Okafor" }).library.entries[0]?.kind).toBe("education");
+  });
+
   it("drops a job the document never mentions, and the rows that hang on it", () => {
     const { proposal, dropped } = validateLibraryProposal(DOCUMENT, plan({
       employment: [

@@ -21,6 +21,15 @@ vi.mock("@/app/actions/cv", () => ({ saveCvLibrary: vi.fn(), rescoreLibrary: vi.
 /** The markup a person can read: everything but the hidden field the save posts. */
 const onScreen = (html: string) => html.replace(/name="library" value="[^"]*"/, "");
 
+it("shows a broad saved skill collection as Library guidance, not a CV-wide limit", () => {
+  const library: CvLibrary = { name: "Test", contact: "", profile: "", entries: [{ id: "skills", kind: "skill",
+    heading: "Capabilities", details: "Confirmed skills", skillItems: Array.from({ length: 12 }, (_, index) => `Skill ${index + 1}`) }] };
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
+  expect(html).toContain("12 saved skills");
+  expect(html).toContain("Keep a broad collection here");
+  expect(html).not.toContain("12/10 individual skills");
+});
+
 it("renders a labelled confirmation checkbox for every responsibility with its saved state", () => {
   const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
@@ -208,7 +217,7 @@ it("puts scoring guidance in a secondary disclosure after the three main section
   const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
   const strip = html.slice(html.indexOf('aria-label="Experience sections"'));
   expect([...strip.slice(0, strip.indexOf("</div>")).matchAll(/role="tab" id="library-tab-(\w+)"[^>]*>([^<]*)</g)].map(match => [match[1], match[2]]))
-    .toEqual([["experience", "Work history"], ["education", "Education &amp; skills"], ["intro", "About you"]]);
+    .toEqual([["experience", "Work history"], ["education", "Education, training &amp; skills"], ["intro", "About you"]]);
   expect(html).toContain("Review evidence</summary>");
   expect(html).toContain("How evidence is scored</summary>");
   const body = html.slice(html.indexOf("How evidence is scored"), html.indexOf("</form>"));

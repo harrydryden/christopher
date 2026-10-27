@@ -66,8 +66,8 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
     };
     return date(b).localeCompare(date(a));
   });
-  const education = library.entries.filter(entry => entry.kind === 'education');
-  if (roles.length + education.length > 20) throw new Error('Select at most 20 employment and education blocks for this CV. The full library is retained.');
+  const education = library.entries.filter(entry => entry.kind === 'education' || entry.kind === 'training');
+  if (roles.length + education.length > 20) throw new Error('Select at most 20 employment and qualification blocks for this CV. The full library is retained.');
   const entryRelevance = (entry: CvLibrary["entries"][number]) => semantic
     ? semanticEntryRelevance(entry.id, semantic)
     : cvRelevance([entry.heading, entry.details, ...(entry.skillItems ?? [])].join(' '), target);
@@ -170,7 +170,7 @@ export function cvBudgetViolations(plan: CvPlan, budget: CvWritingBudget): strin
   if (plan.summary.length > budget.summaryCharacters) violations.push(`Profile: ${plan.summary.length} characters; budget ${budget.summaryCharacters}.`);
   for (const block of budget.blocks) {
     const section = plan.sections.find(section => section.entryId === block.entryId);
-    if (!section) { if (block.kind === 'experience' || block.kind === 'education') violations.push(`Retain ${block.entryId}: ${block.kind} block.`); continue; }
+    if (!section) { if (block.kind === 'experience' || block.kind === 'education' || block.kind === 'training') violations.push(`Retain ${block.entryId}: ${block.kind} block.`); continue; }
     const values = section.skillItems ?? section.bullets;
     const length = values.reduce((sum, value) => sum + value.length, 0);
     if (length > block.maxCharacters) violations.push(`${block.entryId}: ${length} characters; budget ${block.maxCharacters}.`);

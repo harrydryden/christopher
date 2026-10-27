@@ -14,8 +14,10 @@ import { createHash } from "node:crypto";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CvRubricSchema, CvReviewPlanSchema } from "@col/core/cv-assessment";
-import { CvPlanSchema, CvTailoringPlanOutputSchema, EvidenceDraftPlanSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@col/core";
+import { CvPlanSchema, CvTailoringPlanOutputSchema, CvSkillSuggestionPlanSchema, CvSkillVerificationSchema, EvidenceDraftPlanSchema, LibraryProposalSchema, LibraryReviewPlanSchema } from "@col/core";
 import { CV_AUTHOR_PROMPT, CV_REVIEW_PROMPT, CV_RUBRIC_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
+import { CV_SKILL_SUGGESTION_PROMPT } from "./cv-skill-suggestion-prompt";
+import { CV_SKILL_VERIFICATION_PROMPT } from "./cv-skill-verification-prompt";
 import * as P from "./prompts";
 import * as S from "./schemas";
 
@@ -283,7 +285,7 @@ export function assertCacheLayout(id: string, layout: CacheLayout): void {
 
 export type PromptId =
   | "A1" | "A2" | "A3" | "A4" | "A5" | "A6" | "A7" | "A8" | "A9" | "A10" | "A10.sources" | "A11" | "A12" | "A13"
-  | "cv.rubric" | "cv.planning" | "cv.author" | "cv.improvement" | "cv.review" | "cv.review_candidate";
+  | "cv.rubric" | "cv.planning" | "cv.author" | "cv.improvement" | "cv.review" | "cv.review_candidate" | "cv.skill_suggestions" | "cv.skill_verify";
 
 export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   A1: define({ id: "A1", callSite: "A1", system: P.A1_CHOOSE_CAREERS_LINKS, schema: S.CareersLinksSchema,
@@ -341,6 +343,10 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   "cv.review_candidate": define({ id: "cv.review_candidate", callSite: "CV", stage: "review_candidate", system: CV_REVIEW_BATCH_PROMPT, schema: CvReviewBatchSchema,
     route: { model: "cvModel", effort: "high" }, maxTokens: 24_000, timeoutMs: 240_000, priority: "interactive",
     cacheLayout: AUDIT_LAYOUT, expectedOutputTokens: 7_000 }),
+  "cv.skill_suggestions": define({ id: "cv.skill_suggestions", callSite: "CV", stage: "skill_suggestions", system: CV_SKILL_SUGGESTION_PROMPT, schema: CvSkillSuggestionPlanSchema,
+    route: { model: "cvModel", effort: "low" }, maxTokens: 2_000, timeoutMs: 90_000, priority: "interactive", expectedOutputTokens: 600 }),
+  "cv.skill_verify": define({ id: "cv.skill_verify", callSite: "CV", stage: "skill_verify", system: CV_SKILL_VERIFICATION_PROMPT, schema: CvSkillVerificationSchema,
+    route: { model: "cvModel", effort: "low" }, maxTokens: 1_200, timeoutMs: 90_000, priority: "interactive", expectedOutputTokens: 350 }),
 };
 
 export const PROMPT_IDS = Object.keys(PROMPTS) as PromptId[];

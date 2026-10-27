@@ -257,7 +257,7 @@ function fitBullets(source: readonly string[], block: CvBlockBudget, shorten: bo
 }
 
 /**
- * One section for every allocated experience and education block (omitting one fails the build by
+ * One section for every allocated experience, education and training block (omitting one fails the build by
  * design), skills chosen verbatim from the stored labels, and a profile within its own budget.
  */
 export function scriptedPlan(payload: AuthorPayload): CvPlan {

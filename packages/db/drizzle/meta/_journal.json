@@ -421,6 +421,13 @@
       "when": 1793095200000,
       "tag": "0061_discovery_and_description_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1793136421000,
+      "tag": "0062_cv_skill_suggestion_runs",
+      "breakpoints": true
     }
   ]
 }

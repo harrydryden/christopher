@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@col/core/cv";
-import { cvReviewSections, cvReviewSkillLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -26,10 +26,32 @@ it("adds manually entered skills without claiming Library sources", () => {
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
 });
 
-it("rejects removal of non-skill sections and leaves invalid non-skill edits for validation", () => {
-  expect(() => cvReviewSections(saved, ["Built systems.", "Python"], ["role-1"], [])).toThrow("Only skill sections");
+it("rejects removal of Experience and leaves invalid Experience edits for validation", () => {
+  expect(() => cvReviewSections(saved, ["Built systems.", "Python"], ["role-1"], [])).toThrow("Only supporting sections");
   const sections = cvReviewSections(saved, ["", "Python"], [], []);
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(false);
+});
+
+it("includes or omits Training deliberately and refuses to cut off long details", () => {
+  const library = { name: "Ada Lovelace", contact: "", profile: "Analyst", entries: [
+    { id: "train-1", kind: "training" as const, heading: "Lean Six Sigma", details: "Completed accredited course." },
+    { id: "train-long", kind: "training" as const, heading: "Long course", details: "x".repeat(1000) },
+  ] };
+  const available = librarySupportSections(library);
+  expect(available.map(item => item.id)).toEqual(["train-1", "train-long"]);
+  expect(available[1]?.issue).toMatch(/Shorten/);
+  const included = cvReviewSupportingSections(saved.sections, ["train-1"], available);
+  expect(included.at(-1)).toMatchObject({ entryId: "train-1", kind: "training", bullets: ["Completed accredited course."] });
+  expect(cvReviewSupportingSections(saved.sections, [], available)).toEqual(saved.sections);
+  expect(cvReviewSections({ ...saved, sections: included }, ["Built systems.", "Python", "Completed accredited course."], ["train-1"], []))
+    .toEqual(saved.sections);
+  expect(() => cvReviewSupportingSections(saved.sections, ["train-long"], available)).toThrow(/Shorten/);
+});
+
+it("refuses a supporting choice beyond twenty sections so the editor can show a recoverable issue", () => {
+  const full = Array.from({ length: 20 }, (_, index) => ({ ...saved.sections[0]!, entryId: `role-${index}` }));
+  expect(() => cvReviewSupportingSections(full, ["train-1"], [{ id: "train-1", kind: "training", heading: "Course", bullets: ["Completed"] }]))
+    .toThrow(/section limit/);
 });
 
 it("accepts more than six skills without exceeding the bullet limit", () => {

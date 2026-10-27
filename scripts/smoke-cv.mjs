@@ -15,6 +15,7 @@ const {
   reviewFixture,
 } = require("../packages/core/test/cv-review-fixture.ts");
 const { modelForCallSite, resolveSystemSettings } = require("../packages/core/src/settings.ts");
+const { cvHighlightedSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash } = require("../packages/core/src/cv-skill-suggestions.ts");
 
 const { Pool } = createRequire(
   new URL("../apps/web/package.json", import.meta.url),
@@ -40,6 +41,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     busyId = randomUUID(),
     failedId = randomUUID();
   const tableIds = [randomUUID()];
+  let suggestionFixtureVersion = null;
+  let suggestionDraftId = null;
   // The role the applications table is exercised against: its own company, so it goes at the end.
   const TABLE_DOMAIN = "cvtable.invalid";
   const tableCompanyId = randomUUID(), tableSourceId = randomUUID(), tableJobId = randomUUID();
@@ -157,7 +160,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     // Applications owns the CV pages now; on Library it must not be the current entry.
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Applications", exact: true }).getAttribute("aria-current"), null);
     const experienceTab = page.getByRole("tab", { name: "Work history", exact: true });
-    const educationTab = page.getByRole("tab", { name: "Education & skills", exact: true });
+    const educationTab = page.getByRole("tab", { name: "Education, training & skills", exact: true });
     const introTab = page.getByRole("tab", { name: "About you", exact: true });
     assert.equal(await experienceTab.getAttribute("aria-selected"), "true");
     await introTab.click();
@@ -173,7 +176,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await experienceTab.click();
     await educationTab.click();
     assert.equal(await page.getByRole("heading", { name: "Work history", exact: true }).isVisible(), false);
-    await page.getByRole("button", { name: "Add education, skill or interest", exact: true }).click();
+    await page.getByRole("button", { name: "Add education, training, skill or interest", exact: true }).click();
     const skills = page.getByRole("textbox", { name: "Individual skills:", exact: true });
     const skillNames = ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"];
     await skills.fill(skillNames.join(", "));
@@ -323,9 +326,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
           `${error.message}\n${await page.locator("body").innerText()}`,
         );
       });
+    // The server renders controls before React attaches change handlers. The editor enables
+    // them only after hydration; waiting for that marker tests the same safe first interaction.
+    await page.locator('[data-cv-editor-ready="true"]').waitFor({ timeout: 10000 });
     // Skill edits use the same normalisation for the preview and saved revision. Clearing the
     // last skill omits its section instead of sending the empty array that used to reject PDFs.
-    await page.getByRole("button", { name: "Add skill section", exact: true }).click();
+    await page.getByLabel("Add section from Experience", { exact: true }).selectOption("library-skills");
+    await page.getByRole("button", { name: "Remove skill 2 from new section", exact: true }).click();
     // Previously stored comma lists can be deliberately separated without rewriting legitimate
     // comma-containing labels during an unrelated edit.
     const combinedSkills = ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"];
@@ -344,7 +351,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     });
     await page.getByRole("button", { name: "Hide preview on this page", exact: true }).click();
     await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
-    await page.getByRole("button", { name: "Add skill section", exact: true }).click();
+    await page.getByLabel("Add section from Experience", { exact: true }).selectOption("library-skills");
+    await page.getByRole("button", { name: "Remove skill 2 from new section", exact: true }).click();
     const tenSkills = ["SQL", "Python", "Forecasting", "Commercial strategy", "Operations", "Leadership", "Analysis", "Planning", "Reporting", "Partnerships"];
     for (const [index, skill] of tenSkills.entries()) {
       if (index) await page.getByRole("button", { name: "Add skill", exact: true }).click();
@@ -570,7 +578,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "Edited profile retained through panel changes.",
     );
     assert.equal(await page.locator("form form").count(), 0);
-    await page.getByRole("button", { name: "Add skill section", exact: true }).click();
+    await page.getByLabel("Add section from Experience", { exact: true }).selectOption("library-skills");
+    await page.getByRole("button", { name: "Remove skill 2 from new section", exact: true }).click();
     await page.getByRole("textbox", { name: "Skill 1 in new section", exact: true }).fill("SQL");
     const submitted = await page
       .locator("form[id^=cv-edit]")
@@ -1110,12 +1119,82 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(legacyResponse.status(), 200);
     await page.getByRole("button", { name: "Show preview on this page", exact: true }).click();
     assert.deepEqual(legacyResponse.request().postDataJSON().sections.at(-1).skillItems, legacyLabels.slice(0, 10));
+
+    // This is a saved proposal produced by the scripted fixture, not a provider call. The browser
+    // must make the member's selection explicit; only that label may enter Experience and the CV.
+    const previousVersion = (await pool.query("select coalesce(max(version), 0)::integer as version from cv_libraries where user_id = $1", [userId])).rows[0].version;
+    suggestionFixtureVersion = previousVersion;
+    const version = previousVersion + 1;
+    suggestionDraftId = randomUUID();
+    const supportingLibrary = { ...library, entries: [...library.entries,
+      { id: "training-old", kind: "training", heading: "PRINCE2 Practitioner", details: "Completed PRINCE2 Practitioner training." },
+      { id: "training-new", kind: "training", heading: "Lean Six Sigma", details: "Completed Lean Six Sigma training." },
+    ] };
+    const supportingContent = { ...content, sections: [...content.sections,
+      { entryId: "training-old", kind: "training", heading: "PRINCE2 Practitioner", bullets: ["Completed PRINCE2 Practitioner training."] },
+    ] };
+    const evidenceRows = cvSkillEvidenceRows(supportingLibrary);
+    assert.equal(evidenceRows.length, 1);
+    await pool.query("insert into cv_libraries (user_id, version, content) values ($1, $2, $3)", [userId, version, JSON.stringify(supportingLibrary)]);
+    await pool.query(`insert into cv_drafts
+      (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, content)
+      values ($1, $2, 'Suggested skill review', 'Example', $3, $4, $5, 'test', 'ready', $6)`,
+      [suggestionDraftId, userId, description, version, JSON.stringify(supportingLibrary), JSON.stringify(supportingContent)]);
+    const selectedId = randomUUID(), unselectedId = randomUUID();
+    const runId = randomUUID();
+    const proposals = [
+      { id: selectedId, category: "Leadership", label: "Team leadership", sourceId: evidenceRows[0].id, evidenceQuote: "Led a team", roleQuote: "Lead a team" },
+      { id: unselectedId, category: "Management", label: "Team management", sourceId: evidenceRows[0].id, evidenceQuote: "Led a team", roleQuote: "Lead a team" },
+    ];
+    await pool.query(`insert into cv_skill_suggestion_runs
+      (id, user_id, draft_id, library_version, input_hash, status, suggestions)
+      values ($1, $2, $3, $4, $5, 'ready', $6::jsonb)`,
+      [runId, userId, suggestionDraftId, version,
+        cvSkillSuggestionInputHash(version, suggestionDraftId, description, evidenceRows, cvHighlightedSkillRows(supportingContent)), JSON.stringify(proposals)]);
+    await page.goto(`${baseUrl}/cv/${suggestionDraftId}`);
+    await page.locator('[data-cv-editor-ready="true"]').waitFor({ timeout: 10000 });
+    // An existing Training item can be omitted. When it is the last supporting item, the PDF
+    // receives only Work experience; another saved Training item can then be included explicitly.
+    await page.getByText("PRINCE2 Practitioner", { exact: true }).locator("..").getByRole("button", { name: "Remove section" }).click();
+    const withoutSupport = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
+    await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
+    assert.deepEqual((await withoutSupport).request().postDataJSON().sections.map(section => section.kind), ["experience"]);
+    const trainingChoice = page.getByRole("checkbox", { name: "Training · Lean Six Sigma", exact: true });
+    await trainingChoice.check();
+    const withTraining = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
+    await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
+    assert.ok((await withTraining).request().postDataJSON().sections.some(section => section.kind === "training" && section.entryId === "training-new"));
+    await page.getByText("Suggested skills from your Experience", { exact: true }).click();
+    const selectedSkill = page.getByRole("checkbox", { name: /Team leadership · Leadership/ });
+    const unselectedSkill = page.getByRole("checkbox", { name: /Team management · Management/ });
+    await selectedSkill.waitFor();
+    assert.equal(await unselectedSkill.isChecked(), false);
+    await selectedSkill.check();
+    assert.equal(await unselectedSkill.isChecked(), false);
+    await page.getByRole("button", { name: "Save and check · free", exact: true }).click();
+    await page.waitForURL(url => url.pathname !== `/cv/${suggestionDraftId}`);
+    const accepted = (await pool.query("select content from cv_libraries where user_id = $1 order by version desc limit 1", [userId])).rows[0].content;
+    assert.ok(accepted.entries.some(entry => entry.kind === "skill" && entry.skillItems?.includes("Team leadership")));
+    assert.equal(accepted.entries.some(entry => entry.skillItems?.includes("Team management")), false);
+    const savedSuggestion = (await pool.query("select content, library_snapshot from cv_drafts where parent_id = $1 order by created_at desc limit 1", [suggestionDraftId])).rows[0];
+    assert.ok(savedSuggestion.content.sections.some(section => section.kind === "skill" && section.skillItems?.includes("Team leadership")));
+    assert.equal(savedSuggestion.content.sections.some(section => section.skillItems?.includes("Team management")), false);
+    assert.ok(savedSuggestion.content.sections.some(section => section.kind === "training" && section.entryId === "training-new"));
+    assert.equal(savedSuggestion.content.sections.some(section => section.entryId === "training-old"), false);
+    assert.ok(savedSuggestion.library_snapshot.entries.some(entry => entry.kind === "skill" && entry.skillItems?.includes("Team leadership")));
     assert.deepEqual(errors, []);
     console.log(
       "  CV browser flow passed: tabs, evaluation, skill editing and preview, saved edits, responsive layout, progress, quiz, dismissal persistence, finalisation override and PDF download, unsaved-edit protection, applications and sharing",
     );
   } finally {
     await browser?.close();
+    if (suggestionDraftId) {
+      await pool.query(`delete from tasks where payload->>'draftId' in
+        (select id::text from cv_drafts where id = $1::uuid or parent_id = $1::uuid)
+        or payload->>'runId' in (select id::text from cv_skill_suggestion_runs where draft_id = $1::uuid)`, [suggestionDraftId]);
+      await pool.query("delete from cv_drafts where id = $1 or parent_id = $1", [suggestionDraftId]);
+    }
+    if (suggestionFixtureVersion !== null) await pool.query("delete from cv_libraries where user_id = $1 and version > $2", [userId, suggestionFixtureVersion]);
     await pool.query("delete from cv_drafts where id = any($1::uuid[])", [
       tableIds,
     ]);

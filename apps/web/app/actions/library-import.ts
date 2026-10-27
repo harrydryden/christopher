@@ -192,7 +192,7 @@ export async function acceptLibraryImport(importId: string, form: FormData): Pro
         // A job carries no evidence on its own, and a Library is its blocks: an account with none
         // cannot start one from employment history alone.
         if (!result.library.entries.length) {
-          throw new UserFacingError("Tick at least one responsibility, qualification or skill: a job on its own cannot start your Library.");
+          throw new UserFacingError("Tick at least one responsibility, education or training item, or skill: a job on its own cannot start your Library.");
         }
         added = result.added;
         return result.library;
@@ -212,7 +212,7 @@ function addedSentence(added: { jobs: number; rows: number; education: number; s
   const parts = [
     [added.jobs, "job", "jobs"],
     [added.rows, "responsibility", "responsibilities"],
-    [added.education, "qualification", "qualifications"],
+    [added.education, "education or training item", "education or training items"],
     [added.skills, "skill", "skills"],
   ] as const;
   const found = parts.filter(([count]) => count > 0).map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);

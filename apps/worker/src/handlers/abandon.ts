@@ -88,6 +88,13 @@ async function isCompletedQuizPredecessor(
  * worker that ran it and, later, by a sweep that finds the row.
  */
 export const onAbandon: AbandonHookMap = {
+  suggest_cv_skills: async (task, deps) => {
+    const runId = typeof task.payload.runId === "string" ? task.payload.runId : null;
+    if (!runId) return;
+    await deps.db.execute(sql`update cv_skill_suggestion_runs set status = 'failed',
+      error = 'Skill suggestions were interrupted. Refresh to try again.', updated_at = now()
+      where id = ${runId}::uuid and status in ('queued', 'running')`);
+  },
   fetch_locations: async (task, deps, reason) => {
     const jobId = typeof task.payload.jobId === "string" ? task.payload.jobId : null;
     const revision = typeof task.payload.locationRevision === "string" ? task.payload.locationRevision : null;

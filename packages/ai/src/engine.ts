@@ -17,6 +17,7 @@ import {
   validateLibraryReview,
   type CvWritingBudget,
   type CvPlan,
+  type CvSkillSuggestion,
   type CvLibrary,
   type CvTailoringPlan,
   type LibraryEntryReview,
@@ -2070,6 +2071,39 @@ export class AiEngine {
         P.wrap("job_details", JSON.stringify(input.job ?? null)),
       ].join("\n\n"),
       ...(model ? { model } : {}),
+    }, ref);
+  }
+
+  /** Propose skills from confirmed experience and role text; the caller checks every quote again. */
+  async suggestCvSkills(
+    input: { rows: readonly { id: string; text: string }[];
+      highlightedSkills: readonly { category: string; labels: string[] }[];
+      reusableSkills: readonly { id: string; category: string; labels: string[] }[];
+      description: string; model?: string },
+    ref: Ref = {},
+  ): Promise<{ suggestions: Omit<CvSkillSuggestion, "id">[] } | null> {
+    return this.run<{ suggestions: Omit<CvSkillSuggestion, "id">[] }>(PROMPTS["cv.skill_suggestions"], {
+      user: [
+        P.wrap("confirmed_experience_rows", JSON.stringify(input.rows)),
+        P.wrap("target_role", P.truncate(input.description, 20_000)),
+        P.wrap("skills_already_on_this_cv", JSON.stringify(input.highlightedSkills)),
+        P.wrap("reusable_saved_skills", JSON.stringify(input.reusableSkills)),
+      ].join("\n\n"),
+      ...(input.model ? { model: input.model } : {}),
+    }, ref);
+  }
+
+  /** Separate bounded semantic check; the worker additionally validates both citations verbatim. */
+  async verifyCvSkills(
+    input: { candidates: readonly { label: string; category: string; evidenceQuote: string; roleQuote: string; sourceId: string }[];
+      sources: readonly { id: string; text: string }[]; description: string; model?: string },
+    ref: Ref = {},
+  ): Promise<{ decisions: { index: number; sourceSupports: boolean; roleRelevant: boolean }[] } | null> {
+    return this.run<{ decisions: { index: number; sourceSupports: boolean; roleRelevant: boolean }[] }>(PROMPTS["cv.skill_verify"], {
+      user: [P.wrap("skill_candidates", JSON.stringify(input.candidates.map((candidate, index) => ({ index, ...candidate })))),
+        P.wrap("cited_confirmed_experience_rows", JSON.stringify(input.sources)),
+        P.wrap("target_role_context", P.truncate(input.description, 20_000))].join("\n\n"),
+      ...(input.model ? { model: input.model } : {}),
     }, ref);
   }
 

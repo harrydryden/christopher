@@ -7,7 +7,7 @@ export const CV_SKILL_GUIDANCE = {
   suggestionPreferredWords: 2,
   suggestionMaxWords: 3,
 } as const;
-export const CV_LIMITS = { bulletsPerSection: 6, skillsPerSection: CV_SKILL_GUIDANCE.cvPerSection, sections: 20, skillCharacters: 150, bulletCharacters: 650, summaryCharacters: 1800 } as const;
+export const CV_LIMITS = { bulletsPerSection: 6, skillsPerSection: CV_SKILL_GUIDANCE.cvPerSection, skillSections: 5, sections: 20, skillCharacters: 150, bulletCharacters: 650, summaryCharacters: 1800 } as const;
 /** Match the trimmed label accepted by the Library and CV schemas in every editor. */
 export function cvSkillCharacterState(value: string) {
   const count = value.trim().length;

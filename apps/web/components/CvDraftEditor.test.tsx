@@ -33,6 +33,45 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
+it("edits headings and individual skills in saved manual and accepted sections through the one CV form", () => {
+  const existing = { ...content, sections: [...content.sections,
+    { entryId: "manual-skill-12345678-1234-1234-1234-123456789abc", kind: "skill", heading: "Ways of working", bullets: ["Planning"], skillItems: ["Planning"] },
+    { entryId: "accepted-skill", kind: "skill", heading: "Data tools", bullets: ["Python"], skillItems: ["Python"] },
+  ] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={existing} theme={DEFAULT_CV_THEME} baseRevision={3} />));
+  const first = container.querySelector<HTMLInputElement>('[name="skill-heading-1"]')!;
+  const second = container.querySelector<HTMLInputElement>('[name="skill-heading-2"]')!;
+  expect(first.value).toBe("Ways of working");
+  expect(second.value).toBe("Data tools");
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(first, "Leadership");
+    first.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const form = container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!;
+  const data = new FormData(form);
+  expect(data.get("skill-heading-1")).toBe("Leadership");
+  expect(data.get("skill-heading-2")).toBe("Data tools");
+  expect(data.get("skills-1")).toBe("Planning");
+  expect(data.get("skills-2")).toBe("Python");
+  expect(container.textContent).toContain("Unsaved changes");
+});
+
+it("marks skill suggestions stale when a saved skill heading changes", async () => {
+  const existing = { ...content, sections: [...content.sections,
+    { entryId: "skill-1", kind: "skill", heading: "Data tools", bullets: ["Python"], skillItems: ["Python"] },
+  ] } as CvContent;
+  vi.mocked(requestCvSkillSuggestions).mockResolvedValue({ ok: true, run: { id: "run-1", status: "ready", suggestions: [], error: null } });
+  act(() => root.render(<CvDraftEditor id="cv-1" content={existing} theme={DEFAULT_CV_THEME} baseRevision={3} />));
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Generate skills")!.click());
+  expect(container.textContent).not.toContain("changed after this skill check");
+  const heading = container.querySelector<HTMLInputElement>('[name="skill-heading-1"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(heading, "Analysis tools");
+    heading.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(container.textContent).toContain("changed after this skill check");
+});
+
 it("generates skills only on click using current CV edits and saves only selected suggestions", async () => {
   let resolveRequest!: (value: Awaited<ReturnType<typeof requestCvSkillSuggestions>>) => void;
   vi.mocked(requestCvSkillSuggestions).mockReturnValue(new Promise(resolve => { resolveRequest = resolve; }));
@@ -251,6 +290,38 @@ it("lets a reviewer add and remove a skill section without changing Library sect
   act(() => button("Remove skill section").click());
   expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toBe("[]");
   expect(container.querySelector('[data-cv-editor-dirty="false"]')).not.toBeNull();
+});
+
+it("allows a fifth skill section from Experience and disables a sixth", () => {
+  const four = { ...content, sections: [content.sections[0],
+    ...Array.from({ length: 4 }, (_, index) => ({ entryId: `skill-${index}`, kind: "skill" as const,
+      heading: `Category ${index}`, bullets: [`Skill ${index}`], skillItems: [`Skill ${index}`] }))] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={four} theme={DEFAULT_CV_THEME}
+    librarySkillSections={[{ id: "saved-tools", heading: "Tools", items: ["Python"] }]} />));
+  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')!;
+  expect(picker.disabled).toBe(false);
+  expect(container.textContent).toContain("4/5 skill sections on this CV.");
+  act(() => { picker.value = "saved-tools"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(container.textContent).toContain("5/5 skill sections on this CV.");
+  expect(picker.disabled).toBe(true);
+  expect(container.querySelector<HTMLInputElement>('[name="addedSkills"]')?.value).toContain('"sourceEntryId":"saved-tools"');
+});
+
+it("counts selected suggestions as skill sections before saving", async () => {
+  const four = { ...content, sections: [content.sections[0],
+    ...Array.from({ length: 4 }, (_, index) => ({ entryId: `skill-${index}`, kind: "skill" as const,
+      heading: `Category ${index}`, bullets: [`Skill ${index}`], skillItems: [`Skill ${index}`] }))] } as CvContent;
+  vi.mocked(requestCvSkillSuggestions).mockResolvedValue({ ok: true, run: { id: "run-1", status: "ready", error: null,
+    suggestions: [{ id: "proposal-1", category: "Leadership", label: "Team leadership", sourceId: "entry-1",
+      evidenceQuote: "Led a team", roleQuote: "Lead a team" }] } });
+  act(() => root.render(<CvDraftEditor id="cv-1" content={four} theme={DEFAULT_CV_THEME}
+    librarySkillSections={[{ id: "saved-tools", heading: "Tools", items: ["Python"] }]} />));
+  expect(container.textContent).toContain("4/5 skill sections on this CV.");
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Generate skills")!.click());
+  act(() => [...container.querySelectorAll("label")].find(label => label.textContent?.includes("Team leadership"))!
+    .querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+  expect(container.textContent).toContain("5/5 skill sections on this CV.");
+  expect(container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')?.disabled).toBe(true);
 });
 
 it("offers saved Library skills and visibly stops a section at ten", () => {

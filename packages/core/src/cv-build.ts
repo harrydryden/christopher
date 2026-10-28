@@ -93,7 +93,10 @@ export type CvBuildStepDetails = {
    * account's other work in flight holds, excluding this stage's own hold.
    */
   admit_budget: {
-    stage?: CvBuildStageName; expectedUsd?: number; limitUsd?: number; heldUsd?: number; leftUsd?: number;
+    stage?: CvBuildStageName; expectedUsd?: number;
+    /** Which cap refused admission; distinct from the cap's amount. */
+    limit?: "account" | "day" | "discovery";
+    limitUsd?: number; spentUsd?: number; heldUsd?: number; leftUsd?: number;
     /** Closed `skipped` with this when an optional stage after publication was refused: the original stands. */
     reason?: string;
   };
@@ -205,6 +208,7 @@ export type CvFailureKind = (typeof CV_FAILURE_KINDS)[number];
 /** What the page offers the person for a failure that is theirs to resolve. */
 export type CvFailureAction =
   | "raise_budget"
+  | "check_deployment_budget"
   | "fix_library"
   | "shorten_or_raise_pages"
   | "paste_description"
@@ -255,6 +259,8 @@ export interface CvBuildFailure {
   resolvedBy: CvFailurePolicy["resolvedBy"];
   retryable: boolean;
   action?: CvFailureAction;
+  /** The cap that refused an AI hold, when known; legacy failures omit it. */
+  budgetLimit?: "account" | "day" | "discovery";
   /** One sentence in the reader's words, with the figures that matter (amounts, pages, batch). */
   message: string;
   /** The motion that failed. */

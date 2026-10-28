@@ -165,6 +165,30 @@ it("a save with no selected proposal creates no skills Library version", async (
   expect((await database.select().from(schema.cvSkillSuggestionRuns))).toHaveLength(0);
 });
 
+it("saves a renamed CV skill section without renaming its Experience entry", async () => {
+  const draft = await fixture();
+  const skillLibrary = { ...library, entries: [...library.entries,
+    { id: "skill-1", kind: "skill" as const, heading: "Technical skills", details: "Python", skillItems: ["Python"] }] };
+  const skillContent = { ...content, sections: [...content.sections,
+    { entryId: "skill-1", kind: "skill" as const, heading: "Technical skills", bullets: ["Python"], skillItems: ["Python"] }] };
+  await database.update(schema.cvLibraries).set({ content: skillLibrary }).where(eq(schema.cvLibraries.userId, user.id));
+  await database.update(schema.cvDrafts).set({ content: skillContent, librarySnapshot: skillLibrary }).where(eq(schema.cvDrafts.id, draft.id));
+  const invalid = form("", []);
+  invalid.set("skill-heading-1", "   ");
+  expect(await saveCvDraft(draft.id, { ok: true }, invalid)).toMatchObject({ ok: false,
+    error: expect.stringContaining("heading of 1 to 250 characters") });
+  expect((await database.select().from(schema.cvDrafts))).toHaveLength(1);
+  const edit = form("", []);
+  edit.set("skill-heading-1", "  Data tools  ");
+  edit.set("skills-1", "Python\nSQL");
+  await expect(saveCvDraft(draft.id, { ok: true }, edit)).rejects.toThrow(/^redirect:\/cv\//);
+  const [revision] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
+  expect(revision?.content?.sections[1]).toMatchObject({ entryId: "skill-1", heading: "Data tools", skillItems: ["Python", "SQL"] });
+  const [latestLibrary] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, user.id));
+  expect(latestLibrary?.version).toBe(1);
+  expect(latestLibrary?.content.entries.find(entry => entry.id === "skill-1")?.heading).toBe("Technical skills");
+});
+
 it("rejects a supporting Training choice from a stale page after another-tab Library change", async () => {
   const draft = await fixture();
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 2, content: { ...library,

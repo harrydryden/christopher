@@ -34,6 +34,7 @@ import {
   CV_BUILD_MOTIONS,
   CV_BUILD_STAGES,
   assessmentTally,
+  aiBudgetRefusalMessage,
   cvMaxPages,
   cvRelevanceTerms,
   createCvWritingBudget,
@@ -400,10 +401,16 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         journal.run("admit_budget", { stage: stageName, expectedUsd: usd(expected) }, async step => {
           const admitted = await sink.reserve(expected, limits);
           if ("refused" in admitted) {
-            step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
+            step.add({ limit: admitted.refused.limit, limitUsd: admitted.refused.limitUsd,
+              spentUsd: usd(admitted.refused.spent), heldUsd: usd(admitted.refused.held),
               leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });
+            const accountLimit = admitted.refused.limit === "account";
             const refusal = new CvBuildStop("budget_exhausted",
-              "CV generation is unavailable right now. No CV credit will be used. Please try again later.", { motion: "admit_budget" });
+              accountLimit
+                ? `${aiBudgetRefusalMessage("This CV stage", expected, admitted.refused)} No CV credit will be used.`
+                : `The deployment's ${admitted.refused.limit === "day" ? "daily" : "discovery"} AI cap has too little left for this CV stage. No CV credit will be used. Ask an administrator to check the cap before retrying.`,
+              { motion: "admit_budget", budgetLimit: admitted.refused.limit,
+                action: accountLimit ? "raise_budget" : "check_deployment_budget" });
             // After publication a refusal only means the optional work is not done: the step
             // closes as skipped here, because nothing downstream fails it or ever will.
             if (published) await journal.close(step, "skipped", { reason: keptBecause(refusal.message) });

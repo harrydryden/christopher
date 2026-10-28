@@ -1,6 +1,6 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
-import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { cvSectionTexts } from "@col/core/cv-format";
 import { cvImprovementOwner } from "@col/core/cv-assessment";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
@@ -59,6 +59,10 @@ function applyCvFormEdits(saved: CvContent, form: FormData, library: ReturnType<
   if (summary !== saved.summary) delete content.summarySources;
   content.summary = summary;
   const rows = saved.sections.map((section, i) => String(form.get(`${section.skillItems ? "skills" : "section"}-${i}`) ?? (section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets).join("\n")));
+  const skillHeadings = Object.fromEntries(saved.sections.flatMap((section, i) => section.kind === "skill"
+    ? [[section.entryId, String(form.get(`skill-heading-${i}`) ?? section.heading)]] : []));
+  if (Object.values(skillHeadings).some(heading => !heading.trim() || heading.trim().length > 250))
+    throw new UserFacingError("Give each skill section a heading of 1 to 250 characters.");
   const removed = JSON.parse(String(form.get("removedSkills") ?? "[]")) as string[];
   const added = JSON.parse(String(form.get("addedSkills") ?? "[]")) as AddedSkillSection[];
   if (!Array.isArray(removed) || !removed.every((id) => typeof id === "string") ||
@@ -67,8 +71,9 @@ function applyCvFormEdits(saved: CvContent, form: FormData, library: ReturnType<
   const supportIds = JSON.parse(String(form.get("addedSupportIds") ?? "[]")) as unknown;
   if (!Array.isArray(supportIds) || supportIds.length > 20 || supportIds.some(id => typeof id !== "string")
     || new Set(supportIds).size !== supportIds.length) throw new UserFacingError("The supporting section choices could not be read. Refresh and try again.");
-  content.sections = cvReviewSupportingSections(cvReviewSections(saved, rows, removed, added), supportIds as string[], librarySupportSections(library));
-  const skillIssue = cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
+  content.sections = cvReviewSupportingSections(cvReviewSections(saved, rows, removed, added, skillHeadings), supportIds as string[], librarySupportSections(library));
+  const skillIssue = cvReviewSkillSectionLimitIssue(content.sections, saved.sections)
+    || cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
   if (skillIssue) throw new UserFacingError(skillIssue);
   delete content.fitNotes;
   return CvContentSchema.parse(content);

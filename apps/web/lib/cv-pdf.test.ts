@@ -13,12 +13,25 @@ import PDFDocument from "pdfkit";
 import { afterEach, vi } from "vitest";
 import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@col/core/cv";
 import { renderCvPdfWithReport } from "./cv-pdf";
+import { cvReviewSections } from "./cv-review-edits";
 const fixture: CvContent = { name: "Example Candidate", contact: "London", summary: "Operations leader.", sections: [
   { entryId: "skill", kind: "skill", heading: "Internal evidence label", bullets: ["Planning and reporting."] },
   { entryId: "degree", kind: "education", heading: "BSc Economics · Example University", bullets: ["BSc Economics, Example University. Distinction."] },
   { entryId: "extra", kind: "education", heading: "Project qualification", bullets: ["Completed practical training."] },
 ], gaps: [] };
 afterEach(() => vi.restoreAllMocks());
+it("previews an edited skill heading and item while retaining the saved section identity", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const edited = cvReviewSections(fixture, ["Financial modelling", "BSc Economics, Example University. Distinction.", "Completed practical training."], [], [],
+    { skill: "  Corporate development  " });
+  expect(edited[0]?.entryId).toBe("skill");
+  expect(edited[0]?.heading).toBe("Corporate development");
+  await renderCvPdf({ ...fixture, sections: edited });
+  const labels = draw.mock.calls.map(call => call[0]);
+  expect(labels).not.toContain("Internal evidence label");
+  expect(labels).toContain("Corporate development");
+  expect(labels).toContain("Financial modelling");
+});
 it("renders the advertised Black design for saved content without a theme", async () => {
   const fill = vi.spyOn(PDFDocument.prototype, "fill");
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
@@ -246,6 +259,18 @@ it("fits four sections of ten normal skills within half a page", async () => {
   const top = Number(draw.mock.calls.find(call => call[0] === "Operations")![2]);
   const last = rounded.mock.calls.at(-1)!;
   expect(Number(last[1]) + Number(last[3]) - top).toBeLessThan(420);
+});
+it("renders five distinct skill sections and every label without dropping a category", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const headings = ["Operations", "Commercial", "Technology", "Governance", "Leadership"];
+  const sections = headings.map((heading, index) => ({ entryId: `skill-${index}`, kind: "skill" as const,
+    heading, skillItems: [`${heading} planning`, `${heading} delivery`], bullets: [`${heading} planning`] }));
+  const report = await renderCvPdfWithReport({ ...fixture, sections });
+  expect(report.pageCount).toBeLessThanOrEqual(3);
+  for (const section of sections) {
+    expect(draw.mock.calls.some(call => call[0] === section.heading)).toBe(true);
+    for (const label of section.skillItems) expect(draw.mock.calls.filter(call => call[0] === label)).toHaveLength(1);
+  }
 });
 it("rejects downloads above the CV's own page limit while allowing a complete diagnostic preview", async () => {
   const long = { ...fixture, sections: Array.from({ length: 12 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,

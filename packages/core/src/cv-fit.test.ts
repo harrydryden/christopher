@@ -28,6 +28,18 @@ it('allocates fewer characters as role count grows and prioritises relevant rece
  expect(budget.blocks.find(b=>b.entryId==='r0')!.maxBullets).toBeLessThanOrEqual(4);
  expect(cvBudgetViolations(plan,budget).length).toBeGreaterThan(0);
 });
+it('allocates up to five relevant skill sections without changing the ten-skills-per-section limit', () => {
+ const entries = Array.from({ length: 6 }, (_, index) => ({ id: `skill-${index}`, kind: 'skill' as const,
+   heading: `Tools ${index}`, details: `SQL${index}`, skillItems: [`SQL${index}`] }));
+ const source: CvLibrary = { ...library, entries: [library.entries[0]!, ...entries] };
+ const budget = createCvWritingBudget(source, entries.map(entry => entry.skillItems[0]).join(' '));
+ expect(budget.blocks.filter(block => block.kind === 'skill')).toHaveLength(5);
+ expect(budget.blocks.filter(block => block.kind === 'skill').map(block => block.entryId)).toEqual(entries.slice(0, 5).map(entry => entry.id));
+ expect(budget.blocks.filter(block => block.kind === 'skill').every(block => block.maxSkills <= 10)).toBe(true);
+ const tooMany: CvPlan = { summary: 'Analyst.', sections: entries.map(entry => ({ entryId: entry.id, bullets: [entry.skillItems[0]!], skillItems: entry.skillItems })), gaps: [] };
+ expect(() => materialiseCv(source, tooMany)).toThrow('more than 5 skill sections');
+ expect(materialiseCv(source, { ...tooMany, sections: tooMany.sections.slice(0, 5) }).sections).toHaveLength(5);
+});
 it('fits a long CV through measured achievement selection, preserving every role and qualification',async()=>{
  expect((await renderCvPdfWithReport(materialiseCv(library,plan))).pageCount).toBeGreaterThan(2);
  const fitted=await selectCvToFit(library,plan,'Financial planning budgets reporting',createCvWritingBudget(library,'Financial planning budgets reporting'));

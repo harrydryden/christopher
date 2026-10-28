@@ -69,7 +69,7 @@ it("calls a build stopped when nothing is working on it, whatever the draft stil
 
   // The draft's own error, when it has one, is the sentence the person should read.
   const explained = cvBuildState(draft({ error: "Your monthly AI budget is spent." }), null, now);
-  expect(explained.message).toBe("CV generation is unavailable right now. No CV credit was used. Please try again later.");
+  expect(explained.message).toBe("An AI spending limit stopped this CV build. No CV credit was used. Review your budget or ask an administrator before retrying.");
 
   // A task that reported itself done without publishing the draft is stopped too.
   expect(cvBuildState(draft(), task({ status: "done" }), now).phase).toBe("stopped");
@@ -229,6 +229,7 @@ it("names the failure, its heading and the person's way forward on a failed draf
         resolvedBy: "user",
         retryable: false,
         action: "raise_budget",
+        budgetLimit: "account",
         message: "This build needs $3.06 and $1.20 is left of your $50.00 budget this month.",
         motion: "admit_budget",
         retryAt: undefined,
@@ -239,12 +240,11 @@ it("names the failure, its heading and the person's way forward on a failed draf
   );
   expect(state.phase).toBe("failed");
   expect(state.tone).toBe("red");
-  expect(state.title).toBe("CV generation unavailable");
-  expect(state.message).toBe("CV generation is unavailable right now. No CV credit was used. Please try again later.");
+  expect(state.title).toBe("Monthly AI budget reached");
+  expect(state.message).toBe("This build needs $3.06 and $1.20 is left of your $50.00 budget this month.");
   expect(state.action).toBe("raise_budget");
   const wayForward = failureWayForward(state.action, { canRetry: true });
-  expect(wayForward.note).toBeNull();
-  expect([state.message, wayForward.note].filter(Boolean).join(" ").match(/No CV credit was used/g)).toHaveLength(1);
+  expect(wayForward.links).toEqual([{ label: "Open AI budget", href: "/settings#ai-budget" }]);
 
   // Attempts spent on something the system was resolving: the heading says so, and the way out is
   // the retry, which resumes from whatever the build already paid for.
@@ -271,9 +271,26 @@ it("names the failure, its heading and the person's way forward on a failed draf
   expect(older.resumeNote).toBeNull();
 });
 
+it("separates an operator cap from the member's monthly budget", () => {
+  const state = cvBuildState(draft({ status: "failed", failure: failure({
+    kind: "budget_exhausted", resolvedBy: "user", retryable: false,
+    action: "check_deployment_budget", budgetLimit: "day",
+    message: "The deployment's daily AI cap has too little left. No CV credit was used.",
+  }) }), task({ status: "failed" }), now);
+  expect(state.message).toContain("deployment's daily AI cap");
+  expect(state.title).toBe("AI spending limit reached");
+  expect(state.action).toBe("check_deployment_budget");
+  expect(failureWayForward(state.action, { admin: false, canRetry: true })).toMatchObject({
+    links: [], retry: true, retryNote: "Retry after an administrator confirms the cap has capacity.",
+    note: "Ask an administrator to check the deployment's daily AI cap before retrying.",
+  });
+  expect(failureWayForward(state.action, { admin: true, canRetry: true }).links)
+    .toEqual([{ label: "Open Operations", href: "/admin/health" }]);
+});
+
 it("offers each failure the page that fixes it, and the retry only where it would work", () => {
   expect(failureWayForward("raise_budget", { canRetry: true })).toEqual({
-    links: [],
+    links: [{ label: "Open AI budget", href: "/settings#ai-budget" }],
     note: null,
     retry: true,
     retryNote: null,

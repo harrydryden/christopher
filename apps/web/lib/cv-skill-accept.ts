@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { CV_LIMITS, CV_SKILL_GUIDANCE, cvSkillIdentity } from "@col/core/cv-format";
 import { CvContentSchema, CvLibrarySchema, isActiveStoredEvidence, type CvContent, type CvLibrary, type CvSkillSuggestion } from "@col/core";
-import { cvReviewSuggestedSections, cvSuggestionAssignments, type CvSuggestionSkillTarget } from "./cv-review-edits";
+import { cvReviewSkillSectionLimitIssue, cvReviewSuggestedSections, cvSuggestionAssignments, type CvSuggestionSkillTarget } from "./cv-review-edits";
 import { UserFacingError } from "./validation";
 
 const same = (a: string, b: string) => cvSkillIdentity(a) === cvSkillIdentity(b);
@@ -38,6 +38,8 @@ export function acceptCvSkillSuggestions(library: CvLibrary, content: CvContent,
     actualTargets.push({ id: entry.id, heading: entry.heading, items: entry.skillItems ?? [] });
   }
   const sections = cvReviewSuggestedSections(content.sections, selected, actualTargets);
+  const sectionIssue = cvReviewSkillSectionLimitIssue(sections, content.sections);
+  if (sectionIssue) throw new UserFacingError(sectionIssue);
   if (sections.length > CV_LIMITS.sections) throw new UserFacingError("This CV has reached its section limit. Remove a section before saving skills.");
   for (const section of sections) if (section.kind === "skill" && (section.skillItems ?? section.bullets).length > CV_LIMITS.skillsPerSection)
     throw new UserFacingError(`${section.heading} exceeds the CV skill limit. Choose fewer suggestions.`);

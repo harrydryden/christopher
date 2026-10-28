@@ -73,7 +73,7 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
     : cvRelevance([entry.heading, entry.details, ...(entry.skillItems ?? [])].join(' '), target);
   const byRelevance = (a: CvLibrary["entries"][number], b: CvLibrary["entries"][number]) => entryRelevance(b) - entryRelevance(a);
   const skills = library.entries.filter(entry => entry.kind === 'skill' && relevantSkillBlock(entry, target, semantic))
-    .sort(byRelevance).slice(0, Math.min(2, 20 - roles.length - education.length));
+    .sort(byRelevance).slice(0, Math.min(CV_LIMITS.skillSections, CV_LIMITS.sections - roles.length - education.length));
   // The allocations were calibrated on a two-page CV. The user's page limit scales the body;
   // the profile only shrinks for a one-page CV, because it sits in the fixed masthead.
   const pages = cvMaxPages(library.theme) / 2;

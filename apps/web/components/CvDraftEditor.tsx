@@ -1,6 +1,6 @@
 "use client";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
-import { cvReviewSections, cvReviewSupportingSections, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
@@ -128,6 +128,9 @@ export function CvDraftEditor({
       (section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets).join("\n"),
     ),
   );
+  const [skillHeadings, setSkillHeadings] = useState<Record<string, string>>(() => Object.fromEntries(
+    content.sections.filter(section => section.kind === "skill").map(section => [section.entryId, section.heading]),
+  ));
   const [removedSkillIds, setRemovedSkillIds] = useState<string[]>([]);
   const [addedSupportIds, setAddedSupportIds] = useState<string[]>([]);
   const [addedSkills, setAddedSkills] = useState<AddedSkillSection[]>([]);
@@ -156,7 +159,7 @@ export function CvDraftEditor({
   let candidateSections: CvContent["sections"];
   let preSuggestionSections: CvContent["sections"];
   try {
-    const beforeSuggestions = cvReviewSupportingSections(cvReviewSections(content, rows, removedSkillIds, addedSkills),
+    const beforeSuggestions = cvReviewSupportingSections(cvReviewSections(content, rows, removedSkillIds, addedSkills, skillHeadings),
       addedSupportIds, librarySupportingSections);
     preSuggestionSections = beforeSuggestions;
     currentSkillLabels = beforeSuggestions.filter(section => section.kind === "skill")
@@ -187,8 +190,11 @@ export function CvDraftEditor({
   };
   const highlightedSkillLabels = candidate.sections.filter(section => section.kind === "skill")
     .flatMap(section => section.skillItems ?? cvSectionTexts(section));
+  const skillSectionCount = candidate.sections.filter(section => section.kind === "skill").length;
+  const skillSectionCap = Math.max(CV_LIMITS.skillSections, content.sections.filter(section => section.kind === "skill").length);
   const skillLimitIssue = cvReviewSkillLimitIssue(candidate.sections);
   const skillIssue = projectionIssue || (candidate.sections.length > 20 ? "This CV has reached its section limit. Remove a section before saving." : null)
+    || cvReviewSkillSectionLimitIssue(candidate.sections, content.sections)
     || skillLimitIssue || cvReviewSkillCharacterIssue(candidate.sections);
   const fingerprint = JSON.stringify(candidate);
   // What was saved, as the same string: it changes only with the revision, so it is worked out once
@@ -496,6 +502,7 @@ export function CvDraftEditor({
             {suggestionError && <p role="alert" className="mt-2 text-12 text-danger">{suggestionError}</p>}
           </section>
           <CvSkillGuidance context="cv" labels={highlightedSkillLabels} />
+          <p className="text-12 text-muted" role="status">{skillSectionCount}/{CV_LIMITS.skillSections} skill sections on this CV{skillSectionCap > CV_LIMITS.skillSections ? " · Older sections remain editable; additions cannot increase their original count" : ""}.</p>
           <div className="border border-line-muted p-3">
             <h3 className="font-semibold">Supporting sections</h3>
             <p className="mt-1 text-12 text-muted">Choose which Education, Training and Interests from your saved Experience belong in this CV. Skills count too: the supporting group is omitted when none of the four kinds is included.</p>
@@ -518,6 +525,7 @@ export function CvDraftEditor({
           {cvDisplaySections(content).filter(({ section }) => !removedSkillIds.includes(section.entryId)).map(({ section, index }) => {
             const blockId = cvSectionBlockId(section.entryId);
             const skill = section.kind === "skill";
+            const displayedHeading = skillHeadings[section.entryId] ?? section.heading;
             const items = rows[index]!.split("\n");
             const skillCount = items.filter((item) => item.trim()).length;
             const skillSlotsFull = items.length >= CV_LIMITS.skillsPerSection;
@@ -526,7 +534,12 @@ export function CvDraftEditor({
             const availableLibrarySkills = librarySource?.items.filter((item) => !items.some((current) => current.trim().toLowerCase() === item.toLowerCase())) ?? [];
             return <div key={section.entryId} className="space-y-2 text-14">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <label htmlFor={blockId} className="font-semibold">{skill ? `Skills · ${section.heading}` : section.heading}</label>
+                {skill ? <label className="font-semibold">Skill section heading
+                  <input form={formId} name={`skill-heading-${index}`} aria-label={`Heading for skill section ${index + 1}`}
+                    value={skillHeadings[section.entryId] ?? section.heading} maxLength={250}
+                    onChange={event => setSkillHeadings(current => ({ ...current, [section.entryId]: event.target.value }))}
+                    className={input} />
+                </label> : <label htmlFor={blockId} className="font-semibold">{section.heading}</label>}
                 {section.kind !== "experience" && <button type="button" className={buttonClass("secondary")} onClick={() => setRemovedSkillIds((previous) => [...previous, section.entryId])}>Remove section</button>}
               </div>
               {!!section.industryDescriptions?.length && <span className="block text-12 text-muted">{section.industryDescriptions.join(" · ")}</span>}
@@ -535,9 +548,9 @@ export function CvDraftEditor({
                 <input form={formId} type="hidden" name={section.skillItems ? `skills-${index}` : `section-${index}`} value={rows[index]} />
                 <p className="text-12 text-muted" role="status">{skillCount}/{CV_LIMITS.skillsPerSection} skills</p>
                 {items.map((item, itemIndex) => <div key={itemIndex} className="flex flex-wrap items-center gap-2">
-                  <input id={itemIndex === 0 ? blockId : undefined} aria-label={`Skill ${itemIndex + 1} in ${section.heading}`} aria-describedby={`${blockId}-skill-${itemIndex}-count`} value={item} onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? row.split("\n").map((value, j) => j === itemIndex ? event.target.value : value).join("\n") : row))} className={input} />
+                  <input id={itemIndex === 0 ? blockId : undefined} aria-label={`Skill ${itemIndex + 1} in ${displayedHeading}`} aria-describedby={`${blockId}-skill-${itemIndex}-count`} value={item} onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? row.split("\n").map((value, j) => j === itemIndex ? event.target.value : value).join("\n") : row))} className={input} />
                   <SkillCharacterCount value={item} id={`${blockId}-skill-${itemIndex}-count`} />
-                  <button type="button" className={buttonClass("secondary")} aria-label={`Remove skill ${itemIndex + 1} from ${section.heading}`} onClick={() => setRows((previous) => previous.map((row, i) => i === index ? row.split("\n").filter((_, j) => j !== itemIndex).join("\n") : row))}>Remove</button>
+                  <button type="button" className={buttonClass("secondary")} aria-label={`Remove skill ${itemIndex + 1} from ${displayedHeading}`} onClick={() => setRows((previous) => previous.map((row, i) => i === index ? row.split("\n").filter((_, j) => j !== itemIndex).join("\n") : row))}>Remove</button>
                   {(() => {
                     const split = splitCvReviewSkillRow(items, itemIndex);
                     return split && <><button type="button" className={buttonClass("secondary")} disabled={split.length > CV_LIMITS.skillsPerSection} aria-label={`Split skill ${itemIndex + 1} into separate skills`} onClick={() => setRows((previous) => previous.map((row, i) => i === index ? splitCvReviewSkillRow(row.split("\n"), itemIndex)?.join("\n") ?? row : row))}>Split list into skills</button>{split.length > CV_LIMITS.skillsPerSection && <span className="text-12 text-danger" role="status">Splitting makes {split.length} skills; maximum {CV_LIMITS.skillsPerSection}. Shorten the list or use another section.</span>}</>;
@@ -546,7 +559,7 @@ export function CvDraftEditor({
                 <p className="text-12 text-muted">Paste a comma-separated list into one field, then choose “Split list into skills”. A saved label stays whole until you choose to split it.</p>
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" disabled={skillSlotsFull} className={buttonClass("secondary")} onClick={() => setRows((previous) => previous.map((row, i) => i === index ? row ? `${row}\n` : "" : row))}>Add skill</button>
-                  {librarySource && <select aria-label={`Add skill from Experience to ${section.heading}`} className={inputClass} value="" disabled={skillSlotsFull || availableLibrarySkills.length === 0} onChange={(event) => {
+                  {librarySource && <select aria-label={`Add skill from Experience to ${displayedHeading}`} className={inputClass} value="" disabled={skillSlotsFull || availableLibrarySkills.length === 0} onChange={(event) => {
                     const selected = event.target.value;
                     if (selected) setRows((previous) => previous.map((row, i) => i === index ? row ? `${row}\n${selected}` : selected : row));
                   }}><option value="">Add skill from Experience</option>{availableLibrarySkills.map((item) => <option key={item} value={item}>{item}</option>)}</select>}
@@ -579,7 +592,7 @@ export function CvDraftEditor({
               })()}
             </div>
           </div>)}
-          {librarySkillSections.length > 0 && <select aria-label="Add section from Experience" className={inputClass} value="" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onChange={(event) => {
+          {librarySkillSections.length > 0 && <select aria-label="Add section from Experience" className={inputClass} value="" disabled={candidate.sections.length >= CV_LIMITS.sections || skillSectionCount >= skillSectionCap} onChange={(event) => {
             const selected = librarySkillSections.find((section) => section.id === event.target.value);
             if (!selected) return;
             if (selected.items.length > CV_LIMITS.skillsPerSection) {
@@ -595,7 +608,7 @@ export function CvDraftEditor({
               <p className="font-semibold">Choose up to {CV_LIMITS.skillsPerSection} skills from {source.heading}</p>
               <p className="text-12 text-muted">{librarySectionChoice.selected.length}/{CV_LIMITS.skillsPerSection} selected. All selected skills stay in a new {source.heading} section.</p>
               {source.items.map((item, itemIndex) => <label key={itemIndex} className="flex items-center gap-2"><input type="checkbox" aria-label={`Select skill ${itemIndex + 1}: ${item} from ${source.heading}`} checked={librarySectionChoice.selected.includes(itemIndex)} disabled={librarySectionChoice.selected.length >= CV_LIMITS.skillsPerSection && !librarySectionChoice.selected.includes(itemIndex)} onChange={(event) => setLibrarySectionChoice((current) => current && current.sourceId === source.id ? { ...current, selected: event.target.checked ? [...current.selected, itemIndex] : current.selected.filter((index) => index !== itemIndex) } : current)} />{item}</label>)}
-              <div className="flex gap-2"><button type="button" className={buttonClass("secondary")} disabled={librarySectionChoice.selected.length === 0 || content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onClick={() => {
+              <div className="flex gap-2"><button type="button" className={buttonClass("secondary")} disabled={librarySectionChoice.selected.length === 0 || candidate.sections.length >= CV_LIMITS.sections || skillSectionCount >= skillSectionCap} onClick={() => {
                 setAddedSkills((previous) => [...previous, { entryId: `manual-skill-${crypto.randomUUID()}`, sourceEntryId: source.id, heading: source.heading, items: source.items.filter((_, index) => librarySectionChoice.selected.includes(index)) }]);
                 setLibrarySectionChoice(null);
               }}>Add selected Experience section</button><button type="button" className={buttonClass("secondary")} onClick={() => setLibrarySectionChoice(null)}>Cancel</button></div>

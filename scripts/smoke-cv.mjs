@@ -879,7 +879,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       resolvedBy: "user",
       retryable: false,
       action: "raise_budget",
-      message: "This build needs $3.06 and $1.20 is left of your $50.00 AI budget this month.",
+      budgetLimit: "account",
+      message: "This CV stage needs about $3.06 of AI budget; your budget of $50 has $1.20 left this month (it resets on the 1st). Raise it on Settings, or ask an administrator. No CV credit will be used.",
       motion: "admit_budget",
       attempt: 1,
       maxAttempts: 3,
@@ -894,12 +895,12 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     });
     await motion(failedId, 2, "preparing", "admit_budget", "Reserving this build's share of your AI budget", "failed", 59, 200, {}, budgetFailure);
     await page.goto(`${baseUrl}/cv/${failedId}`);
-    await page.getByRole("heading", { name: "CV generation unavailable", exact: true }).waitFor();
-    const failureNotice = page.getByRole("alert").filter({ hasText: "CV generation unavailable" });
+    await page.getByRole("heading", { name: "Monthly AI budget reached", exact: true }).waitFor();
+    const failureNotice = page.getByRole("alert").filter({ hasText: "Monthly AI budget reached" });
     const noticeText = await failureNotice.innerText();
-    assert.match(noticeText, /CV generation is unavailable right now\. No CV credit was used\. Please try again later\./);
-    assert.doesNotMatch(noticeText, /\$|AI budget/i);
-    assert.equal(await failureNotice.getByRole("link").count(), 0);
+    assert.match(noticeText, /needs about \$3\.06 of AI budget; your budget of \$50 has \$1\.20 left this month/);
+    assert.match(noticeText, /No CV credit will be used\./);
+    assert.equal(await failureNotice.getByRole("link", { name: "Open AI budget" }).getAttribute("href"), "/settings#ai-budget");
     // The retry is offered because this draft is failed and unfinalised, which is what the action needs.
     assert.equal(await failureNotice.getByRole("button", { name: "Retry generation", exact: true }).count(), 1);
     await page.getByRole("button", { name: "Show build log", exact: true }).click();

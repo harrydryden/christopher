@@ -206,6 +206,8 @@ export type CvContent = z.infer<typeof CvContentSchema>;
 
 /** Names, employers, dates and qualifications come from the user's library, never model metadata. */
 export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
+  if (plan.sections.filter(section => library.entries.some(entry => entry.id === section.entryId && entry.kind === "skill")).length > CV_LIMITS.skillSections)
+    throw new Error(`CV has more than ${CV_LIMITS.skillSections} skill sections`);
   const seen = new Set<string>();
   const seenJobs = new Set<string>();
   const selected = new Map(plan.sections.map(section => {

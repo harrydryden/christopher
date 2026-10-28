@@ -212,7 +212,7 @@ it("keeps skill labels in a separate Library panel without appearance controls",
   expect(html).toContain('id="library-panel-education" aria-labelledby="library-tab-education" hidden=""');
 });
 
-it("puts scoring guidance in a secondary disclosure after the three main sections", () => {
+it("loads scoring guidance only when its secondary disclosure opens", async () => {
   const library: CvLibrary = { name: "Example", contact: "", profile: "", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL" }] };
   const html = renderToStaticMarkup(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 }));
   const strip = html.slice(html.indexOf('aria-label="Experience sections"'));
@@ -221,9 +221,22 @@ it("puts scoring guidance in a secondary disclosure after the three main section
   expect(html).toContain("Review evidence</summary>");
   expect(html).toContain("How evidence is scored</summary>");
   const body = html.slice(html.indexOf("How evidence is scored"), html.indexOf("</form>"));
-  expect(body).toContain('<h2 class="ds-pixel text-12">Scoring guide</h2>');
-  expect(body).toContain("A strong row says");
-  expect(body).not.toMatch(/<(input|select|textarea|button)\b/);
+  expect(body).not.toContain("Scoring guide");
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 })));
+    const details = [...container.querySelectorAll("details")].find(item => item.querySelector("summary")?.textContent === "How evidence is scored")!;
+    expect(details.textContent).not.toContain("Scoring guide");
+    await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle")); });
+    await vi.waitFor(() => expect(details.textContent).toContain("Scoring guide"));
+    expect(details.textContent).toContain("A strong row says");
+    expect(details.querySelector("input, select, textarea, button")).toBeNull();
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+  }
 });
 
 it("shows the evidence a stored review reports, with a question and a control that answers it", () => {

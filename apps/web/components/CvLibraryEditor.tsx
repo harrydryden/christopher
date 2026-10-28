@@ -17,7 +17,6 @@ import dynamic from "next/dynamic";
 import { EvidenceSummary } from "./EvidenceScore";
 import { LibraryRowTypeMenu } from "./LibraryRowTypeMenu";
 import { RowScoreButton } from "./RowScoreButton";
-import { EvidenceGuide } from "./EvidenceGuide";
 import { CvLibrarySkillGuidance } from "./CvLibrarySkillGuidance";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
@@ -27,6 +26,8 @@ import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillLis
 const input = inputClass;
 const EvidenceConversation = dynamic(() => import("./EvidenceConversation").then(module => module.EvidenceConversation),
   { loading: () => <p className="text-14 text-muted">Opening question…</p> });
+const EvidenceGuide = dynamic(() => import("./EvidenceGuide").then(module => module.EvidenceGuide),
+  { loading: () => <p className="text-14 text-muted">Opening scoring guide…</p> });
 const libraryTabs = [["experience", "Work history"], ["education", "Education, training & skills"], ["intro", "About you"]] as const;
 type LibraryTab = typeof libraryTabs[number][0];
 const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
@@ -66,6 +67,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<LibraryTab>("experience");
+  const [guideOpen, setGuideOpen] = useState(false);
   // `library` arrives opened: the page ran `openStoredLibrary` on it in the same request (see
   // app/(app)/library/page.tsx), and opening is idempotent, so it is held as sent rather than
   // parsed again here — which would put the CV schema and zod in this page's first load.
@@ -672,7 +674,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         {evidence.line && <p className="text-14 text-muted">{evidence.line}</p>}
         {(unreviewed || rescoring) && <div className="flex flex-wrap items-center gap-3 text-14"><span>{changedRows ? "Some rows changed since the last review." : "Some rows have not been reviewed yet."}</span><button type="button" disabled={rescoring || dirty} className={buttonClass("secondary")} onClick={() => startTransition(() => rescore(new FormData()))}>{rescoring ? "Reviewing…" : "Re-score evidence"}</button></div>}
         {refused && <p role="alert" className="text-14 text-danger">{refused}</p>}
-        <details><summary className="cursor-pointer text-12 text-muted">How evidence is scored</summary><div className="mt-3"><EvidenceGuide /></div></details>
+        <details onToggle={event => setGuideOpen(event.currentTarget.open)}><summary className="cursor-pointer text-12 text-muted">How evidence is scored</summary>{guideOpen && <div className="mt-3"><EvidenceGuide /></div>}</details>
       </div>
     </details>
   </form>;

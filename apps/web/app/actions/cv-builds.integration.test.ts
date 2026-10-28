@@ -7,7 +7,8 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, grantCvCredits, releaseCvCredit, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
-import { CV_THEMES, DEFAULT_CV_THEME } from "@col/core/cv";
+import { CV_THEMES, DEFAULT_CV_THEME, CvLibrarySchema } from "@col/core/cv";
+import { cvTailoringEvidence, validateCvTailoringPlan } from "@col/core/cv-tailoring";
 import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
@@ -281,15 +282,30 @@ it("retries a rebuild that stopped before writing with its rubric and improvemen
 it("retries a page-limit failure against the page limit set since, keeping the CV's own appearance", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   const theme = { ...CV_THEMES.Navy!, font: "Arial" as const, maxPages: 1 };
+  const sourceRubric = rubricFixture("Finance operations");
   const draft = await failedDraft({
     content: { ...content, theme },
+    buildCheckpoint: { sourceRubric },
     failure: {
       kind: "page_limit_unfittable", resolvedBy: "user", retryable: false, action: "shorten_or_raise_pages",
       message: "The CV is 2 pages after three attempts; the limit is 1.", motion: "shorten", attempt: 1, maxAttempts: 3,
     },
   });
+  const oldPlan = { requirements: [{
+    requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence",
+  }], gapQuestions: [] };
+  const oldLibrary = CvLibrarySchema.parse(draft.librarySnapshot);
+  expect(validateCvTailoringPlan(oldPlan, sourceRubric, cvTailoringEvidence(oldLibrary), oldLibrary)).toEqual(oldPlan);
+  await database.insert(schema.cvTailoringPlans).values({ draftId: draft.id, userId: user.id, plan: oldPlan });
   // What the failure asks for: raise the page limit in Settings, then retry.
   await database.insert(schema.userSettings).values({ userId: user.id, key: "cvTheme", value: { ...DEFAULT_CV_THEME, maxPages: 3 }, updatedAt: new Date() });
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 2, content: {
+    ...library, entries: [...library.entries, {
+      id: "new-stronger-evidence", kind: "experience" as const, heading: "Operations lead",
+      details: "Directed a larger operations team", confirmedResponsibilities: ["Directed a larger operations team"],
+    }],
+  } });
 
   expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const retried = await draftRow(draft.id);
@@ -297,6 +313,10 @@ it("retries a page-limit failure against the page limit set since, keeping the C
   expect(retried.content!.theme).toEqual({ ...theme, maxPages: 3 });
   expect(retried.content!.sections).toEqual(content.sections);
   expect(retried.librarySnapshot.theme!.maxPages).toBe(3);
+  expect(retried.libraryVersion).toBe(2);
+  expect(retried.librarySnapshot.entries.some(entry => entry.id === "new-stronger-evidence")).toBe(true);
+  expect(retried.buildCheckpoint?.sourceRubric).toEqual(sourceRubric);
+  expect(await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, draft.id))).toHaveLength(0);
 });
 
 it("refuses a retry on the extraction model, and reads a retired CV model as the default", async () => {

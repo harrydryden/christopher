@@ -909,6 +909,10 @@ export async function assessCvDraft(
       const settings = await getSettingsFor(user.id, tx);
       const model = cvModelFor(settings);
       const refreshed = stale ? await currentLibrarySnapshot(tx, user.id, settings) : undefined;
+      // A plan belongs to the exact evidence snapshot it was prepared from. If a retry refreshes
+      // that snapshot, leave planning to the worker instead of offering it an older own plan.
+      if (refreshed) await tx.delete(cvTailoringPlans)
+        .where(and(eq(cvTailoringPlans.draftId, id), eq(cvTailoringPlans.userId, user.id)));
       const checkpoint = draft.buildCheckpoint ?? {};
       // A page limit the build could not meet is raised in Settings, so that is where the retry
       // reads it. Saved wording carries its own limit in its theme, and is measured against that,

@@ -54,7 +54,7 @@ Plain Save does not run completion retention: unchecked revisions must not delet
 - The saved draft’s own evidence plan is checked first, then its immediate parent’s, with rubric and evidence validation in both cases; a deleted parent does not force a valid copied plan to be lost.
 - Production web build and all bundle budgets passed. The CV route is 134,566 bytes gzip against a 138,000-byte budget, 232 bytes above the preceding implementation.
 - Strict verified evaluation gate passes at prompt set `987e0b5ac958`; release checks pass (139 tests and two expected database skips). No paid live evaluation was needed because prompts and model contracts are unchanged.
-- Final browser and broad web suite results are recorded before review submission.
+- The local broad web run passed 1,597 tests and exposed seven old Save/Check contract expectations in four files. Those tests were updated to require immediate Save followed by explicit Check; their clean affected-file rerun passed 105 tests. The [PR118 checks](https://github.com/harrydryden/christopher/pull/118/checks) provide the full-suite gate for the final head; the PR description records final browser and hosted results.
 
 ## Remaining limits
 

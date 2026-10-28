@@ -185,6 +185,9 @@ it("spares the failed draft an edit is written from, even with a newer failure b
   expect(
     (await rows()).some((row) => row.id === failedBuild.id),
   ).toBe(false);
+  // A direct Save keeps the approved baseline until the person explicitly checks this wording.
+  expect(saved.status).toBe("ready");
+  await database.update(schema.cvDrafts).set({ status: "queued" }).where(eq(schema.cvDrafts.id, saved.id));
   await finish(saved.id);
   expect((await rows()).map((row) => [row.id, Boolean(row.archivedAt)])).toEqual(
     [

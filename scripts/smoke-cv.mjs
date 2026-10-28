@@ -732,7 +732,17 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "a direct save must not queue model work");
     await page.getByRole("tab", { name: "Review", exact: true }).click();
     await page.getByRole("button", { name: "Check saved CV", exact: true }).click();
-    await page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor().catch(async error => {
+      const [row] = (await pool.query("select status from cv_drafts where id = $1", [childId])).rows;
+      const tasks = (await pool.query("select status, error from tasks where payload->>'draftId' = $1", [childId])).rows;
+      const alerts = await page.locator('[role="alert"], [role="status"]').allInnerTexts();
+      const heading = page.getByRole("heading", { name: "Your CV is queued", exact: true, includeHidden: true });
+      const queuedHeadingCount = await heading.count();
+      const selectedTab = await page.locator('[role="tab"][aria-selected="true"]').allInnerTexts();
+      throw new Error(`${error.message}\nCheck state: ${JSON.stringify({ row, tasks, alerts, queuedHeadingCount, selectedTab, url: page.url() })}`, { cause: error });
+    });
+    assert.equal(await page.getByRole("tab", { name: "Write", exact: true }).getAttribute("aria-selected"), "true",
+      "a confirmed Check opens the Write tab containing its queued progress");
     assert.equal((await pool.query("select count(*)::int n from tasks where payload->>'draftId' = $1 and status = 'queued'", [childId])).rows[0].n, 1,
       "the explicit Check queues exactly one CV task");
     await page.goto(`${baseUrl}/cv/${readyId}#cv-content-section-job`);

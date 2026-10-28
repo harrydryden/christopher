@@ -8,6 +8,8 @@
  */
 import type { ScoreBatchRecord } from "./score-batch";
 
+import type { CvSkillDraftContext } from "./cv-skill-draft-context";
+
 export interface TaskPayloads {
   extract_document: { sourceId: string; documentId: string };
   verify_company: { sourceId?: string; candidateId: string };
@@ -23,7 +25,7 @@ export interface TaskPayloads {
    */
   generate_cv: { draftId: string; userId?: string; mode?: "assess" | "improve"; rubric?: unknown; improvements?: string[] };
   /** One bounded, account-owned proposal; never writes the user's skills library. */
-  suggest_cv_skills: { userId: string; draftId: string; runId: string };
+  suggest_cv_skills: { userId: string; draftId: string; runId: string; baseRevision?: number; draftContext?: CvSkillDraftContext };
   discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "partial" | "suspect_empty" | "shrunk" | "pasted" | "recovery" | "logo_sweep" };
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };

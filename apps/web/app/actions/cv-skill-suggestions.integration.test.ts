@@ -5,6 +5,7 @@ import { createTestDb } from "@/test/db";
 import { signInTestUser } from "@/test/auth";
 import { and, eq, sql } from "drizzle-orm";
 import type { User } from "@col/db/schema";
+import { cvSkillDraftContext } from "@col/core/cv-skill-draft-context";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -51,17 +52,22 @@ const form = (runId: string, selected: string[], summary = "Analyst", intent?: s
   if (intent) data.set("intent", intent);
   return data;
 };
+const request = (draft: Awaited<ReturnType<typeof fixture>>, edited = content, refresh = false, pageLibraryVersion = 1) =>
+  requestCvSkillSuggestions(draft.id, refresh, pageLibraryVersion, edited, draft.revision);
 
 it("queues one owned proposal and refuses another account's read", async () => {
   const draft = await fixture();
-  expect(await requestCvSkillSuggestions(draft.id, false, 0)).toMatchObject({ ok: false });
-  const first = await requestCvSkillSuggestions(draft.id);
+  expect(await request(draft, content, false, 0)).toMatchObject({ ok: false });
+  const first = await request(draft);
   expect(first.ok).toBe(true);
   if (!first.ok) return;
   expect(first.run.status).toBe("queued");
-  const again = await requestCvSkillSuggestions(draft.id);
+  const again = await request(draft);
   expect(again.ok && again.run.id).toBe(first.run.id);
-  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_cv_skills"))).toHaveLength(1);
+  const queued = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_cv_skills"));
+  expect(queued).toHaveLength(1);
+  expect(queued[0]!.payload).toMatchObject({ baseRevision: draft.revision,
+    draftContext: cvSkillDraftContext(content) });
   const ownerRead = await readCvSkillSuggestions(draft.id, first.run.id);
   expect(ownerRead.ok).toBe(true);
   const other = await signInTestUser(database, process.env.SESSION_SECRET!, "other-skill@example.com");
@@ -70,9 +76,45 @@ it("queues one owned proposal and refuses another account's read", async () => {
   expect((await requestCvSkillSuggestions(draft.id)).ok).toBe(false);
 });
 
+it("binds unsaved Write wording to the run and accepts selected skills only with that same wording", async () => {
+  const draft = await fixture();
+  const edited = { ...content, summary: "Analyst using Excel", sections: [{ ...content.sections[0]!,
+    bullets: ["Used Excel to report monthly results"] }] };
+  const requested = await request(draft, edited);
+  if (!requested.ok) throw new Error(requested.error);
+  const [queued] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_cv_skills"));
+  expect(queued!.payload).toMatchObject({ baseRevision: 1, draftContext: cvSkillDraftContext(edited) });
+  const chosen = crypto.randomUUID();
+  await database.update(schema.cvSkillSuggestionRuns).set({ status: "ready", suggestions: [{ id: chosen,
+    category: "Data tools", label: "Excel", sourceId: "entry:role:row:0", evidenceQuote: "Used Excel", roleQuote: "spreadsheets" }] })
+    .where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
+  const save = form(requested.run.id, [chosen], "Analyst using Excel ");
+  save.set("section-0", "Used Excel to report monthly results");
+  await expect(saveCvDraft(draft.id, { ok: true }, save)).rejects.toThrow(/^redirect:\/cv\//);
+  const [accepted] = await database.select().from(schema.cvSkillSuggestionRuns).where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
+  const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, accepted!.acceptedDraftId!));
+  expect(saved!.content?.summary).toBe("Analyst using Excel");
+  expect(saved!.content?.sections[0]?.bullets).toEqual(["Used Excel to report monthly results"]);
+  expect(saved!.content?.sections.flatMap(section => section.skillItems ?? [])).toEqual(["Excel"]);
+});
+
+it("rejects an underlying Write edit after generation before any Library skill write", async () => {
+  const draft = await fixture();
+  const requested = await request(draft);
+  if (!requested.ok) throw new Error(requested.error);
+  const chosen = crypto.randomUUID();
+  await database.update(schema.cvSkillSuggestionRuns).set({ status: "ready", suggestions: [{ id: chosen,
+    category: "Data tools", label: "Excel", sourceId: "entry:role:row:0", evidenceQuote: "Used Excel", roleQuote: "spreadsheets" }] })
+    .where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
+  expect(await saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen], "Changed summary")))
+    .toMatchObject({ ok: false, error: expect.stringContaining("Write section changed") });
+  expect((await database.select().from(schema.cvLibraries))).toHaveLength(1);
+  expect((await database.select().from(schema.cvDrafts))).toHaveLength(1);
+});
+
 it("saves selected labels only, replays exactly once and rejects changed wording or intent", async () => {
   const draft = await fixture();
-  const requested = await requestCvSkillSuggestions(draft.id);
+  const requested = await request(draft);
   if (!requested.ok) throw new Error(requested.error);
   const chosen = crypto.randomUUID(), unchosen = crypto.randomUUID();
   const proposals = [chosen, unchosen].map((id, index) => ({ id, category: "Data tools", label: index ? "Python" : "Excel",
@@ -97,7 +139,7 @@ it("saves selected labels only, replays exactly once and rejects changed wording
 
 it("rejects stale, forged and foreign selections without writing skills", async () => {
   const draft = await fixture();
-  const requested = await requestCvSkillSuggestions(draft.id);
+  const requested = await request(draft);
   if (!requested.ok) throw new Error(requested.error);
   const chosen = crypto.randomUUID();
   await database.update(schema.cvSkillSuggestionRuns).set({ status: "ready", suggestions: [{ id: chosen, category: "Data tools",

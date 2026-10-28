@@ -10,11 +10,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
 
-vi.mock("@/app/actions/cv", () => ({ saveCvDraft: vi.fn() }));
+vi.mock("@/app/actions/cv", () => ({ saveCvDraft: vi.fn(), requestCvSkillSuggestions: vi.fn(), readCvSkillSuggestions: vi.fn() }));
 // The lazily loaded check, unreachable: `import("@col/core/cv")` rejects as a failed chunk would.
 vi.mock("@col/core/cv", () => { throw new Error("Failed to fetch dynamically imported module"); });
 
 import { CvDraftEditor } from "./CvDraftEditor";
+import { readCvSkillSuggestions, requestCvSkillSuggestions } from "@/app/actions/cv";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,9 +27,102 @@ const content = {
 let root: Root;
 let container: HTMLElement;
 beforeEach(() => {
+  vi.clearAllMocks();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("generates skills only on click using current CV edits and saves only selected suggestions", async () => {
+  let resolveRequest!: (value: Awaited<ReturnType<typeof requestCvSkillSuggestions>>) => void;
+  vi.mocked(requestCvSkillSuggestions).mockReturnValue(new Promise(resolve => { resolveRequest = resolve; }));
+  act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME}
+    baseRevision={3} latestLibraryVersion={7} />));
+  expect(requestCvSkillSuggestions).not.toHaveBeenCalled();
+  const profile = container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(profile, " Updated analyst profile. ");
+    profile.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const generate = [...container.querySelectorAll("button")].find(button => button.textContent === "Generate skills")!;
+  await act(async () => { generate.click(); generate.click(); });
+  expect(requestCvSkillSuggestions).toHaveBeenCalledTimes(1);
+  expect(requestCvSkillSuggestions).toHaveBeenCalledWith("cv-1", false, 7,
+    expect.objectContaining({ summary: "Updated analyst profile." }), 3);
+  await act(async () => resolveRequest({ ok: true, run: { id: "run-1", status: "ready", error: null,
+    suggestions: [{ id: "proposal-1", category: "Leadership", label: "Team leadership", sourceId: "entry-1",
+      evidenceQuote: "Led a team", roleQuote: "Lead a team" },
+    { id: "proposal-2", category: "Management", label: "Team management", sourceId: "entry-1",
+      evidenceQuote: "Led a team", roleQuote: "Lead a team" }] } }));
+  expect(container.textContent).not.toContain("changed after this skill check");
+  const selected = [...container.querySelectorAll("label")].find(label => label.textContent?.includes("Team leadership"))!
+    .querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  act(() => selected.click());
+  expect(container.querySelector<HTMLInputElement>('[name="selectedSuggestionIds"]')?.value).toBe('["proposal-1"]');
+  expect(container.textContent).toContain("1 highlighted skill on this CV");
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(profile, "Another profile revision.");
+    profile.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(container.textContent).toContain("changed after this skill check");
+  expect(container.querySelector<HTMLInputElement>('[name="selectedSuggestionIds"]')?.value).toBe("[]");
+  expect([...container.querySelectorAll("button")].some(button => button.textContent === "Generate skills for current edits")).toBe(true);
+});
+
+it("does not let an old poll replace a newer suggestion run", async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveOldPoll!: (value: Awaited<ReturnType<typeof readCvSkillSuggestions>>) => void;
+    vi.mocked(readCvSkillSuggestions).mockReturnValue(new Promise(resolve => { resolveOldPoll = resolve; }));
+    vi.mocked(requestCvSkillSuggestions)
+      .mockResolvedValueOnce({ ok: true, run: { id: "old-run", status: "queued", suggestions: [], error: null } })
+      .mockResolvedValueOnce({ ok: true, run: { id: "new-run", status: "ready", error: null,
+        suggestions: [{ id: "new-skill", category: "Leadership", label: "Team leadership", sourceId: "entry-1",
+          evidenceQuote: "Led a team", roleQuote: "Lead a team" }] } });
+    act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} baseRevision={1} />));
+    await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Generate skills")!.click());
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(readCvSkillSuggestions).toHaveBeenCalledWith("cv-1", "old-run");
+    const profile = container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(profile, "Updated analyst profile.");
+      profile.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Generate skills for current edits")!.click());
+    await act(async () => resolveOldPoll({ ok: true, run: { id: "old-run", status: "ready", suggestions: [], error: null } }));
+    expect(container.textContent).toContain("Team leadership");
+    expect(container.querySelector<HTMLInputElement>('[name="skillSuggestionRunId"]')?.value).toBe("new-run");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("offers a fresh generation after server rejection, but reconnects after an unknown network outcome", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(requestCvSkillSuggestions).mockResolvedValue({ ok: true,
+      run: { id: "queued-run", status: "queued", suggestions: [], error: null } });
+    vi.mocked(readCvSkillSuggestions)
+      .mockResolvedValueOnce({ ok: false, error: "Your CV changed. Generate skills again." })
+      .mockRejectedValueOnce(new Error("network disconnected"))
+      .mockResolvedValueOnce({ ok: true, run: { id: "queued-run", status: "ready", suggestions: [], error: null } });
+    act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} baseRevision={1} />));
+    const button = (label: string) => [...container.querySelectorAll("button")].find(item => item.textContent === label)!;
+    await act(async () => button("Generate skills").click());
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(container.textContent).toContain("Your CV changed. Generate skills again.");
+    expect(button("Generate skills")).not.toBeNull();
+    await act(async () => button("Generate skills").click());
+    expect(requestCvSkillSuggestions).toHaveBeenCalledTimes(2);
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(button("Reconnect to suggestion check")).not.toBeNull();
+    await act(async () => button("Reconnect to suggestion check").click());
+    expect(readCvSkillSuggestions).toHaveBeenCalledTimes(3);
+    expect(requestCvSkillSuggestions).toHaveBeenCalledTimes(2);
+    expect(button("Refresh suggestions")).not.toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 afterEach(() => {
   act(() => root.unmount());

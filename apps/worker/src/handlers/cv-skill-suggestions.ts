@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
-import { CvLibrarySchema, cvHighlightedSkillRows, cvReusableSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions, type TaskPayloads } from "@col/core";
+import { CvLibrarySchema, MAX_CV_SKILL_DRAFT_CONTEXT_BYTES, cvDraftContextHighlightedSkills, cvReusableSkillRows,
+  cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions, isCvSkillDraftContext, type TaskPayloads } from "@col/core";
 import { estimateCostUsd } from "@col/ai";
 import { cvDrafts, cvSkillSuggestionRuns, latestCvLibrary, type Db, type Task } from "@col/db";
 import { openAccountAiPass } from "../account-ai-pass";
@@ -8,7 +9,7 @@ import type { TaskRunContext } from "../queue";
 
 /** One paid, bounded proposal and one independent semantic check; neither writes the Library. */
 export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: TaskRunContext): Promise<unknown> {
-  const { userId, draftId, runId } = (task.payload ?? {}) as TaskPayloads["suggest_cv_skills"];
+  const { userId, draftId, runId, baseRevision, draftContext } = (task.payload ?? {}) as TaskPayloads["suggest_cv_skills"];
   if (!userId || !draftId || !runId) return { skipped: "invalid suggestion task" };
   const [run] = await deps.db.select().from(cvSkillSuggestionRuns)
     .where(and(eq(cvSkillSuggestionRuns.id, runId), eq(cvSkillSuggestionRuns.userId, userId), eq(cvSkillSuggestionRuns.draftId, draftId))).limit(1);
@@ -17,14 +18,16 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
     const written = await deps.db.transaction(async tx => {
       await deps.assertOwnership?.(tx as unknown as Db);
       if (status === "ready") {
-        const [currentDraft] = await tx.select({ status: cvDrafts.status, content: cvDrafts.content,
+        const [currentDraft] = await tx.select({ status: cvDrafts.status, content: cvDrafts.content, revision: cvDrafts.revision,
           jobDescription: cvDrafts.jobDescription }).from(cvDrafts)
           .where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, userId))).limit(1).for("share");
         const currentLibrary = await latestCvLibrary(tx as unknown as Db, userId);
         const currentRows = currentLibrary ? cvSkillEvidenceRows(CvLibrarySchema.parse(currentLibrary.content)) : [];
         if (!currentDraft?.content || !["ready", "failed"].includes(currentDraft.status) || !currentLibrary
+          || currentDraft.revision !== baseRevision || !draftContext
           || currentLibrary.version !== run.libraryVersion
-          || cvSkillSuggestionInputHash(currentLibrary.version, draftId, currentDraft.jobDescription, currentRows, cvHighlightedSkillRows(currentDraft.content)) !== run.inputHash) {
+          || cvSkillSuggestionInputHash(currentLibrary.version, draftId, currentDraft.jobDescription, currentRows,
+            cvDraftContextHighlightedSkills(draftContext), draftContext, baseRevision) !== run.inputHash) {
           status = "failed"; suggestions = []; error = "Your Experience or target role changed. Refresh suggestions.";
         }
       }
@@ -34,16 +37,25 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
     });
     return written.length ? { status, count: suggestions.length } : { skipped: "suggestion run superseded" };
   };
-  const [draft] = await deps.db.select({ jobDescription: cvDrafts.jobDescription, status: cvDrafts.status, content: cvDrafts.content })
+  const [draft] = await deps.db.select({ jobDescription: cvDrafts.jobDescription, status: cvDrafts.status, content: cvDrafts.content,
+    revision: cvDrafts.revision })
     .from(cvDrafts).where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, userId))).limit(1);
   const latest = await latestCvLibrary(deps.db, userId);
   if (!draft?.content || !["ready", "failed"].includes(draft.status) || !latest)
     return finish("failed", [], "This CV or Experience is no longer available for suggestions.");
+  if (!Number.isInteger(baseRevision) || baseRevision! < 0 || !isCvSkillDraftContext(draftContext))
+    return finish("failed", [], "This skill request predates the current Write section. Generate skills again.");
+  const draftContextBytes = Buffer.byteLength(JSON.stringify(draftContext));
+  if (draftContextBytes > MAX_CV_SKILL_DRAFT_CONTEXT_BYTES)
+    return finish("failed", [], "This CV draft is too long for skill suggestions. Shorten it, then generate skills again.");
+  if (draft.revision !== baseRevision)
+    return finish("failed", [], "This CV changed. Generate skills again.");
   const library = CvLibrarySchema.parse(latest.content);
   const rows = cvSkillEvidenceRows(library);
-  const highlightedSkills = cvHighlightedSkillRows(draft.content);
+  const highlightedSkills = cvDraftContextHighlightedSkills(draftContext);
   const reusableSkills = cvReusableSkillRows(library);
-  const inputHash = cvSkillSuggestionInputHash(latest.version, draftId, draft.jobDescription, rows, highlightedSkills);
+  const inputHash = cvSkillSuggestionInputHash(latest.version, draftId, draft.jobDescription, rows, highlightedSkills,
+    draftContext, baseRevision);
   if (latest.version !== run.libraryVersion || inputHash !== run.inputHash)
     return finish("failed", [], "Your Experience or target role changed. Refresh suggestions.");
   if (!rows.length) return finish("ready");
@@ -58,7 +70,8 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
   const model = settings.cvModel;
   const pass = openAccountAiPass(deps, { userId, settings, callSite: "CV", model, refId: `cv_skill_suggestions:${runId}`, signal: ctx?.signal });
   if (!pass.ai.enabled) return finish("failed", [], "Skill suggestions are unavailable at present.");
-  const proposalBytes = Buffer.byteLength(JSON.stringify({ rows, highlightedSkills, reusableSkills })) + Buffer.byteLength(draft.jobDescription);
+  const proposalBytes = Buffer.byteLength(JSON.stringify({ rows, highlightedSkills, reusableSkills }))
+    + Buffer.byteLength(draft.jobDescription) + draftContextBytes;
   // The verifier can cite every source, but sends each row only once. Reserve both requests,
   // including a generous ceiling for sixteen candidate records and prompt framing.
   const verificationBytes = proposalBytes + 16_000;
@@ -67,7 +80,8 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
   const admitted = await pass.admit(expected);
   if ("refused" in admitted) return finish("failed", [], admitted.refused);
   try {
-    const proposed = await pass.ai.suggestCvSkills({ rows, highlightedSkills, reusableSkills, description: draft.jobDescription, model },
+    const proposed = await pass.ai.suggestCvSkills({ rows, highlightedSkills, reusableSkills, draftContext,
+      description: draft.jobDescription, model },
       { userId, refType: "cv_skill_suggestions", refId: runId });
     if (!proposed) return finish("failed", [], "No skill suggestions were returned. Try refreshing later.");
     const candidates = proposed.suggestions.map(item => ({ category: item.category, label: item.label,

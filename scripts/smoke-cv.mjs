@@ -16,6 +16,7 @@ const {
 } = require("../packages/core/test/cv-review-fixture.ts");
 const { modelForCallSite, resolveSystemSettings } = require("../packages/core/src/settings.ts");
 const { cvHighlightedSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash } = require("../packages/core/src/cv-skill-suggestions.ts");
+const { cvSkillDraftContext } = require("../packages/core/src/cv-skill-draft-context.ts");
 
 const { Pool } = createRequire(
   new URL("../apps/web/package.json", import.meta.url),
@@ -1140,9 +1141,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const evidenceRows = cvSkillEvidenceRows(supportingLibrary);
     assert.equal(evidenceRows.length, 1);
     await pool.query("insert into cv_libraries (user_id, version, content) values ($1, $2, $3)", [userId, version, JSON.stringify(supportingLibrary)]);
-    await pool.query(`insert into cv_drafts
+    const insertedSuggestionDraft = await pool.query(`insert into cv_drafts
       (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, content)
-      values ($1, $2, 'Suggested skill review', 'Example', $3, $4, $5, 'test', 'ready', $6)`,
+      values ($1, $2, 'Suggested skill review', 'Example', $3, $4, $5, 'test', 'ready', $6) returning revision`,
       [suggestionDraftId, userId, description, version, JSON.stringify(supportingLibrary), JSON.stringify(supportingContent)]);
     const selectedId = randomUUID(), unselectedId = randomUUID();
     const runId = randomUUID();
@@ -1150,11 +1151,6 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       { id: selectedId, category: "Leadership", label: "Team leadership", sourceId: evidenceRows[0].id, evidenceQuote: "Led a team", roleQuote: "Lead a team" },
       { id: unselectedId, category: "Management", label: "Team management", sourceId: evidenceRows[0].id, evidenceQuote: "Led a team", roleQuote: "Lead a team" },
     ];
-    await pool.query(`insert into cv_skill_suggestion_runs
-      (id, user_id, draft_id, library_version, input_hash, status, suggestions)
-      values ($1, $2, $3, $4, $5, 'ready', $6::jsonb)`,
-      [runId, userId, suggestionDraftId, version,
-        cvSkillSuggestionInputHash(version, suggestionDraftId, description, evidenceRows, cvHighlightedSkillRows(supportingContent)), JSON.stringify(proposals)]);
     await page.goto(`${baseUrl}/cv/${suggestionDraftId}`);
     await page.locator('[data-cv-editor-ready="true"]').waitFor({ timeout: 10000 });
     // An existing Training item can be omitted. When it is the last supporting item, the PDF
@@ -1167,8 +1163,15 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await trainingChoice.check();
     const withTraining = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
-    assert.ok((await withTraining).request().postDataJSON().sections.some(section => section.kind === "training" && section.entryId === "training-new"));
-    await page.getByText("Suggested skills from your Experience", { exact: true }).click();
+    const editedSuggestionContent = (await withTraining).request().postDataJSON();
+    assert.ok(editedSuggestionContent.sections.some(section => section.kind === "training" && section.entryId === "training-new"));
+    await pool.query(`insert into cv_skill_suggestion_runs
+      (id, user_id, draft_id, library_version, input_hash, status, suggestions)
+      values ($1, $2, $3, $4, $5, 'ready', $6::jsonb)`,
+      [runId, userId, suggestionDraftId, version,
+        cvSkillSuggestionInputHash(version, suggestionDraftId, description, evidenceRows,
+          cvHighlightedSkillRows(editedSuggestionContent), cvSkillDraftContext(editedSuggestionContent), insertedSuggestionDraft.rows[0].revision), JSON.stringify(proposals)]);
+    await page.getByRole("button", { name: "Generate skills", exact: true }).click();
     const selectedSkill = page.getByRole("checkbox", { name: /Team leadership · Leadership/ });
     const unselectedSkill = page.getByRole("checkbox", { name: /Team management · Management/ });
     await selectedSkill.waitFor();

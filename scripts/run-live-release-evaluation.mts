@@ -8,7 +8,7 @@ import { publishReplayFixture, REPLAY_FIXTURE_LIBRARY } from "../apps/worker/src
 import { readRecordingHeader, recordCvDraft, replayFromRecording } from "../apps/worker/src/cv-replay";
 import { readEnv } from "../apps/worker/src/env";
 import { handleSuggestCvSkills } from "../apps/worker/src/handlers/cv-skill-suggestions";
-import { cvHighlightedSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions } from "../packages/core/src/index";
+import { cvHighlightedSkillRows, cvSkillDraftContext, cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions } from "../packages/core/src/index";
 import { schema, type Task } from "../packages/db/src/index";
 import { runMigrations } from "../packages/db/src/migrate";
 import { installLiveEvaluationGuard } from "./live-evaluation-guard.mjs";
@@ -95,10 +95,12 @@ try {
   const rows = cvSkillEvidenceRows(REPLAY_FIXTURE_LIBRARY);
   const highlighted = cvHighlightedSkillRows(draft.content!);
   const [run] = await deps.db.insert(schema.cvSkillSuggestionRuns).values({ userId: draft.userId, draftId: draft.id,
-    libraryVersion: 1, inputHash: cvSkillSuggestionInputHash(1, draft.id, draft.jobDescription, rows, highlighted) }).returning();
+    libraryVersion: 1, inputHash: cvSkillSuggestionInputHash(1, draft.id, draft.jobDescription, rows, highlighted,
+      cvSkillDraftContext(draft.content!), draft.revision) }).returning();
   const beforeDraftRevision = draft.revision;
   guard.setPhase("skills");
-  await handleSuggestCvSkills({ type: "suggest_cv_skills", payload: { userId: draft.userId, draftId: draft.id, runId: run!.id } } as Task, deps);
+  await handleSuggestCvSkills({ type: "suggest_cv_skills", payload: { userId: draft.userId, draftId: draft.id, runId: run!.id,
+    baseRevision: draft.revision, draftContext: cvSkillDraftContext(draft.content!) } } as Task, deps);
   const [result] = await deps.db.select().from(schema.cvSkillSuggestionRuns).where(eq(schema.cvSkillSuggestionRuns.id, run!.id));
   const calls = await deps.db.select({ promptId: schema.aiCalls.promptId, costUsd: schema.aiCalls.costUsd, ok: schema.aiCalls.ok })
     .from(schema.aiCalls).where(and(eq(schema.aiCalls.refId, run!.id), eq(schema.aiCalls.userId, draft.userId)));

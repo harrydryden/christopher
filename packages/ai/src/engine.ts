@@ -2079,6 +2079,7 @@ export class AiEngine {
     input: { rows: readonly { id: string; text: string }[];
       highlightedSkills: readonly { category: string; labels: string[] }[];
       reusableSkills: readonly { id: string; category: string; labels: string[] }[];
+      draftContext: { summary: string; sections: readonly { kind: string; heading: string; bullets: readonly string[]; skillItems?: readonly string[] }[] };
       description: string; model?: string },
     ref: Ref = {},
   ): Promise<{ suggestions: Omit<CvSkillSuggestion, "id">[] } | null> {
@@ -2086,6 +2087,7 @@ export class AiEngine {
       user: [
         P.wrap("confirmed_experience_rows", JSON.stringify(input.rows)),
         P.wrap("target_role", P.truncate(input.description, 20_000)),
+        P.wrap("current_cv_draft", JSON.stringify(input.draftContext)),
         P.wrap("skills_already_on_this_cv", JSON.stringify(input.highlightedSkills)),
         P.wrap("reusable_saved_skills", JSON.stringify(input.reusableSkills)),
       ].join("\n\n"),

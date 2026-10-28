@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { groupCvLibrary, isActiveStoredEvidence, type CvContent, type CvLibrary } from "./cv";
 import { CV_SKILL_GUIDANCE, cvSkillIdentity } from "./cv-format";
+import type { CvSkillDraftContext } from "./cv-skill-draft-context";
 
 const shortLabel = z.string().trim().min(1).max(60).refine(value => {
   const words = value.split(/\s+/u);
@@ -56,8 +57,15 @@ export function cvHighlightedSkillRows(content: CvContent): Array<{ category: st
 }
 
 export function cvSkillSuggestionInputHash(libraryVersion: number, draftId: string, description: string, rows: readonly { id: string; text: string }[],
-  highlightedSkills: readonly { category: string; labels: string[] }[]): string {
-  return createHash("sha256").update(JSON.stringify({ libraryVersion, draftId, description, rows, highlightedSkills })).digest("hex");
+  highlightedSkills: readonly { category: string; labels: string[] }[], draftContext: CvSkillDraftContext, baseRevision: number): string {
+  // Queue payloads are stored as JSONB, which does not preserve object key order. Rebuild the
+  // context in a fixed order so request, worker and later reads hash identical content.
+  const canonicalContext = { summary: draftContext.summary, sections: draftContext.sections.map(section => ({
+    kind: section.kind, heading: section.heading, bullets: section.bullets,
+    ...(section.skillItems ? { skillItems: section.skillItems } : {}),
+  })) };
+  return createHash("sha256").update(JSON.stringify({ version: 2, libraryVersion, draftId, description,
+    rows, highlightedSkills, draftContext: canonicalContext, baseRevision })).digest("hex");
 }
 
 /** The model proposes labels; exact source and role citations are checked independently. */

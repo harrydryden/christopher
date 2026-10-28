@@ -16,6 +16,10 @@
       "types": "./src/cv-format.ts",
       "default": "./src/cv-format.ts"
     },
+    "./cv-skill-draft-context": {
+      "types": "./src/cv-skill-draft-context.ts",
+      "default": "./src/cv-skill-draft-context.ts"
+    },
     "./cv-helpers": {
       "types": "./src/cv-helpers.ts",
       "default": "./src/cv-helpers.ts"

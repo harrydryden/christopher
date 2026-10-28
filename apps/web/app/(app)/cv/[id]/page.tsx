@@ -347,6 +347,7 @@ export default async function CvDraftPage({
             latestSkillTargets={(latestLibrary[0]?.content.entries ?? []).flatMap(entry => entry.kind === "skill" && isActiveStoredEvidence(entry) && entry.skillItems?.length
               ? [{ id: entry.id, heading: entry.heading, items: entry.skillItems }] : [])}
             latestLibraryVersion={latestLibrary[0]?.version}
+            baseRevision={draft.revision}
             blocked={blocked}
             finalised={!!draft.finalisedAt}
             hasFinalPdf={hasFinalPdf}

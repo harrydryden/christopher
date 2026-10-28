@@ -26,6 +26,7 @@ export * from "./cv-build-plan";
 export * from "./cv-quality";
 export * from "./cv-gap-quiz";
 export * from "./cv-skill-suggestions";
+export * from "./cv-skill-draft-context";
 export * from "./evidence-rubric";
 export * from "./library-review";
 export * from "./library-import";

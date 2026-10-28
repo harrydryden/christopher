@@ -1,7 +1,7 @@
 /** The suggestion worker uses a real database, but never contacts a model provider. */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { AiEngine } from "@col/ai";
-import { cvHighlightedSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash, type CvLibrary } from "@col/core";
+import { cvHighlightedSkillRows, cvSkillDraftContext, cvSkillEvidenceRows, cvSkillSuggestionInputHash, type CvLibrary } from "@col/core";
 import { createDb, schema, type Task } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -50,8 +50,10 @@ async function fixture(ownerId = userId) {
     companyName: "Acme", jobDescription: description, libraryVersion: 1, librarySnapshot: library,
     model: "claude-sonnet-5", status: "ready", content }).returning();
   const [run] = await client.db.insert(schema.cvSkillSuggestionRuns).values({ userId: ownerId, draftId: draft!.id,
-    libraryVersion: 1, inputHash: cvSkillSuggestionInputHash(1, draft!.id, description, cvSkillEvidenceRows(library), cvHighlightedSkillRows(content)) }).returning();
-  const task = { type: "suggest_cv_skills", payload: { userId: ownerId, draftId: draft!.id, runId: run!.id } } as unknown as Task;
+    libraryVersion: 1, inputHash: cvSkillSuggestionInputHash(1, draft!.id, description, cvSkillEvidenceRows(library),
+      cvHighlightedSkillRows(content), cvSkillDraftContext(content), draft!.revision) }).returning();
+  const task = { type: "suggest_cv_skills", payload: { userId: ownerId, draftId: draft!.id, runId: run!.id,
+    baseRevision: draft!.revision, draftContext: cvSkillDraftContext(content) } } as unknown as Task;
   return { draft: draft!, run: run!, task };
 }
 
@@ -77,17 +79,50 @@ it("publishes verified proposals without changing the Library or draft", async (
   const result = await handleSuggestCvSkills(task, deps());
   expect(result).toEqual({ status: "ready", count: 1 });
   expect(propose).toHaveBeenCalledOnce();
+  expect(propose.mock.calls[0]?.[0]).toMatchObject({ draftContext: cvSkillDraftContext(draft.content!) });
   expect(verify).toHaveBeenCalledOnce();
+  expect(verify.mock.calls[0]?.[0]).not.toHaveProperty("draftContext");
   expect(await savedRun(run.id)).toMatchObject({ status: "ready", suggestions: [{ label: "Team leadership" }] });
   expect((await client.db.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, userId))).map(row => row.version)).toEqual([1]);
   expect((await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!.revision).toBe(0);
   expect(await client.db.select().from(schema.aiReservations)).toHaveLength(0);
 });
 
-it("drops a semantically rejected proposal", async () => {
+it("sends unsaved Write wording as context while grounding only in confirmed Experience", async () => {
+  const { task, run, draft } = await fixture();
+  const edited = { ...draft.content!, summary: "Analyst focused on Excel reporting" };
+  const draftContext = cvSkillDraftContext(edited);
+  await client.db.update(schema.cvSkillSuggestionRuns).set({ inputHash: cvSkillSuggestionInputHash(1, draft.id,
+    description, cvSkillEvidenceRows(library), cvHighlightedSkillRows(edited), draftContext, draft.revision) })
+    .where(eq(schema.cvSkillSuggestionRuns.id, run.id));
+  const { propose, verify } = modelAnswers();
+  expect(await handleSuggestCvSkills({ ...task, payload: { ...task.payload, draftContext } } as Task, deps()))
+    .toEqual({ status: "ready", count: 1 });
+  expect(propose.mock.calls[0]?.[0]).toMatchObject({ draftContext });
+  expect(verify.mock.calls[0]?.[0]).not.toHaveProperty("draftContext");
+  expect((await savedRun(run.id)).suggestions).toHaveLength(1);
+});
+
+it("fails an old queued task without Write context before AI admission", async () => {
   const { task, run } = await fixture();
-  modelAnswers(false);
-  expect(await handleSuggestCvSkills(task, deps())).toEqual({ status: "ready", count: 0 });
+  const { propose, verify } = modelAnswers();
+  expect(await handleSuggestCvSkills({ ...task, payload: { userId, draftId: run.draftId, runId: run.id } } as Task, deps()))
+    .toEqual({ status: "failed", count: 0 });
+  expect(propose).not.toHaveBeenCalled();
+  expect(verify).not.toHaveBeenCalled();
+  expect(await client.db.select().from(schema.aiReservations)).toHaveLength(0);
+});
+
+it("does not treat a draft-only claim as evidence when semantic verification rejects it", async () => {
+  const { task, run, draft } = await fixture();
+  const draftContext = cvSkillDraftContext({ ...draft.content!, summary: "Expert in Python and machine learning" });
+  await client.db.update(schema.cvSkillSuggestionRuns).set({ inputHash: cvSkillSuggestionInputHash(1, draft.id,
+    description, cvSkillEvidenceRows(library), cvHighlightedSkillRows(draft.content!), draftContext, draft.revision) })
+    .where(eq(schema.cvSkillSuggestionRuns.id, run.id));
+  const { verify } = modelAnswers(false);
+  expect(await handleSuggestCvSkills({ ...task, payload: { ...task.payload, draftContext } } as Task, deps()))
+    .toEqual({ status: "ready", count: 0 });
+  expect(verify.mock.calls[0]?.[0]).not.toHaveProperty("draftContext");
   expect((await savedRun(run.id)).suggestions).toEqual([]);
 });
 
@@ -145,7 +180,8 @@ it("rejects oversized confirmed Experience without sampling or reserving AI spen
   const { task, run, draft } = await fixture();
   await client.db.update(schema.cvLibraries).set({ content: oversized }).where(eq(schema.cvLibraries.userId, userId));
   await client.db.update(schema.cvSkillSuggestionRuns).set({
-    inputHash: cvSkillSuggestionInputHash(1, run.draftId, description, cvSkillEvidenceRows(oversized), cvHighlightedSkillRows(draft.content!)),
+    inputHash: cvSkillSuggestionInputHash(1, run.draftId, description, cvSkillEvidenceRows(oversized),
+      cvHighlightedSkillRows(draft.content!), cvSkillDraftContext(draft.content!), draft.revision),
   }).where(eq(schema.cvSkillSuggestionRuns.id, run.id));
   const { propose, verify } = modelAnswers();
   expect(await handleSuggestCvSkills(task, deps())).toEqual({ status: "failed", count: 0 });

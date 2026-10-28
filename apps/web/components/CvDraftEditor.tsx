@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
 import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState, cvSkillIdentity } from "@col/core/cv-format";
+import { cvSkillDraftContext } from "@col/core/cv-skill-draft-context";
 import { cvDisplaySections } from "@col/core/cv-helpers";
 import type { CvTheme } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
@@ -85,6 +86,7 @@ export function CvDraftEditor({
   librarySupportingSections = [],
   latestSkillTargets = [],
   latestLibraryVersion,
+  baseRevision,
 }: {
   id: string;
   content: CvContent;
@@ -111,6 +113,7 @@ export function CvDraftEditor({
   librarySupportingSections?: LibrarySupportSection[];
   latestSkillTargets?: { id: string; heading: string; items: string[] }[];
   latestLibraryVersion?: number;
+  baseRevision?: number;
 }) {
   const formId = `cv-edit-${id}`;
   const [hydrated, setHydrated] = useState(false);
@@ -132,7 +135,10 @@ export function CvDraftEditor({
   const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
   const [suggestionError, setSuggestionError] = useState("");
   const [suggestionPollStopped, setSuggestionPollStopped] = useState(false);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [suggestionStarting, setSuggestionStarting] = useState(false);
+  const suggestionRequestInFlight = useRef(false);
+  const suggestionGeneration = useRef(0);
+  const [suggestionInputFingerprint, setSuggestionInputFingerprint] = useState<string | null>(null);
   const [librarySectionChoice, setLibrarySectionChoice] = useState<{ sourceId: string; selected: number[] } | null>(null);
   const [preview, setPreview] = useState<{
     url: string;
@@ -146,16 +152,28 @@ export function CvDraftEditor({
   let currentSkillLabels: string[] = [];
   let projectionIssue: string | null = null;
   let candidateSections: CvContent["sections"];
+  let preSuggestionSections: CvContent["sections"];
   try {
     const beforeSuggestions = cvReviewSupportingSections(cvReviewSections(content, rows, removedSkillIds, addedSkills),
       addedSupportIds, librarySupportingSections);
+    preSuggestionSections = beforeSuggestions;
     currentSkillLabels = beforeSuggestions.filter(section => section.kind === "skill")
       .flatMap(section => section.skillItems ?? cvSectionTexts(section));
     candidateSections = cvReviewSuggestedSections(beforeSuggestions, selectedSuggestions, latestSkillTargets);
   } catch (failure) {
     projectionIssue = failure instanceof Error ? failure.message : "Review your section choices.";
+    preSuggestionSections = content.sections;
     candidateSections = content.sections;
   }
+  // Save trims the profile before checking the run. Send that same wording to avoid a stale run
+  // solely because a reviewer left whitespace at the edge of the textarea.
+  const preSuggestionCandidate: CvContent = { ...content, theme, summary: summary.trim(), sections: preSuggestionSections };
+  const preSuggestionFingerprint = JSON.stringify(cvSkillDraftContext(preSuggestionCandidate));
+  const suggestionsStale = !!skillRun && suggestionInputFingerprint !== preSuggestionFingerprint;
+  if (suggestionsStale) candidateSections = preSuggestionSections;
+  useEffect(() => {
+    if (suggestionsStale && selectedSuggestionIds.length) setSelectedSuggestionIds([]);
+  }, [suggestionsStale, selectedSuggestionIds.length]);
   const candidate = {
     ...content,
     theme,
@@ -183,27 +201,78 @@ export function CvDraftEditor({
   useEffect(() => {
     if (!skillRun || suggestionPollStopped || (skillRun.status !== "queued" && skillRun.status !== "running")) return;
     let active = true;
+    let polling = false;
+    const generation = suggestionGeneration.current;
     const timer = window.setInterval(async () => {
+      if (polling) return;
+      polling = true;
       try {
         const result = await readCvSkillSuggestions(id, skillRun.id);
-        if (!active) return;
+        if (!active || generation !== suggestionGeneration.current) return;
         if (result.ok) setSkillRun(result.run);
-        else { setSuggestionError(result.error); setSuggestionPollStopped(true); }
+        else {
+          // A resolved server rejection means this run is no longer usable. A transport error
+          // below leaves it intact, because the queued task may still be running.
+          setSuggestionError(result.error);
+          setSkillRun(null);
+          setSelectedSuggestionIds([]);
+          setSuggestionInputFingerprint(null);
+        }
       } catch {
-        if (active) { setSuggestionError("Could not check suggestions. Check your connection; this request may still be running."); setSuggestionPollStopped(true); }
+        if (active && generation === suggestionGeneration.current) { setSuggestionError("Could not check suggestions. Check your connection; this request may still be running."); setSuggestionPollStopped(true); }
+      } finally {
+        polling = false;
       }
     }, 3_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [id, skillRun?.id, skillRun?.status, suggestionPollStopped]);
   async function loadSuggestions(refresh: boolean) {
+    if (suggestionRequestInFlight.current || projectionIssue) return;
+    suggestionRequestInFlight.current = true;
+    const generation = ++suggestionGeneration.current;
+    setSuggestionStarting(true);
     setSuggestionError("");
     setSuggestionPollStopped(false);
     try {
-      const result = await requestCvSkillSuggestions(id, refresh, latestLibraryVersion);
-      if (result.ok) { setSkillRun(result.run); setSelectedSuggestionIds([]); }
-      else setSuggestionError(result.error);
+      const result = await requestCvSkillSuggestions(id, refresh, latestLibraryVersion, preSuggestionCandidate, baseRevision);
+      if (generation !== suggestionGeneration.current) return;
+      if (result.ok) { setSkillRun(result.run); setSuggestionInputFingerprint(preSuggestionFingerprint); setSelectedSuggestionIds([]); }
+      else {
+        setSuggestionError(result.error);
+        setSkillRun(null);
+        setSelectedSuggestionIds([]);
+        setSuggestionInputFingerprint(null);
+        setSuggestionPollStopped(false);
+      }
     } catch {
-      setSuggestionError("Could not start suggestions. Check your connection and try again.");
+      if (generation === suggestionGeneration.current) setSuggestionError("Could not start suggestions. Check your connection and try again.");
+    } finally {
+      suggestionRequestInFlight.current = false;
+      setSuggestionStarting(false);
+    }
+  }
+  async function reconnectSuggestions() {
+    if (!skillRun || suggestionRequestInFlight.current) return;
+    suggestionRequestInFlight.current = true;
+    const generation = ++suggestionGeneration.current;
+    setSuggestionStarting(true);
+    setSuggestionError("");
+    try {
+      const result = await readCvSkillSuggestions(id, skillRun.id);
+      if (generation !== suggestionGeneration.current) return;
+      if (result.ok) { setSkillRun(result.run); setSuggestionPollStopped(false); }
+      else {
+        setSuggestionError(result.error);
+        setSkillRun(null);
+        setSelectedSuggestionIds([]);
+        setSuggestionInputFingerprint(null);
+        setSuggestionPollStopped(false);
+      }
+    } catch {
+      if (generation === suggestionGeneration.current) setSuggestionError("Could not reconnect to suggestions. Check your connection and try again.");
+    } finally {
+      suggestionRequestInFlight.current = false;
+      setSuggestionStarting(false);
     }
   }
   async function updatePreview() {
@@ -290,7 +359,7 @@ export function CvDraftEditor({
           <input type="hidden" name="addedSupportIds" value={JSON.stringify(addedSupportIds)} />
           <input type="hidden" name="pageLibraryVersion" value={latestLibraryVersion ?? ""} />
           <input type="hidden" name="skillSuggestionRunId" value={skillRun?.id ?? ""} />
-          <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(selectedSuggestionIds)} />
+          <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(suggestionsStale ? [] : selectedSuggestionIds)} />
         </SettingsForm>
       </fieldset>
       <p className="mt-2 text-12 text-muted">Saving keeps your wording and checks a new revision. Rewriting uses the latest Experience evidence and one CV credit.</p>
@@ -386,16 +455,19 @@ export function CvDraftEditor({
             Changed profile and bullet wording is kept as saved phrasing for the next CV. It adds no
             facts to your Experience.
           </p>
-          <details className="border border-line-muted p-3" open={suggestionsOpen} onToggle={(event) => {
-            const open = event.currentTarget.open;
-            setSuggestionsOpen(open);
-            if (open && !skillRun) void loadSuggestions(false);
-          }}>
-            <summary className="cursor-pointer font-semibold">Suggested skills from your Experience</summary>
-            <p className="mt-2 text-12 text-muted">This is a recommended set for the whole CV, including relevant skills already here. Existing skills are marked included; select any new ones you want to add. Remove a current skill if you want to replace it.</p>
-            {skillRun?.status === "queued" || skillRun?.status === "running" ? <p role="status" className="mt-2 text-12">Checking your Experience and this role…</p> : null}
-            {skillRun?.status === "failed" && <p role="status" className="mt-2 text-12 text-warn">{skillRun.error ?? "Suggestions could not be prepared."}</p>}
-            {skillRun?.status === "ready" && (skillRun.suggestions.length
+          <section className="border border-line-muted p-3" aria-label="Skill recommendations">
+            <h3 className="font-semibold">Suggested skills from your Experience</h3>
+            <p className="mt-2 text-12 text-muted">Suggest around 10 skills across relevant categories, based on your Experience, current CV and this role. Choose the suggestions you want to add; new skills and categories are saved to Experience when you save the CV. Existing skills are marked included; remove a current skill if you want to replace it.</p>
+            <button type="button" className={`${buttonClass("secondary")} mt-3`}
+              onClick={() => void (suggestionPollStopped && !suggestionsStale ? reconnectSuggestions() : loadSuggestions(!!skillRun))}
+              disabled={suggestionStarting || !!projectionIssue || (!!skillRun && !suggestionsStale && !suggestionPollStopped && (skillRun.status === "queued" || skillRun.status === "running"))}>
+              {suggestionStarting ? "Starting skill check…" : suggestionPollStopped && !suggestionsStale ? "Reconnect to suggestion check"
+                : !skillRun ? "Generate skills" : suggestionsStale ? "Generate skills for current edits" : "Refresh suggestions"}
+            </button>
+            {suggestionsStale && <p role="status" className="mt-2 text-12 text-warn">Your CV wording or section choices changed after this skill check. Generate skills for the current edits before selecting suggestions.</p>}
+            {!suggestionsStale && (skillRun?.status === "queued" || skillRun?.status === "running") ? <p role="status" className="mt-2 text-12">Checking your Experience, current CV wording and this role…</p> : null}
+            {!suggestionsStale && skillRun?.status === "failed" && <p role="status" className="mt-2 text-12 text-warn">{skillRun.error ?? "Suggestions could not be prepared."}</p>}
+            {!suggestionsStale && skillRun?.status === "ready" && (skillRun.suggestions.length
               ? <div className="mt-3 space-y-3">{skillRun.suggestions.map(item => {
                 const alreadyIncluded = currentSkillLabels.some(label => cvSkillIdentity(label) === cvSkillIdentity(item.label));
                 return <label key={item.id} className="flex gap-2 text-14">
@@ -407,9 +479,7 @@ export function CvDraftEditor({
               })}</div>
               : <p role="status" className="mt-2 text-12 text-muted">No grounded skills were found for this role. You can refresh after updating Experience.</p>)}
             {suggestionError && <p role="alert" className="mt-2 text-12 text-danger">{suggestionError}</p>}
-            <button type="button" className={`${buttonClass("secondary")} mt-3`} onClick={() => void loadSuggestions(true)}
-              disabled={!suggestionPollStopped && (skillRun?.status === "queued" || skillRun?.status === "running")}>{suggestionPollStopped ? "Reconnect to suggestion check" : "Refresh suggestions"}</button>
-          </details>
+          </section>
           <CvSkillGuidance context="cv" labels={highlightedSkillLabels} />
           <div className="border border-line-muted p-3">
             <h3 className="font-semibold">Supporting sections</h3>

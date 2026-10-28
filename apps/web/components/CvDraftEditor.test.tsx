@@ -33,6 +33,45 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
+it("edits headings and individual skills in saved manual and accepted sections through the one CV form", () => {
+  const existing = { ...content, sections: [...content.sections,
+    { entryId: "manual-skill-12345678-1234-1234-1234-123456789abc", kind: "skill", heading: "Ways of working", bullets: ["Planning"], skillItems: ["Planning"] },
+    { entryId: "accepted-skill", kind: "skill", heading: "Data tools", bullets: ["Python"], skillItems: ["Python"] },
+  ] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={existing} theme={DEFAULT_CV_THEME} baseRevision={3} />));
+  const first = container.querySelector<HTMLInputElement>('[name="skill-heading-1"]')!;
+  const second = container.querySelector<HTMLInputElement>('[name="skill-heading-2"]')!;
+  expect(first.value).toBe("Ways of working");
+  expect(second.value).toBe("Data tools");
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(first, "Leadership");
+    first.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const form = container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!;
+  const data = new FormData(form);
+  expect(data.get("skill-heading-1")).toBe("Leadership");
+  expect(data.get("skill-heading-2")).toBe("Data tools");
+  expect(data.get("skills-1")).toBe("Planning");
+  expect(data.get("skills-2")).toBe("Python");
+  expect(container.textContent).toContain("Unsaved changes");
+});
+
+it("marks skill suggestions stale when a saved skill heading changes", async () => {
+  const existing = { ...content, sections: [...content.sections,
+    { entryId: "skill-1", kind: "skill", heading: "Data tools", bullets: ["Python"], skillItems: ["Python"] },
+  ] } as CvContent;
+  vi.mocked(requestCvSkillSuggestions).mockResolvedValue({ ok: true, run: { id: "run-1", status: "ready", suggestions: [], error: null } });
+  act(() => root.render(<CvDraftEditor id="cv-1" content={existing} theme={DEFAULT_CV_THEME} baseRevision={3} />));
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Generate skills")!.click());
+  expect(container.textContent).not.toContain("changed after this skill check");
+  const heading = container.querySelector<HTMLInputElement>('[name="skill-heading-1"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(heading, "Analysis tools");
+    heading.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(container.textContent).toContain("changed after this skill check");
+});
+
 it("generates skills only on click using current CV edits and saves only selected suggestions", async () => {
   let resolveRequest!: (value: Awaited<ReturnType<typeof requestCvSkillSuggestions>>) => void;
   vi.mocked(requestCvSkillSuggestions).mockReturnValue(new Promise(resolve => { resolveRequest = resolve; }));

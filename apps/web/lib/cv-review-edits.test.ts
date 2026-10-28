@@ -26,6 +26,16 @@ it("adds manually entered skills without claiming Library sources", () => {
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
 });
 
+it("edits a saved skill heading without changing its identity, items or skill citations", () => {
+  const sections = cvReviewSections(saved, ["Built systems.", "Python"], [], [], { "skill-1": "  Data tools  ", "role-1": "Forged role heading" });
+  expect(sections[0]).toEqual(saved.sections[0]);
+  expect(sections[1]).toEqual({ ...saved.sections[1], heading: "Data tools" });
+  expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
+  expect(cvReviewSections(saved, ["Built systems.", "Python"], [], [])).toEqual(saved.sections);
+  expect(() => cvReviewSections(saved, ["Built systems.", "Python"], [], [], { "skill-1": "  " })).toThrow("heading");
+  expect(() => cvReviewSections(saved, ["Built systems.", "Python"], [], [], { "skill-1": "x".repeat(251) })).toThrow("heading");
+});
+
 it("allows five CV skill sections, refuses a new sixth, and keeps older six-section CVs editable", () => {
   const skills = Array.from({ length: 6 }, (_, index) => ({ entryId: `skill-${index}`, kind: "skill" as const,
     heading: `Tools ${index}`, bullets: [`Skill ${index}`], skillItems: [`Skill ${index}`] }));

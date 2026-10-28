@@ -52,6 +52,7 @@ export function cvReviewSections(
   rows: string[],
   removedSkillIds: string[],
   addedSkills: AddedSkillSection[],
+  skillHeadings: Readonly<Record<string, string>> = {},
 ): CvContent["sections"] {
   const removed = new Set(removedSkillIds);
   if (removedSkillIds.some((id) => !saved.sections.some((section) => section.kind !== "experience" && section.entryId === id)))
@@ -61,12 +62,16 @@ export function cvReviewSections(
     const before = section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets;
     const edited = lines(rows[index] ?? before.join("\n"));
     if (section.kind === "skill" && edited.length === 0) return [];
-    const changed = JSON.stringify(edited) !== JSON.stringify(before);
+    const heading = section.kind === "skill" ? (skillHeadings[section.entryId] ?? section.heading).trim() : section.heading;
+    if (section.kind === "skill" && (!heading || heading.length > 250))
+      throw new Error("Give each skill section a heading of 1 to 250 characters.");
+    const textChanged = JSON.stringify(edited) !== JSON.stringify(before);
+    const changed = heading !== section.heading || textChanged;
     if (!changed) return [section];
     return [{
       ...section,
-      ...(section.kind === "skill" ? { skillItems: edited, bullets: edited.slice(0, CV_LIMITS.bulletsPerSection) } : { bullets: edited }),
-      bulletSources: undefined,
+      ...(section.kind === "skill" ? { heading, skillItems: edited, bullets: edited.slice(0, CV_LIMITS.bulletsPerSection) } : { bullets: edited }),
+      ...(textChanged ? { bulletSources: undefined } : {}),
     }];
   });
   const seen = new Set(saved.sections.map((section) => section.entryId));

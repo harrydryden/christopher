@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@col/core/cv";
-import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -24,6 +24,17 @@ it("adds manually entered skills without claiming Library sources", () => {
   expect(sections[1]?.bulletSources).toBeUndefined();
   expect(sections[2]).toEqual({ entryId: "manual-skill-12345678-1234-1234-1234-123456789abc", kind: "skill", heading: "Tools", skillItems: ["Excel", "SQL"], bullets: ["Excel", "SQL"] });
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
+});
+
+it("allows five CV skill sections, refuses a new sixth, and keeps older six-section CVs editable", () => {
+  const skills = Array.from({ length: 6 }, (_, index) => ({ entryId: `skill-${index}`, kind: "skill" as const,
+    heading: `Tools ${index}`, bullets: [`Skill ${index}`], skillItems: [`Skill ${index}`] }));
+  expect(cvReviewSkillSectionLimitIssue([saved.sections[0]!, ...skills.slice(0, 5)], saved.sections)).toBeNull();
+  expect(cvReviewSkillSectionLimitIssue([saved.sections[0]!, ...skills], saved.sections)).toContain("up to 5 skill sections");
+  const older = [saved.sections[0]!, ...skills];
+  expect(CvContentSchema.safeParse({ ...saved, sections: older }).success).toBe(true);
+  expect(cvReviewSkillSectionLimitIssue(older, older)).toBeNull();
+  expect(cvReviewSkillSectionLimitIssue([...older, { ...skills[0]!, entryId: "skill-6" }], older)).toContain("up to 5 skill sections");
 });
 
 it("rejects removal of Experience and leaves invalid Experience edits for validation", () => {

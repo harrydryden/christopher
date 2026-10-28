@@ -247,6 +247,18 @@ it("fits four sections of ten normal skills within half a page", async () => {
   const last = rounded.mock.calls.at(-1)!;
   expect(Number(last[1]) + Number(last[3]) - top).toBeLessThan(420);
 });
+it("renders five distinct skill sections and every label without dropping a category", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const headings = ["Operations", "Commercial", "Technology", "Governance", "Leadership"];
+  const sections = headings.map((heading, index) => ({ entryId: `skill-${index}`, kind: "skill" as const,
+    heading, skillItems: [`${heading} planning`, `${heading} delivery`], bullets: [`${heading} planning`] }));
+  const report = await renderCvPdfWithReport({ ...fixture, sections });
+  expect(report.pageCount).toBeLessThanOrEqual(3);
+  for (const section of sections) {
+    expect(draw.mock.calls.some(call => call[0] === section.heading)).toBe(true);
+    for (const label of section.skillItems) expect(draw.mock.calls.filter(call => call[0] === label)).toHaveLength(1);
+  }
+});
 it("rejects downloads above the CV's own page limit while allowing a complete diagnostic preview", async () => {
   const long = { ...fixture, sections: Array.from({ length: 12 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
       bullets: Array.from({ length: 6 }, () =>

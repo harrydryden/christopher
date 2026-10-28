@@ -1,6 +1,6 @@
 "use client";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
-import { cvReviewSections, cvReviewSupportingSections, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
@@ -187,8 +187,11 @@ export function CvDraftEditor({
   };
   const highlightedSkillLabels = candidate.sections.filter(section => section.kind === "skill")
     .flatMap(section => section.skillItems ?? cvSectionTexts(section));
+  const skillSectionCount = candidate.sections.filter(section => section.kind === "skill").length;
+  const skillSectionCap = Math.max(CV_LIMITS.skillSections, content.sections.filter(section => section.kind === "skill").length);
   const skillLimitIssue = cvReviewSkillLimitIssue(candidate.sections);
   const skillIssue = projectionIssue || (candidate.sections.length > 20 ? "This CV has reached its section limit. Remove a section before saving." : null)
+    || cvReviewSkillSectionLimitIssue(candidate.sections, content.sections)
     || skillLimitIssue || cvReviewSkillCharacterIssue(candidate.sections);
   const fingerprint = JSON.stringify(candidate);
   // What was saved, as the same string: it changes only with the revision, so it is worked out once
@@ -496,6 +499,7 @@ export function CvDraftEditor({
             {suggestionError && <p role="alert" className="mt-2 text-12 text-danger">{suggestionError}</p>}
           </section>
           <CvSkillGuidance context="cv" labels={highlightedSkillLabels} />
+          <p className="text-12 text-muted" role="status">{skillSectionCount}/{CV_LIMITS.skillSections} skill sections on this CV{skillSectionCap > CV_LIMITS.skillSections ? " · Older sections remain editable; additions cannot increase their original count" : ""}.</p>
           <div className="border border-line-muted p-3">
             <h3 className="font-semibold">Supporting sections</h3>
             <p className="mt-1 text-12 text-muted">Choose which Education, Training and Interests from your saved Experience belong in this CV. Skills count too: the supporting group is omitted when none of the four kinds is included.</p>
@@ -579,7 +583,7 @@ export function CvDraftEditor({
               })()}
             </div>
           </div>)}
-          {librarySkillSections.length > 0 && <select aria-label="Add section from Experience" className={inputClass} value="" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onChange={(event) => {
+          {librarySkillSections.length > 0 && <select aria-label="Add section from Experience" className={inputClass} value="" disabled={candidate.sections.length >= CV_LIMITS.sections || skillSectionCount >= skillSectionCap} onChange={(event) => {
             const selected = librarySkillSections.find((section) => section.id === event.target.value);
             if (!selected) return;
             if (selected.items.length > CV_LIMITS.skillsPerSection) {
@@ -595,7 +599,7 @@ export function CvDraftEditor({
               <p className="font-semibold">Choose up to {CV_LIMITS.skillsPerSection} skills from {source.heading}</p>
               <p className="text-12 text-muted">{librarySectionChoice.selected.length}/{CV_LIMITS.skillsPerSection} selected. All selected skills stay in a new {source.heading} section.</p>
               {source.items.map((item, itemIndex) => <label key={itemIndex} className="flex items-center gap-2"><input type="checkbox" aria-label={`Select skill ${itemIndex + 1}: ${item} from ${source.heading}`} checked={librarySectionChoice.selected.includes(itemIndex)} disabled={librarySectionChoice.selected.length >= CV_LIMITS.skillsPerSection && !librarySectionChoice.selected.includes(itemIndex)} onChange={(event) => setLibrarySectionChoice((current) => current && current.sourceId === source.id ? { ...current, selected: event.target.checked ? [...current.selected, itemIndex] : current.selected.filter((index) => index !== itemIndex) } : current)} />{item}</label>)}
-              <div className="flex gap-2"><button type="button" className={buttonClass("secondary")} disabled={librarySectionChoice.selected.length === 0 || content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onClick={() => {
+              <div className="flex gap-2"><button type="button" className={buttonClass("secondary")} disabled={librarySectionChoice.selected.length === 0 || candidate.sections.length >= CV_LIMITS.sections || skillSectionCount >= skillSectionCap} onClick={() => {
                 setAddedSkills((previous) => [...previous, { entryId: `manual-skill-${crypto.randomUUID()}`, sourceEntryId: source.id, heading: source.heading, items: source.items.filter((_, index) => librarySectionChoice.selected.includes(index)) }]);
                 setLibrarySectionChoice(null);
               }}>Add selected Experience section</button><button type="button" className={buttonClass("secondary")} onClick={() => setLibrarySectionChoice(null)}>Cancel</button></div>

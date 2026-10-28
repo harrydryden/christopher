@@ -1,6 +1,6 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
-import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { cvSectionTexts } from "@col/core/cv-format";
 import { cvImprovementOwner } from "@col/core/cv-assessment";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
@@ -68,7 +68,8 @@ function applyCvFormEdits(saved: CvContent, form: FormData, library: ReturnType<
   if (!Array.isArray(supportIds) || supportIds.length > 20 || supportIds.some(id => typeof id !== "string")
     || new Set(supportIds).size !== supportIds.length) throw new UserFacingError("The supporting section choices could not be read. Refresh and try again.");
   content.sections = cvReviewSupportingSections(cvReviewSections(saved, rows, removed, added), supportIds as string[], librarySupportSections(library));
-  const skillIssue = cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
+  const skillIssue = cvReviewSkillSectionLimitIssue(content.sections, saved.sections)
+    || cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
   if (skillIssue) throw new UserFacingError(skillIssue);
   delete content.fitNotes;
   return CvContentSchema.parse(content);

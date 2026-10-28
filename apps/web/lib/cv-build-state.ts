@@ -159,7 +159,9 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
   // The kind's policy names the failure; the record itself says who resolves it, because a kind can
   // change hands with repetition (the system tries a refused prompt once, then it is the person's).
   const budgetFailure = failure?.kind === "budget_exhausted" || /AI budget|budget.{0,40}\$/i.test(draft.error ?? "");
-  const policyTitle = budgetFailure ? "CV generation unavailable" : failure ? CV_FAILURE_POLICIES[failure.kind]?.title ?? "The build failed" : null;
+  const policyTitle = budgetFailure
+    ? failure?.budgetLimit === "account" ? "Monthly AI budget reached" : "AI spending limit reached"
+    : failure ? CV_FAILURE_POLICIES[failure.kind]?.title ?? "The build failed" : null;
   // A failure the queue has already moved past: the worker has claimed a later attempt, so the
   // record on the draft is history and the build is simply running again.
   const superseded = !!failure && task?.status === "running" && failure.attempt !== undefined && task.attempts > failure.attempt;
@@ -173,7 +175,9 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
   // explanation of a build that stopped, so only a task the queue gave up on has one of those.
   const taskError = budgetFailure ? null : task?.status === "failed" ? task.error ?? null : null;
   const failureMessage = budgetFailure
-    ? "CV generation is unavailable right now. No CV credit was used. Please try again later."
+    ? failure?.budgetLimit === "account" || failure?.budgetLimit === "day" || failure?.budgetLimit === "discovery"
+      ? failure.message
+      : "An AI spending limit stopped this CV build. No CV credit was used. Review your budget or ask an administrator before retrying."
     : failure?.message ?? draft.error ?? "This build stopped before it finished.";
   const resumeNote = resumeNoteFor(draft.buildCheckpoint);
   const base = {
@@ -300,9 +304,14 @@ export function failureWayForward(
   const done = { retry: canRetry, retryNote: canRetry ? "When you have done that, retry generation." : null };
   switch (action) {
     case "raise_budget":
-      // The failure message already explains the credit and when to retry. Repeating it in the
-      // way-forward panel made the failed CV show the same advice twice.
-      return { links: [], note: null, retry: canRetry, retryNote: null };
+      return { links: [{ label: "Open AI budget", href: "/settings#ai-budget" }], note: null,
+        retry: canRetry, retryNote: null };
+    case "check_deployment_budget":
+      return context.admin
+        ? { links: [{ label: "Open Operations", href: "/admin/health" }],
+            note: "Check the worker's daily AI cap before retrying.", ...done }
+        : { links: [], note: "Ask an administrator to check the deployment's daily AI cap before retrying.",
+            retry: canRetry, retryNote: canRetry ? "Retry after an administrator confirms the cap has capacity." : null };
     case "fix_library":
       return { links: [{ label: "Open the Library", href: "/library" }], note: null, ...done };
     case "shorten_or_raise_pages":

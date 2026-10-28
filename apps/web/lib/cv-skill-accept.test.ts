@@ -92,3 +92,12 @@ it("groups Unicode-equivalent new category headings into one preview and saved s
     .toEqual([["Excel", "Power BI"]]);
   expect(accepted.library.entries.filter(entry => entry.kind === "skill" && entry.heading === "Analytics")).toHaveLength(1);
 });
+
+it("keeps five CV skill categories and rejects a sixth suggested category", () => {
+  const five = CvContentSchema.parse({ ...content, sections: [content.sections[0],
+    ...Array.from({ length: 5 }, (_, index) => ({ entryId: `skill-${index}`, kind: "skill", heading: `Category ${index}`,
+      bullets: [`Skill ${index}`], skillItems: [`Skill ${index}`] }))] });
+  expect(() => acceptCvSkillSuggestions(library, five, [suggestion("99999999-9999-4999-8999-999999999999", "Extra", "Excel")]))
+    .toThrow("up to 5 skill sections");
+  expect(acceptCvSkillSuggestions(library, five, []).content.sections).toHaveLength(6);
+});

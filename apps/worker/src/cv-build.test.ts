@@ -341,14 +341,15 @@ it("returns the credit when an internal budget limit prevents a build", async ()
 
   const refused = await draftAfter(draft.id);
   expect(refused.status).toBe("failed");
-  expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", retryable: false, action: "raise_budget", motion: "admit_budget" });
-  expect(refused.error).toContain("CV generation is unavailable right now");
+  expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", retryable: false, action: "raise_budget", budgetLimit: "account", motion: "admit_budget" });
+  expect(refused.error).toContain("your budget of $0.01 has");
   expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("released");
   const rows = await steps(draft.id);
   expect(motions(rows)).toEqual(["load_inputs", "admit_budget"]);
   const admit = rows[1]!;
   expect(admit.status).toBe("failed");
-  expect(admit.detail).toMatchObject({ stage: "rubric", limitUsd: 0.01, heldUsd: 0, leftUsd: 0.01 });
+  expect(admit.detail).toMatchObject({ stage: "rubric", limit: "account", limitUsd: 0.01,
+    spentUsd: 0, heldUsd: 0, leftUsd: 0.01 });
   // Nothing was spent, and the attempt that would have spent it is not retried.
   expect(scripted.calls).toEqual([]);
   expect(await db.select().from(schema.aiCalls)).toHaveLength(0);

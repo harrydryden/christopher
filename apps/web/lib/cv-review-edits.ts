@@ -31,6 +31,13 @@ export function cvReviewSkillLimitIssue(sections: CvContent["sections"]): string
   return over ? `${over.heading} has more than ${CV_LIMITS.skillsPerSection} skills. Remove some before saving or previewing.` : null;
 }
 
+/** Existing older CVs may already exceed the new cap; editing them must not add another section. */
+export function cvReviewSkillSectionLimitIssue(sections: CvContent["sections"], saved: CvContent["sections"] = []): string | null {
+  const skillCount = (items: CvContent["sections"]) => items.filter(section => section.kind === "skill").length;
+  return skillCount(sections) > Math.max(CV_LIMITS.skillSections, skillCount(saved))
+    ? `This CV supports up to ${CV_LIMITS.skillSections} skill sections. Remove one before adding another.` : null;
+}
+
 export function cvReviewSkillCharacterIssue(sections: CvContent["sections"]): string | null {
   const over = sections.find((section) => section.kind === "skill" && (section.skillItems ?? cvSectionTexts(section))
     .some(item => cvSkillCharacterState(item).tooLong));

@@ -2,7 +2,7 @@
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import { cvReviewSections, cvReviewSupportingSections, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
 import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState, cvSkillIdentity } from "@col/core/cv-format";
 import { cvSkillDraftContext } from "@col/core/cv-skill-draft-context";
@@ -147,6 +147,8 @@ export function CvDraftEditor({
   }>();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
+  const onSaveStatusChange = useCallback((status: { pending: boolean; error: string | null }) => setSaveStatus(status), []);
   const controller = useRef<AbortController | null>(null);
   const selectedSuggestions = skillRun?.status === "ready" ? skillRun.suggestions.filter(item => selectedSuggestionIds.includes(item.id)) : [];
   let currentSkillLabels: string[] = [];
@@ -170,6 +172,9 @@ export function CvDraftEditor({
   const preSuggestionCandidate: CvContent = { ...content, theme, summary: summary.trim(), sections: preSuggestionSections };
   const preSuggestionFingerprint = JSON.stringify(cvSkillDraftContext(preSuggestionCandidate));
   const suggestionsStale = !!skillRun && suggestionInputFingerprint !== preSuggestionFingerprint;
+  const selectedNewSuggestionIds = selectedSuggestions.filter(item => !currentSkillLabels.some(label => cvSkillIdentity(label) === cvSkillIdentity(item.label)))
+    .map(item => item.id);
+  const saveableSuggestionIds = suggestionsStale ? [] : selectedNewSuggestionIds;
   if (suggestionsStale) candidateSections = preSuggestionSections;
   useEffect(() => {
     if (suggestionsStale && selectedSuggestionIds.length) setSelectedSuggestionIds([]);
@@ -345,6 +350,7 @@ export function CvDraftEditor({
         <SettingsForm
           id={formId}
           action={saveCvDraft.bind(null, id)}
+          onStatusChange={onSaveStatusChange}
           submitLabel={finalised ? "Save as new revision · free" : dirty ? "Save and check · free" : "Save as new revision · free"}
           submitVariant={!finalised && dirty ? "primary" : "secondary"}
           submitDisabled={!!skillIssue}
@@ -359,7 +365,7 @@ export function CvDraftEditor({
           <input type="hidden" name="addedSupportIds" value={JSON.stringify(addedSupportIds)} />
           <input type="hidden" name="pageLibraryVersion" value={latestLibraryVersion ?? ""} />
           <input type="hidden" name="skillSuggestionRunId" value={skillRun?.id ?? ""} />
-          <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(suggestionsStale ? [] : selectedSuggestionIds)} />
+          <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(saveableSuggestionIds)} />
         </SettingsForm>
       </fieldset>
       <p className="mt-2 text-12 text-muted">Saving keeps your wording and checks a new revision. Rewriting uses the latest Experience evidence and one CV credit.</p>
@@ -478,6 +484,15 @@ export function CvDraftEditor({
                 </label>;
               })}</div>
               : <p role="status" className="mt-2 text-12 text-muted">No grounded skills were found for this role. You can refresh after updating Experience.</p>)}
+            <div className="mt-4 space-y-2">
+              <p role="status" className="text-12 text-muted">{saveableSuggestionIds.length} new {saveableSuggestionIds.length === 1 ? "skill" : "skills"} selected to save{saveableSuggestionIds.length ? " · Unsaved" : ""}.</p>
+              <p className="text-12 text-muted">Saves selected skills and your other current CV edits as a new revision. New skills and categories are also saved to Experience.</p>
+              <button type="submit" form={formId} className={buttonClass("primary")}
+                disabled={!hydrated || !!blocked || !!skillIssue || saveableSuggestionIds.length === 0 || saveStatus.pending}>
+                {saveStatus.pending ? "Saving selected skills…" : "Save selected skills to CV"}
+              </button>
+              {saveStatus.error && <p role="alert" className="text-12 text-danger">Save update: {saveStatus.error}</p>}
+            </div>
             {suggestionError && <p role="alert" className="mt-2 text-12 text-danger">{suggestionError}</p>}
           </section>
           <CvSkillGuidance context="cv" labels={highlightedSkillLabels} />

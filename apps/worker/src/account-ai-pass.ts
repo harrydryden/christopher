@@ -4,6 +4,7 @@ import { accountCanScore } from "@col/db";
 import { budgetLimits, recordAiUsage, tryReserveAi, type AiHold } from "./budget";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
+import { serverFallbackEnabled } from "./provider-routing";
 
 /** How long a pass may hold its share of the month: the task's deadline, with room to spare. */
 const HOLD_MINUTES = 10;
@@ -27,6 +28,7 @@ export function openAccountAiPass(deps: WorkerDeps, opts: {
   const ai = createAiEngine({
     apiKey: deps.env.anthropicApiKey,
     client: deps.aiClient,
+    useServerFallback: serverFallbackEnabled(deps),
     getModel: () => opts.model,
     getStageRoutes: async () => (await deps.settings()).stageRoutes,
     ...(opts.signal ? { signal: opts.signal } : {}),

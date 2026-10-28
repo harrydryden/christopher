@@ -51,7 +51,7 @@ describe("libraryImportView", () => {
 
     expect(view.state).toBe("proposed");
     expect(view.counts).toEqual({ jobs: 1, rows: 2, education: 1, skills: 1 });
-    expect(view.headline).toBe("Found in jane-okafor-cv.pdf: 1 job, 2 responsibilities, 1 qualification and 1 skill");
+    expect(view.headline).toBe("Found in jane-okafor-cv.pdf: 1 job, 2 responsibilities, 1 education or training item and 1 skill");
     expect(view.proposal!.employment[0]!.company).toBe("Acme Logistics");
   });
 
@@ -82,7 +82,7 @@ describe("libraryImportView", () => {
 describe("the sentences", () => {
   it("lists only what was found, and says so when nothing was", () => {
     expect(proposalHeadline({ jobs: 4, rows: 17, education: 2, skills: 0 }, "your CV"))
-      .toBe("Found in your CV: 4 jobs, 17 responsibilities and 2 qualifications");
+      .toBe("Found in your CV: 4 jobs, 17 responsibilities and 2 education or training items");
     expect(proposalHeadline({ jobs: 0, rows: 0, education: 0, skills: 3 }, "your CV")).toBe("Found in your CV: 3 skills");
     expect(proposalHeadline({ jobs: 0, rows: 0, education: 0, skills: 0 }, "your CV")).toBe("Nothing to add from your CV");
   });

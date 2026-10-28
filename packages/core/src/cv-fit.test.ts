@@ -87,11 +87,22 @@ it('reports each motion of writing and fitting with the figures behind it',async
 it('never silently drops employment or education to satisfy the page count',async()=>{
  const events: CvFitEvent[] = [];
  const failing = buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}),undefined,async event => { events.push(event); });
- await expect(failing).rejects.toThrow('omitted employment or education');
+ await expect(failing).rejects.toThrow('omitted employment or a qualification');
  // Named in the taxonomy the whole build is classified by: what the writer returned is unusable.
  await expect(failing).rejects.toMatchObject({ kind:'output_invalid', detail:{ omitted:['e'] } });
  // The reading that found it is reported before the build stops, so the page can say what was lost.
  expect(events.at(-1)).toMatchObject({ motion:'check_plan', omitted:['e'] });
+});
+it('budgets and protects Training as a qualification', async () => {
+ const training = { id:'t', kind:'training' as const, heading:'PRINCE2 Practitioner', details:'PRINCE2 Practitioner, 2019' };
+ const source: CvLibrary = { ...library, entries:[...library.entries, training] };
+ const budget = createCvWritingBudget(source, 'Finance');
+ expect(budget.blocks.find(block => block.entryId === 't')).toMatchObject({ kind:'training', priority:10 });
+ expect(cvBudgetViolations(plan, budget)).toContain('Retain t: training block.');
+ const missing = buildFittedCv(source, 'Finance', async () => plan);
+ await expect(missing).rejects.toMatchObject({ kind:'output_invalid', detail:{ omitted:['t'] } });
+ const content = materialiseCv(source, { ...plan, sections:[...plan.sections, { entryId:'t', bullets:['PRINCE2 Practitioner, 2019'] }] });
+ expect(content.sections.find(section => section.entryId === 't')).toMatchObject({ kind:'training', heading:'PRINCE2 Practitioner' });
 });
 it('ranks structured skill labels including AI and R, and enforces their allocated count', async () => {
  const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',theme:{ ...DEFAULT_CV_THEME, maxPages: 2 },entries:[

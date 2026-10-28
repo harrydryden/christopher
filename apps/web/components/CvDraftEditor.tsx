@@ -1,18 +1,19 @@
 "use client";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
-import { cvReviewSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, splitCvReviewSkillRow, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
-import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@col/core/cv-format";
+import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState, cvSkillIdentity } from "@col/core/cv-format";
 import { cvDisplaySections } from "@col/core/cv-helpers";
 import type { CvTheme } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
-import { saveCvDraft } from "@/app/actions/cv";
+import { readCvSkillSuggestions, requestCvSkillSuggestions, saveCvDraft, type CvSkillSuggestionsResult } from "@/app/actions/cv";
 import { CvWorkspacePanel } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
 import { Button } from "./Button";
 import { CvAppearance } from "./CvAppearance";
+import { CvSkillGuidance } from "./CvSkillGuidance";
 import { SettingsForm } from "./SettingsForm";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass } from "@/components/Field";
@@ -81,6 +82,9 @@ export function CvDraftEditor({
   finalised = false,
   hasFinalPdf = false,
   librarySkillSections = [],
+  librarySupportingSections = [],
+  latestSkillTargets = [],
+  latestLibraryVersion,
 }: {
   id: string;
   content: CvContent;
@@ -104,8 +108,13 @@ export function CvDraftEditor({
   hasFinalPdf?: boolean;
   /** Active, structured skill blocks in the Library snapshot used for this draft. */
   librarySkillSections?: LibrarySkillSection[];
+  librarySupportingSections?: LibrarySupportSection[];
+  latestSkillTargets?: { id: string; heading: string; items: string[] }[];
+  latestLibraryVersion?: number;
 }) {
   const formId = `cv-edit-${id}`;
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
   const [summary, setSummary] = useState(content.summary);
   // A saved revision may predate the font and page limit; resolved once, on the server, so edits
   // stay comparable.
@@ -117,7 +126,13 @@ export function CvDraftEditor({
     ),
   );
   const [removedSkillIds, setRemovedSkillIds] = useState<string[]>([]);
+  const [addedSupportIds, setAddedSupportIds] = useState<string[]>([]);
   const [addedSkills, setAddedSkills] = useState<AddedSkillSection[]>([]);
+  const [skillRun, setSkillRun] = useState<Extract<CvSkillSuggestionsResult, { ok: true }>["run"] | null>(null);
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
+  const [suggestionError, setSuggestionError] = useState("");
+  const [suggestionPollStopped, setSuggestionPollStopped] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [librarySectionChoice, setLibrarySectionChoice] = useState<{ sourceId: string; selected: number[] } | null>(null);
   const [preview, setPreview] = useState<{
     url: string;
@@ -127,14 +142,31 @@ export function CvDraftEditor({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const controller = useRef<AbortController | null>(null);
+  const selectedSuggestions = skillRun?.status === "ready" ? skillRun.suggestions.filter(item => selectedSuggestionIds.includes(item.id)) : [];
+  let currentSkillLabels: string[] = [];
+  let projectionIssue: string | null = null;
+  let candidateSections: CvContent["sections"];
+  try {
+    const beforeSuggestions = cvReviewSupportingSections(cvReviewSections(content, rows, removedSkillIds, addedSkills),
+      addedSupportIds, librarySupportingSections);
+    currentSkillLabels = beforeSuggestions.filter(section => section.kind === "skill")
+      .flatMap(section => section.skillItems ?? cvSectionTexts(section));
+    candidateSections = cvReviewSuggestedSections(beforeSuggestions, selectedSuggestions, latestSkillTargets);
+  } catch (failure) {
+    projectionIssue = failure instanceof Error ? failure.message : "Review your section choices.";
+    candidateSections = content.sections;
+  }
   const candidate = {
     ...content,
     theme,
     summary,
-    sections: cvReviewSections(content, rows, removedSkillIds, addedSkills),
+    sections: candidateSections,
   };
+  const highlightedSkillLabels = candidate.sections.filter(section => section.kind === "skill")
+    .flatMap(section => section.skillItems ?? cvSectionTexts(section));
   const skillLimitIssue = cvReviewSkillLimitIssue(candidate.sections);
-  const skillIssue = skillLimitIssue || cvReviewSkillCharacterIssue(candidate.sections);
+  const skillIssue = projectionIssue || (candidate.sections.length > 20 ? "This CV has reached its section limit. Remove a section before saving." : null)
+    || skillLimitIssue || cvReviewSkillCharacterIssue(candidate.sections);
   const fingerprint = JSON.stringify(candidate);
   // What was saved, as the same string: it changes only with the revision, so it is worked out once
   // rather than stringifying the whole CV a second time on every keystroke.
@@ -148,6 +180,32 @@ export function CvDraftEditor({
     [preview],
   );
   useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => {
+    if (!skillRun || suggestionPollStopped || (skillRun.status !== "queued" && skillRun.status !== "running")) return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await readCvSkillSuggestions(id, skillRun.id);
+        if (!active) return;
+        if (result.ok) setSkillRun(result.run);
+        else { setSuggestionError(result.error); setSuggestionPollStopped(true); }
+      } catch {
+        if (active) { setSuggestionError("Could not check suggestions. Check your connection; this request may still be running."); setSuggestionPollStopped(true); }
+      }
+    }, 3_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [id, skillRun?.id, skillRun?.status, suggestionPollStopped]);
+  async function loadSuggestions(refresh: boolean) {
+    setSuggestionError("");
+    setSuggestionPollStopped(false);
+    try {
+      const result = await requestCvSkillSuggestions(id, refresh, latestLibraryVersion);
+      if (result.ok) { setSkillRun(result.run); setSelectedSuggestionIds([]); }
+      else setSuggestionError(result.error);
+    } catch {
+      setSuggestionError("Could not start suggestions. Check your connection and try again.");
+    }
+  }
   async function updatePreview() {
     if (skillIssue) {
       setError(skillIssue);
@@ -212,9 +270,9 @@ export function CvDraftEditor({
   }
   return (
     <>
-      {/* A disabled fieldset disables every control inside it, which is how the unverified wall
-          reaches a submit button this component does not own. */}
-      <fieldset disabled={!!blocked} className="min-w-0" data-cv-editor-dirty={dirty ? "true" : "false"}>
+      {/* Save and every editable panel remain disabled until React has attached their handlers. */}
+      <fieldset disabled={!!blocked || !hydrated} className="min-w-0" data-cv-editor-dirty={dirty ? "true" : "false"}
+        data-cv-editor-ready={hydrated ? "true" : "false"}>
         <SettingsForm
           id={formId}
           action={saveCvDraft.bind(null, id)}
@@ -229,6 +287,10 @@ export function CvDraftEditor({
           )}
           <input type="hidden" name="removedSkills" value={JSON.stringify(removedSkillIds)} />
           <input type="hidden" name="addedSkills" value={JSON.stringify(addedSkills)} />
+          <input type="hidden" name="addedSupportIds" value={JSON.stringify(addedSupportIds)} />
+          <input type="hidden" name="pageLibraryVersion" value={latestLibraryVersion ?? ""} />
+          <input type="hidden" name="skillSuggestionRunId" value={skillRun?.id ?? ""} />
+          <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(selectedSuggestionIds)} />
         </SettingsForm>
       </fieldset>
       <p className="mt-2 text-12 text-muted">Saving keeps your wording and checks a new revision. Rewriting uses the latest Experience evidence and one CV credit.</p>
@@ -240,7 +302,7 @@ export function CvDraftEditor({
       <section className="flex flex-wrap items-center gap-3 border-b border-line-muted pb-3 text-13" aria-label="CV preview">
         {finalised && hasFinalPdf && !dirty
           ? <a href={`/api/cv/${id}/pdf?preview=1`} target="_blank" rel="noopener noreferrer" className={buttonClass("secondary", "md", "no-underline")}>Preview final PDF</a>
-          : <button type="button" disabled={pending || !!blocked} onClick={updatePreview} className={buttonClass("secondary")}>
+          : <button type="button" disabled={pending || !!blocked || !hydrated} onClick={updatePreview} className={buttonClass("secondary")}>
               {pending ? "Rendering preview…" : "Preview current edits"}
             </button>}
         <span className="text-muted">{dirty ? "Preview includes unsaved edits; save and check before finalising." : finalised ? hasFinalPdf ? "The approved PDF is shown exactly as finalised." : "Preview this wording before saving a new revision." : "Preview of this saved revision."}</span>
@@ -255,7 +317,7 @@ export function CvDraftEditor({
         <section className="border border-line-muted p-4">
           <h2 className="text-14 font-semibold">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
-            <CvAppearance value={theme} onChange={setTheme} />
+            <fieldset disabled={!!blocked || !hydrated} className="contents"><CvAppearance value={theme} onChange={setTheme} /></fieldset>
           </div>
         </section>
       </CvWorkspacePanel>
@@ -272,6 +334,7 @@ export function CvDraftEditor({
         {assessment}
       </CvWorkspacePanel>
       <CvWorkspacePanel tab="content">
+        <fieldset disabled={!!blocked || !hydrated} className="contents">
         <section className="space-y-3 border border-line-muted p-4">
           <h2 className="text-14 font-semibold">CV wording</h2>
           <p className="text-14">
@@ -323,7 +386,49 @@ export function CvDraftEditor({
             Changed profile and bullet wording is kept as saved phrasing for the next CV. It adds no
             facts to your Experience.
           </p>
-          {librarySkillSections.length > 0 && <p className="text-12 text-muted">Experience choices come from the snapshot saved with this CV. Add each skill group as its own section; check your current Experience for newer changes.</p>}
+          <details className="border border-line-muted p-3" open={suggestionsOpen} onToggle={(event) => {
+            const open = event.currentTarget.open;
+            setSuggestionsOpen(open);
+            if (open && !skillRun) void loadSuggestions(false);
+          }}>
+            <summary className="cursor-pointer font-semibold">Suggested skills from your Experience</summary>
+            <p className="mt-2 text-12 text-muted">This is a recommended set for the whole CV, including relevant skills already here. Existing skills are marked included; select any new ones you want to add. Remove a current skill if you want to replace it.</p>
+            {skillRun?.status === "queued" || skillRun?.status === "running" ? <p role="status" className="mt-2 text-12">Checking your Experience and this role…</p> : null}
+            {skillRun?.status === "failed" && <p role="status" className="mt-2 text-12 text-warn">{skillRun.error ?? "Suggestions could not be prepared."}</p>}
+            {skillRun?.status === "ready" && (skillRun.suggestions.length
+              ? <div className="mt-3 space-y-3">{skillRun.suggestions.map(item => {
+                const alreadyIncluded = currentSkillLabels.some(label => cvSkillIdentity(label) === cvSkillIdentity(item.label));
+                return <label key={item.id} className="flex gap-2 text-14">
+                  <input type="checkbox" checked={alreadyIncluded || selectedSuggestionIds.includes(item.id)} disabled={alreadyIncluded}
+                    onChange={event => setSelectedSuggestionIds(current => event.target.checked
+                      ? [...current, item.id] : current.filter(id => id !== item.id))} />
+                  <span><strong>{item.label}</strong> · {item.category}{alreadyIncluded ? " · Already on this CV" : ""}<span className="block text-12 text-muted">Your Experience: “{item.evidenceQuote}” · Role: “{item.roleQuote}”</span></span>
+                </label>;
+              })}</div>
+              : <p role="status" className="mt-2 text-12 text-muted">No grounded skills were found for this role. You can refresh after updating Experience.</p>)}
+            {suggestionError && <p role="alert" className="mt-2 text-12 text-danger">{suggestionError}</p>}
+            <button type="button" className={`${buttonClass("secondary")} mt-3`} onClick={() => void loadSuggestions(true)}
+              disabled={!suggestionPollStopped && (skillRun?.status === "queued" || skillRun?.status === "running")}>{suggestionPollStopped ? "Reconnect to suggestion check" : "Refresh suggestions"}</button>
+          </details>
+          <CvSkillGuidance context="cv" labels={highlightedSkillLabels} />
+          <div className="border border-line-muted p-3">
+            <h3 className="font-semibold">Supporting sections</h3>
+            <p className="mt-1 text-12 text-muted">Choose which Education, Training and Interests from your saved Experience belong in this CV. Skills count too: the supporting group is omitted when none of the four kinds is included.</p>
+            {removedSkillIds.filter(sectionId => content.sections.some(section => section.entryId === sectionId && section.kind !== "experience")).map(sectionId => {
+              const section = content.sections.find(item => item.entryId === sectionId)!;
+              return <button key={sectionId} type="button" className={`${buttonClass("secondary")} mt-2 mr-2`}
+                onClick={() => setRemovedSkillIds(current => current.filter(id => id !== sectionId))}>Restore {section.kind} · {section.heading}</button>;
+            })}
+            {librarySupportingSections.filter(section => !content.sections.some(existing => existing.entryId === section.id)).map(section =>
+              <label key={section.id} className="mt-2 flex items-center gap-2 text-14">
+                <input type="checkbox" checked={addedSupportIds.includes(section.id)} disabled={!!section.issue || (!addedSupportIds.includes(section.id)
+                  && content.sections.length - removedSkillIds.length + addedSkills.length + addedSupportIds.length >= 20)} onChange={event => setAddedSupportIds(current => event.target.checked
+                  ? [...current, section.id] : current.filter(id => id !== section.id))} />
+                <span>{section.kind === "training" ? "Training" : section.kind === "education" ? "Education" : "Interests"} · {section.heading}
+                  {section.issue && <span className="block text-12 text-warn">{section.issue}</span>}</span>
+              </label>)}
+          </div>
+          {librarySkillSections.length > 0 && <p className="text-12 text-muted">Existing skill choices come from the snapshot saved with this CV. New suggestions use your latest Experience.</p>}
           {skillIssue && <p className="text-12 text-danger" role="alert">{skillIssue}</p>}
           {cvDisplaySections(content).filter(({ section }) => !removedSkillIds.includes(section.entryId)).map(({ section, index }) => {
             const blockId = cvSectionBlockId(section.entryId);
@@ -337,7 +442,7 @@ export function CvDraftEditor({
             return <div key={section.entryId} className="space-y-2 text-14">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label htmlFor={blockId} className="font-semibold">{skill ? `Skills · ${section.heading}` : section.heading}</label>
-                {skill && <button type="button" className={buttonClass("secondary")} onClick={() => setRemovedSkillIds((previous) => [...previous, section.entryId])}>Remove skill section</button>}
+                {section.kind !== "experience" && <button type="button" className={buttonClass("secondary")} onClick={() => setRemovedSkillIds((previous) => [...previous, section.entryId])}>Remove section</button>}
               </div>
               {!!section.industryDescriptions?.length && <span className="block text-12 text-muted">{section.industryDescriptions.join(" · ")}</span>}
               <CommentCount n={commentCounts[blockId] ?? 0} />
@@ -389,7 +494,6 @@ export function CvDraftEditor({
               })()}
             </div>
           </div>)}
-          <button type="button" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} className={buttonClass("secondary")} onClick={() => setAddedSkills((previous) => [...previous, { entryId: `manual-skill-${crypto.randomUUID()}`, heading: "Skills", items: [""] }])}>Add skill section</button>
           {librarySkillSections.length > 0 && <select aria-label="Add section from Experience" className={inputClass} value="" disabled={content.sections.length - removedSkillIds.length + addedSkills.length >= 20} onChange={(event) => {
             const selected = librarySkillSections.find((section) => section.id === event.target.value);
             if (!selected) return;
@@ -413,6 +517,7 @@ export function CvDraftEditor({
             </div>;
           })()}
         </section>
+        </fieldset>
         {share}
         {tracking}
         {buildLog && <CvDisclosure label="Build details">{buildLog}</CvDisclosure>}

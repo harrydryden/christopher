@@ -43,6 +43,7 @@ describe("task dedupe keys and priorities", () => {
       rescore_all: [{ userId: u }, "rescore_all:u1", 6],
       reevaluate_gate: [{ userId: u, companyId: c }, "reevaluate_gate:u1:c1", 1],
       generate_cv: [{ draftId: "cv1" }, "generate_cv:cv1", 2],
+      suggest_cv_skills: [{ userId: u, draftId: "cv1", runId: "r1" }, "suggest_cv_skills:r1", 1],
       import_posting: [{ userId: u, companyId: c, url: "https://a.example/j" }, "import_posting:u1:c1:https://a.example/j", 1],
       review_library: [{ userId: u, libraryVersion: 3 }, "review_library:u1", 1],
       draft_evidence: [{ userId: u, evidenceDraftId: "ed1", attempt: 1 }, "draft_evidence:ed1:1", 1],
@@ -76,7 +77,7 @@ describe("task deadlines", () => {
 
   it("names every task type once", () => {
     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
-    expect(TASK_TYPE_NAMES).toHaveLength(28);
+    expect(TASK_TYPE_NAMES).toHaveLength(29);
   });
 });
 

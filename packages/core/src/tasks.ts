@@ -22,6 +22,8 @@ export interface TaskPayloads {
    * the draft still finds it.
    */
   generate_cv: { draftId: string; userId?: string; mode?: "assess" | "improve"; rubric?: unknown; improvements?: string[] };
+  /** One bounded, account-owned proposal; never writes the user's skills library. */
+  suggest_cv_skills: { userId: string; draftId: string; runId: string };
   discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "partial" | "suspect_empty" | "shrunk" | "pasted" | "recovery" | "logo_sweep" };
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
@@ -126,7 +128,7 @@ export const GATE_REEVALUATION_VERSION = 2;
  * the lane cannot disagree about which types count.
  */
 export const INTERACTIVE_TASK_TYPES = [
-  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "draft_evidence", "import_library_document", "import_role_description",
+  "generate_cv", "suggest_cv_skills", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "draft_evidence", "import_library_document", "import_role_description",
 ] as const satisfies readonly TaskType[];
 
 /** The shared daily scan and its fan-out: the scan lane's own work. */
@@ -163,6 +165,7 @@ const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T])
   // Keyed by the draft, not the account: a draft id is already one account's, and the interface
   // and the abandonment hooks find a build's task by exactly this key.
   generate_cv: { priority: 2, dedupe: (p) => `generate_cv:${p.draftId}` },
+  suggest_cv_skills: { priority: 1, dedupe: (p) => `suggest_cv_skills:${p.runId}` },
   import_posting: { priority: 1, dedupe: (p) => `import_posting:${p.userId}:${p.companyId}:${p.url}` },
   // Someone is looking at the Library, waiting for the scores to land. Deliberately not scoped to
   // the version: the editor saves the whole library at once, so a person typing through five saves
@@ -251,6 +254,7 @@ export function cvBuildDeadlineMs(allowances: Record<string, number> = CV_STAGE_
 export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: number } = {
   scan_company: 3 * 60_000,
   generate_cv: cvBuildDeadlineMs(),
+  suggest_cv_skills: 4 * 60_000,
   discover: 5 * 60_000,
   // A page fetch, a browser render when the page needs one, and one model call.
   import_posting: 4 * 60_000,

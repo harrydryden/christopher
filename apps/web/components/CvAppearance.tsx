@@ -181,6 +181,9 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
         >
           EDUCATION AND SKILLS
         </p>
+        <h4 className="text-14 font-semibold">Education</h4>
+        <p className="text-14 font-semibold">Degree · Example University</p>
+        <p className="text-14">• Graduated with distinction.</p>
         <h4 className="text-14 font-semibold">Skills</h4>
         <div className="flex flex-wrap gap-2">
           {["Financial planning", "Team leadership", "SQL"].map((skill) => (
@@ -196,8 +199,6 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
             </span>
           ))}
         </div>
-        <h4 className="text-14 font-semibold">Education</h4>
-        <p className="text-14">• Degree · Example University</p>
       </div>
     </fieldset>
   );

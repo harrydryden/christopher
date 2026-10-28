@@ -242,7 +242,7 @@ export async function selectCvToFit(
     if (budget.blocks.some((block) => block.entryId === section.entryId))
       return true;
     const entry = library.entries.find((entry) => entry.id === section.entryId);
-    if (entry?.kind === "experience" || entry?.kind === "education")
+    if (entry?.kind === "experience" || entry?.kind === "education" || entry?.kind === "training")
       return true;
     const soleEssentialBlock = [...essentialSections.values()].some(sections => sections.size === 1 && sections.has(section.entryId));
     if (soleEssentialBlock) {
@@ -320,14 +320,14 @@ export async function selectCvToFit(
   for (;;) {
     const previous = reachable.at(-1)!;
     const next = structuredClone(previous.plan);
-    // Education is protected. Every employment entry retains at least one bullet.
+    // Education and training are protected. Every employment entry retains at least one bullet.
     const semanticCounts = requirementCounts(next, semantic, library);
     const candidates = next.sections
       .flatMap((section, sectionIndex) => {
         const entry = library.entries.find(
           (entry) => entry.id === section.entryId,
         )!;
-        if (entry.kind === "education") return [];
+        if (entry.kind === "education" || entry.kind === "training") return [];
         const values = section.skillItems ?? section.bullets;
         return values.flatMap((value, index) =>
           entry.kind === "experience" && values.length === 1
@@ -476,7 +476,7 @@ export async function buildFittedCv(
     await say({ motion: "write", phase: "done", attempt: attempt + 1, ...planSize(plan, budget) });
     const missing = budget.blocks.filter(
       (block) =>
-        (block.kind === "experience" || block.kind === "education") &&
+        (block.kind === "experience" || block.kind === "education" || block.kind === "training") &&
         !plan.sections.some((section) => section.entryId === block.entryId),
     );
     // Prose libraries and explicit skill lists have different authoring contracts.
@@ -497,7 +497,7 @@ export async function buildFittedCv(
     if (missing.length)
       throw new CvFitFailure(
         "output_invalid",
-        "The writer omitted employment or education. No incomplete CV was saved.",
+        "The writer omitted employment or a qualification. No incomplete CV was saved.",
         { omitted: missing.map(block => block.entryId) },
       );
     if (skillCorrections.length) {
@@ -605,7 +605,7 @@ export async function buildFittedCv(
     );
   throw new CvFitFailure(
     "page_limit_unfittable",
-    `The builder could not fit the minimum employment and education content into ${maxPages} ${maxPages === 1 ? "page" : "pages"} after three budgeted attempts. Reduce the selected evidence blocks or profile detail, or raise the page limit in Settings, then save again.`,
+    `The builder could not fit the minimum employment and qualification content into ${maxPages} ${maxPages === 1 ? "page" : "pages"} after three budgeted attempts. Reduce the selected evidence blocks or profile detail, or raise the page limit in Settings, then save again.`,
     { pages: feedback?.pageCount ?? maxPages + 1, maxPages, attempts: 3 },
   );
 }

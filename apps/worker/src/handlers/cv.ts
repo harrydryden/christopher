@@ -26,6 +26,7 @@ import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@col
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, releaseCvCredit, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@col/db";
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@col/ai";
+import { serverFallbackEnabled } from "../provider-routing";
 import {
   CvContentSchema,
   CvStoredPlanSchema,
@@ -357,7 +358,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           // Each saved revision carries its own page limit in its theme.
           const reusedContent = !!saved && savedPages! <= cvMaxPages(saved.theme);
           step.add({
-            roles: counted("experience"), qualifications: counted("education"), skillBlocks: counted("skill"),
+            roles: counted("experience"), qualifications: counted("education") + counted("training"), skillBlocks: counted("skill"),
             reusedRubric: !!reused, reusedContent,
           });
           return { library, saved, reusedContent, fromCheckpoint, savedPages };
@@ -458,6 +459,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       const ai = createAiEngine({
         apiKey: deps.env.anthropicApiKey,
         client: deps.aiClient,
+        useServerFallback: serverFallbackEnabled(deps),
         getModel: () => draft.model,
         getStageRoutes: async () => stageRoutes,
         // Every call this build makes is made under its signal, so a deadline, a lost lease or a
@@ -1024,14 +1026,14 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
             }
             const omitted = library.entries.filter(entry =>
-              (entry.kind === "experience" || entry.kind === "education") &&
+              (entry.kind === "experience" || entry.kind === "education" || entry.kind === "training") &&
               !plan.sections.some(section => section.entryId === entry.id));
             if (omitted.length)
-              throw new CvBuildStop("output_invalid", "The optional revision omitted employment or education.");
+              throw new CvBuildStop("output_invalid", "The optional revision omitted employment or qualifications.");
             // The optional pass strengthens role evidence. Preserve the already checked qualification
-            // wording, so retaining an education block cannot conceal the loss of one qualification.
+            // wording, so retaining a block cannot conceal the loss of one qualification.
             const baselineQualifications = new Map(CvStoredPlanSchema.parse(args.baselineContent).sections
-              .filter(section => library.entries.some(entry => entry.id === section.entryId && entry.kind === "education"))
+              .filter(section => library.entries.some(entry => entry.id === section.entryId && (entry.kind === "education" || entry.kind === "training")))
               .map(section => [section.entryId, section]));
             plan.sections = plan.sections.map(section => baselineQualifications.get(section.entryId) ?? section);
             // One author call only. Deterministic fitting may remove whole lower-value bullets; an

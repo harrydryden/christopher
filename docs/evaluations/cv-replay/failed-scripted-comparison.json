@@ -1,0 +1,32 @@
+{
+  "kind": "cv-replay-scripted-baseline-comparison",
+  "at": "2026-10-28T07:05:29.153Z",
+  "promptSetVersion": "710b956d15c1",
+  "unverified": false,
+  "source": "live provider recording",
+  "outcome": "published",
+  "grade": {
+    "passed": false,
+    "invariants": {
+      "claimsSupported": true,
+      "coverageNotLower": true,
+      "pageLimitMet": true,
+      "noEssentialRegressed": false
+    },
+    "score": 90,
+    "pageCount": 2,
+    "regressions": [
+      {
+        "requirementId": "r4",
+        "before": 1,
+        "after": 0.5
+      }
+    ]
+  },
+  "baseline": {
+    "source": "draft",
+    "score": 90,
+    "pageCount": 2
+  },
+  "note": "The saved scripted fixture marked r4 fully met; live evidence review marked regulated-environment experience partial because specific regulatory accountability was absent. This comparison is not a release qualification."
+}

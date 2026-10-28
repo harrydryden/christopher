@@ -5,6 +5,7 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
@@ -32,6 +33,30 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+});
+
+it("keeps the server-rendered editor disabled until hydration enables its handlers", () => {
+  const props = { id: "cv-1", content, theme: DEFAULT_CV_THEME,
+    librarySkillSections: [{ id: "saved-tools", heading: "Tools", items: ["Python"] }] };
+  const html = renderToString(<CvDraftEditor {...props} />);
+  expect(html).toContain('data-cv-editor-ready="false"');
+  expect(html).toMatch(/<fieldset[^>]*disabled=""/);
+  const server = document.createElement("div");
+  server.innerHTML = html;
+  expect(server.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')?.matches(":disabled")).toBe(true);
+  expect(server.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')?.matches(":disabled")).toBe(true);
+  act(() => root.render(<CvDraftEditor {...props} />));
+  const fieldset = container.querySelector<HTMLFieldSetElement>('[data-cv-editor-ready="true"]');
+  expect(fieldset?.disabled).toBe(false);
+  expect(container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')?.matches(":disabled")).toBe(false);
+  expect(container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')?.matches(":disabled")).toBe(false);
+});
+
+it("blocks edits for an unverified account without disabling read-only share controls", () => {
+  act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME}
+    blocked="Confirm your account" share={<button type="button" data-share-control>Share details</button>} />));
+  expect(container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')?.matches(":disabled")).toBe(true);
+  expect(container.querySelector<HTMLButtonElement>('[data-share-control]')?.matches(":disabled")).toBe(false);
 });
 
 it("stringifies the saved revision once, not on every keystroke, and still knows when it is edited", () => {
@@ -69,15 +94,17 @@ it("says the preview could not load when its check cannot be fetched", async () 
 });
 
 it("lets a reviewer add and remove a skill section without changing Library sections", () => {
-  act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} />));
+  act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME}
+    librarySkillSections={[{ id: "saved-tools", heading: "Tools", items: ["Python"] }]} />));
   const button = (label: string) => [...container.querySelectorAll("button")].find((element) => element.textContent === label)!;
-  act(() => button("Add skill section").click());
+  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')!;
+  act(() => { picker.value = "saved-tools"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
   const skill = container.querySelector<HTMLInputElement>('[aria-label="Skill 1 in new section"]')!;
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(skill, "Python");
     skill.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toContain("manual-skill-");
+  expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toContain('"sourceEntryId":"saved-tools"');
   expect(container.querySelector('[data-cv-editor-dirty="true"]')).not.toBeNull();
   act(() => button("Remove skill section").click());
   expect(container.querySelector('[name="addedSkills"]')?.getAttribute("value")).toBe("[]");

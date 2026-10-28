@@ -26,6 +26,7 @@ import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary 
 import { CV_LIMITS } from "@col/core/cv-format";
 import type { CvAssessment } from "@col/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
+import { librarySupportSections } from "@/lib/cv-review-edits";
 import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
@@ -95,7 +96,7 @@ export default async function CvDraftPage({
     // This account's newest Library version, so the panel can say when the evidence behind this
     // revision has moved on. The content is not read: only the number the two are compared by.
     db()
-      .select({ version: cvLibraries.version })
+      .select({ version: cvLibraries.version, content: cvLibraries.content })
       .from(cvLibraries)
       .where(eq(cvLibraries.userId, user.id))
       .orderBy(desc(cvLibraries.version))
@@ -342,6 +343,10 @@ export default async function CvDraftPage({
             content={content}
             theme={resolveCvTheme(content.theme)}
             librarySkillSections={librarySkillSections}
+            librarySupportingSections={librarySupportSections(latestLibrary[0]?.content ?? draft.librarySnapshot)}
+            latestSkillTargets={(latestLibrary[0]?.content.entries ?? []).flatMap(entry => entry.kind === "skill" && isActiveStoredEvidence(entry) && entry.skillItems?.length
+              ? [{ id: entry.id, heading: entry.heading, items: entry.skillItems }] : [])}
+            latestLibraryVersion={latestLibrary[0]?.version}
             blocked={blocked}
             finalised={!!draft.finalisedAt}
             hasFinalPdf={hasFinalPdf}

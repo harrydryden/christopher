@@ -38,6 +38,8 @@ export interface WorkerDeps {
   signal?: AbortSignal;
   /** A stand-in for the Anthropic client, so a test can drive the real CV engine with scripted answers. */
   aiClient?: AiClientLike;
+  /** Synthetic live evaluation only: keep every provider call on its explicitly priced model. */
+  disableServerFallback?: boolean;
   /**
    * `db` is one transaction that is never committed (a CV replay). A resource lease taken inside
    * it is invisible to every other connection and ends with it, so it is not renewed: a renewal

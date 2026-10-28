@@ -82,7 +82,7 @@ export function proposalHeadline(
   const parts = [
     [counts.jobs, "job", "jobs"],
     [counts.rows, "responsibility", "responsibilities"],
-    [counts.education, "qualification", "qualifications"],
+    [counts.education, "education or training item", "education or training items"],
     [counts.skills, "skill", "skills"],
   ] as const;
   const found = parts.filter(([count]) => count > 0).map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);

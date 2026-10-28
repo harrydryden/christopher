@@ -212,9 +212,11 @@ Employment: one entry per job the document states, in the order it gives them.
   only. Do not merge two statements into one, do not split one across two, and do not add a row to round
   a job out. A job the document describes in a sentence has one row.
 
-Education: each qualification, course or certification the document states. heading is what a
-reader would recognise it by — the institution or the award — and detail is the line as written,
-both copied verbatim from the document; detail is its own quote, so give heading and detail only.
+Education and training: each qualification, course or certification the document states goes in
+education with kind "education" for academic awards or kind "training" for courses and professional
+certifications. heading is what a reader would recognise it by — the institution or the award —
+and detail is the line as written, both copied verbatim from the document; detail is its own quote.
+Do not infer a type from an ambiguous line; omit kind to leave it as education for review.
 
 Skills: the individual skills the document lists, each a short label of at most eighty characters,
 copied as written. Take them only where the document names them; never infer a skill from a

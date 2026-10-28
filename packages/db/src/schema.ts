@@ -12,6 +12,7 @@
  */
 import type { CvLibrary, CvContent, LibraryEntryReview, EvidenceDraftInput } from "@col/core";
 import type { CvAssessment, CvJobSource } from "@col/core/cv-assessment";
+import type { CvSkillSuggestion } from "@col/core";
 import type { CvReviewDecision } from "@col/core/cv-review";
 import type { CvTailoringPlan } from "@col/core/cv-tailoring";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@col/core";
@@ -1129,6 +1130,26 @@ export const resourceLeases = pgTable("resource_leases", {
   owner: uuid("owner").notNull(),
   expiresAt: ts("expires_at").notNull(),
 });
+
+/** One account-owned proposal set; selections are saved only by an explicit CV review action. */
+export const cvSkillSuggestionRuns = pgTable("cv_skill_suggestion_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  draftId: uuid("draft_id").notNull().references(() => cvDrafts.id, { onDelete: "cascade" }),
+  libraryVersion: integer("library_version").notNull(),
+  inputHash: text("input_hash").notNull(),
+  status: text("status", { enum: ["queued", "running", "ready", "failed"] }).notNull().default("queued"),
+  suggestions: jsonb("suggestions").$type<CvSkillSuggestion[]>().notNull().default([]),
+  error: text("error"),
+  acceptedSelectionHash: text("accepted_selection_hash"),
+  acceptedDraftId: uuid("accepted_draft_id"),
+  createdAt: tsNow("created_at"),
+  updatedAt: tsNow("updated_at"),
+}, table => [
+  index("cv_skill_suggestion_runs_user_draft_idx").on(table.userId, table.draftId, table.createdAt.desc()),
+  uniqueIndex("cv_skill_suggestion_runs_active_uidx").on(table.draftId)
+    .where(sql`${table.status} in ('queued', 'running')`),
+]);
 
 export const discoveryCandidates = pgTable("discovery_candidates", {
   id: uuid("id").primaryKey().defaultRandom(),

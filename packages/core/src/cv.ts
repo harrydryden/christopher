@@ -1,6 +1,6 @@
 export * from "./cv-budget";
 export * from "./cv-writing-preferences";
-import { CV_LIMITS } from "./cv-format";
+import { CV_LIMITS, CV_SKILL_GUIDANCE } from "./cv-format";
 export * from "./cv-format";
 import { z } from "zod";
 
@@ -26,7 +26,7 @@ export {
 const skillItemSchema = z.string().trim().min(1).max(CV_LIMITS.skillCharacters).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.");
 const skillItemsSchema = (max: number) => z.array(skillItemSchema).min(1).max(max)
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
-const SkillItemsSchema = skillItemsSchema(20);
+const SkillItemsSchema = skillItemsSchema(CV_SKILL_GUIDANCE.libraryPerSection);
 const GeneratedSkillItemsSchema = skillItemsSchema(CV_LIMITS.skillsPerSection);
 /**
  * A writer's citation: the id of the source row a bullet or the profile rests on. It used to be
@@ -109,7 +109,7 @@ const RowFacetsSchema = z.preprocess(value => {
 
 export const CvEntrySchema = z.object({
   id: z.string().min(1).max(100),
-  kind: z.enum(["experience", "education", "skill", "interest"]),
+  kind: z.enum(["experience", "education", "training", "skill", "interest"]),
   // A block stored as a draft by an earlier release is active: the status is no longer the
   // person's to set, so reading it as anything else would strand evidence nobody can reactivate.
   status: z.preprocess(value => value === "draft" ? "active" : value, z.enum(["active", "inactive"])).optional(),
@@ -185,7 +185,7 @@ export type CvLibrary = z.infer<typeof CvLibrarySchema>;
 const cvPlanSchema = <T extends SourceIdSchema>(sourceId: T, skillItems: typeof SkillItemsSchema | typeof GeneratedSkillItemsSchema) => z.object({
   summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
   summarySources: z.array(sourceId).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), skillItems: skillItems.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(sourceId).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(20),
+  sections: z.array(z.object({ entryId: z.string(), skillItems: skillItems.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(sourceId).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(CV_LIMITS.sections),
   gaps: z.array(z.string().max(500)).max(12),
 });
 /** The writer's answer. Citations are source ids (`summarySources`, one `bulletSources` item per bullet). */
@@ -199,7 +199,7 @@ export const CvContentSchema = z.object({
   linkedinUrl: LinkedInSchema,
   websiteUrl: WebsiteSchema,
   name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters), summarySources: z.array(CvStoredSourceIdSchema).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvStoredSourceIdSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(20),
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvStoredSourceIdSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(CV_LIMITS.sections),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvContent = z.infer<typeof CvContentSchema>;

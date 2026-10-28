@@ -1,19 +1,21 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
-import { cvReviewSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
+import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { cvSectionTexts } from "@col/core/cv-format";
 import { cvImprovementOwner } from "@col/core/cv-assessment";
 import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, cvPdfs, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit } from "@col/db";
+import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, cvPdfs, cvSkillSuggestionRuns, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit } from "@col/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
+  cvHighlightedSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash,
   type AppSettings, type CvContent, type CvWritingPreferences } from "@col/core";
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@col/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
+import { acceptCvSkillSuggestions } from "@/lib/cv-skill-accept";
 import { normaliseSubmittedLibrarySkills } from "@/lib/cv-skill-list";
 import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
@@ -49,7 +51,7 @@ async function upsertUserSetting(tx: Pick<Tx, "insert">, userId: string, key: st
 }
 
 /** The editor's fields over the saved content. Fit notes describe a build these edits now replace. */
-function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
+function applyCvFormEdits(saved: CvContent, form: FormData, library: ReturnType<typeof CvLibrarySchema.parse>): CvContent {
   const content = structuredClone(saved);
   if (form.has("theme")) content.theme = JSON.parse(String(form.get("theme")));
   const summary = String(form.get("summary") ?? "").trim();
@@ -61,7 +63,10 @@ function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
   if (!Array.isArray(removed) || !removed.every((id) => typeof id === "string") ||
       !Array.isArray(added) || !added.every((section) => section && typeof section.entryId === "string" && typeof section.heading === "string" && Array.isArray(section.items) && section.items.every((item: unknown) => typeof item === "string")))
     throw new UserFacingError("The skill edits could not be read. Refresh and try again.");
-  content.sections = cvReviewSections(saved, rows, removed, added);
+  const supportIds = JSON.parse(String(form.get("addedSupportIds") ?? "[]")) as unknown;
+  if (!Array.isArray(supportIds) || supportIds.length > 20 || supportIds.some(id => typeof id !== "string")
+    || new Set(supportIds).size !== supportIds.length) throw new UserFacingError("The supporting section choices could not be read. Refresh and try again.");
+  content.sections = cvReviewSupportingSections(cvReviewSections(saved, rows, removed, added), supportIds as string[], librarySupportSections(library));
   const skillIssue = cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
   if (skillIssue) throw new UserFacingError(skillIssue);
   delete content.fitNotes;
@@ -336,7 +341,7 @@ export async function saveCvAppearance(_prev: ActionResult, form: FormData): Pro
   } catch {
     return fail("Could not save appearance. Check the colours, font and page limit, then try again.");
   }
-  revalidate("/settings", "/cv");
+  revalidate("/settings", "/cv", "/library");
   return ok();
 }
 
@@ -526,6 +531,65 @@ export async function requestCv(
   revalidate("/library", "/applications", "/cv");
   redirect(`/cv/${draftId}`);
 }
+export type CvSkillSuggestionsResult = { ok: true; run: { id: string; status: "queued" | "running" | "ready" | "failed"; suggestions: typeof cvSkillSuggestionRuns.$inferSelect.suggestions; error: string | null } }
+  | { ok: false; error: string };
+
+/** Opening Skills or explicitly refreshing queues one bounded account-owned proposal. */
+export async function requestCvSkillSuggestions(id: string, refresh = false, pageLibraryVersion?: number): Promise<CvSkillSuggestionsResult> {
+  const user = await requireVerifiedUser();
+  try {
+    zUuid().parse(id);
+    return await db().transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:skillrun:${id}`}))`);
+      const [draft] = await tx.select({ id: cvDrafts.id, status: cvDrafts.status, content: cvDrafts.content,
+        jobDescription: cvDrafts.jobDescription }).from(cvDrafts)
+        .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id))).limit(1);
+      if (!draft?.content || !["ready", "failed"].includes(draft.status))
+        throw new UserFacingError("Wait for this CV to finish before asking for skill suggestions.");
+      const latest = await latestLibrary(tx, user.id);
+      if (!latest) throw new UserFacingError("Save your confirmed Experience before asking for skill suggestions.");
+      if (pageLibraryVersion !== undefined && pageLibraryVersion !== latest.version)
+        throw new UserFacingError("Your Experience changed in another tab. Reload this CV before choosing suggestions.");
+      const rows = cvSkillEvidenceRows(CvLibrarySchema.parse(latest.content));
+      if (!rows.length) throw new UserFacingError("Confirm an Experience row before asking for skill suggestions.");
+      const inputHash = cvSkillSuggestionInputHash(latest.version, id, draft.jobDescription, rows, cvHighlightedSkillRows(draft.content));
+      const [previous] = await tx.select().from(cvSkillSuggestionRuns)
+        .where(and(eq(cvSkillSuggestionRuns.userId, user.id), eq(cvSkillSuggestionRuns.draftId, id)))
+        .orderBy(desc(cvSkillSuggestionRuns.createdAt)).limit(1);
+      if (previous && ["queued", "running"].includes(previous.status) && previous.inputHash !== inputHash)
+        await tx.update(cvSkillSuggestionRuns).set({ status: "failed", error: "Experience or target role changed.", updatedAt: new Date() })
+          .where(eq(cvSkillSuggestionRuns.id, previous.id));
+      else if (previous && (["queued", "running"].includes(previous.status) || (!refresh && previous.status === "ready" && previous.inputHash === inputHash)))
+        return { ok: true as const, run: { id: previous.id, status: previous.status, suggestions: previous.suggestions, error: previous.error } };
+      const [run] = await tx.insert(cvSkillSuggestionRuns).values({ userId: user.id, draftId: id,
+        libraryVersion: latest.version, inputHash }).returning();
+      await enqueue("suggest_cv_skills", { userId: user.id, draftId: id, runId: run!.id }, tx);
+      return { ok: true as const, run: { id: run!.id, status: run!.status, suggestions: run!.suggestions, error: null } };
+    });
+  } catch (error) {
+    const result = actionError(error, "Could not prepare skill suggestions. Please try again.");
+    return { ok: false, error: result.ok ? "Could not prepare skill suggestions." : result.error };
+  }
+}
+
+/** Poll only this account's proposal; provider diagnostics never enter the member response. */
+export async function readCvSkillSuggestions(id: string, runId: string): Promise<CvSkillSuggestionsResult> {
+  const user = await requireVerifiedUser();
+  try {
+    zUuid().parse(id); zUuid().parse(runId);
+    const [draft] = await db().select({ id: cvDrafts.id }).from(cvDrafts)
+      .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id))).limit(1);
+    if (!draft) return { ok: false, error: "This CV is no longer available." };
+    const [run] = await db().select().from(cvSkillSuggestionRuns)
+      .where(and(eq(cvSkillSuggestionRuns.id, runId), eq(cvSkillSuggestionRuns.draftId, id), eq(cvSkillSuggestionRuns.userId, user.id))).limit(1);
+    if (!run) return { ok: false, error: "These suggestions are no longer available. Refresh them." };
+    return { ok: true, run: { id: run.id, status: run.status, suggestions: run.suggestions, error: run.error } };
+  } catch (error) {
+    const result = actionError(error, "Could not read skill suggestions. Please try again.");
+    return { ok: false, error: result.ok ? "Could not read skill suggestions." : result.error };
+  }
+}
+
 export async function saveCvDraft(
   id: string,
   _prev: ActionResult,
@@ -541,8 +605,25 @@ export async function saveCvDraft(
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     if (!draft || !["ready", "failed"].includes(draft.status) || !draft.content)
       return fail("Wait for the current build to finish before editing.");
-    const content = applyCvFormEdits(draft.content, form);
+    const supportSource = await latestLibrary(db(), user.id);
+    const supportLibrary = CvLibrarySchema.parse(supportSource?.content ?? draft.librarySnapshot);
+    const addedSupportIds = JSON.parse(String(form.get("addedSupportIds") ?? "[]")) as string[];
+    if (addedSupportIds.length && (!supportSource || String(supportSource.version) !== String(form.get("pageLibraryVersion") ?? "")))
+      return fail("Your Experience changed in another tab. Reload this CV before choosing supporting sections.");
+    let content = applyCvFormEdits(draft.content, form, supportLibrary);
+    let selectedSuggestionIds: string[];
+    try { selectedSuggestionIds = JSON.parse(String(form.get("selectedSuggestionIds") ?? "[]")); }
+    catch { return fail("The selected skills could not be read. Refresh the suggestions and try again."); }
+    if (!Array.isArray(selectedSuggestionIds) || selectedSuggestionIds.length > 10
+      || selectedSuggestionIds.some(item => typeof item !== "string" || !zUuid().safeParse(item).success)
+      || new Set(selectedSuggestionIds).size !== selectedSuggestionIds.length)
+      return fail("The selected skills could not be read. Refresh the suggestions and try again.");
+    const suggestionRunId = String(form.get("skillSuggestionRunId") ?? "");
+    if (selectedSuggestionIds.length && !zUuid().safeParse(suggestionRunId).success)
+      return fail("Refresh the skill suggestions before saving your selection.");
     const rebuild = form.get("intent") === "improve";
+    const selectionHash = createHash("sha256").update(JSON.stringify({ selectedIds: [...selectedSuggestionIds].sort(),
+      content, rebuild, rememberWording: form.get("rememberWording") === "on" })).digest("hex");
     // The rolling archive can remove a parent before this queued build starts, so the revision
     // carries what it needs: the rubric, and for a rebuild the improvements the system can act on.
     const rubric = draft.assessment ? { rubric: draft.assessment.rubric } : {};
@@ -568,9 +649,17 @@ export async function saveCvDraft(
       // Either save queues a build, and a build counts against the account's cap. The account's
       // lock comes before the role's; the count is taken once the save is known to be possible.
       await lockCvBuildCapacity(tx, user.id);
+      const [suggestionRun] = selectedSuggestionIds.length ? await tx.select().from(cvSkillSuggestionRuns)
+        .where(and(eq(cvSkillSuggestionRuns.id, suggestionRunId), eq(cvSkillSuggestionRuns.userId, user.id), eq(cvSkillSuggestionRuns.draftId, id)))
+        .limit(1).for("update") : [];
+      if (selectedSuggestionIds.length && !suggestionRun) throw new UserFacingError("These skill suggestions are no longer available. Refresh them.");
+      if (suggestionRun?.acceptedDraftId) {
+        if (suggestionRun.acceptedSelectionHash !== selectionHash) throw new UserFacingError("This selection was already saved differently. Open the saved CV or refresh suggestions.");
+        return suggestionRun.acceptedDraftId;
+      }
+      if (suggestionRun && suggestionRun.status !== "ready") throw new UserFacingError("Wait for the skill checks to finish before saving.");
       // Both a rebuild and a direct edit are written from this draft, so retention spares it
       // however many newer failures the role has; the next publish clears it.
-      const revision = await nextCvRevision(tx, draft, { spare: id });
       // Read again inside the lock. The status this save was offered on is as old as the page, and
       // two clicks on Rebuild are two of these transactions, one behind the other: without this the
       // second one wrote a second draft, queued a second build and held the budget twice.
@@ -585,6 +674,28 @@ export async function saveCvDraft(
         .limit(1);
       if (building) throw new UserFacingError("This CV is already being rebuilt.");
       await assertCvBuildCapacity(tx, user.id);
+      if (addedSupportIds.length) {
+        const currentSupport = await latestLibrary(tx, user.id);
+        if (currentSupport?.version !== supportSource?.version)
+          throw new UserFacingError("Your Experience changed while you chose supporting sections. Reload this CV and choose again.");
+      }
+      let skillLibraryVersion: number | undefined;
+      let skillLibrary: ReturnType<typeof CvLibrarySchema.parse> | undefined;
+      if (suggestionRun) {
+        const selected = selectedSuggestionIds.map(selectedId => suggestionRun.suggestions.find(item => item.id === selectedId));
+        if (selected.some(item => !item)) throw new UserFacingError("One selected skill is no longer available. Refresh suggestions.");
+        skillLibraryVersion = await writeCvLibraryVersion(tx, user.id, suggestionRun.libraryVersion, current => {
+          if (!current) throw new UserFacingError("Your Experience changed. Refresh suggestions.");
+          const rows = cvSkillEvidenceRows(CvLibrarySchema.parse(current));
+          if (cvSkillSuggestionInputHash(suggestionRun.libraryVersion, id, draft.jobDescription, rows, cvHighlightedSkillRows(draft.content!)) !== suggestionRun.inputHash)
+            throw new UserFacingError("Your Experience or target role changed. Refresh suggestions.");
+          const accepted = acceptCvSkillSuggestions(CvLibrarySchema.parse(current), content, selected as NonNullable<typeof selected[number]>[]);
+          content = accepted.content;
+          skillLibrary = accepted.library;
+          return accepted.library;
+        });
+      }
+      const revision = await nextCvRevision(tx, draft, { spare: id });
       // Corrections are remembered whichever build the save requests, and an improved revision
       // is written with them from the start.
       const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, draft.content!, content) : undefined;
@@ -625,14 +736,20 @@ export async function saveCvDraft(
           .returning();
         await reserveCvCredit(tx, user.id, fitting!.id);
         await enqueue("generate_cv", { draftId: fitting!.id, ...rubric, improvements, mode: "improve" }, tx);
+        if (suggestionRun) await tx.update(cvSkillSuggestionRuns).set({ acceptedSelectionHash: selectionHash, acceptedDraftId: fitting!.id, updatedAt: new Date() }).where(eq(cvSkillSuggestionRuns.id, suggestionRun.id));
         return fitting!.id;
       }
+      // A selected skill cites the current confirmed Experience; assess the revision against that
+      // same current Library, even if the original draft predates an Experience edit.
+      const directSnapshot = skillLibrary ?? (addedSupportIds.length ? supportLibrary : draft.librarySnapshot);
       const [saved] = await tx
         .insert(cvDrafts)
         .values({
           ...original,
           model,
           content,
+          libraryVersion: skillLibraryVersion ?? (addedSupportIds.length ? supportSource?.version ?? draft.libraryVersion : draft.libraryVersion),
+          librarySnapshot: directSnapshot,
           status: "queued",
           error: null,
           archivedAt: null,
@@ -647,6 +764,7 @@ export async function saveCvDraft(
         })
         .returning();
       await enqueue("generate_cv", { draftId: saved!.id, mode: "assess", ...rubric }, tx);
+      if (suggestionRun) await tx.update(cvSkillSuggestionRuns).set({ acceptedSelectionHash: selectionHash, acceptedDraftId: saved!.id, updatedAt: new Date() }).where(eq(cvSkillSuggestionRuns.id, suggestionRun.id));
       return saved!.id;
     });
   } catch (error) {
@@ -655,7 +773,7 @@ export async function saveCvDraft(
     if (error instanceof z.ZodError) return fail(cvContentIssues(error));
     return actionError(error, "Could not save the draft. Please try again.");
   }
-  revalidate("/settings", "/cv");
+  revalidate("/settings", "/cv", "/library");
   redirect(`/cv/${savedId}`);
 }
 

@@ -1,7 +1,22 @@
-import type { CvContent } from "@col/core/cv";
-import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState } from "@col/core/cv-format";
+import type { CvContent, CvLibrary } from "@col/core/cv";
+import { isActiveStoredEvidence } from "@col/core/cv-helpers";
+import type { CvSkillSuggestion } from "@col/core";
+import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState, cvSkillIdentity } from "@col/core/cv-format";
 
 export type AddedSkillSection = { entryId: string; heading: string; items: string[]; sourceEntryId?: string };
+export type LibrarySupportSection = { id: string; kind: "education" | "training" | "interest"; heading: string; bullets: string[]; issue?: string };
+
+/** Saved supporting evidence that can be deliberately included in this CV review. */
+export function librarySupportSections(library: CvLibrary): LibrarySupportSection[] {
+  return library.entries.flatMap(entry => {
+    if (!["education", "training", "interest"].includes(entry.kind) || !isActiveStoredEvidence(entry)) return [];
+    const bullets = entry.details.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const issue = !bullets.length ? "Add details in Experience before including this section."
+      : bullets.length > CV_LIMITS.bulletsPerSection || bullets.some(line => line.length > CV_LIMITS.bulletCharacters)
+        ? "Shorten this section in Experience before including it; no details will be cut off." : undefined;
+    return [{ id: entry.id, kind: entry.kind as LibrarySupportSection["kind"], heading: entry.heading, bullets, ...(issue ? { issue } : {}) }];
+  });
+}
 
 /** An explicit review action; canonical labels containing commas stay whole until it is chosen. */
 export function splitCvReviewSkillRow(items: string[], index: number): string[] | null {
@@ -32,8 +47,8 @@ export function cvReviewSections(
   addedSkills: AddedSkillSection[],
 ): CvContent["sections"] {
   const removed = new Set(removedSkillIds);
-  if (removedSkillIds.some((id) => !saved.sections.some((section) => section.kind === "skill" && section.entryId === id)))
-    throw new Error("Only skill sections can be removed here.");
+  if (removedSkillIds.some((id) => !saved.sections.some((section) => section.kind !== "experience" && section.entryId === id)))
+    throw new Error("Only supporting sections can be removed here.");
   const existing = saved.sections.flatMap((section, index) => {
     if (removed.has(section.entryId)) return [];
     const before = section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets;
@@ -57,4 +72,63 @@ export function cvReviewSections(
     return [{ entryId, kind: "skill" as const, heading: heading.trim() || "Skills", skillItems, bullets: skillItems.slice(0, CV_LIMITS.bulletsPerSection) }];
   });
   return [...existing, ...added];
+}
+
+export function cvReviewSupportingSections(sections: CvContent["sections"], selectedIds: readonly string[], available: readonly LibrarySupportSection[]): CvContent["sections"] {
+  const seen = new Set(sections.map(section => section.entryId));
+  const added = selectedIds.flatMap(id => {
+    const source = available.find(item => item.id === id);
+    if (!source) throw new Error("A supporting section is no longer available. Refresh this CV.");
+    if (source.issue) throw new Error(source.issue);
+    if (seen.has(id)) return [];
+    seen.add(id);
+    return [{ entryId: source.id, kind: source.kind, heading: source.heading, bullets: source.bullets }];
+  });
+  if (sections.length + added.length > 20) throw new Error("This CV has reached its section limit.");
+  return [...sections, ...added];
+}
+
+export type CvSuggestionSkillTarget = { id: string; heading: string; items: readonly string[] };
+const sameSkill = (a: string, b: string) => cvSkillIdentity(a) === cvSkillIdentity(b);
+
+/** One ordering and global-label rule shared by the preview and the committed Library/CV merge. */
+export function cvSuggestionAssignments(sections: CvContent["sections"], selected: readonly CvSkillSuggestion[],
+  skillTargets: readonly CvSuggestionSkillTarget[]): Array<{ suggestion: CvSkillSuggestion; targetId?: string; heading: string }> {
+  const held = sections.filter(section => section.kind === "skill").flatMap(section => section.skillItems ?? cvSectionTexts(section));
+  const assignments: Array<{ suggestion: CvSkillSuggestion; targetId?: string; heading: string }> = [];
+  for (const suggestion of selected) {
+    if (held.some(label => sameSkill(label, suggestion.label))) continue;
+    held.push(suggestion.label);
+    const target = skillTargets.find(entry => entry.items.some(label => sameSkill(label, suggestion.label)))
+      ?? skillTargets.find(entry => sameSkill(entry.heading, suggestion.category));
+    assignments.push({ suggestion, targetId: target?.id, heading: target?.heading ?? suggestion.category });
+  }
+  return assignments;
+}
+
+/** A preview-only projection; the server assigns Library entry IDs when the selection is saved. */
+export function cvReviewSuggestedSections(sections: CvContent["sections"], selected: readonly CvSkillSuggestion[],
+  skillTargets: readonly CvSuggestionSkillTarget[] = []): CvContent["sections"] {
+  const projected = structuredClone(sections);
+  const byCategory = new Map<string, { heading: string; targetId?: string; labels: string[]; firstId: string }>();
+  for (const { suggestion, targetId, heading } of cvSuggestionAssignments(sections, selected, skillTargets)) {
+    const key = targetId ?? `new:${cvSkillIdentity(heading)}`;
+    const group = byCategory.get(key) ?? { heading, targetId, labels: [], firstId: suggestion.id };
+    group.labels.push(suggestion.label);
+    byCategory.set(key, group);
+  }
+  for (const { heading, targetId, labels, firstId } of byCategory.values()) {
+    const existing = targetId ? projected.find(section => section.kind === "skill" && section.entryId === targetId) : undefined;
+    if (existing) {
+      const held = existing.skillItems ?? cvSectionTexts(existing);
+      const merged = [...held];
+      for (const label of labels) if (!merged.some(item => sameSkill(item, label))) merged.push(label);
+      existing.skillItems = merged; existing.bullets = merged.slice(0, CV_LIMITS.bulletsPerSection);
+      delete existing.bulletSources;
+    } else {
+      projected.push({ entryId: targetId ?? `preview-suggested-${firstId}`, kind: "skill", heading,
+        skillItems: labels, bullets: labels.slice(0, CV_LIMITS.bulletsPerSection) });
+    }
+  }
+  return projected;
 }

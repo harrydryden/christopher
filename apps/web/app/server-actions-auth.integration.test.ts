@@ -116,7 +116,7 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/cv-share.ts": { createCvShareLink: "user", revokeCvShareLink: "user", resolveCvShareComment: "user" },
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
-    saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", assessCvDraft: "verified",
+    saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", requestCvSkillSuggestions: "verified", readCvSkillSuggestions: "verified", assessCvDraft: "verified",
     dismissCvReviewItem: "user", finaliseCvDraft: "user", rescoreLibrary: "verified", quoteCvBuild: "verified",
   },
   "actions/evidence.ts": {

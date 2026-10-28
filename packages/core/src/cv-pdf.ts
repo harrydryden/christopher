@@ -1,4 +1,4 @@
-import { cvSectionHeading, cvSectionTexts } from "./cv-format";
+import { cvSectionHeading, cvSectionTexts, cvSupportingTitle } from "./cv-format";
 import PDFDocument from "pdfkit";
 import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, cvMaxPages, CvContentSchema, CV_GROUPS, type CvContent, type CvFont } from "./cv";
 import { LIBERATION_SANS_BOLD, LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
@@ -183,8 +183,7 @@ export async function renderCvPdfWithReport(
   const quietBottomSpace = 100;
   const skillHeadingColour = accent;
   const measureSection = (section: CvContent["sections"][number]) => {
-    // Education and Skills share a parent section, with a subsection for each. Qualifications carry
-    // their own label in the bullet; retain headings only when they add information.
+    // Qualifications keep their own heading, even if the first detail repeats its name.
     const sectionHeading = section.kind === "skill" ? clean(section.heading) : cvSectionHeading(section);
     const showHeading = sectionHeading !== null;
     doc.font(face.bold).fontSize(section.kind === "skill" ? 9 : 10);
@@ -251,21 +250,26 @@ export async function renderCvPdfWithReport(
         : headerHeight + industryHeight + contentHeight + 6,
     };
   };
-  let educationSkillsStarted = false;
+  const supplementary = groups.slice(1).filter(group => ordered.some(section => section.kind === group.kind));
+  const names = supplementary.map(group => group.title);
+  const supplementaryTitle = cvSupportingTitle(ordered.map(section => section.kind));
+  let supplementaryStarted = false;
   for (const { kind, title } of groups) {
     const sections = ordered.filter((s) => s.kind === kind).map(measureSection);
     if (!sections.length) continue;
     const first = sections[0]!;
     const keepFirstSkillRow = kind === "skill" &&
-      first.wholeHeight <= pageBodyHeight - (educationSkillsStarted ? 20 : 60);
-    if (kind === "education" || kind === "skill") {
+      first.wholeHeight <= pageBodyHeight - (supplementaryStarted ? 20 : 60);
+    if (kind !== "experience") {
       const followingHeight = keepFirstSkillRow ? first.wholeHeight : first.minimumHeight;
-      if (!educationSkillsStarted) {
-        heading("Education and Skills", 20 + followingHeight);
-        educationSkillsStarted = true;
+      if (!supplementaryStarted) {
+        heading(supplementaryTitle!, (names.length > 1 ? 20 : 0) + followingHeight);
+        supplementaryStarted = true;
       } else room(20 + followingHeight);
-      text(title, true, 10);
-      doc.moveDown(0.5);
+      if (names.length > 1) {
+        text(title, true, 10);
+        doc.moveDown(0.5);
+      }
     } else heading(title, kind === "experience" ? first.experienceStartHeight : first.minimumHeight);
     for (const [index, layout] of sections.entries()) {
       const {

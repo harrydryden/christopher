@@ -85,6 +85,7 @@ export const LibraryProposalSchema = z.object({
   })).max(60),
   /** `heading` and `detail` are both anchored, and `detail` is the line as written: its quote. */
   education: z.array(z.object({
+    kind: z.enum(["education", "training"]).optional(),
     heading: z.string().max(400),
     detail: z.string().max(4000),
     quote: z.string().max(4000).nullable().optional(),
@@ -112,6 +113,8 @@ export interface ProposedJob {
 }
 export interface ProposedQualification {
   id: string;
+  /** Absent on proposals saved before Training was a Library type. */
+  kind?: "education" | "training";
   heading: string;
   detail: string;
   quote: string;
@@ -146,6 +149,7 @@ export const StoredLibraryProposalSchema = z.object({
   })).max(LIBRARY_IMPORT_MAX_JOBS),
   education: z.array(z.object({
     id: z.string().min(1).max(100),
+    kind: z.enum(["education", "training"]).optional(),
     heading: z.string().min(1).max(250),
     detail: z.string().min(1).max(4000),
     quote: z.string().max(4000),
@@ -388,7 +392,7 @@ export function validateLibraryProposal(
       continue;
     }
     seenEducation.add(key(heading + detail));
-    education.push({ id: `education-${education.length}`, heading, detail, quote: detail });
+    education.push({ id: `education-${education.length}`, kind: item.kind ?? "education", heading, detail, quote: detail });
   }
 
   const skills: ProposedSkill[] = [];
@@ -547,9 +551,9 @@ export function proposalToLibraryAdditions(
 
   for (const item of proposal.education) {
     if (!accepted.has(item.id)) continue;
-    if (entries.some(entry => entry.kind === "education" && key(entry.heading) === key(item.heading)
+    if (entries.some(entry => (entry.kind === "education" || entry.kind === "training") && key(entry.heading) === key(item.heading)
       && key(entry.details) === key(item.detail))) continue;
-    entries.push({ id: `${prefix}:${item.id}`, kind: "education", status: "active", heading: item.heading, details: item.detail });
+    entries.push({ id: `${prefix}:${item.id}`, kind: item.kind ?? "education", status: "active", heading: item.heading, details: item.detail });
     added.education += 1;
   }
 

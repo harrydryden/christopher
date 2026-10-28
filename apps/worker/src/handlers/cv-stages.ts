@@ -37,7 +37,7 @@ import {
   type CvBuildStageName,
 } from "@col/core";
 import { CvBuildStop } from "@col/core/cv-build-failure";
-import type { CvClaimItem, CvRubric } from "@col/core/cv-assessment";
+import { cvAuditPartitions, type CvClaimItem, type CvRubric } from "@col/core/cv-assessment";
 import { log } from "../log";
 
 /** The version of the prompts every checkpoint entry is pinned to: the model package's registry hash. */
@@ -111,15 +111,7 @@ export interface CvAuditBatch {
  * holds, and which requirements each checks. The engine's `only` names batches by these indices.
  */
 export function cvAuditBatches(input: { rubric: CvRubric; claims: CvClaimItem[] }, size = CV_REVIEW_BATCH_SIZE): CvAuditBatch[] {
-  const count = Math.ceil(Math.max(input.rubric.requirements.length, input.claims.length) / size);
-  const share = <T>(items: T[], index: number) => {
-    const each = Math.ceil(items.length / count);
-    return items.slice(index * each, (index + 1) * each);
-  };
-  return Array.from({ length: count }, (_, index) => ({
-    requirements: share(input.rubric.requirements, index),
-    claims: share(input.claims, index),
-  }));
+  return cvAuditPartitions(input, size);
 }
 
 // ---------------------------------------------------------------------------------------------

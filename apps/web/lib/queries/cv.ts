@@ -8,9 +8,9 @@ import {
   libraryReviewsSignature,
   tasks,
 } from "@col/db";
-import type { CvBuildCheckpoint, CvBuildFailure, CvLibrary } from "@col/core";
+import type { CvBuildFailure, CvLibrary } from "@col/core";
 import { libraryEntryInputHash, normaliseLibraryReview } from "@col/core/library-review";
-import type { CvBuildTask } from "@/lib/cv-build-state";
+import type { CvBuildTask, CvProgressCheckpoint } from "@/lib/cv-build-state";
 import type { CvJournalStep } from "@/lib/cv-build-journal";
 import { CV_MEDIAN_MIN_RUNS, type CvMotionMedians } from "@/lib/cv-build-narrative";
 import type { CvProgressRows } from "@/lib/cv-progress";
@@ -186,7 +186,7 @@ interface CvProgressRow extends Record<string, unknown> {
   createdAt: Date | string;
   progressAt: Date | string | null;
   failure: CvBuildFailure | null;
-  buildCheckpoint: CvBuildCheckpoint | null;
+  buildCheckpoint: CvProgressCheckpoint | null;
   taskStatus: CvBuildTask["status"] | null;
   attempts: number | null;
   maxAttempts: number | null;
@@ -251,7 +251,11 @@ export async function readCvProgress(userId: string, draftId: string, window: Cv
   try {
     const result = await db().execute<CvProgressRow>(sql`
       select d.status, d.build_stage as "buildStage", d.error, d.created_at as "createdAt",
-        d.progress_at as "progressAt", d.failure, d.build_checkpoint as "buildCheckpoint",
+        d.progress_at as "progressAt", d.failure,
+        case when d.build_checkpoint is null then null else jsonb_build_object(
+          'rubricPresent', d.build_checkpoint->'rubric' is not null and d.build_checkpoint->'rubric' <> 'null'::jsonb,
+          'contentAt', d.build_checkpoint->>'contentAt'
+        ) end as "buildCheckpoint",
         t.status as "taskStatus", t.attempts, t.max_attempts as "maxAttempts", t.error as "taskError",
         t.started_at as "taskStartedAt",
         exists (select 1 from tasks a where a.payload->>'draftId' = d.id::text and a.status in ('queued', 'running')) as "anyTaskActive",

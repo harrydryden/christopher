@@ -404,10 +404,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const openWidth = (await main.boundingBox()).width;
 
     // The current edit has one primary save; a fresh rewrite is available under More with its cost.
-    assert.equal(await page.getByRole("button", { name: "Save and check · free", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Save changes · free", exact: true }).count(), 1);
     await page.getByText("More options", { exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "Rewrite from Experience · 1 credit", exact: true }).count(), 1);
-    assert.match(await page.locator("main").innerText(), /Saving keeps your wording and checks a new revision/);
+    assert.match(await page.locator("main").innerText(), /Saving keeps your wording as a new draft without checking or rebuilding this CV/);
 
     // The wording option sits with the words it remembers, on the Content tab, and is still
     // called by its own four words rather than its hint.
@@ -678,7 +678,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       }
       note(`start at ${location.href} history.state=${history.state ? Object.keys(history.state).join(",") : "null"}`);
     });
-    const saveButton = page.getByRole("button", { name: /^Save (and check|as new revision) · free$/ });
+    const saveButton = page.getByRole("button", { name: /^Save (changes|as new revision) · free$/ });
     await saveButton.click();
     try {
       // Longer than the database's thirty-second statement timeout, so a render held up by a lock
@@ -696,7 +696,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         .allInnerTexts()
         .catch(() => []);
       const buttons = await page
-        .getByRole("button", { name: /Save (and check|as new revision) · free|Saving…/ })
+        .getByRole("button", { name: /Save (changes|as new revision) · free|Saving…/ })
         .evaluateAll((nodes) => nodes.map((node) => `${node.textContent?.trim()} disabled=${node.disabled} form=${node.getAttribute("form")} type=${node.getAttribute("type")}`))
         .catch(() => []);
       const navigation = await page.evaluate(() => window.__avaNavTrace ?? []).catch(() => []);
@@ -719,7 +719,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       [childId],
     );
     assert.equal(child.parent_id, readyId);
-    assert.equal(child.status, "queued");
+    assert.equal(child.status, "ready");
     assert.equal(child.content.summary, submitted.summary);
     assert.deepEqual(child.content.sections.at(-1).skillItems, ["SQL"]);
     assert.match(child.content.sections.at(-1).entryId, /^manual-skill-/);
@@ -728,9 +728,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       child.content.theme.primary,
       JSON.parse(submitted.theme).primary,
     );
-    await page
-      .getByRole("heading", { name: "Your CV is queued", exact: true })
-      .waitFor();
+    assert.equal((await pool.query("select count(*)::int n from tasks where payload->>'draftId' = $1 and status in ('queued', 'running')", [childId])).rows[0].n, 0,
+      "a direct save must not queue model work");
+    await page.getByRole("tab", { name: "Review", exact: true }).click();
+    await page.getByRole("button", { name: "Check saved CV", exact: true }).click();
+    await page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor();
+    assert.equal((await pool.query("select count(*)::int n from tasks where payload->>'draftId' = $1 and status = 'queued'", [childId])).rows[0].n, 1,
+      "the explicit Check queues exactly one CV task");
     await page.goto(`${baseUrl}/cv/${readyId}#cv-content-section-job`);
     await page.locator("textarea#cv-content-section-job:focus").waitFor();
     assert.equal(
@@ -1116,9 +1120,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       [legacyId, userId, description, JSON.stringify(library), JSON.stringify(legacyContent)]);
     await page.goto(`${baseUrl}/cv/${legacyId}`);
     await page.getByRole("textbox", { name: "Skill 11 in Legacy tools", exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: /^Save (and check|as new revision) · free$/ }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: /^Save (changes|as new revision) · free$/ }).isDisabled(), true);
     await page.getByRole("button", { name: "Remove skill 11 from Legacy tools", exact: true }).click();
-    assert.equal(await page.getByRole("button", { name: /^Save (and check|as new revision) · free$/ }).isDisabled(), false);
+    assert.equal(await page.getByRole("button", { name: /^Save (changes|as new revision) · free$/ }).isDisabled(), false);
     const legacyPreview = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const legacyResponse = await legacyPreview;

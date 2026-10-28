@@ -80,6 +80,19 @@ export type CvJobSource = {
 export type CvTextItem = { id: string; text: string };
 export type CvClaimItem = CvTextItem & { requiredEvidenceId?: string };
 
+/** Shared audit partition: checkpoint indices and provider requests must name identical work. */
+export function cvAuditPartitions(input: { rubric: CvRubric; claims: CvClaimItem[] }, size: number): Array<{ requirements: CvRubric["requirements"]; claims: CvClaimItem[] }> {
+  const count = Math.ceil(Math.max(input.rubric.requirements.length, input.claims.length) / size);
+  const share = <T>(items: T[], index: number) => {
+    const each = Math.ceil(items.length / count);
+    return items.slice(index * each, (index + 1) * each);
+  };
+  return Array.from({ length: count }, (_, index) => ({
+    requirements: share(input.rubric.requirements, index),
+    claims: share(input.claims, index),
+  }));
+}
+
 /** Only prose actually printed in the PDF contributes to the CV score. */
 export function cvTextItems(content: CvContent): CvTextItem[] {
   return [

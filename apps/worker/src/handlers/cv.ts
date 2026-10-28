@@ -547,27 +547,29 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       if (reused) await runner.save(rubricStage, { description: draft.jobDescription }, rubric);
 
       // ---- The evidence plan and the optional questions ---------------------------------------
-      /**
-       * The parent revision's evidence plan, for a child draft (a direct edit, or an improvement
-       * written as a new build) whose own checkpoint has none. The plan depends only on the rubric
-       * and the evidence, so it stands for the child when both are the parent's: the same Library
-       * version and the parent's own rubric, reused rather than asked for again. It is read from the
-       * plan saved beside the parent at publication (the checkpoint is cleared then) and checked
-       * against this draft's rubric and Library; anything that fails is no plan at all.
-       */
+      /** A saved plan is candidate data only: its rubric and evidence are checked before reuse. */
       const parentPlan = async (): Promise<CvTailoringPlan | undefined> => {
-        if (!parent || !reused || parent.userId !== draft.userId || parent.libraryVersion !== draft.libraryVersion ||
-            parent.jobDescription !== draft.jobDescription || !parent.assessment) return undefined;
-        try {
-          if (JSON.stringify(CvRubricSchema.parse(parent.assessment.rubric)) !== JSON.stringify(CvRubricSchema.parse(rubric))) return undefined;
-          const [row] = await deps.db.select({ plan: schema.cvTailoringPlans.plan }).from(schema.cvTailoringPlans)
-            .where(and(eq(schema.cvTailoringPlans.draftId, parent.id), eq(schema.cvTailoringPlans.userId, draft.userId)));
-          if (!row) return undefined;
-          return validateCvTailoringPlan(row.plan, rubric, cvTailoringEvidence(library), library);
-        } catch (error) {
-          log.info("parent evidence plan not reusable; continuing without it", { draftId, error: (error as Error).message });
-          return undefined;
+        const matchingRubric = (source: unknown) => {
+          try {
+            return !!source && JSON.stringify(CvRubricSchema.parse(source)) === JSON.stringify(CvRubricSchema.parse(rubric));
+          } catch { return false; }
+        };
+        const candidates = [
+          matchingRubric(draft.assessment?.rubric ?? draft.buildCheckpoint?.sourceRubric) ? draft.id : null,
+          parent && reused && parent.userId === draft.userId && parent.libraryVersion === draft.libraryVersion &&
+            parent.jobDescription === draft.jobDescription &&
+            matchingRubric(parent.assessment?.rubric ?? parent.buildCheckpoint?.sourceRubric) ? parent.id : null,
+        ].filter((id): id is string => !!id);
+        for (const candidateId of candidates) {
+          try {
+            const [row] = await deps.db.select({ plan: schema.cvTailoringPlans.plan }).from(schema.cvTailoringPlans)
+              .where(and(eq(schema.cvTailoringPlans.draftId, candidateId), eq(schema.cvTailoringPlans.userId, draft.userId)));
+            if (row) return validateCvTailoringPlan(row.plan, rubric, cvTailoringEvidence(library), library);
+          } catch (error) {
+            log.info("saved evidence plan not reusable; continuing without it", { draftId, candidateId, error: (error as Error).message });
+          }
         }
+        return undefined;
       };
       let tailoringPlan: CvTailoringPlan | undefined = checkpoint.tailoringPlan;
       if (checkpoint.tailoringEnabled && !inputs.reusedContent) {
@@ -837,6 +839,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
                 // Only the batches this build does not already hold: a retry pays for what it lost.
                 // The revision's re-check holds none, and sends only the claims the memo lacks.
                 ...(pass === "draft" ? { only: pending } : claimMemo ? { claimMemo } : {}),
+                ...(pass === "draft" ? { onCompletedBatch: async (batch: { index: number; result: CvReviewPlan }) => {
+                  await runner.save(auditStage(batch.index), inputsFor(batch.index), batch.result);
+                  held.set(batch.index, batch.result);
+                } } : {}),
                 onBatch: async event => {
                   const position = `(batch ${event.index + 1} of ${event.total})`;
                   if (event.phase === "start") {
@@ -883,10 +889,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           total = audit.total;
           for (const result of audit.batches) {
             if (result.status === "done" && result.result) {
+              // Older or test engines may not invoke the durable completion hook.
+              if (pass === "draft" && !held.has(result.index))
+                await runner.save(auditStage(result.index), inputsFor(result.index), result.result);
               held.set(result.index, result.result);
-              // Saved as soon as the audit returns, finished batches only, so a retry re-runs only
-              // the batches this attempt lost.
-              if (pass === "draft") await runner.save(auditStage(result.index), inputsFor(result.index), result.result);
               continue;
             }
             // A batch that did not finish closes with what ended it: its own failure, or a

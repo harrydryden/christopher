@@ -72,7 +72,7 @@ export function CvAssessmentPanel({
           ? hasFinalPdf
             ? "This finalised revision no longer has a current assessment. Its saved PDF is still available; create a new revision for a current review."
             : "This finalised revision has no saved PDF available. Create a new revision, check it and finalise again."
-          : busy ? "Assessment pending" : "Assessment required"}</p>
+          : busy ? "Assessment pending" : hasContent ? "Saved — check when ready" : "Assessment required"}</p>
         {!busy && !finalised && finaliseReason && (
           <p className="text-14 text-warn">{finaliseReason}</p>
         )}
@@ -83,11 +83,12 @@ export function CvAssessmentPanel({
               <SettingsForm
                 action={assessCvDraft.bind(null, id)}
                 submitLabel={
-                  hasContent ? "Fit and assess saved revision" : "Retry generation"
+                  hasContent ? "Check saved CV" : "Retry generation"
                 }
               >
                 <></>
               </SettingsForm>
+              {hasContent && <p className="mt-2 text-12 text-muted">The check may fit the saved wording to your page limit before assessing it.</p>}
             </fieldset>
             {blocked && <p role="status" className="text-14 text-warn">{blocked}</p>}
           </>

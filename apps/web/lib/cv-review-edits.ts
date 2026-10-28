@@ -6,6 +6,32 @@ import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState, cvSkillIdentity } fro
 export type AddedSkillSection = { entryId: string; heading: string; items: string[]; sourceEntryId?: string };
 export type LibrarySupportSection = { id: string; kind: "education" | "training" | "interest"; heading: string; bullets: string[]; issue?: string };
 
+/** One canonical projection for the editor preview, suggestion input and direct save. */
+export function cvReviewEditedContent(saved: CvContent, edits: {
+  summary: string;
+  theme: CvContent["theme"];
+  rows: string[];
+  removedSkillIds: string[];
+  addedSkills: AddedSkillSection[];
+  skillHeadings: Readonly<Record<string, string>>;
+  addedSupportIds: string[];
+}, available: readonly LibrarySupportSection[]): CvContent {
+  const summary = edits.summary.trim();
+  const content: CvContent = {
+    ...saved,
+    theme: edits.theme,
+    summary,
+    sections: cvReviewSupportingSections(
+      cvReviewSections(saved, edits.rows, edits.removedSkillIds, edits.addedSkills, edits.skillHeadings),
+      edits.addedSupportIds,
+      available,
+    ),
+  };
+  if (summary !== saved.summary) delete content.summarySources;
+  delete content.fitNotes;
+  return content;
+}
+
 /** Saved supporting evidence that can be deliberately included in this CV review. */
 export function librarySupportSections(library: CvLibrary): LibrarySupportSection[] {
   return library.entries.flatMap(entry => {

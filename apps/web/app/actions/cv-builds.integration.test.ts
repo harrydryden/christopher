@@ -171,7 +171,7 @@ it("reserves a returned credit again when the user retries a failed AI-written b
   expect((await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("reserved");
 });
 
-it("keeps the parent's rubric in a Direct Edit's checkpoint, where a later retry can find it", async () => {
+it("saves wording immediately without a task and keeps the rubric for an explicit Check", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   // A finished, assessed revision (the helper is a function declaration, so it is in scope here).
   const parent = await finalisableDraft();
@@ -181,12 +181,57 @@ it("keeps the parent's rubric in a Direct Edit's checkpoint, where a later retry
   form.set("section-0", "Led a team");
   await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(saved!.status).toBe("ready");
+  expect(saved!.assessment).toBeNull();
   expect(saved!.buildCheckpoint).toEqual({ sourceRubric: rubric });
+  expect(await buildTasks()).toHaveLength(0);
+  expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await buildTasks();
-  expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess", rubric });
+  expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess" });
 });
 
-it("writes a rebuild and a direct edit with the CV model chosen now, not the parent's", async () => {
+it("deduplicates repeated direct saves, permits distinct wording, and carries the immediate evidence plan", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const parent = await finalisableDraft();
+  const plan = { sections: [{ title: "Existing plan" }] } as never;
+  await database.insert(schema.cvTailoringPlans).values({ draftId: parent.id, userId: user.id, plan });
+  const edit = (summary: string) => {
+    const form = new FormData();
+    form.set("summary", summary);
+    form.set("section-0", "Led a team");
+    return form;
+  };
+  await expect(saveCvDraft(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveCvDraft(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
+  let children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(children).toHaveLength(1);
+  expect(children[0]!.status).toBe("ready");
+  expect(children[0]!.assessment).toBeNull();
+  expect((await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, children[0]!.id)))[0]?.plan).toEqual(plan);
+  await expect(saveCvDraft(children[0]!.id, { ok: true }, edit("A further quick edit"))).rejects.toThrow("redirect:/cv/");
+  const [grandchild] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, children[0]!.id));
+  expect(grandchild?.buildCheckpoint).toEqual({ sourceRubric: parent.assessment!.rubric });
+  expect((await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, grandchild!.id)))[0]?.plan).toEqual(plan);
+  await expect(saveCvDraft(parent.id, { ok: true }, edit("Second saved wording"))).rejects.toThrow("redirect:/cv/");
+  children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(children).toHaveLength(2);
+  expect(await buildTasks()).toHaveLength(0);
+});
+
+it("keeps a genuinely current assessment when a new saved revision changes no assessed input", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const parent = await finalisableDraft();
+  const form = new FormData();
+  form.set("summary", content.summary);
+  form.set("section-0", "Led a team");
+  await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(saved!.assessment?.inputHash).toBe(parent.assessment!.inputHash);
+  expect(saved!.status).toBe("ready");
+  expect(await buildTasks()).toHaveLength(0);
+});
+
+it("uses the newly chosen model for Rewrite but preserves the parent model on direct Save", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   const parent = await failedDraft({ status: "ready", failure: null, error: null, buildCheckpoint: null });
   await setCvModel("claude-opus-5");
@@ -206,7 +251,7 @@ it("writes a rebuild and a direct edit with the CV model chosen now, not the par
   await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, rebuild!.id));
   await expect(saveCvDraft(parent.id, { ok: true }, edit())).rejects.toThrow("redirect:/cv/");
   const children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
-  expect(children.map(child => child.model)).toEqual(["claude-opus-5", "claude-opus-5"]);
+  expect(children.map(child => child.model)).toEqual(["claude-opus-5", "claude-haiku-4-5"]);
   expect((await draftRow(parent.id)).model).toBe("claude-haiku-4-5");
 });
 
@@ -352,8 +397,8 @@ it("holds a retry and a saved edit to the same cap, and counts only this account
   const edit = new FormData();
   edit.set("summary", content.summary);
   edit.set("section-0", "Led a team");
-  expect(await saveCvDraft(ready.id, { ok: true }, edit)).toEqual({ ok: false, error: CV_BUILD_CAP_MESSAGE });
-  expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, ready.id))).toHaveLength(0);
+  await expect(saveCvDraft(ready.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, ready.id))).toHaveLength(1);
 
   await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, failed.id));
   await database.update(schema.cvDrafts).set({ status: "generating" }).where(eq(schema.cvDrafts.id, ready.id));

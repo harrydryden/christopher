@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createAiEngine, mergeCvAssessBatches, type AiClientLike, type AiUsageRecord, type CvAssessBatchEvent, type ParseResponse } from "./engine";
+import { cvAuditPartitions } from "@col/core/cv-assessment";
+import { cvReviewBatches } from "./cv-review-batch";
 
 const inputFor = (requirements: number, claims: number) => ({
   rubric: { requirements: Array.from({ length: requirements }, (_, i) => ({ id: `r${i}`, label: "Operations", quote: "Lead operations", importance: "essential" as const, category: "experience" as const })), caveats: [] },
@@ -48,6 +50,13 @@ function streaming(respond: (params: Record<string, unknown>, index: number, sig
 const hang = (signal?: AbortSignal) => new Promise<ParseResponse>((_, reject) => signal!.addEventListener("abort", () => reject(new Error("Request was aborted."))));
 
 describe("an audit's batches, each as it ended", () => {
+  it("keeps checkpoint and provider partitions identical, including uneven inputs", () => {
+    const input = inputFor(17, 22);
+    const checkpoint = cvAuditPartitions(input, 8);
+    const provider = cvReviewBatches(input, 8);
+    expect(provider.map(({ requirements, claims }) => ({ requirements, claims }))).toEqual(checkpoint);
+    expect(checkpoint.map(batch => [batch.requirements.length, batch.claims.length])).toEqual([[6, 8], [6, 8], [5, 6]]);
+  });
   it("keeps the batches that finished when one fails, and reports the siblings it stopped as cancelled", async () => {
     const input = inputFor(40, 40);
     const { client } = streaming((params, index, signal) => {
@@ -87,6 +96,51 @@ describe("an audit's batches, each as it ended", () => {
     const checkpointed = full.batches.filter(batch => ![1, 3].includes(batch.index));
     const merged = mergeCvAssessBatches([...checkpointed, ...rerun.batches].sort((a, b) => a.index - b.index).map(batch => batch.result!));
     expect(merged).toEqual(full.review);
+  });
+
+  it("awaits durable batch completion and treats a failed checkpoint as fatal", async () => {
+    const input = inputFor(8, 1);
+    const { client } = streaming(params => Promise.resolve({ parsed_output: answerFor(payloadOf(params)), usage: { input_tokens: 10, output_tokens: 10 } }));
+    let release!: () => void;
+    const persisted = new Promise<void>(resolve => { release = resolve; });
+    let reached!: () => void;
+    const entered = new Promise<void>(resolve => { reached = resolve; });
+    const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1" });
+    let settled = false;
+    const audit = engine.assessCvBatches(input, {}, { onCompletedBatch: async batch => {
+      expect(batch.index).toBe(0);
+      expect(batch.result.matches).toHaveLength(8);
+      reached();
+      await persisted;
+    } }).finally(() => { settled = true; });
+    await entered;
+    expect(settled).toBe(false);
+    release();
+    expect((await audit).batches[0]?.status).toBe("done");
+
+    await expect(engine.assessCvBatches(input, {}, { onCompletedBatch: async () => {
+      throw new Error("checkpoint persistence failed");
+    } })).rejects.toThrow("checkpoint persistence failed");
+  });
+
+  it("cancels sibling calls if durable batch persistence fails", async () => {
+    const input = inputFor(16, 1);
+    let siblingCancelled = false;
+    const { client, calls } = streaming((params, index, signal) => {
+      if (index === 0) return Promise.resolve({ parsed_output: answerFor(payloadOf(params)), usage: { input_tokens: 10, output_tokens: 10 } });
+      return new Promise<ParseResponse>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          siblingCancelled = true;
+          reject(new Error("Request was aborted."));
+        }, { once: true });
+      });
+    });
+    const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1" });
+    await expect(engine.assessCvBatches(input, {}, { onCompletedBatch: async () => {
+      throw new Error("checkpoint persistence failed");
+    } })).rejects.toThrow("checkpoint persistence failed");
+    expect(calls).toHaveLength(2);
+    expect(siblingCancelled).toBe(true);
   });
 
   it("sends nothing more when the first batch fails before its response begins", async () => {

@@ -1,6 +1,6 @@
 "use client";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
-import { cvReviewSections, cvReviewSupportingSections, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
+import { cvReviewEditedContent, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
@@ -49,6 +49,10 @@ export function RebuildButton({ form, disabled = false }: { form?: string; disab
 }
 
 const input = `mt-1 ${inputClass}`;
+const EMPTY_LIBRARY_SKILLS: LibrarySkillSection[] = [];
+const EMPTY_LIBRARY_SUPPORT: LibrarySupportSection[] = [];
+const EMPTY_SKILL_TARGETS: { id: string; heading: string; items: string[] }[] = [];
+const EMPTY_SELECTED_SUGGESTIONS: [] = [];
 
 function SkillCharacterCount({ value, id }: { value: string; id: string }) {
   const { count, approaching, tooLong } = cvSkillCharacterState(value);
@@ -82,9 +86,9 @@ export function CvDraftEditor({
   blocked = null,
   finalised = false,
   hasFinalPdf = false,
-  librarySkillSections = [],
-  librarySupportingSections = [],
-  latestSkillTargets = [],
+  librarySkillSections = EMPTY_LIBRARY_SKILLS,
+  librarySupportingSections = EMPTY_LIBRARY_SUPPORT,
+  latestSkillTargets = EMPTY_SKILL_TARGETS,
   latestLibraryVersion,
   baseRevision,
 }: {
@@ -153,41 +157,41 @@ export function CvDraftEditor({
   const [saveStatus, setSaveStatus] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
   const onSaveStatusChange = useCallback((status: { pending: boolean; error: string | null }) => setSaveStatus(status), []);
   const controller = useRef<AbortController | null>(null);
-  const selectedSuggestions = skillRun?.status === "ready" ? skillRun.suggestions.filter(item => selectedSuggestionIds.includes(item.id)) : [];
-  let currentSkillLabels: string[] = [];
-  let projectionIssue: string | null = null;
-  let candidateSections: CvContent["sections"];
-  let preSuggestionSections: CvContent["sections"];
-  try {
-    const beforeSuggestions = cvReviewSupportingSections(cvReviewSections(content, rows, removedSkillIds, addedSkills, skillHeadings),
-      addedSupportIds, librarySupportingSections);
-    preSuggestionSections = beforeSuggestions;
-    currentSkillLabels = beforeSuggestions.filter(section => section.kind === "skill")
-      .flatMap(section => section.skillItems ?? cvSectionTexts(section));
-    candidateSections = cvReviewSuggestedSections(beforeSuggestions, selectedSuggestions, latestSkillTargets);
-  } catch (failure) {
-    projectionIssue = failure instanceof Error ? failure.message : "Review your section choices.";
-    preSuggestionSections = content.sections;
-    candidateSections = content.sections;
-  }
-  // Save trims the profile before checking the run. Send that same wording to avoid a stale run
-  // solely because a reviewer left whitespace at the edge of the textarea.
-  const preSuggestionCandidate: CvContent = { ...content, theme, summary: summary.trim(), sections: preSuggestionSections };
-  const preSuggestionFingerprint = JSON.stringify(cvSkillDraftContext(preSuggestionCandidate));
+  const selectedSuggestions = useMemo(() => skillRun?.status === "ready"
+    ? skillRun.suggestions.filter(item => selectedSuggestionIds.includes(item.id)) : EMPTY_SELECTED_SUGGESTIONS,
+  [skillRun, selectedSuggestionIds]);
+  const { preSuggestionCandidate, currentSkillLabels, projectionIssue, preSuggestionFingerprint } = useMemo(() => {
+    try {
+      const edited = cvReviewEditedContent(content, {
+        summary, theme, rows, removedSkillIds, addedSkills, skillHeadings, addedSupportIds,
+      }, librarySupportingSections);
+      return {
+        preSuggestionCandidate: edited,
+        currentSkillLabels: edited.sections.filter(section => section.kind === "skill")
+          .flatMap(section => section.skillItems ?? cvSectionTexts(section)),
+        projectionIssue: null as string | null,
+        preSuggestionFingerprint: JSON.stringify(cvSkillDraftContext(edited)),
+      };
+    } catch (failure) {
+      return {
+        preSuggestionCandidate: content,
+        currentSkillLabels: [] as string[],
+        projectionIssue: failure instanceof Error ? failure.message : "Review your section choices.",
+        preSuggestionFingerprint: "",
+      };
+    }
+  }, [content, summary, theme, rows, removedSkillIds, addedSkills, skillHeadings, addedSupportIds, librarySupportingSections]);
   const suggestionsStale = !!skillRun && suggestionInputFingerprint !== preSuggestionFingerprint;
   const selectedNewSuggestionIds = selectedSuggestions.filter(item => !currentSkillLabels.some(label => cvSkillIdentity(label) === cvSkillIdentity(item.label)))
     .map(item => item.id);
   const saveableSuggestionIds = suggestionsStale ? [] : selectedNewSuggestionIds;
-  if (suggestionsStale) candidateSections = preSuggestionSections;
+  const candidate = useMemo((): CvContent => suggestionsStale || !selectedSuggestions.length
+    ? preSuggestionCandidate
+    : { ...preSuggestionCandidate, sections: cvReviewSuggestedSections(preSuggestionCandidate.sections, selectedSuggestions, latestSkillTargets) },
+  [preSuggestionCandidate, suggestionsStale, selectedSuggestions, latestSkillTargets]);
   useEffect(() => {
     if (suggestionsStale && selectedSuggestionIds.length) setSelectedSuggestionIds([]);
   }, [suggestionsStale, selectedSuggestionIds.length]);
-  const candidate = {
-    ...content,
-    theme,
-    summary,
-    sections: candidateSections,
-  };
   const highlightedSkillLabels = candidate.sections.filter(section => section.kind === "skill")
     .flatMap(section => section.skillItems ?? cvSectionTexts(section));
   const skillSectionCount = candidate.sections.filter(section => section.kind === "skill").length;
@@ -196,10 +200,14 @@ export function CvDraftEditor({
   const skillIssue = projectionIssue || (candidate.sections.length > 20 ? "This CV has reached its section limit. Remove a section before saving." : null)
     || cvReviewSkillSectionLimitIssue(candidate.sections, content.sections)
     || skillLimitIssue || cvReviewSkillCharacterIssue(candidate.sections);
-  const fingerprint = JSON.stringify(candidate);
+  const fingerprint = useMemo(() => JSON.stringify(candidate), [candidate]);
   // What was saved, as the same string: it changes only with the revision, so it is worked out once
   // rather than stringifying the whole CV a second time on every keystroke.
-  const baseline = useMemo(() => JSON.stringify({ ...content, theme: baseTheme }), [content, baseTheme]);
+  const baseline = useMemo(() => {
+    const saved = { ...content, theme: baseTheme };
+    delete saved.fitNotes;
+    return JSON.stringify(saved);
+  }, [content, baseTheme]);
   const dirty = fingerprint !== baseline;
   const currentPreview = preview?.fingerprint === fingerprint;
   useEffect(
@@ -357,7 +365,7 @@ export function CvDraftEditor({
           id={formId}
           action={saveCvDraft.bind(null, id)}
           onStatusChange={onSaveStatusChange}
-          submitLabel={finalised ? "Save as new revision · free" : dirty ? "Save and check · free" : "Save as new revision · free"}
+          submitLabel={dirty ? "Save changes · free" : "Save as new revision · free"}
           submitVariant={!finalised && dirty ? "primary" : "secondary"}
           submitDisabled={!!skillIssue}
           secondaryActions={<details className="text-12"><summary className="cursor-pointer">More options</summary><div className="mt-2"><RebuildButton disabled={!!skillIssue} /></div></details>}
@@ -374,7 +382,7 @@ export function CvDraftEditor({
           <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(saveableSuggestionIds)} />
         </SettingsForm>
       </fieldset>
-      <p className="mt-2 text-12 text-muted">Saving keeps your wording and checks a new revision. Rewriting uses the latest Experience evidence and one CV credit.</p>
+      <p className="mt-2 text-12 text-muted">Saving keeps your wording as a new draft without checking or rebuilding this CV. Check the saved CV when you are ready. Rewriting uses the latest Experience evidence and one CV credit.</p>
       {blocked && (
         <p role="status" className="mt-2 border border-warn p-3 text-14 text-warn">
           {blocked}
@@ -386,7 +394,7 @@ export function CvDraftEditor({
           : <button type="button" disabled={pending || !!blocked || !hydrated} onClick={updatePreview} className={buttonClass("secondary")}>
               {pending ? "Rendering preview…" : "Preview current edits"}
             </button>}
-        <span className="text-muted">{dirty ? "Preview includes unsaved edits; save and check before finalising." : finalised ? hasFinalPdf ? "The approved PDF is shown exactly as finalised." : "Preview this wording before saving a new revision." : "Preview of this saved revision."}</span>
+        <span className="text-muted">{dirty ? "Preview includes unsaved edits; save, then check before finalising." : finalised ? hasFinalPdf ? "The approved PDF is shown exactly as finalised." : "Preview this wording before saving a new revision." : "Preview of this saved revision."}</span>
         {error && <p role="alert" className="w-full text-14 text-danger">{error}</p>}
         {preview && !currentPreview && <p role="status" className="w-full text-12 text-muted">Edits changed since this preview. Refresh it to see the current wording.</p>}
         {preview && currentPreview && <>

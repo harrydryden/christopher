@@ -1,5 +1,5 @@
 import { cvQuoteIsAnchored } from "@col/core/cv-review";
-import { cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvRubric, type CvTextItem } from "@col/core/cv-assessment";
+import { cvAuditPartitions, cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvRubric, type CvTextItem } from "@col/core/cv-assessment";
 
 type Context = { cv: CvTextItem[]; claims: CvClaimItem[]; evidence: CvTextItem[] };
 type Match = CvReviewPlan["matches"][number];
@@ -44,15 +44,10 @@ export type CvReviewBatch = { requirements: CvRubric["requirements"]; claims: Cv
  * cite; every batch is assessed against the complete CV and evidence, sent once as shared context.
  */
 export function cvReviewBatches(input: { rubric: CvRubric; claims: CvClaimItem[]; evidence: CvTextItem[] }, size: number): CvReviewBatch[] {
-  const count = Math.ceil(Math.max(input.rubric.requirements.length, input.claims.length) / size);
-  const share = <T>(items: T[], index: number) => {
-    const each = Math.ceil(items.length / count);
-    return items.slice(index * each, (index + 1) * each);
-  };
-  return Array.from({ length: count }, (_, index) => {
-    const claims = share(input.claims, index);
+  return cvAuditPartitions(input, size).map(batch => {
+    const { claims } = batch;
     return {
-      requirements: share(input.rubric.requirements, index),
+      requirements: batch.requirements,
       claims,
       claimSources: input.evidence.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
     };

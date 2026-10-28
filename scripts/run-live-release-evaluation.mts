@@ -1,6 +1,7 @@
 /** One authorised, capped provider pass on an invented CV in a local disposable database. */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { and, eq } from "../packages/db/node_modules/drizzle-orm/index.js";
 import { createScriptedAiClient } from "../apps/web/test/scripted-ai-client";
 import { createDeps } from "../apps/worker/src/context";
@@ -28,16 +29,22 @@ const dbUrl = process.env.DATABASE_URL;
 if (model !== "claude-fable-5-1" || !key || maxUsd !== 10 || !dbUrl)
   throw new Error("Evaluation needs the reviewed model, provider key, $10 cap and local database URL.");
 const database = new URL(dbUrl);
+const localDatabaseName = process.env.CV_EVAL_DATABASE_NAME ?? "col_cv_live_eval_1028";
+if (!["col_cv_live_eval_1028", "col_cv_live_eval_release_1028"].includes(localDatabaseName))
+  throw new Error("Evaluation database name is not a reviewed disposable fixture database.");
 if (!["127.0.0.1", "localhost"].includes(database.hostname)
-  || database.port !== "55449" || database.pathname !== "/col_cv_live_eval_1028")
+  || database.port !== "55449" || database.pathname !== `/${localDatabaseName}`)
   throw new Error("Evaluation refuses any database other than the dedicated local disposable database.");
 process.env.COL_DISABLE_BROWSER = "1";
 const outDir = resolve(process.env.CV_EVAL_OUTPUT_DIR ?? "/tmp/col-cv-live-evaluation-1028");
 mkdirSync(outDir, { recursive: true });
-const ledgerPath = "/tmp/col-cv-live-evaluation-1028/guard-ledger.json";
+const historicalLedgerPath = "/tmp/col-cv-live-evaluation-1028/guard-ledger.json";
+const ledgerPath = process.env.CV_EVAL_LEDGER_PATH ?? historicalLedgerPath;
+if (!isAbsolute(ledgerPath) || (localDatabaseName === "col_cv_live_eval_release_1028" && ledgerPath === historicalLedgerPath))
+  throw new Error("The release fixture requires its explicit, separate absolute spend ledger path.");
 const prior = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, "utf8")) : undefined;
 const guard = installLiveEvaluationGuard({ model, maxUsd, phases: {
-  fixture: { maxUsd: 0, maxRequests: 0 }, cv: { maxUsd: 9, maxRequests: 7 }, skills: { maxUsd: 2, maxRequests: 2 },
+  fixture: { maxUsd: 0, maxRequests: 0 }, cv: { maxUsd: 9, maxRequests: 7 }, skills: { maxUsd: 2, maxRequests: 4 },
 }, prior, onDebit: snapshot => writeFileSync(ledgerPath, JSON.stringify(snapshot, null, 2) + "\n") });
 guard.setPhase("fixture");
 let deps: Awaited<ReturnType<typeof createDeps>> | undefined;
@@ -55,6 +62,9 @@ try {
       "cv-live-release-fixture-1028@example.invalid");
   if (!draft) throw new Error("The provider-recorded synthetic draft is unavailable for resume.");
   if (draft.model !== model) throw new Error("Synthetic draft model does not match the authorised provider model.");
+  const [fixtureUser] = await deps.db.select({ email: schema.users.email }).from(schema.users).where(eq(schema.users.id, draft.userId));
+  if (fixtureUser?.email !== "cv-live-release-fixture-1028@example.invalid")
+    throw new Error("The source recording does not belong to the reviewed synthetic fixture account.");
   if (resumeAuthorFrom && !skillsOnlyFrom) {
     const dry = await replayFromRecording(deps, draft.id, resumeAuthorFrom);
     if (dry.report.misses.some(miss => miss.promptId === "cv.author")
@@ -91,7 +101,14 @@ try {
     writeFileSync(resolve(outDir, "cv-replay-report.json"), JSON.stringify(replayed.report, null, 2) + "\n");
   }
 
-  await deps.db.insert(schema.cvLibraries).values({ userId: draft.userId, version: 1, content: REPLAY_FIXTURE_LIBRARY });
+  const [fixtureLibrary] = await deps.db.select({ version: schema.cvLibraries.version, content: schema.cvLibraries.content })
+    .from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, draft.userId));
+  if (fixtureLibrary) {
+    if (fixtureLibrary.version !== 1 || !isDeepStrictEqual(fixtureLibrary.content, REPLAY_FIXTURE_LIBRARY))
+      throw new Error("The existing local fixture Library differs from the recorded synthetic source.");
+  } else {
+    await deps.db.insert(schema.cvLibraries).values({ userId: draft.userId, version: 1, content: REPLAY_FIXTURE_LIBRARY });
+  }
   const rows = cvSkillEvidenceRows(REPLAY_FIXTURE_LIBRARY);
   const highlighted = cvHighlightedSkillRows(draft.content!);
   const [run] = await deps.db.insert(schema.cvSkillSuggestionRuns).values({ userId: draft.userId, draftId: draft.id,

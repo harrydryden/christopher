@@ -346,7 +346,7 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
   "cv.skill_suggestions": define({ id: "cv.skill_suggestions", callSite: "CV", stage: "skill_suggestions", system: CV_SKILL_SUGGESTION_PROMPT, schema: CvSkillSuggestionPlanSchema,
     route: { model: "cvModel", effort: "low" }, maxTokens: 2_000, timeoutMs: 90_000, priority: "interactive", expectedOutputTokens: 600 }),
   "cv.skill_verify": define({ id: "cv.skill_verify", callSite: "CV", stage: "skill_verify", system: CV_SKILL_VERIFICATION_PROMPT, schema: CvSkillVerificationSchema,
-    route: { model: "cvModel", effort: "low" }, maxTokens: 1_200, timeoutMs: 90_000, priority: "interactive", expectedOutputTokens: 350 }),
+    route: { model: "cvModel", effort: "low" }, maxTokens: 4_000, timeoutMs: 90_000, priority: "interactive", expectedOutputTokens: 350 }),
 };
 
 export const PROMPT_IDS = Object.keys(PROMPTS) as PromptId[];

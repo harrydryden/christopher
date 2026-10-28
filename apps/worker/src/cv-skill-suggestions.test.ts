@@ -1,7 +1,7 @@
 /** The suggestion worker uses a real database, but never contacts a model provider. */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { AiEngine } from "@col/ai";
-import { cvHighlightedSkillRows, cvSkillDraftContext, cvSkillEvidenceRows, cvSkillSuggestionInputHash, type CvLibrary } from "@col/core";
+import { AiEngine, PROMPTS, estimateCostUsd } from "@col/ai";
+import { cvHighlightedSkillRows, cvSkillDraftContext, cvSkillEvidenceRows, cvSkillSuggestionInputHash, cvReusableSkillRows, type CvLibrary } from "@col/core";
 import { createDb, schema, type Task } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -85,6 +85,45 @@ it("publishes verified proposals without changing the Library or draft", async (
   expect(await savedRun(run.id)).toMatchObject({ status: "ready", suggestions: [{ label: "Team leadership" }] });
   expect((await client.db.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, userId))).map(row => row.version)).toEqual([1]);
   expect((await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!.revision).toBe(0);
+  expect(await client.db.select().from(schema.aiReservations)).toHaveLength(0);
+});
+
+it("holds the full proposal and verifier output ceilings before either model call", async () => {
+  const { task, draft } = await fixture();
+  expect(PROMPTS["cv.skill_suggestions"].maxTokens).toBe(2_000);
+  expect(PROMPTS["cv.skill_verify"].maxTokens).toBe(4_000);
+  const { propose } = modelAnswers();
+  propose.mockImplementation(async () => {
+    const rows = cvSkillEvidenceRows(library);
+    const draftContext = cvSkillDraftContext(draft.content!);
+    const highlightedSkills = cvHighlightedSkillRows(draft.content!);
+    const reusableSkills = cvReusableSkillRows(library);
+    const proposalBytes = Buffer.byteLength(JSON.stringify({ rows, highlightedSkills, reusableSkills }))
+      + Buffer.byteLength(description) + Buffer.byteLength(JSON.stringify(draftContext));
+    const verificationBytes = proposalBytes + 16_000;
+    const expected = estimateCostUsd("claude-sonnet-5", { inputTokens: Math.ceil((proposalBytes + verificationBytes) / 2),
+      outputTokens: PROMPTS["cv.skill_suggestions"].maxTokens + PROMPTS["cv.skill_verify"].maxTokens,
+      cacheReadTokens: 0, cacheWriteTokens: 0 });
+    const held = await client.db.select({ amount: schema.aiReservations.amount }).from(schema.aiReservations);
+    expect(held).toHaveLength(1);
+    expect(held[0]!.amount).toBeCloseTo(expected, 5);
+    return { suggestions: [{ category: "Leadership", label: "Team leadership", sourceId: "entry:one:row:0",
+      evidenceQuote: "Led a team of six", roleQuote: "Lead a team of six" }] };
+  });
+  expect(await handleSuggestCvSkills(task, deps())).toEqual({ status: "ready", count: 1 });
+  expect(await client.db.select().from(schema.aiReservations)).toHaveLength(0);
+});
+
+it("does not accept or save suggestions when the verifier stops at its output ceiling", async () => {
+  const { task, run, draft } = await fixture();
+  const { propose, verify } = modelAnswers();
+  verify.mockResolvedValue(null);
+  expect(await handleSuggestCvSkills(task, deps())).toEqual({ status: "failed", count: 0 });
+  expect(propose).toHaveBeenCalledOnce();
+  expect(verify).toHaveBeenCalledOnce();
+  expect(await savedRun(run.id)).toMatchObject({ status: "failed", suggestions: [] });
+  expect((await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!.revision).toBe(draft.revision);
+  expect((await client.db.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, userId))).map(row => row.version)).toEqual([1]);
   expect(await client.db.select().from(schema.aiReservations)).toHaveLength(0);
 });
 

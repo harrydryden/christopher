@@ -1,0 +1,29 @@
+{
+  "kind": "cv-skill-suggestions-live-probe",
+  "at": "2026-10-28T07:09:59.565Z",
+  "promptSetVersion": "710b956d15c1",
+  "syntheticCandidate": true,
+  "source": "provider",
+  "model": "claude-fable-5-1",
+  "outcome": "ready",
+  "verifiedCalls": [
+    {
+      "promptId": "cv.skill_suggestions",
+      "costUsd": 0.09044
+    },
+    {
+      "promptId": "cv.skill_verify",
+      "costUsd": 0.08068
+    }
+  ],
+  "suggestionCount": 10,
+  "categoryCount": 5,
+  "selectedOnlyPersistence": "covered by isolated integration tests; this paid probe makes no Library or CV change",
+  "groundingChecks": {
+    "atMostTen": true,
+    "atMostThreeWords": true,
+    "sourceQuotesPresent": true,
+    "roleQuotesPresent": true
+  },
+  "note": "Proposal and verification were live; selection and persistence remain covered by isolated integration tests. Raw synthetic quotes and provider outputs are retained only in ignored local evidence."
+}

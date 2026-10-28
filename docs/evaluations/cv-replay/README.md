@@ -5,24 +5,27 @@
 It is written by `pnpm --filter @col/worker cli replay <draft-id> --recordings <file> --out
 docs/evaluations/cv-replay/report.json`.
 
-The current `report.json` replays a scripted, offline synthetic fixture at the current prompt set.
-It is explicitly `unverified`: the new skill proposal prompt and draft-context contract have not
-been exercised by a live provider evaluation. A prior verified provider replay is retained as
-`report-live-2026-10-28.json` for its original prompt set; it does not qualify the changed prompts.
+The current `report.json` replays a genuine provider recording of the synthetic fixture at prompt
+set `987e0b5ac958`. It published a CV with supported claims inside its page limit, passed all four
+replay invariants and had no missing recorded calls. A prior verified provider replay remains in
+`report-live-2026-10-28.json` for its original prompt set.
 
 That earlier recorded build published
 with supported claims inside the page limit. Its comparison with the older scripted draft baseline
 failed one essential requirement: the live reviewer marked regulated-environment experience partial
 where the scripted fixture had marked it fully met. That comparison is retained separately in
 `failed-scripted-comparison.json`; it is not hidden or treated as a passing qualification.
-The earlier offline replay compared the rebuilt CV with the live recording's own assessment,
-passed all four invariants and was the verified release report for that prompt set. The two skill
-stages were also called live on the same disposable local fixture at that version; their bounded,
-grounded summary is in `../cv-skill-live-probe.json`. Neither that probe nor the current scripted
-CV replay verifies the changed draft-context proposal prompt. Strict release qualification therefore
-requires a new authorised live evaluation; ordinary CI accepts the explicitly unverified fixture.
-The bounded live continuation reused one existing genuine provider author response after an
-exact prompt/version/input match and made two fresh provider review calls. The replay report's
+The earlier offline replay compared the rebuilt CV with the live recording's own assessment and
+passed all four invariants at that prompt set. The new skill stages were called live on the saved
+synthetic fixture with current Write context; their successful bounded, grounded summary is in
+`../cv-skill-live-probe.json`. The first verifier call exhausted its 1,200-token ceiling, accepted
+no suggestions and is retained in `../cv-skill-live-probe-failed-2026-10-28.json`. After the ceiling
+and budget reservation were corrected, a second two-call skill probe passed using the **same $10
+attempt ledger**. The CV recording and the skill probe use the same invented candidate and role;
+the skill probe tailors from the saved fixture CV, while the provider CV replay runs in a rollback
+scratch transaction. The replay report alone does not exercise skill stages.
+The earlier bounded live continuation reused one existing genuine provider author response after
+an exact prompt/version/input match and made two fresh provider review calls. Its replay report's
 cost includes the reused author call; it is not the incremental amount charged in that continuation.
 
 The raw provider recording is not committed: recordings contain synthetic candidate text and

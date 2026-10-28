@@ -1,0 +1,13 @@
+{
+  "kind": "cv-skill-suggestions-failed-probe",
+  "at": "2026-10-28T13:06:46.933943Z",
+  "promptSetVersion": "987e0b5ac958",
+  "syntheticCandidate": true,
+  "source": "provider",
+  "outcome": "failed_verify_max_tokens",
+  "proposal": { "stopReason": "end_turn", "costUsd": 0.097287 },
+  "verification": { "outputCeilingTokens": 1200, "stopReason": "max_tokens", "costUsd": 0.09051 },
+  "acceptedSuggestions": 0,
+  "suggestionPassChangedLibraryOrCv": false,
+  "note": "The verification response reached its old output ceiling and no incomplete proposal was accepted. A later bounded probe after raising the ceiling to 4,000 tokens is published separately."
+}

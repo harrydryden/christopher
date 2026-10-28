@@ -75,7 +75,7 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
   // The verifier can cite every source, but sends each row only once. Reserve both requests,
   // including a generous ceiling for sixteen candidate records and prompt framing.
   const verificationBytes = proposalBytes + 16_000;
-  const expected = estimateCostUsd(model, { inputTokens: Math.ceil((proposalBytes + verificationBytes) / 2), outputTokens: 3_200,
+  const expected = estimateCostUsd(model, { inputTokens: Math.ceil((proposalBytes + verificationBytes) / 2), outputTokens: 6_000,
     cacheReadTokens: 0, cacheWriteTokens: 0 });
   const admitted = await pass.admit(expected);
   if ("refused" in admitted) return finish("failed", [], admitted.refused);

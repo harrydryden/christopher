@@ -32,10 +32,13 @@ import {
   RecordingClient,
   ReplayClient,
   createProviderClient,
+  readRecording,
+  recordingKey,
   promptSetVersion,
   resolveRoute,
   routedModel,
   type AiClientLike,
+  type AiStreamLike,
   type Effort,
   type RecordingKey,
   type StageRoutes,
@@ -374,6 +377,8 @@ export interface RecordCvOptions {
   /** The file to write; default `docs/evaluations/recordings/<draft>-<time>.jsonl`. */
   path?: string;
   routes?: StageRoutes;
+  /** Reuse only an exact author answer previously recorded from this provider for this draft. */
+  resumeAuthorFrom?: string;
 }
 
 /**
@@ -383,10 +388,13 @@ export interface RecordCvOptions {
  */
 export async function recordCvDraft(deps: WorkerDeps, draftId: string, options: RecordCvOptions = {}): Promise<{ path: string; report: CvReplayReport }> {
   const injected = !!deps.aiClient;
+  if (injected && options.resumeAuthorFrom) throw new Error("A provider recording cannot be resumed through an injected client.");
   const apiKey = deps.env.anthropicApiKey;
   if (!injected && !apiKey) throw new Error("Recording is a live, paid build: set ANTHROPIC_API_KEY for the worker first.");
   const stamp = deps.now().toISOString().replace(/[:.]/g, "-");
   const path = resolve(options.path ?? resolve(RECORDINGS_DIR, `${draftId}-${stamp}.jsonl`));
+  if (options.resumeAuthorFrom && resolve(options.resumeAuthorFrom) === path)
+    throw new Error("The provider source recording and new destination must differ.");
   mkdirSync(dirname(path), { recursive: true });
   const [draft] = await deps.db.select({ model: schema.cvDrafts.model }).from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draftId));
   if (!draft) throw new Error(`No CV draft ${draftId}.`);
@@ -396,7 +404,42 @@ export async function recordCvDraft(deps: WorkerDeps, draftId: string, options: 
     routes: cvStageRoutes(mergeStageRoutes(deploymentRoutes as StageRoutes, options.routes), draft.model), at: deps.now().toISOString(),
   };
   writeFileSync(path, JSON.stringify(meta) + "\n");
-  const client = new RecordingClient(deps.aiClient ?? createProviderClient(apiKey!), { path, secrets: [apiKey] });
+  let inner = deps.aiClient ?? createProviderClient(apiKey!);
+  if (options.resumeAuthorFrom) {
+    const source = readRecordingHeader(options.resumeAuthorFrom);
+    const calls = readRecording(options.resumeAuthorFrom);
+    const author = calls.find(call => call.promptId === "cv.author" && call.stage === "author");
+    if (source.meta?.client !== "provider" || source.meta.draftId !== draftId
+      || source.meta.promptSetVersion !== promptSetVersion() || !author
+      || author.promptVersion !== PROMPTS["cv.author"].version
+      || source.meta.routes["cv.author"]?.resolvedModel !== draft.model
+      || author.response.model !== draft.model || !/^msg_[A-Za-z0-9_-]+$/u.test(String((author.response as { id?: string }).id))
+      || author.response.stop_reason !== "end_turn" || !author.response.usage
+      || recordingKey(author.request, { promptId: "cv.author", promptVersion: author.promptVersion, stage: "author" }).inputHash !== author.inputHash)
+      throw new Error("The prior provider author answer is not eligible for exact-input reuse.");
+    const provider = inner;
+    let used = false;
+    const stream = (params: Record<string, unknown>, callOptions?: Record<string, unknown>, callMeta?: { promptId: string; promptVersion: string; stage?: string }): AiStreamLike => {
+      if (callMeta?.promptId === "cv.author") {
+        const current = recordingKey(params, callMeta);
+        if (used || current.promptId !== author.promptId || current.promptVersion !== author.promptVersion
+          || current.stage !== author.stage || current.inputHash !== author.inputHash)
+          throw new Error("The current author input differs from the recorded provider answer.");
+        used = true;
+        return { on: () => undefined, abort: () => undefined, finalMessage: async () => author.response,
+          get currentMessage() { return author.response; }, get request_id() { return String((author.response as { id?: string }).id); } } as AiStreamLike;
+      }
+      if (callMeta?.promptId !== "cv.review" && callMeta?.promptId !== "cv.review_candidate")
+        throw new Error("An unplanned CV stage was requested during the bounded resume.");
+      if (!provider.messages.stream) throw new Error("The provider client does not support streamed review.");
+      return provider.messages.stream(params, callOptions, callMeta);
+    };
+    const failClosedCreate: AiClientLike["messages"]["create"] = async () => {
+      throw new Error("The bounded provider resume requires a streamed, named CV stage.");
+    };
+    inner = { messages: { create: failClosedCreate, stream }, beta: { messages: { create: failClosedCreate, stream } } };
+  }
+  const client = new RecordingClient(inner, { path, secrets: [apiKey] });
   const { report, assessment } = await replayCvDraft(deps, draftId, { client, routes: options.routes, source: "live", recording: path, unverified: injected });
   const line: RecordingBaseline = { kind: "baseline", baseline: assessment ? cvReplayBaseline(assessment, "recording") : null, report };
   appendFileSync(path, JSON.stringify(line) + "\n");

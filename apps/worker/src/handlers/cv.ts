@@ -26,6 +26,7 @@ import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@col
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, releaseCvCredit, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@col/db";
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@col/ai";
+import { serverFallbackEnabled } from "../provider-routing";
 import {
   CvContentSchema,
   CvStoredPlanSchema,
@@ -458,6 +459,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       const ai = createAiEngine({
         apiKey: deps.env.anthropicApiKey,
         client: deps.aiClient,
+        useServerFallback: serverFallbackEnabled(deps),
         getModel: () => draft.model,
         getStageRoutes: async () => stageRoutes,
         // Every call this build makes is made under its signal, so a deadline, a lost lease or a

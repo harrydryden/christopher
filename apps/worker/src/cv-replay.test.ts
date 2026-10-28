@@ -3,10 +3,10 @@
  * recorded through the real handler, replayed from the recording with no client and no key, and
  * graded — and neither run leaves a trace in the database.
  */
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { schema, type Db } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -19,6 +19,9 @@ import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
 import { seedReplayFixtureDraft } from "./cv-replay-fixture";
 import { mergeStageRoutes, readRecordingHeader, recordCvDraft, replayCvDraft, replayFromRecording, serialiseNestedTransactions } from "./cv-replay";
+
+const providerClient = vi.hoisted(() => vi.fn());
+vi.mock("@col/ai", async importOriginal => ({ ...(await importOriginal<typeof import("@col/ai")>()), createProviderClient: providerClient }));
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/col_test";
 
@@ -36,12 +39,66 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await deps?.close(); });
 beforeEach(async () => {
+  providerClient.mockReset();
   await db.execute(sql`delete from tasks`);
   await db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_skill_suggestion_runs, cv_drafts, ai_calls, ai_reservations, worker_events`);
   deps.userSettings = (async () => ({ aiBudgetUsd: 1000, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
   deps.aiClient = undefined;
   deps.env.anthropicApiKey = "fixture-key";
 });
+
+it("reuses only the exact recorded provider author answer while sending fresh review calls", async () => {
+  const draft = await publishedDraft();
+  const directory = mkdtempSync(join(tmpdir(), "col-replay-resume-"));
+  const source = join(directory, "source.jsonl");
+  const resumed = join(directory, "resumed.jsonl");
+  const first = createScriptedAiClient({ barrierMs: 200 });
+  providerClient.mockReturnValueOnce(first.client);
+  await recordCvDraft(deps, draft.id, { path: source });
+  const sourceCalls = readFileSync(source, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  const author = sourceCalls.find(line => line.kind === "call" && line.promptId === "cv.author");
+  expect(sourceCalls[0]).toMatchObject({ kind: "meta", client: "provider" });
+  // The scripted transport has no provider request ID; give this synthetic provider fixture one.
+  author.response.id = "msg_fixture_author";
+  writeFileSync(source, sourceCalls.map(line => JSON.stringify(line)).join("\n") + "\n");
+  expect(author?.response.id).toMatch(/^msg_/);
+
+  const second = createScriptedAiClient({ barrierMs: 200 });
+  providerClient.mockReturnValueOnce(second.client);
+  const result = await recordCvDraft(deps, draft.id, { path: resumed, resumeAuthorFrom: source });
+  expect(result.report.outcome).toBe("published");
+  expect(second.calls.some(call => call.kind === "author")).toBe(false);
+  expect(second.calls.some(call => call.kind === "review")).toBe(true);
+  const resumedCalls = readFileSync(resumed, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  const reused = resumedCalls.find(line => line.kind === "call" && line.promptId === "cv.author");
+  expect(reused).toMatchObject({ inputHash: author.inputHash, response: { id: author.response.id } });
+}, 120_000);
+
+it("rejects injected or altered author provenance before any resumed provider call", async () => {
+  const draft = await publishedDraft();
+  const directory = mkdtempSync(join(tmpdir(), "col-replay-resume-"));
+  const source = join(directory, "source.jsonl");
+  const destination = join(directory, "destination.jsonl");
+  const first = createScriptedAiClient({ barrierMs: 200 });
+  deps.aiClient = first.client;
+  await recordCvDraft(deps, draft.id, { path: source });
+  await expect(recordCvDraft(deps, draft.id, { path: destination, resumeAuthorFrom: source })).rejects.toThrow(/injected client/);
+  deps.aiClient = undefined;
+  const second = createScriptedAiClient({ barrierMs: 200 });
+  providerClient.mockReturnValue(second.client);
+  await expect(recordCvDraft(deps, draft.id, { path: destination, resumeAuthorFrom: source })).rejects.toThrow(/not eligible/);
+  expect(second.calls).toHaveLength(0);
+
+  const lines = readFileSync(source, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  lines[0].client = "provider";
+  const author = lines.find(line => line.kind === "call" && line.promptId === "cv.author");
+  author.response.id = "msg_fixture_author";
+  author.request.max_tokens += 1;
+  writeFileSync(source, lines.map(line => JSON.stringify(line)).join("\n") + "\n");
+  await expect(recordCvDraft(deps, draft.id, { path: destination, resumeAuthorFrom: source })).rejects.toThrow(/not eligible/);
+  expect(second.calls).toHaveLength(0);
+  await expect(recordCvDraft(deps, draft.id, { path: source, resumeAuthorFrom: source })).rejects.toThrow(/source recording.*destination must differ/i);
+}, 120_000);
 
 /** A published fixture draft, built through the queue against the scripted client. */
 async function publishedDraft() {

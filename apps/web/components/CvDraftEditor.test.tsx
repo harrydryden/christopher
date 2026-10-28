@@ -15,7 +15,7 @@ vi.mock("@/app/actions/cv", () => ({ saveCvDraft: vi.fn(), requestCvSkillSuggest
 vi.mock("@col/core/cv", () => { throw new Error("Failed to fetch dynamically imported module"); });
 
 import { CvDraftEditor } from "./CvDraftEditor";
-import { readCvSkillSuggestions, requestCvSkillSuggestions } from "@/app/actions/cv";
+import { readCvSkillSuggestions, requestCvSkillSuggestions, saveCvDraft } from "@/app/actions/cv";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -60,13 +60,61 @@ it("generates skills only on click using current CV edits and saves only selecte
   act(() => selected.click());
   expect(container.querySelector<HTMLInputElement>('[name="selectedSuggestionIds"]')?.value).toBe('["proposal-1"]');
   expect(container.textContent).toContain("1 highlighted skill on this CV");
+  expect(container.textContent).toContain("1 new skill selected to save · Unsaved.");
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(profile, "Another profile revision.");
     profile.dispatchEvent(new Event("input", { bubbles: true }));
   });
   expect(container.textContent).toContain("changed after this skill check");
   expect(container.querySelector<HTMLInputElement>('[name="selectedSuggestionIds"]')?.value).toBe("[]");
+  expect(container.textContent).toContain("0 new skills selected to save.");
+  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Save selected skills to CV")?.disabled).toBe(true);
   expect([...container.querySelectorAll("button")].some(button => button.textContent === "Generate skills for current edits")).toBe(true);
+});
+
+it("submits selected new skills and other edits through the existing save form, with shared pending and error state", async () => {
+  let finishSave!: (value: Awaited<ReturnType<typeof saveCvDraft>>) => void;
+  vi.mocked(saveCvDraft).mockReturnValue(new Promise(resolve => { finishSave = resolve; }));
+  vi.mocked(requestCvSkillSuggestions).mockResolvedValue({ ok: true, run: { id: "run-1", status: "ready", error: null,
+    suggestions: [
+      { id: "included", category: "Tools", label: "Python", sourceId: "entry-1", evidenceQuote: "Python", roleQuote: "Python" },
+      { id: "new", category: "Leadership", label: "Team leadership", sourceId: "entry-1", evidenceQuote: "Led a team", roleQuote: "Lead a team" },
+    ] } });
+  const existing = { ...content, sections: [...content.sections, { entryId: "skill-1", kind: "skill", heading: "Tools", bullets: ["Python"], skillItems: ["Python"] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={existing} theme={DEFAULT_CV_THEME} baseRevision={3} />));
+  const save = () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Save selected skills to CV" || button.textContent === "Saving selected skills…")!;
+  expect(save().disabled).toBe(true);
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Generate skills")!.click());
+  expect(save().disabled).toBe(true);
+  const newChoice = [...container.querySelectorAll("label")].find(label => label.textContent?.includes("Team leadership"))!
+    .querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  act(() => newChoice.click());
+  expect(container.textContent).toContain("1 new skill selected to save · Unsaved.");
+  expect(save().disabled).toBe(false);
+  const summary = container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(summary, "Updated analyst profile.");
+    summary.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // The changed wording makes the proposal stale; generate it again against these edits.
+  expect(save().disabled).toBe(true);
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Generate skills for current edits")!.click());
+  act(() => [...container.querySelectorAll("label")].find(label => label.textContent?.includes("Team leadership"))!
+    .querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+  const form = container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!;
+  expect(save().form).toBe(form);
+  act(() => save().click());
+  expect(saveCvDraft).toHaveBeenCalledTimes(1);
+  const data = vi.mocked(saveCvDraft).mock.calls[0]![2];
+  expect(data.get("selectedSuggestionIds")).toBe('["new"]');
+  expect(data.get("skillSuggestionRunId")).toBe("run-1");
+  expect(data.get("summary")).toBe("Updated analyst profile.");
+  expect(save().textContent).toBe("Saving selected skills…");
+  expect(save().disabled).toBe(true);
+  await act(async () => finishSave({ ok: false, error: "Save was refused." }));
+  expect(save().disabled).toBe(false);
+  expect(container.textContent).toContain("Save update: Save was refused.");
+  expect(form.querySelector('[role="alert"]')?.textContent).toContain("Save was refused.");
 });
 
 it("does not let an old poll replace a newer suggestion run", async () => {

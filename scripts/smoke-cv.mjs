@@ -1178,7 +1178,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(await unselectedSkill.isChecked(), false);
     await selectedSkill.check();
     assert.equal(await unselectedSkill.isChecked(), false);
-    await page.getByRole("button", { name: "Save and check · free", exact: true }).click();
+    const saveSelectedSkills = page.getByRole("button", { name: "Save selected skills to CV", exact: true });
+    assert.equal(await saveSelectedSkills.isDisabled(), false);
+    await saveSelectedSkills.click();
     await page.waitForURL(url => url.pathname !== `/cv/${suggestionDraftId}`);
     const accepted = (await pool.query("select content from cv_libraries where user_id = $1 order by version desc limit 1", [userId])).rows[0].content;
     assert.ok(accepted.entries.some(entry => entry.kind === "skill" && entry.skillItems?.includes("Team leadership")));

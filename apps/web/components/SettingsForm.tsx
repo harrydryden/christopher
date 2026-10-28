@@ -23,6 +23,7 @@ export function SettingsForm({
   secondaryActions,
   successMessage,
   resetOnSuccess = true,
+  onStatusChange,
 }: {
   id?: string;
   action: (
@@ -39,6 +40,8 @@ export function SettingsForm({
   successMessage?: string;
   /** Controlled editors keep their own saved values after a confirmed action. */
   resetOnSuccess?: boolean;
+  /** Lets a submit control outside this form reflect the same pending and error state. */
+  onStatusChange?: (status: { pending: boolean; error: string | null }) => void;
 }) {
   const editVersion = useRef(0);
   const submittedVersion = useRef(0);
@@ -65,6 +68,9 @@ export function SettingsForm({
   );
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => { if (!state.ok) errorRef.current?.focus(); }, [state]);
+  useEffect(() => {
+    onStatusChange?.({ pending: isPending, error: state.ok ? null : state.error });
+  }, [isPending, onStatusChange, state]);
   useEffect(() => {
     // CV fields can sit outside this element and still belong to it via `form={id}`.
     // Those controls are reset with the form, so their edits must count too.

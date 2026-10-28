@@ -413,9 +413,10 @@ for (const [refused, stage] of [[3, "improve"], [4, "reaudit"]] as const) {
     // Nothing is left running and nothing reads as failed over a ready CV.
     expect(steps.filter(step => step.status === "running" || step.status === "failed").map(step => step.motion)).toEqual([]);
     const admit = steps.filter(step => step.motion === "admit_budget").at(-1)!;
-    expect(admit).toMatchObject({ status: "skipped", detail: { stage, reason: expect.stringMatching(/^CV generation is unavailable/) } });
+    const budgetReason = /your budget of \$10 has \$0\.01 left this month.*Settings.*No CV credit will be used/;
+    expect(admit).toMatchObject({ status: "skipped", detail: { stage, reason: expect.stringMatching(budgetReason) } });
     const adopt = steps.find(step => step.motion === "adopt_revision")!;
-    expect(adopt).toMatchObject({ status: "skipped", detail: { reason: expect.stringMatching(/^CV generation is unavailable/) } });
+    expect(adopt).toMatchObject({ status: "skipped", detail: { reason: expect.stringMatching(budgetReason) } });
     expect(steps.at(-1)!.motion).toBe("adopt_revision");
     expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(stage === "improve" ? 0 : 1);
   });

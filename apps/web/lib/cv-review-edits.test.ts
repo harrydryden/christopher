@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@col/core/cv";
-import { cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
+import { cvReviewEditedContent, cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -8,6 +8,19 @@ const saved = CvContentSchema.parse({
     { entryId: "role-1", kind: "experience", heading: "Analyst", bullets: ["Built systems."], bulletSources: [["entry:role-1"]] },
     { entryId: "skill-1", kind: "skill", heading: "Technical skills", bullets: ["Python"], skillItems: ["Python"], bulletSources: [["entry:skill-1"]] },
   ],
+});
+
+it("projects the exact canonical saved content and lets a removed skill have an empty heading", () => {
+  const source = { ...saved, fitNotes: ["A previous fit"], summarySources: ["entry:role-1"] };
+  const edited = cvReviewEditedContent(source, {
+    summary: "  New profile.  ", theme: source.theme, rows: ["Built systems.", "Python"],
+    removedSkillIds: ["skill-1"], addedSkills: [], skillHeadings: { "skill-1": " " }, addedSupportIds: [],
+  }, []);
+  expect(edited.summary).toBe("New profile.");
+  expect(edited.sections).toEqual([saved.sections[0]]);
+  expect(edited.summarySources).toBeUndefined();
+  expect(edited.fitNotes).toBeUndefined();
+  expect(source.fitNotes).toEqual(["A previous fit"]);
 });
 
 it("omits an emptied skill section while preserving unchanged section IDs and citations", () => {

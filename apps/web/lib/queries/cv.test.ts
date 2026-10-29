@@ -15,7 +15,7 @@ import { createDb, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
 import { sql } from "drizzle-orm";
-import { cvStepsSignature } from "@/lib/cv-build-state";
+import { cvBuildState, cvStepsSignature } from "@/lib/cv-build-state";
 import { mergeSteps } from "@/lib/cv-build-journal";
 import { cvProgressReading } from "@/lib/cv-progress";
 import { ensureTestUser } from "@/test/auth";
@@ -110,6 +110,21 @@ it("reads a draft and its poll row from a database the worker has not migrated y
   expect(migrated!.buildCheckpoint).toMatchObject({ attempt: 1 });
   expect(migrated!.progressAt).toBeInstanceOf(Date);
   expect((await readCvProgress(user.id, draft.id))!.draft.failure).toMatchObject({ kind: "overloaded" });
+});
+
+it("reads only the checkpoint facts needed for resume wording, not recorded model outputs", async () => {
+  const checkpoint = {
+    rubric: { requirements: [{ id: "r1", text: "Lead a team" }] },
+    contentAt: "2026-10-28T12:00:00.000Z",
+    stages: { audit: "large recorded result ".repeat(8_000) },
+  };
+  const draft = await seedDraft({ status: "failed", failure, buildCheckpoint: checkpoint as never });
+  const full = (await getOwnCvDraft(user.id, draft.id))!.buildCheckpoint;
+  const progress = (await readCvProgress(user.id, draft.id))!;
+  expect(progress.draft.buildCheckpoint).toEqual({ rubricPresent: true, contentAt: checkpoint.contentAt });
+  expect(JSON.stringify(progress.draft.buildCheckpoint).length).toBeLessThan(JSON.stringify(full).length / 100);
+  expect(cvBuildState(progress.draft, progress.task).resumeNote).toBe(
+    cvBuildState({ ...progress.draft, buildCheckpoint: full }, progress.task).resumeNote);
 });
 
 it("probes for the daily versions table until it exists, then remembers that it does", async () => {

@@ -1,11 +1,10 @@
 import { cvMaxPages, type CvContent, type CvLibrary } from "@col/core/cv";
 import type { CvAssessment } from "@col/core/cv-assessment";
 import { diagnoseCvQuality } from "@col/core/cv-quality";
-import { assessCvDraft } from "@/app/actions/cv";
 import { cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
 import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvLazyWidgets";
-import { SettingsForm } from "./SettingsForm";
+import { CvCheckForm } from "./CvCheckForm";
 import { CvReviewControls } from "./CvReviewControls";
 
 /** Explain source changes where the evidence is judged; rewriting stays in the Write controls. */
@@ -72,7 +71,7 @@ export function CvAssessmentPanel({
           ? hasFinalPdf
             ? "This finalised revision no longer has a current assessment. Its saved PDF is still available; create a new revision for a current review."
             : "This finalised revision has no saved PDF available. Create a new revision, check it and finalise again."
-          : busy ? "Assessment pending" : "Assessment required"}</p>
+          : busy ? "Assessment pending" : hasContent ? "Saved — check when ready" : "Assessment required"}</p>
         {!busy && !finalised && finaliseReason && (
           <p className="text-14 text-warn">{finaliseReason}</p>
         )}
@@ -80,14 +79,8 @@ export function CvAssessmentPanel({
         {!busy && !finalised && (
           <>
             <fieldset disabled={!!blocked} className="min-w-0">
-              <SettingsForm
-                action={assessCvDraft.bind(null, id)}
-                submitLabel={
-                  hasContent ? "Fit and assess saved revision" : "Retry generation"
-                }
-              >
-                <></>
-              </SettingsForm>
+              <CvCheckForm id={id} hasContent={hasContent} />
+              {hasContent && <p className="mt-2 text-12 text-muted">The check may fit the saved wording to your page limit before assessing it.</p>}
             </fieldset>
             {blocked && <p role="status" className="text-14 text-warn">{blocked}</p>}
           </>

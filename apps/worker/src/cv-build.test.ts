@@ -6,7 +6,7 @@
  * re-run, what each call cost. The queue is real too, so a retry is a real requeue with a real
  * backoff and a real second claim.
  */
-import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, reserveCvCredit, schema, startCvBuildStep, type Db, type Task } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { BadRequestError, InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@col/ai";
@@ -826,6 +826,45 @@ it("resumes a failed audit batch alone, keeping the batches that finished", asyn
   expect(scripted.count("review")).toBe(3);
   expect(scripted.count("author")).toBe(1);
   expect(scripted.count("rubric")).toBe(1);
+});
+
+it("checkpoints a paid audit batch before a later batch completes, then resumes only the latter", async () => {
+  const requirementIds = Array.from({ length: 10 }, (_, index) => `r${index + 1}`);
+  const description = requirementIds.map(id => `Requirement ${id}.`).join(" ");
+  const rubric = { caveats: [], requirements: requirementIds.map(id => ({
+    id, label: `Requirement ${id}`, quote: `Requirement ${id}.`, importance: "essential" as const, category: "experience" as const })) };
+  let failLater!: (error: Error) => void;
+  const later = new Promise<ParseResponse>((_resolve, reject) => { failLater = reject; });
+  let blocked = true;
+  const scripted = scriptedClient({
+    rubric: () => answered(rubric),
+    review: params => {
+      const blocks = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
+      const batch = JSON.parse(blocks[2]!.text) as { requirements: Array<{ id: string }> };
+      if (blocked && batch.requirements.some(requirement => requirement.id === "r6")) {
+        blocked = false;
+        return later;
+      }
+      return reviewAnswer(params);
+    },
+  });
+  deps.aiClient = scripted.client;
+  const draft = await makeDraft({ jobDescription: description });
+  const draining = queueFor().drain();
+  try {
+    await vi.waitFor(async () => {
+      expect(scripted.count("review")).toBe(2);
+      expect((await draftAfter(draft.id)).buildCheckpoint?.stages).toHaveProperty("audit[0]");
+    }, { timeout: 8_000, interval: 25 });
+  } finally {
+    failLater(new InternalServerError(529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, undefined, new Headers()));
+    await draining;
+  }
+  expect((await draftAfter(draft.id)).buildCheckpoint?.stages).toHaveProperty("audit[0]");
+  expect((await draftAfter(draft.id)).buildCheckpoint?.stages).not.toHaveProperty("audit[1]");
+  await runDueNow();
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  expect(scripted.count("review")).toBe(3);
 });
 
 it("claims an account's first CV build before anyone's second", async () => {

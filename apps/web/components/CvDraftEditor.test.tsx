@@ -11,11 +11,16 @@ import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
 
 vi.mock("@/app/actions/cv", () => ({ saveCvDraft: vi.fn(), requestCvSkillSuggestions: vi.fn(), readCvSkillSuggestions: vi.fn() }));
+vi.mock("@/lib/cv-review-edits", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/lib/cv-review-edits")>();
+  return { ...actual, cvReviewEditedContent: vi.fn(actual.cvReviewEditedContent) };
+});
 // The lazily loaded check, unreachable: `import("@col/core/cv")` rejects as a failed chunk would.
 vi.mock("@col/core/cv", () => { throw new Error("Failed to fetch dynamically imported module"); });
 
 import { CvDraftEditor } from "./CvDraftEditor";
 import { readCvSkillSuggestions, requestCvSkillSuggestions, saveCvDraft } from "@/app/actions/cv";
+import { cvReviewEditedContent } from "@/lib/cv-review-edits";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -179,6 +184,24 @@ it("does not let an old poll replace a newer suggestion run", async () => {
     await act(async () => resolveOldPoll({ ok: true, run: { id: "old-run", status: "ready", suggestions: [], error: null } }));
     expect(container.textContent).toContain("Team leadership");
     expect(container.querySelector<HTMLInputElement>('[name="skillSuggestionRunId"]')?.value).toBe("new-run");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not reproject the full CV when a queued skill check updates its polling status", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(requestCvSkillSuggestions).mockResolvedValue({ ok: true,
+      run: { id: "poll-run", status: "queued", suggestions: [], error: null } });
+    vi.mocked(readCvSkillSuggestions).mockResolvedValue({ ok: true,
+      run: { id: "poll-run", status: "running", suggestions: [], error: null } });
+    act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} baseRevision={1} />));
+    await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Generate skills")!.click());
+    const projections = vi.mocked(cvReviewEditedContent).mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(readCvSkillSuggestions).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(cvReviewEditedContent)).toHaveBeenCalledTimes(projections);
   } finally {
     vi.useRealTimers();
   }

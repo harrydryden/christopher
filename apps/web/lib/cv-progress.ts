@@ -7,7 +7,7 @@
  */
 import type { CvBuildCheckpoint, CvBuildFailure } from "@col/core";
 import { stepToWire, type CvJournalStep } from "./cv-build-journal";
-import { CV_PROGRESS_STALE_MS, cvBuildState, cvWorkFlags, cvWorkVersion, type CvBuildDraft, type CvBuildTask } from "./cv-build-state";
+import { CV_PROGRESS_STALE_MS, cvBuildState, cvWorkFlags, cvWorkVersion, type CvBuildDraft, type CvBuildTask, type CvProgressCheckpoint } from "./cv-build-state";
 import type { CvProgressReading } from "./cv-progress-types";
 
 export interface CvProgressRows {
@@ -18,7 +18,7 @@ export interface CvProgressRows {
     createdAt: Date;
     progressAt: Date | null;
     failure: CvBuildFailure | null;
-    buildCheckpoint?: CvBuildCheckpoint | null;
+    buildCheckpoint?: CvProgressCheckpoint | CvBuildCheckpoint | null;
   };
   /** The newest `generate_cv` row behind the draft, or null when there is none. */
   task: CvBuildTask | null;

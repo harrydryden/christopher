@@ -755,6 +755,8 @@ export type CvAssessPass = "draft" | "revision";
 export interface CvAssessHooks {
   /** Never throws into the audit: a hook that fails is logged and the batch carries on. */
   onBatch?: (event: CvAssessBatchEvent) => void | Promise<void>;
+  /** A durable completion boundary. Rejection stops the audit and cancels sibling calls. */
+  onCompletedBatch?: (batch: { index: number; result: CvReviewPlan; usage: AiUsageRecord[] }) => Promise<void>;
   /** Default `draft`. */
   pass?: CvAssessPass;
 }
@@ -1494,6 +1496,7 @@ export class AiEngine {
         await say("failed", extra);
         return { index, status: "failed", usage, error: ASSESSMENT_COVERAGE_ERROR, failure: { kind: "output_invalid" } };
       }
+      await options.onCompletedBatch?.({ index, result, usage });
       await say("done", extra);
       return { index, status: "done", result, usage };
     };

@@ -46,6 +46,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  assessCvDraft,
   finaliseCvDraft,
   answerCvGapQuiz,
   requestCv,
@@ -542,6 +543,9 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     edit.set("rememberWording", "on");
     await expect(saveCvDraft(first.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const editedDraft = await childOf(first.id);
+    expect(editedDraft.status).toBe("ready");
+    expect(await database.select().from(schema.tasks).where(sql`payload->>'draftId' = ${editedDraft.id}`)).toHaveLength(0);
+    expect(await assessCvDraft(editedDraft.id, { ok: true }, new FormData())).toEqual({ ok: true });
     const [editTask] = await database
       .select()
       .from(schema.tasks)

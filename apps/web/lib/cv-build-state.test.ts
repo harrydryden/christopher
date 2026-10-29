@@ -14,7 +14,7 @@ import {
   type CvBuildDraft,
   type CvBuildTask,
 } from "./cv-build-state";
-import type { CvBuildFailure } from "@col/core";
+import type { CvBuildCheckpoint, CvBuildFailure } from "@col/core";
 
 const now = new Date("2026-09-18T12:00:00.000Z");
 const ago = (ms: number) => new Date(now.getTime() - ms);
@@ -252,7 +252,7 @@ it("names the failure, its heading and the person's way forward on a failed draf
     draft({
       status: "failed",
       failure: failure({ attempt: 3, retryAt: undefined }),
-      buildCheckpoint: { rubric: { requirements: [] } as unknown as NonNullable<CvBuildDraft["buildCheckpoint"]>["rubric"], contentAt: now.toISOString() },
+      buildCheckpoint: { rubric: { requirements: [] } as unknown as CvBuildCheckpoint["rubric"], contentAt: now.toISOString() },
     }),
     task({ status: "failed", attempts: 3 }),
     now,

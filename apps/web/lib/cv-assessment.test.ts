@@ -130,7 +130,7 @@ it("never displays a stale score as a current assessment", () => {
       content,
     }),
   );
-  expect(html).toContain("Fit and assess saved revision");
+  expect(html).toContain("Check saved CV");
   expect(html).not.toContain("/100");
 });
 
@@ -139,7 +139,7 @@ it("gives a finalised CV with a stale assessment a truthful PDF or recovery stat
   const kept = renderToStaticMarkup(createElement(CvAssessmentPanel, { ...props, hasFinalPdf: true }));
   expect(kept).toContain("Its saved PDF is still available");
   expect(kept).not.toContain("Assessment required");
-  expect(kept).not.toContain("Fit and assess saved revision");
+  expect(kept).not.toContain("Check saved CV");
   const missing = renderToStaticMarkup(createElement(CvAssessmentPanel, { ...props, hasFinalPdf: false }));
   expect(missing).toContain("Create a new revision");
   expect(missing).not.toContain("Assessment required");
@@ -234,7 +234,7 @@ it("says why finalising is unavailable instead of hiding the control", () => {
     }),
   );
   expect(stale).toContain("Assess this saved revision against the job description before finalising it.");
-  expect(stale).toContain("Fit and assess saved revision");
+  expect(stale).toContain("Check saved CV");
 });
 
 it("disables the actions that spend money until the address is confirmed, and says why", () => {
@@ -252,5 +252,5 @@ it("disables the actions that spend money until the address is confirmed, and sa
     }),
   );
   expect(html).toContain(sentence);
-  expect(html).toMatch(/<fieldset disabled=""[\s\S]*Fit and assess saved revision/);
+  expect(html).toMatch(/<fieldset disabled=""[\s\S]*Check saved CV/);
 });

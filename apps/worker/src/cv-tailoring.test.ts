@@ -181,6 +181,62 @@ it("a completed quiz reuses its semantic plan, skips another pause and passes pr
   expect(JSON.stringify((await draftAfter(draft.id)).content)).toContain("summarySources");
 });
 
+it("reuses a validated evidence plan through two ready direct saves, but not after Library changes", async () => {
+  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  await queue().drain();
+  const [base] = await db.select().from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.userId, userId)).orderBy(sql`${schema.cvDrafts.revision} desc`).limit(1);
+  expect(base?.status).toBe("ready");
+  expect(base?.content).toBeTruthy();
+  const [basePlan] = await db.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, base!.id));
+  expect(basePlan?.plan).toEqual(noGapPlan);
+
+  const insertDirect = async (parent: typeof base, revision: number, queued = false, changedLibrary = false) => {
+    const [saved] = await db.insert(schema.cvDrafts).values({
+      userId, jobTitle: base!.jobTitle, companyName: base!.companyName, jobDescription: base!.jobDescription,
+      libraryVersion: changedLibrary ? base!.libraryVersion + 1 : base!.libraryVersion,
+      librarySnapshot: changedLibrary ? { ...library, entries: [{ ...library.entries[0]!, details: "Different role",
+        confirmedResponsibilities: ["Different role"] }, library.entries[1]!] } : base!.librarySnapshot,
+      model: base!.model, content: { ...base!.content!, summary: `Operations leader version ${revision}` },
+      status: queued ? "queued" : "ready", parentId: parent!.id, revision,
+      buildCheckpoint: { sourceRubric: rubric },
+    }).returning();
+    // A stale copied row is intentional in the changed-Library case: the worker must reject it.
+    await db.insert(schema.cvTailoringPlans).values({ draftId: saved!.id, userId, plan: basePlan!.plan });
+    return saved!;
+  };
+  const first = await insertDirect(base, base!.revision + 1);
+  const second = await insertDirect(first, base!.revision + 2, true);
+  // Retention may remove an immediate parent; the saved revision still owns its copied plan.
+  await db.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, first.id));
+  const payload = { draftId: second.id, userId, mode: "assess" as const };
+  await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
+  await queue().drain();
+  expect((await draftAfter(second.id)).status).toBe("ready");
+  const [reusedPlan] = await db.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, second.id));
+  expect(reusedPlan?.plan).toEqual(noGapPlan);
+  expect(scripted.calls.filter(call => call === "planner")).toHaveLength(0);
+  expect(scripted.calls.filter(call => call === "rubric")).toHaveLength(0);
+
+  const reviewTails: Array<Record<string, unknown>> = [];
+  const originalCreate = scripted.client.messages.create;
+  scripted.client.messages.create = async (params, options, call) => {
+    if (call?.promptId === "cv.review") {
+      const blocks = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
+      reviewTails.push(JSON.parse(blocks[2]!.text) as Record<string, unknown>);
+    }
+    return originalCreate(params, options, call);
+  };
+  const changed = await insertDirect(second, base!.revision + 3, true, true);
+  const changedPayload = { draftId: changed.id, userId, mode: "assess" as const };
+  await enqueueTask(db, "generate_cv", changedPayload, { dedupeKey: dedupeKeyFor("generate_cv", changedPayload) });
+  await queue().drain();
+  expect((await draftAfter(changed.id)).status).toBe("ready");
+  expect(reviewTails.length).toBeGreaterThan(0);
+  expect(reviewTails.every(tail => !("libraryVerdicts" in tail))).toBe(true);
+});
+
 it("publishes the baseline first, then adopts one verified improvement as a new revision of the same chain", async () => {
   let draftId = "";
   let progressAtWhenImprovementStarted: number | null | undefined;

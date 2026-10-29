@@ -88,7 +88,13 @@ export interface CvBuildDraft {
   /** The structured record of why the last attempt stopped, when there is one. */
   failure?: CvBuildFailure | null;
   /** What the build already paid for, so the page can say a retry will not pay for it again. */
-  buildCheckpoint?: CvBuildCheckpoint | null;
+  buildCheckpoint?: CvBuildCheckpoint | CvProgressCheckpoint | null;
+}
+
+/** The progress feed needs only these two facts, never the recorded model outputs. */
+export interface CvProgressCheckpoint {
+  rubricPresent: boolean;
+  contentAt: string | null;
 }
 
 /** What a queued build says while no worker is running. */
@@ -129,9 +135,10 @@ function parseMoment(value: string | undefined): Date | null {
 }
 
 /** "A retry resumes from …", so nobody fears paying twice for a build that already ran the dear calls. */
-function resumeNoteFor(checkpoint: CvBuildCheckpoint | null | undefined): string | null {
+function resumeNoteFor(checkpoint: CvBuildDraft["buildCheckpoint"]): string | null {
   if (!checkpoint) return null;
-  const parts = [checkpoint.rubric ? "the requirements already extracted" : null, checkpoint.contentAt ? "the wording already written" : null].filter(
+  const rubricPresent = "rubricPresent" in checkpoint ? checkpoint.rubricPresent : !!checkpoint.rubric;
+  const parts = [rubricPresent ? "the requirements already extracted" : null, checkpoint.contentAt ? "the wording already written" : null].filter(
     (part): part is string => part !== null,
   );
   if (!parts.length) return null;

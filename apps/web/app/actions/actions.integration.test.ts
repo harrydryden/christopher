@@ -1252,7 +1252,7 @@ describe("scan reporting", () => {
 
 });
 
-it("queues oversized edits for automatic fitting, permits previews and protects final downloads", async () => {
+it("saves oversized edits immediately, then queues fitting on explicit Check while protecting final downloads", async () => {
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
   const library = { name: "Example", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director", details: "Led a team" }] };
   const content = { name: "Example", contact: "London", summary: "Leader", sections: Array.from({ length: 5 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
@@ -1282,7 +1282,9 @@ it("queues oversized edits for automatic fitting, permits previews and protects 
   const revisions = await database.select().from(schema.cvDrafts);
   expect(revisions).toHaveLength(2);
   const child = revisions.find(row => row.parentId === draft!.id)!;
-  expect(child).toMatchObject({ status: "queued", content: { ...content, sections: content.sections.map(section => ({ ...section, bullets: section.bullets.map(bullet => bullet.trim()) })) } });
+  expect(child).toMatchObject({ status: "ready", content: { ...content, sections: content.sections.map(section => ({ ...section, bullets: section.bullets.map(bullet => bullet.trim()) })) } });
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(0);
+  expect(await assessCvDraft(child.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
   expect(task!.payload).toMatchObject({ draftId: child.id, mode: "assess" });
   const response = await downloadCv(
@@ -1789,6 +1791,8 @@ it("assesses, improves with current evidence, finalises and exports through the 
     )[0]!;
     expect(revised.assessment).toBeNull();
     expect(revised.finalisedAt).toBeNull();
+    expect(revised.status).toBe("ready");
+    expect(await assessCvDraft(revised.id, { ok: true }, new FormData())).toEqual({ ok: true });
     const reviewed = await run(revised.id);
     expect(reviewed.status).toBe("ready");
     expect(writer).toHaveBeenCalledTimes(4);

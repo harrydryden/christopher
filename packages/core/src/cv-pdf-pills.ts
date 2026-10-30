@@ -3,7 +3,7 @@ import { cvForeground } from "./cv-theme";
 
 export const PILL_STYLES = {
   industry: { fontSize: 8, paddingX: 8, paddingY: 4, gapX: 5, gapY: 4, radius: 7 },
-  skill: { fontSize: 8.5, paddingX: 6, paddingY: 3, gapX: 5, gapY: 4, radius: 8 },
+  skill: { fontSize: 8.5, paddingX: 6, paddingY: 2, gapX: 5, gapY: 2, radius: 8 },
 } as const;
 type PillStyle = { fontSize: number; paddingX: number; paddingY: number; gapX: number; gapY: number; radius: number };
 type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number; heading: boolean };

@@ -210,8 +210,8 @@ export async function renderCvPdfWithReport(
   }
   const groups = CV_GROUPS;
   const ordered = cvDisplaySections(content).map((item) => item.section);
-  const skillSectionGap = 9;
-  const skillPillStyle = targeted ? { ...PILL_STYLES.skill, fontSize: Math.max(11, bodySize - 1), paddingY: 4 } : PILL_STYLES.skill;
+  const skillSectionGap = 4;
+  const skillPillStyle = targeted ? { ...PILL_STYLES.skill, fontSize: Math.max(11, bodySize - 1) } : PILL_STYLES.skill;
   const pageBodyHeight = doc.page.height - 55 - 44;
   const quietBottomSpace = 100;
   const skillHeadingColour = accent;

@@ -2,6 +2,7 @@ import { cvVersionLabel } from "@/lib/cv-version";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { dailyCvVersions, getCvMotionMedians, getOwnCvDraft, readCvProgress } from "@/lib/queries/cv";
 import { cvBuildState } from "@/lib/cv-build-state";
+import { cvPageMode } from "@/lib/cv-page-mode";
 import { cvProgressReading } from "@/lib/cv-progress";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
@@ -120,8 +121,9 @@ export default async function CvDraftPage({
   ]);
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
-  const busy = draft.status === "queued" || draft.status === "generating";
+  const { processing: busy, paused, editable } = cvPageMode(draft.status, !!content);
   const awaitingEvidence = draft.status === "awaiting_evidence";
+  const continuationDraftId = awaitingEvidence ? draft.gapQuiz?.continuationDraftId : null;
   const awaitingPriorities = draft.status === "awaiting_priorities";
   const failed = draft.status === "failed";
   const targetedPageFit = failed && draft.failure?.kind === "page_limit_unfittable" && !!targetingView;
@@ -184,6 +186,8 @@ export default async function CvDraftPage({
         finalised={!!draft.finalisedAt}
         hasFinalPdf={hasFinalPdf}
         busy={busy}
+        paused={awaitingEvidence ? "evidence" : awaitingPriorities ? "priorities" : null}
+        continuationDraftId={continuationDraftId}
         hasContent={!!content}
         content={content}
         library={draft.librarySnapshot}
@@ -222,7 +226,12 @@ export default async function CvDraftPage({
           </>
         }
       />
-      <CvNextAction id={id} next={cvNextAction({
+      <CvNextAction id={id} hrefOverride={continuationDraftId ? `/cv/${continuationDraftId}` : undefined} next={continuationDraftId ? {
+        title: "Continue with the new CV revision",
+        detail: "This evidence checkpoint is complete. Your CV build continues in the linked revision.",
+        target: "content",
+        action: "Open the continuing CV build",
+      } : cvNextAction({
         status: draft.status,
         finalised: !!draft.finalisedAt,
         hasFinalPdf,
@@ -287,7 +296,7 @@ export default async function CvDraftPage({
           <p className="text-14">Change this CV's evidence or maximum pages below. Your Experience is kept. The same build resumes after you confirm; it does not start a new CV purchase.</p>
           <CvTargetingConfirmation view={targetingView} blocked={blocked} recovery />
         </section>}
-        {(!content || busy) && (
+        {(!content || busy || paused) && (
           <CvWorkspacePanel tab="appearance">
             <h2 className="text-14 font-semibold">Appearance and CV settings</h2>
             <div className="mt-4 space-y-3">
@@ -306,9 +315,9 @@ export default async function CvDraftPage({
             </div>
           </CvWorkspacePanel>
         )}
-        {(!content || busy) && (
+        {(!content || busy || paused) && (
           <CvWorkspacePanel tab="content">
-            {awaitingEvidence && draft.gapQuiz?.status === "awaiting_answers" && (
+            {awaitingEvidence && !continuationDraftId && draft.gapQuiz?.status === "awaiting_answers" && (
               <CvGapQuiz
                 // Shaped here: the destinations an answer can be saved under, not the snapshot.
                 quiz={gapQuizForm(draft.gapQuiz, draft.librarySnapshot)}
@@ -319,10 +328,17 @@ export default async function CvDraftPage({
                 openDrafts={await openEvidenceDrafts("cv_quiz", id)}
               />
             )}
+            {awaitingEvidence && !continuationDraftId && draft.gapQuiz?.status !== "awaiting_answers" && (
+              <p role="alert" className="border border-warn p-4 text-14 text-warn">Evidence questions are unavailable for this paused build. Your saved wording is retained. <Link prefetch={false} className="underline" href={`/cv/${id}`}>Reload this CV</Link>; if they are still missing, ask an administrator to check the build.</p>
+            )}
             {awaitingPriorities && targetingView && <CvTargetingConfirmation view={targetingView} blocked={blocked} />}
-            {draft.gapQuiz?.continuationDraftId && (
+            {awaitingPriorities && !targetingView && (
+              <p role="alert" className="border border-warn p-4 text-14 text-warn">Priority choices are unavailable for this paused build. Your saved wording is retained. <Link prefetch={false} className="underline" href={`/cv/${id}`}>Reload this CV</Link>; if they are still missing, ask an administrator to check the build.</p>
+            )}
+            {paused && content && !continuationDraftId && <p className="text-14 text-muted">Your saved wording is retained while this build waits. {awaitingEvidence ? "Answer or skip the evidence questions above to continue." : "Confirm the role priorities above to continue."}</p>}
+            {continuationDraftId && (
               <p className="border border-line-muted p-4 text-14">
-                Your answers were saved to Experience. <Link prefetch={false} className="underline" href={`/cv/${draft.gapQuiz.continuationDraftId}`}>Open the continuing CV build</Link>.
+                This evidence checkpoint is complete. <Link prefetch={false} className="underline" href={`/cv/${continuationDraftId}`}>Open the continuing CV build</Link>.
               </p>
             )}
             {busy && build && (
@@ -350,7 +366,7 @@ export default async function CvDraftPage({
             )}
           </CvWorkspacePanel>
         )}
-        {content && !busy ? (
+        {editable && content ? (
           <CvDraftEditor
             key={id}
             id={id}

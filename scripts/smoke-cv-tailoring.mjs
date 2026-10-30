@@ -134,6 +134,23 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     })))), "the continuation uses the grouped new Library with the original build preferences");
     assert.ok(saved.new_library.entries[0].details.includes("Launched the service in France"));
 
+    // Returning to the archived parent must show the continuing draft, not reopen an already
+    // answered checkpoint or offer editing and assessment on this superseded revision.
+    await page.goto(`${baseUrl}/cv/${answerId}`);
+    await page.getByText("This evidence checkpoint is complete.", { exact: false }).first().waitFor();
+    assert.equal(await page.getByRole("heading", { name: "Could your Experience say more?" }).count(), 0);
+    assert.equal(await page.getByText(/Evidence questions are unavailable for this paused build/).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "No further evidence — continue" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /Save (changes|as new revision) · free/ }).count(), 0);
+    const continuingLink = page.getByRole("tabpanel", { name: "Write" }).getByRole("link", { name: "Open the continuing CV build" });
+    assert.equal(await continuingLink.count(), 1);
+    assert.equal(await continuingLink.getAttribute("href"), `/cv/${continuationId}`);
+    await page.getByRole("tab", { name: "Review" }).click();
+    assert.equal(await page.getByRole("button", { name: "Check saved CV" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Finalise this CV" }).count(), 0);
+    await page.getByRole("tabpanel", { name: "Review" }).getByRole("link", { name: "Open the continuing CV build" }).click();
+    await page.waitForURL(url => url.pathname === `/cv/${continuationId}`);
+
     // The newest Library renders the evidence and its tag as cells in the same row.
     await page.goto(`${baseUrl}/library`);
     await page.getByRole("tab", { name: "Work history", exact: true }).click();

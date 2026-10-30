@@ -4,8 +4,8 @@ import type { cvNextAction } from "@/lib/cv-next-action";
 import { buttonClass } from "@/components/Button";
 
 /** The one sentence a person needs before opening the three workspace tabs. */
-export function CvNextAction({ id, next }: { id: string; next: ReturnType<typeof cvNextAction> }) {
-  const href = next.target === "download" ? `/api/cv/${id}/pdf` : next.target === "review" ? "#cv-guided-review" : `#cv-panel-${next.target}`;
+export function CvNextAction({ id, next, hrefOverride }: { id: string; next: ReturnType<typeof cvNextAction>; hrefOverride?: string }) {
+  const href = hrefOverride ?? (next.target === "download" ? `/api/cv/${id}/pdf` : next.target === "review" ? "#cv-guided-review" : `#cv-panel-${next.target}`);
   return <section className="flex flex-wrap items-center justify-between gap-3 border-b border-line-muted pb-4" aria-labelledby="cv-next-action">
     <div className="space-y-1">
       <h2 id="cv-next-action" className="text-16 font-semibold">{next.title}</h2>

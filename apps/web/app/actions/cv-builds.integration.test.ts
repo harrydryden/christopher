@@ -13,6 +13,7 @@ import { cvTailoringEvidence, validateCvTailoringPlan } from "@col/core/cv-tailo
 import { cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { reviseFailedCvTargeting } from "./cv-targeting";
 import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
+import { reusedCvRubric } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import type { User } from "@col/db/schema";
@@ -328,6 +329,49 @@ it("uses the newly chosen model for Rewrite but preserves the parent model on di
   const children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children.map(child => child.model)).toEqual(["claude-opus-5", "claude-haiku-4-5"]);
   expect((await draftRow(parent.id)).model).toBe("claude-haiku-4-5");
+});
+
+it.each(["save", "rewrite"] as const)("carries a checkpoint-only role rubric through %s without the parent", async (intent) => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const sourceRubric = rubricFixture("Finance operations");
+  const parent = await failedDraft({ status: "ready", failure: null, error: null,
+    assessment: null, buildCheckpoint: { sourceRubric, tailoringPlan: { requirements: [], gapQuestions: [] } } });
+  const form = new FormData();
+  form.set("summary", content.summary);
+  form.set("section-0", "Led a team");
+  if (intent === "rewrite") form.set("intent", "improve");
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(child?.buildCheckpoint?.sourceRubric).toEqual(sourceRubric);
+  expect(child?.buildCheckpoint?.tailoringPlan).toBeUndefined();
+  expect(child?.assessment).toBeNull();
+  await database.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, parent.id));
+  const surviving = await draftRow(child!.id);
+  expect(reusedCvRubric(surviving, undefined, surviving.buildCheckpoint?.sourceRubric))
+    .toMatchObject({ rubric: sourceRubric });
+  if (intent === "save") {
+    expect(await assessCvDraft(child!.id, { ok: true }, new FormData())).toEqual({ ok: true });
+    expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: child!.id, mode: "assess" });
+  } else {
+    expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: child!.id, mode: "improve" });
+  }
+});
+
+it("queues Rewrite with the valid checkpoint rubric when the assessment rubric belongs to another role", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const parent = await finalisableDraft();
+  const sourceRubric = rubricFixture(parent.jobDescription);
+  await database.update(schema.cvDrafts).set({ assessment: { ...parent.assessment!, rubric: rubricFixture("Another role") },
+    buildCheckpoint: { sourceRubric } }).where(eq(schema.cvDrafts.id, parent.id));
+  const form = new FormData();
+  form.set("intent", "improve");
+  form.set("summary", content.summary);
+  form.set("section-0", "Led a team");
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(child?.buildCheckpoint?.sourceRubric).toEqual(sourceRubric);
+  expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: child!.id,
+    mode: "improve", rubric: sourceRubric });
 });
 
 it("retries a rebuild that stopped before writing with its rubric and improvements kept", async () => {

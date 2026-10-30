@@ -29,6 +29,7 @@ import { lockRoleView } from "@/lib/decisions";
 import { cvCreditOffer } from "@/lib/cv-credit";
 import { cvPdfContentHash } from "@/lib/cv-pdf-store";
 import { cvDraftEditBaseHash } from "@/lib/cv-edit-base";
+import { cvRevisionRubricCheckpoint } from "@/lib/cv-rubric-carry";
 import { cvEvaluationRows } from "@/lib/cv-evaluation";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -741,7 +742,7 @@ export async function saveCvDraft(
         throw new UserFacingError("This CV changed while you were editing. Reload before saving your edits.");
       // A new revision carries the locked row's rubric and retry metadata. The source's own
       // assessment, progress and failure are deliberately not inherited by a fresh build.
-      const rubric = source.assessment ? { rubric: source.assessment.rubric } : {};
+      const rubricCheckpoint = cvRevisionRubricCheckpoint(source, source.jobDescription);
       const improvements = source.assessment?.review.matches.filter(match => cvImprovementOwner(match) === "system")
         .map(match => match.improvement).filter(Boolean) ?? [];
       const { id: _id, createdAt: _created, assessment: _assessment, finalisedAt: _finalised,
@@ -850,14 +851,16 @@ export async function saveCvDraft(
             // What this rebuild was asked for, where a retry of it can find it again.
             buildCheckpoint: {
               tailoringEnabled: true, quizCompleted: true, mode: "improve", improvements,
-              ...(source.assessment ? { sourceRubric: source.assessment.rubric } : {}),
+              ...(rubricCheckpoint ?? {}),
             },
             reviewDecision: null,
             targetingBrief: nextBrief,
           })
           .returning();
         await reserveCvCredit(tx, user.id, fitting!.id);
-        await enqueue("generate_cv", { draftId: fitting!.id, ...rubric, improvements, mode: "improve" }, tx);
+        await enqueue("generate_cv", { draftId: fitting!.id,
+          ...(rubricCheckpoint ? { rubric: rubricCheckpoint.sourceRubric } : {}),
+          improvements, mode: "improve" }, tx);
         if (suggestionRun) await tx.update(cvSkillSuggestionRuns).set({ acceptedSelectionHash: selectionHash, acceptedDraftId: fitting!.id, updatedAt: new Date() }).where(eq(cvSkillSuggestionRuns.id, suggestionRun.id));
         return fitting!.id;
       }
@@ -898,8 +901,7 @@ export async function saveCvDraft(
           parentId: id,
           revision,
           // Keep a known rubric through successive quick saves for the eventual explicit Check.
-          buildCheckpoint: source.assessment?.rubric || source.buildCheckpoint?.sourceRubric
-            ? { sourceRubric: source.assessment?.rubric ?? source.buildCheckpoint!.sourceRubric } : null,
+          buildCheckpoint: rubricCheckpoint,
           assessment,
           reviewDecision: assessment && cvReviewDecisionCurrent(source.reviewDecision, assessment) ? source.reviewDecision : null,
           targetingBrief: nextBrief,

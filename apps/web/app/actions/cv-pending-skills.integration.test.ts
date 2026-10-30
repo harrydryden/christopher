@@ -6,6 +6,8 @@ import { cvUserSkillProposals } from "@col/core/cv-pending-skills";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
+import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
+import { reusedCvRubric } from "@col/core";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -15,6 +17,7 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined) }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import { decideCvPendingSkill } from "./cv-pending-skills";
+import { assessCvDraft } from "./cv";
 
 const library = CvLibrarySchema.parse({ name: "Candidate", contact: "London", profile: "Operations",
   structuredExperience: true, employment: [{ id: "job", company: "Acme", jobTitle: "Manager", current: false,
@@ -65,6 +68,29 @@ it("accepts a member-confirmed linked skill once, writes Experience and a free C
   expect(revisions.find(row => row.parentId === source.id)).toMatchObject({ status: "ready", revision: 2,
     libraryVersion: 2, assessment: null });
   expect(revisions.find(row => row.id === source.id)?.pendingSkillProposals?.[0]).toMatchObject({ status: "accepted", decisionRequestKey: requestKey });
+});
+
+it("keeps a checkpoint-only role rubric through acceptance after parent retention", async () => {
+  const sourceRubric = rubricFixture("Lead a team");
+  const source = await draft();
+  await database.update(schema.cvDrafts).set({ buildCheckpoint: { sourceRubric,
+    tailoringPlan: { requirements: [], gapQuestions: [] } } }).where(eq(schema.cvDrafts.id, source.id));
+  const proposal = cvUserSkillProposals(library, content)[0]!;
+  const result = await decideCvPendingSkill(source.id, proposal.id, { decision: "accept",
+    evidence: { kind: "link_existing", evidenceEntryId: "entry:role:row:0" },
+    confirmFactual: true, expectedRevision: 1, requestKey: crypto.randomUUID() });
+  expect(result.ok).toBe(true);
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, source.id));
+  expect(child?.buildCheckpoint).toEqual({ sourceRubric });
+  expect(child?.assessment).toBeNull();
+  expect(child?.semanticAuditCache).toBeNull();
+  await database.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, source.id));
+  const [surviving] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, child!.id));
+  expect(reusedCvRubric(surviving!, undefined, surviving!.buildCheckpoint?.sourceRubric))
+    .toMatchObject({ rubric: sourceRubric });
+  expect(await assessCvDraft(child!.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
+  expect(task?.payload).toMatchObject({ draftId: child!.id, mode: "assess" });
 });
 
 it("adds a short, explicitly confirmed Experience example with the skill", async () => {

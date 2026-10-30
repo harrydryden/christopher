@@ -1,6 +1,6 @@
 {
   "kind": "cv-replay",
-  "at": "2026-10-30T20:12:19.912Z",
+  "at": "2026-10-30T20:37:43.794Z",
   "draftId": "2179ffaa-d017-43a6-a7c3-467bf93afd71",
   "promptSetVersion": "951386df60b9",
   "unverified": false,
@@ -54,7 +54,7 @@
       "costUsd": 0.30862
     }
   },
-  "wallMs": 234,
+  "wallMs": 229,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",

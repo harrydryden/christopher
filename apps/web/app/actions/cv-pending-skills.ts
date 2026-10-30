@@ -13,6 +13,7 @@ import { cvDrafts, cvLibraries, lockCvDraft, nextCvRevision } from "@col/db";
 import { requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { latestLibrary, writeCvLibraryVersion } from "@/lib/cv-library-write";
+import { cvRevisionRubricCheckpoint } from "@/lib/cv-rubric-carry";
 import { UserFacingError, actionError, zUuid } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
 
@@ -160,7 +161,7 @@ export async function decideCvPendingSkill(draftId: string, proposalId: string,
       const [child] = await tx.insert(cvDrafts).values({ ...original, userId: user.id, parentId: draftId,
         libraryVersion: newVersion, librarySnapshot: newSnapshot, content: newContent, status: "ready",
         revision, assessment: null, reviewDecision: null, finalisedAt: null, archivedAt: null,
-        buildStage: null, buildCheckpoint: null, failure: null, semanticAuditCache: null,
+        buildStage: null, buildCheckpoint: cvRevisionRubricCheckpoint(draft, draft.jobDescription), failure: null, semanticAuditCache: null,
         targetingBrief: nextBrief, pendingSkillProposals: mark("accepted") }).returning({ id: cvDrafts.id });
       await tx.update(cvDrafts).set({ pendingSkillProposals: mark("accepted", child!.id) }).where(eq(cvDrafts.id, draftId));
       return `/cv/${child!.id}`;

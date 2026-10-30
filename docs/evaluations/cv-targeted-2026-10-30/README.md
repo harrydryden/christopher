@@ -21,3 +21,11 @@ The current reports are `../cv-replay/report.json` and `../cv-skill-live-probe.j
 - SHA-256 `qualified-cv.json`: `24f7de95d93d751cea4434e6b6eb9196947e26182998229a2f99961b8bf53f65`
 
 After the final regression fix preserving more than six selected qualifications, `final-fit-replay.json` confirms the same recorded build still passes all four invariants with zero recording misses. This replay makes no provider calls and does not add to the paid ledger.
+
+## Completion audit qualification
+
+`completion-replay.json` repeats that exact recorded build after the recovery, selected-Interest and review-guidance audit fixes. It passes all four invariants with zero misses and makes no paid calls. `completion-browser.json` is a separate synthetic local browser check of preview guidance, immediate Save, retained page choices and the focused editing link; its 113 ms Save is one local diagnostic sample.
+
+`preparation-live-summary.json` adds genuine fresh role extraction and evidence planning at the same prompt set, from source commit `8fa8759285bc5e7ac29b2e0357e7ea5a58b14554`. It ran in a temporary checkout in the existing worker's shell, with the database URL removed and credentials kept in that environment. Nine requirements were extracted and mapped, exact quotations validated and five emphasis priorities recommended. Two calls took 39.1 seconds and cost $0.246028. The cumulative evaluation ledger is now **$1.600163 of $10**. This is separate stage qualification, not one fresh end-to-end build or a hosted frontend benchmark.
+
+The preparation recording SHA-256 is `71e6e386c8bbff939e48dbd803093da1d4f8f109386e098d8dd3eaf38bdcdd44`. The full report and raw recording were generated under `/tmp/col-cv-adr-8fa87592/preparation-evaluation` on the worker; the committed file is the non-sensitive result summary, not the raw provider transcript. Temporary worker files are not a durable archive and may disappear on redeployment.

@@ -19,6 +19,18 @@ it("leaves complete, correctly cited reviews unchanged", () => {
   expect(markUnverifiedFindings(review, [])).toEqual(review);
 });
 
+it("keeps full-library requirement coverage while forbidding omitted evidence for claims", () => {
+  const review = reviewFixture(context);
+  const eligible = context.evidence.filter(item => item.id !== "source:profile");
+  review.matches[0]!.libraryEvidence = [{ id: "source:profile", quote: "Operations leader" }];
+  review.claims[0]!.evidence = [{ id: "entry:role:1", quote: "Led operations" }];
+  expect(reviewBatchIssues(review, { ...context, evidence: eligible,
+    libraryVerdictEvidence: context.evidence })).toEqual([]);
+  review.claims[0]!.evidence = [{ id: "source:profile", quote: "Operations leader" }];
+  expect(reviewBatchIssues(review, { ...context, evidence: eligible,
+    libraryVerdictEvidence: context.evidence }).map(item => item.kind)).toContain("claim");
+});
+
 it("flags unverified CV, library and own-block citations without awarding credit or weakening the final validator", () => {
   const review = reviewFixture(context);
   review.matches[0]!.cvEvidence[0]!.quote = "Invented achievement";

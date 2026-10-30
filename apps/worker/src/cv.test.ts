@@ -5,8 +5,10 @@ import {
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, listCvBuildSteps, schema, startCvBuildStep, type Task } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
-import { AiEngine } from "@col/ai";
+import { AiEngine, promptSetVersion } from "@col/ai";
 import { DEFAULT_CV_THEME } from "@col/core/cv";
+import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
+import { cvTargetingRubricKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "./test-users";
 import { handleGenerateCv } from "./handlers/cv";
@@ -66,6 +68,46 @@ it("generates once on duplicate delivery, preserving the saved evidence", async 
   expect(build.mock.calls[0]![0].library).toEqual(library);
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready"); expect(saved!.content?.sections[0]?.heading).toBe("Director · Acme");
+});
+it("pauses after one full-evidence plan and resumes the same credited build after priority confirmation", async () => {
+  const { draft, deps, task } = await setup();
+  const targetLibrary = { ...library, entries: [...library.entries,
+    { id: "two", kind: "experience" as const, heading: "Oil and gas role", details: "Ran offshore reporting",
+      confirmedResponsibilities: ["Ran offshore reporting"] }] };
+  const source = cvTargetingSource(1, targetLibrary, "Lead a team");
+  const initial = CvTargetingBriefSchema.parse({ version: 1, source, entries: [],
+    presentation: { maxPages: 2, bodySizePt: 12 },
+    priority: { state: "unprepared", emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [] } });
+  await client.db.update(schema.cvDrafts).set({ targetingBrief: initial,
+    librarySnapshot: { ...targetLibrary, theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 } },
+    buildCheckpoint: { tailoringEnabled: true } }).where(eq(schema.cvDrafts.id, draft.id));
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const planning = vi.spyOn(AiEngine.prototype, "planCvTailoring").mockResolvedValue(plan);
+  const author = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Led a team",
+    summarySources: ["entry:one:row:0"],
+    sections: [{ entryId: "one", bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] });
+  expect(await handleGenerateCv(task, deps)).toMatchObject({ awaitingPriorities: true });
+  const [paused] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(paused?.status).toBe("awaiting_priorities");
+  expect(paused?.buildCheckpoint?.tailoringPlan).toBeTruthy();
+  expect(author).not.toHaveBeenCalled();
+  const pending = CvTargetingBriefSchema.parse(paused!.targetingBrief);
+  const rubric = pending.priority.rubric!;
+  const confirmed = CvTargetingBriefSchema.parse({ ...pending, entries: [{ entryId: "two", treatment: "omit" }], priority: { ...pending.priority,
+    state: "confirmed", rubricKey: cvTargetingRubricKey(source, rubric, draft.model, promptSetVersion()),
+    emphasisRequirementIds: rubric.requirements.map(row => row.id), acknowledgedEssentialOmissionIds: [] } });
+  await client.db.update(schema.cvDrafts).set({ status: "queued", targetingBrief: confirmed }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  const [ready] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(ready?.status, ready?.error ?? "").toBe("ready");
+  expect(ready?.content?.theme?.maxPages).toBe(2);
+  expect(planning).toHaveBeenCalledOnce();
+  expect(author).toHaveBeenCalledOnce();
+  const auditEvidence = vi.mocked(AiEngine.prototype.assessCvBatches).mock.calls.flatMap(call => call[0].evidence.map(item => item.id));
+  expect(auditEvidence).toContain("entry:one");
+  expect(auditEvidence).not.toContain("entry:two");
+  expect(auditEvidence).not.toContain("source:profile");
 });
 it("shows missing credentials as a recoverable failed draft", async () => {
   const { task, deps, draft } = await setup(); deps.env.anthropicApiKey = undefined;
@@ -298,7 +340,7 @@ it("does not author a CV against a hallucinated requirement", async () => {
   expect(saved!.assessment).toBeNull();
 });
 
-it("automatically fits an oversized saved draft before assessment, retaining its edited appearance and reporting stages", async () => {
+it("keeps oversized saved wording intact and makes Check fail before any provider call", async () => {
   const { materialiseCv, DEFAULT_CV_THEME } = await import("@col/core/cv");
   const { renderCvPdfWithReport } = await import("@col/core/cv-pdf");
   const { task, deps, draft } = await setup();
@@ -311,30 +353,48 @@ it("automatically fits an oversized saved draft before assessment, retaining its
   await client.db.update(schema.cvDrafts).set({ librarySnapshot: snapshot, content }).where(eq(schema.cvDrafts.id, draft.id));
   task.payload = { draftId: draft.id, mode: "assess" };
   const read = async () => (await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!;
-  vi.mocked(AiEngine.prototype.analyseCvJob).mockImplementation(async description => {
-    expect((await read()).buildStage).toBe("analysing");
-    return rubricFixture(description);
-  });
-  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockImplementation(async input => {
-    expect((await read()).buildStage).toBe("writing");
-    expect(input.library.theme).toEqual(content.theme);
-    expect(input.layoutFeedback?.previousPlan.summary).toBe(long.summary);
-    return { ...long, sections: entries.map(entry => ({ entryId: entry.id, bullets: ["Led a team"] })) };
-  });
-  vi.mocked(AiEngine.prototype.assessCv).mockImplementation(async input => {
-    const saved = await read();
-    expect(saved.buildStage).toBe("assessing");
-    expect((await renderCvPdfWithReport(saved.content!)).pageCount).toBeLessThanOrEqual(2);
-    expect(input.cv.some(item => item.text.includes("Managed operational"))).toBe(false);
-    return reviewFixture(input);
-  });
+  const build = vi.spyOn(AiEngine.prototype, "buildCv");
   await handleGenerateCv(task, deps);
   const saved = await read();
-  expect(saved.status).toBe("ready");
+  expect(saved.status).toBe("failed");
   expect(saved.buildStage).toBeNull();
-  expect(saved.assessment!.pageCount).toBeLessThanOrEqual(2);
+  expect(saved.failure).toMatchObject({ kind: "page_limit_unfittable" });
+  expect(saved.error).toContain("measures");
+  expect(saved.content).toEqual(content);
   expect(saved.content!.theme).toEqual(content.theme);
-  expect(build).toHaveBeenCalledOnce();
+  expect(build).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.assessCv).not.toHaveBeenCalled();
+});
+
+it("remeasures an appearance-only saved revision and reuses its exact factual audit", async () => {
+  vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader",
+    sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  await handleGenerateCv(task, deps);
+  const [first] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(first?.semanticAuditCache?.identity).toMatch(/^[a-f0-9]{64}$/);
+  const revised = { ...first!.content!, theme: { ...DEFAULT_CV_THEME, primary: "#285447" } };
+  await client.db.update(schema.cvDrafts).set({ status: "queued", content: revised, assessment: null,
+    buildCheckpoint: { sourceRubric: first!.assessment!.rubric }, semanticAuditCache: first!.semanticAuditCache })
+    .where(eq(schema.cvDrafts.id, draft.id));
+  vi.mocked(AiEngine.prototype.assessCvBatches).mockClear();
+  vi.mocked(AiEngine.prototype.assessCv).mockClear();
+  task.payload = { draftId: draft.id, mode: "assess" };
+  await handleGenerateCv(task, deps);
+  const [second] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(second?.status).toBe("ready");
+  expect(second?.assessment?.pageCount).toBeGreaterThan(0);
+  expect(second?.assessment?.inputHash).not.toBe(first!.assessment!.inputHash);
+  expect(AiEngine.prototype.assessCvBatches).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.assessCv).not.toHaveBeenCalled();
+  expect(second?.semanticAuditCache).toEqual(first!.semanticAuditCache);
+  await client.db.update(schema.cvDrafts).set({ status: "queued",
+    content: { ...revised, summary: "Newly asserted leadership result" }, assessment: null,
+    buildCheckpoint: { sourceRubric: second!.assessment!.rubric } }).where(eq(schema.cvDrafts.id, draft.id));
+  vi.mocked(AiEngine.prototype.assessCvBatches).mockClear();
+  await handleGenerateCv(task, deps);
+  expect(AiEngine.prototype.assessCvBatches).toHaveBeenCalled();
 });
 
 it("publishes through rolling retention only after fitting and assessment succeed", async () => {

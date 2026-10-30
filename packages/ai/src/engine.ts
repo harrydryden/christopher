@@ -781,6 +781,8 @@ export interface CvAssessInput {
    * Absent (a build with no plan), the audit judges the library side itself.
    */
   libraryVerdicts?: ReadonlyMap<string, Pick<CvReviewPlan["matches"][number], "libraryStatus" | "libraryEvidence">>;
+  /** Full confirmed evidence validates settled Library verdicts; it is not sent as claim evidence. */
+  libraryVerdictEvidence?: CvTextItem[];
 }
 
 export interface CvAssessOptions extends CvAssessHooks {
@@ -1444,7 +1446,8 @@ export class AiEngine {
     }, { ...ref, stage: corrections ? `${stage}_retry` : stage });
     const assess = async (index: number, onStart?: () => void): Promise<CvAssessBatchResult> => {
       const batch = batches[index]!;
-      const context = { cv: input.cv, claims: batch.claims, evidence: input.evidence };
+      const context = { cv: input.cv, claims: batch.claims, evidence: input.evidence,
+        ...(verdicts && input.libraryVerdictEvidence ? { libraryVerdictEvidence: input.libraryVerdictEvidence } : {}) };
       const usage: AiUsageRecord[] = [];
       const onRecord = (record: AiUsageRecord) => { usage.push(record); };
       // The batches run together, so a watcher that only saw the audit begin and end could not say
@@ -1530,6 +1533,7 @@ export class AiEngine {
       maxPages?: number;
       rubric?: CvRubric;
       tailoringPlan?: CvTailoringPlan;
+      emphasisRequirementIds?: string[];
       improvements?: string[];
       layoutFeedback?: {
         pageCount: number;
@@ -1566,7 +1570,8 @@ export class AiEngine {
       ...(stylePreferences ? { stylePreferences } : {}), ...(preferredWording ? { preferredWording } : {}) } });
     const role = JSON.stringify({ jobTitle: input.jobTitle, company: input.company, description: input.description,
       maxPages: input.maxPages ?? CV_PAGE_LIMITS.default,
-      ...(input.rubric ? { rubric: input.rubric } : {}), ...(input.tailoringPlan ? { tailoringPlan: cvTailoringPlanForWriter(input.tailoringPlan) } : {}) });
+      ...(input.rubric ? { rubric: input.rubric } : {}), ...(input.tailoringPlan ? { tailoringPlan: cvTailoringPlanForWriter(input.tailoringPlan) } : {}),
+      ...(input.emphasisRequirementIds?.length ? { emphasisRequirementIds: input.emphasisRequirementIds } : {}) });
     const volatile = {
       ...(input.writingBudget ? { writingBudget: input.writingBudget } : {}),
       ...(input.improvements?.length ? { improvements: input.improvements } : {}),

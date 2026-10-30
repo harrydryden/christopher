@@ -9,8 +9,10 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
+import type { CvTargetingView } from "@col/core/cv-targeting";
 
 vi.mock("@/app/actions/cv", () => ({ saveCvDraft: vi.fn(), requestCvSkillSuggestions: vi.fn(), readCvSkillSuggestions: vi.fn() }));
+vi.mock("@/app/actions/cv-targeting", () => ({ confirmCvTargetingPriorities: vi.fn() }));
 vi.mock("@/lib/cv-review-edits", async importOriginal => {
   const actual = await importOriginal<typeof import("@/lib/cv-review-edits")>();
   return { ...actual, cvReviewEditedContent: vi.fn(actual.cvReviewEditedContent) };
@@ -36,6 +38,35 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("saves unsaved wording, a treatment change and an optional signpost through one form", async () => {
+  const view = { draftId: "cv-1", revision: 3, status: "confirmed", source: { libraryVersion: 1,
+    evidenceHash: "a".repeat(64), jobDescriptionHash: "b".repeat(64) }, rubricKey: "c".repeat(64),
+    entries: [{ entryId: "e-1", kind: "experience", heading: "Analyst, Engines Ltd", treatment: "feature" }],
+    priorities: Array.from({ length: 3 }, (_, index) => ({ id: `r-${index}`, label: `Requirement ${index}`,
+      quote: "The role requires analysis", importance: "desirable", category: "experience", selected: true,
+      evidenceEntryIds: ["e-1"] })), essentialOmissionIds: [], acknowledgedEssentialOmissionIds: [],
+    summaryNeedsReview: false, presentation: { maxPages: 2, bodySizePt: 12 } } as CvTargetingView;
+  await act(async () => { root.render(<CvDraftEditor id="cv-1" content={content} theme={{ ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 }}
+    baseRevision={3} targetingView={view} />); });
+  await vi.waitFor(() => expect(container.querySelector('select[aria-label="Analyst, Engines Ltd treatment"]')).not.toBeNull());
+  const bullet = container.querySelector<HTMLTextAreaElement>('textarea[name="section-0"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bullet, "Edited supported work.");
+    bullet.dispatchEvent(new Event("input", { bubbles: true })); });
+  const treatment = container.querySelector<HTMLSelectElement>('select[aria-label="Analyst, Engines Ltd treatment"]')!;
+  act(() => { treatment.value = "summarise"; treatment.dispatchEvent(new Event("change", { bubbles: true })); });
+  const signpost = container.querySelector<HTMLInputElement>('input[aria-label="Competency label for bullet 1 in Analyst, Engines Ltd"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(signpost, "Analysis");
+    signpost.dispatchEvent(new Event("input", { bubbles: true })); });
+  const data = new FormData(container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!);
+  expect(data.get("section-0")).toBe("Edited supported work.");
+  expect(JSON.parse(String(data.get("targetingChoices"))).entries).toEqual([{ entryId: "e-1", treatment: "summarise" }]);
+  expect(JSON.parse(String(data.get("bulletSignposts")))["e-1"]).toEqual(["Analysis"]);
+  expect(data.get("targetingExpectedRubricKey")).toBe("c".repeat(64));
+  const navigation = new Event("beforeunload", { cancelable: true });
+  act(() => window.dispatchEvent(navigation));
+  expect(navigation.defaultPrevented).toBe(true);
 });
 
 it("edits headings and individual skills in saved manual and accepted sections through the one CV form", () => {

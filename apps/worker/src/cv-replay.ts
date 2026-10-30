@@ -243,6 +243,8 @@ export interface CvReplayOptions {
 export interface CvReplayRun {
   report: CvReplayReport;
   assessment: CvAssessment | null;
+  /** Exact rebuilt wording, retained for offline PDF inspection after the transaction rolls back. */
+  content: CvContent | null;
 }
 
 /**
@@ -282,11 +284,12 @@ export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: 
       const [copy] = await db.insert(schema.cvDrafts).values({
         userId: scratch!.id, jobTitle: draft.jobTitle, companyName: draft.companyName, jobDescription: draft.jobDescription,
         jobSource: draft.jobSource, libraryVersion: draft.libraryVersion, librarySnapshot: draft.librarySnapshot, model: draft.model,
-        status: "queued", revision: 1,
+        status: "queued", revision: 1, targetingBrief: draft.targetingBrief,
         // The snapshot as it was built: the rubric its assessment was made against and the plan its
         // wording followed, so a replay compares like with like instead of re-deriving either.
         buildCheckpoint: {
-          ...(draft.assessment?.rubric ? { sourceRubric: draft.assessment.rubric } : {}),
+          ...((draft.assessment?.rubric ?? draft.buildCheckpoint?.sourceRubric)
+            ? { sourceRubric: draft.assessment?.rubric ?? draft.buildCheckpoint?.sourceRubric } : {}),
           ...(plan ? { tailoringEnabled: true, tailoringPlan: plan.plan } : {}),
           quizCompleted: true,
         },
@@ -340,7 +343,7 @@ export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: 
     baseline,
     grade: found.assessment && found.content ? gradeCvReplay({ assessment: found.assessment, content: found.content, baseline }) : null,
   };
-  return { report, assessment: found.assessment };
+  return { report, assessment: found.assessment, content: found.content };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -408,24 +411,27 @@ export async function recordCvDraft(deps: WorkerDeps, draftId: string, options: 
   if (options.resumeAuthorFrom) {
     const source = readRecordingHeader(options.resumeAuthorFrom);
     const calls = readRecording(options.resumeAuthorFrom);
-    const author = calls.find(call => call.promptId === "cv.author" && call.stage === "author");
+    const authors = calls.filter(call => call.promptId === "cv.author" && call.stage === "author");
     if (source.meta?.client !== "provider" || source.meta.draftId !== draftId
-      || source.meta.promptSetVersion !== promptSetVersion() || !author
-      || author.promptVersion !== PROMPTS["cv.author"].version
+      || source.meta.promptSetVersion !== promptSetVersion() || !authors.length
       || source.meta.routes["cv.author"]?.resolvedModel !== draft.model
-      || author.response.model !== draft.model || !/^msg_[A-Za-z0-9_-]+$/u.test(String((author.response as { id?: string }).id))
-      || author.response.stop_reason !== "end_turn" || !author.response.usage
-      || recordingKey(author.request, { promptId: "cv.author", promptVersion: author.promptVersion, stage: "author" }).inputHash !== author.inputHash)
+      || authors.some(author => author.promptVersion !== PROMPTS["cv.author"].version
+        || author.response.model !== draft.model || !/^msg_[A-Za-z0-9_-]+$/u.test(String((author.response as { id?: string }).id))
+        || author.response.stop_reason !== "end_turn" || !author.response.usage
+        || recordingKey(author.request, { promptId: "cv.author", promptVersion: author.promptVersion, stage: "author" }).inputHash !== author.inputHash))
       throw new Error("The prior provider author answer is not eligible for exact-input reuse.");
     const provider = inner;
-    let used = false;
+    let authorIndex = 0;
     const stream = (params: Record<string, unknown>, callOptions?: Record<string, unknown>, callMeta?: { promptId: string; promptVersion: string; stage?: string }): AiStreamLike => {
       if (callMeta?.promptId === "cv.author") {
+        // A recorded build may have corrected an invalid first answer. Reuse the exact ordered
+        // sequence, including its correction input; never buy a new author call during resume.
+        const author = authors[authorIndex];
         const current = recordingKey(params, callMeta);
-        if (used || current.promptId !== author.promptId || current.promptVersion !== author.promptVersion
+        if (!author || current.promptId !== author.promptId || current.promptVersion !== author.promptVersion
           || current.stage !== author.stage || current.inputHash !== author.inputHash)
           throw new Error("The current author input differs from the recorded provider answer.");
-        used = true;
+        authorIndex++;
         return { on: () => undefined, abort: () => undefined, finalMessage: async () => author.response,
           get currentMessage() { return author.response; }, get request_id() { return String((author.response as { id?: string }).id); } } as AiStreamLike;
       }

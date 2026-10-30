@@ -35,7 +35,7 @@ type CompletionValues = Pick<
   Partial<typeof cvDrafts.$inferInsert>,
   // A published CV has nothing left to resume from and nothing left to explain, so publication is
   // also where the build's checkpoint and its last failure are cleared, in the same transaction.
-  "content" | "assessment" | "revision" | "buildStage" | "error" | "buildCheckpoint" | "failure"
+  "content" | "assessment" | "semanticAuditCache" | "revision" | "buildStage" | "error" | "buildCheckpoint" | "failure" | "pendingSkillProposals"
 > & { status?: "ready" };
 
 // The same immutable expression is shared by the index, lookup and lock identity.
@@ -412,7 +412,8 @@ export async function saveCvTailoringPlan(tx: Pick<Db, "insert">, draftId: strin
 export async function saveImprovedCvRevision(
   tx: Transaction,
   baselineId: string,
-  values: Pick<typeof cvDrafts.$inferInsert, "content" | "assessment">,
+  values: Pick<typeof cvDrafts.$inferInsert, "content" | "assessment"> &
+    { pendingSkillProposals?: typeof cvDrafts.$inferInsert.pendingSkillProposals },
   tailoringPlan?: CvTailoringPlan,
 ): Promise<CvImprovedRevision> {
   await lockCvDraft(tx, baselineId);
@@ -429,7 +430,8 @@ export async function saveImprovedCvRevision(
     userId: baseline.userId, jobId: baseline.jobId, jobTitle: baseline.jobTitle, companyName: baseline.companyName,
     jobDescription: baseline.jobDescription, jobSource: baseline.jobSource, libraryVersion: baseline.libraryVersion,
     librarySnapshot: baseline.librarySnapshot, model: baseline.model, status: "generating", revision,
-    parentId: baseline.id, ...values,
+    parentId: baseline.id, targetingBrief: baseline.targetingBrief,
+    pendingSkillProposals: values.pendingSkillProposals ?? baseline.pendingSkillProposals, ...values,
   }).returning({ id: cvDrafts.id, createdAt: cvDrafts.createdAt });
   await completeCv(tx, row!.id, { status: "ready", revision, buildStage: null, buildCheckpoint: null, failure: null });
   if (tailoringPlan) await saveCvTailoringPlan(tx, row!.id, baseline.userId, tailoringPlan);

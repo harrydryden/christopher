@@ -28,6 +28,10 @@ const skillItemsSchema = (max: number) => z.array(skillItemSchema).min(1).max(ma
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
 const SkillItemsSchema = skillItemsSchema(CV_SKILL_GUIDANCE.libraryPerSection);
 const GeneratedSkillItemsSchema = skillItemsSchema(CV_LIMITS.skillsPerSection);
+const BulletSignpostSchema = z.string().trim().min(1).max(60)
+  .refine(value => !/[\r\n]/.test(value), "Keep each competency signpost on one line.").nullable();
+const signpostsMatchBullets = (section: { bullets: string[]; bulletSignposts?: Array<string | null> }) =>
+  section.bulletSignposts === undefined || section.bulletSignposts.length === section.bullets.length;
 /**
  * A writer's citation: the id of the source row a bullet or the profile rests on. It used to be
  * `{sourceId, quote}`, with the row copied out in full; nothing but a substring check read the
@@ -185,7 +189,7 @@ export type CvLibrary = z.infer<typeof CvLibrarySchema>;
 const cvPlanSchema = <T extends SourceIdSchema>(sourceId: T, skillItems: typeof SkillItemsSchema | typeof GeneratedSkillItemsSchema) => z.object({
   summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
   summarySources: z.array(sourceId).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), skillItems: skillItems.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(sourceId).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(CV_LIMITS.sections),
+  sections: z.array(z.object({ entryId: z.string(), skillItems: skillItems.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSignposts: z.array(BulletSignpostSchema).max(CV_LIMITS.bulletsPerSection).optional(), bulletSources: z.array(z.array(sourceId).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() }).refine(signpostsMatchBullets, "Give one signpost slot per bullet.")).min(1).max(CV_LIMITS.sections),
   gaps: z.array(z.string().max(500)).max(12),
 });
 /** The writer's answer. Citations are source ids (`summarySources`, one `bulletSources` item per bullet). */
@@ -199,7 +203,10 @@ export const CvContentSchema = z.object({
   linkedinUrl: LinkedInSchema,
   websiteUrl: WebsiteSchema,
   name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters), summarySources: z.array(CvStoredSourceIdSchema).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvStoredSourceIdSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(CV_LIMITS.sections),
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSignposts: z.array(BulletSignpostSchema).max(CV_LIMITS.bulletsPerSection).optional(), bulletSources: z.array(z.array(CvStoredSourceIdSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })
+    .refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")
+    .refine(section => signpostsMatchBullets(section), "Give one signpost slot per bullet.")
+    .refine(section => section.kind !== "skill" || !section.bulletSignposts?.some(Boolean), "Competency signposts belong to prose bullets only.")).min(1).max(CV_LIMITS.sections),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvContent = z.infer<typeof CvContentSchema>;

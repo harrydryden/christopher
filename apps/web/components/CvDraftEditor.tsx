@@ -2,6 +2,7 @@
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import { cvReviewEditedContent, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
 import { CV_LIMITS, cvSectionTexts, cvSkillCharacterState, cvSkillIdentity } from "@col/core/cv-format";
@@ -9,6 +10,8 @@ import { cvSkillDraftContext } from "@col/core/cv-skill-draft-context";
 import { cvDisplaySections } from "@col/core/cv-helpers";
 import type { CvTheme } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
+import type { CvTargetingBriefV1, CvTargetingChoices, CvTargetingView } from "@col/core/cv-targeting";
+import { projectCvTargetedSections } from "@col/core/cv-targeting-projection";
 import { readCvSkillSuggestions, requestCvSkillSuggestions, saveCvDraft, type CvSkillSuggestionsResult } from "@/app/actions/cv";
 import { CvWorkspacePanel } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
@@ -16,6 +19,7 @@ import { Button } from "./Button";
 import { CvAppearance } from "./CvAppearance";
 import { CvSkillGuidance } from "./CvSkillGuidance";
 import { SettingsForm } from "./SettingsForm";
+import { cvTargetingChoiceIssue, initialCvTargetingChoices } from "@/lib/cv-targeting-choices";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass } from "@/components/Field";
 
@@ -50,6 +54,7 @@ export function RebuildButton({ form, disabled = false }: { form?: string; disab
 
 const input = `mt-1 ${inputClass}`;
 const EMPTY_LIBRARY_SKILLS: LibrarySkillSection[] = [];
+const CvTargetingControls = dynamic(() => import("./CvTargetingPanel").then(module => module.CvTargetingControls));
 const EMPTY_LIBRARY_SUPPORT: LibrarySupportSection[] = [];
 const EMPTY_SKILL_TARGETS: { id: string; heading: string; items: string[] }[] = [];
 const EMPTY_SELECTED_SUGGESTIONS: [] = [];
@@ -91,6 +96,8 @@ export function CvDraftEditor({
   latestSkillTargets = EMPTY_SKILL_TARGETS,
   latestLibraryVersion,
   baseRevision,
+  targetingView,
+  targetingBrief,
 }: {
   id: string;
   content: CvContent;
@@ -118,6 +125,8 @@ export function CvDraftEditor({
   latestSkillTargets?: { id: string; heading: string; items: string[] }[];
   latestLibraryVersion?: number;
   baseRevision?: number;
+  targetingView?: CvTargetingView | null;
+  targetingBrief?: CvTargetingBriefV1 | null;
 }) {
   const formId = `cv-edit-${id}`;
   const [hydrated, setHydrated] = useState(false);
@@ -127,6 +136,15 @@ export function CvDraftEditor({
   // stay comparable.
   const [baseTheme] = useState(resolvedTheme);
   const [theme, setTheme] = useState(baseTheme);
+  const [targetingChoices, setTargetingChoices] = useState<CvTargetingChoices | null>(() =>
+    targetingView ? initialCvTargetingChoices(targetingView) : null);
+  const initialTargetingChoices = useRef(targetingChoices ? JSON.stringify(targetingChoices) : "");
+  const targetingDirty = !!targetingChoices && JSON.stringify(targetingChoices) !== initialTargetingChoices.current;
+  const targetingIssue = targetingView && targetingChoices ? cvTargetingChoiceIssue(targetingView, targetingChoices) : null;
+  function changeTargeting(next: CvTargetingChoices) {
+    setTargetingChoices(next);
+    setTheme(current => ({ ...current, maxPages: next.presentation.maxPages, bodySizePt: next.presentation.bodySizePt }));
+  }
   const [rows, setRows] = useState(
     content.sections.map((section) =>
       (section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets).join("\n"),
@@ -134,6 +152,10 @@ export function CvDraftEditor({
   );
   const [skillHeadings, setSkillHeadings] = useState<Record<string, string>>(() => Object.fromEntries(
     content.sections.filter(section => section.kind === "skill").map(section => [section.entryId, section.heading]),
+  ));
+  const [bulletSignposts, setBulletSignposts] = useState<Record<string, (string | null)[]>>(() => Object.fromEntries(
+    content.sections.filter(section => section.kind !== "skill").map(section =>
+      [section.entryId, section.bulletSignposts ?? section.bullets.map(() => null)]),
   ));
   const [removedSkillIds, setRemovedSkillIds] = useState<string[]>([]);
   const [addedSupportIds, setAddedSupportIds] = useState<string[]>([]);
@@ -163,7 +185,7 @@ export function CvDraftEditor({
   const { preSuggestionCandidate, currentSkillLabels, projectionIssue, preSuggestionFingerprint } = useMemo(() => {
     try {
       const edited = cvReviewEditedContent(content, {
-        summary, theme, rows, removedSkillIds, addedSkills, skillHeadings, addedSupportIds,
+        summary, theme, rows, removedSkillIds, addedSkills, skillHeadings, bulletSignposts, addedSupportIds,
       }, librarySupportingSections);
       return {
         preSuggestionCandidate: edited,
@@ -180,15 +202,25 @@ export function CvDraftEditor({
         preSuggestionFingerprint: "",
       };
     }
-  }, [content, summary, theme, rows, removedSkillIds, addedSkills, skillHeadings, addedSupportIds, librarySupportingSections]);
+  }, [content, summary, theme, rows, removedSkillIds, addedSkills, skillHeadings, bulletSignposts, addedSupportIds, librarySupportingSections]);
   const suggestionsStale = !!skillRun && suggestionInputFingerprint !== preSuggestionFingerprint;
   const selectedNewSuggestionIds = selectedSuggestions.filter(item => !currentSkillLabels.some(label => cvSkillIdentity(label) === cvSkillIdentity(item.label)))
     .map(item => item.id);
   const saveableSuggestionIds = suggestionsStale ? [] : selectedNewSuggestionIds;
-  const candidate = useMemo((): CvContent => suggestionsStale || !selectedSuggestions.length
+  const editedCandidate = useMemo((): CvContent => suggestionsStale || !selectedSuggestions.length
     ? preSuggestionCandidate
     : { ...preSuggestionCandidate, sections: cvReviewSuggestedSections(preSuggestionCandidate.sections, selectedSuggestions, latestSkillTargets) },
   [preSuggestionCandidate, suggestionsStale, selectedSuggestions, latestSkillTargets]);
+  const targetedProjection = useMemo((): { content: CvContent; issue: string | null } => {
+    if (!targetingDirty || !targetingChoices) return { content: editedCandidate, issue: null };
+    try {
+      return { content: { ...editedCandidate, sections: projectCvTargetedSections(editedCandidate,
+        { entries: targetingChoices.entries }, targetingBrief).sections }, issue: null };
+    } catch (error) {
+      return { content: editedCandidate, issue: error instanceof Error ? error.message : "Review your targeting choices." };
+    }
+  }, [editedCandidate, targetingDirty, targetingChoices, targetingBrief]);
+  const candidate = targetedProjection.content;
   useEffect(() => {
     if (suggestionsStale && selectedSuggestionIds.length) setSelectedSuggestionIds([]);
   }, [suggestionsStale, selectedSuggestionIds.length]);
@@ -197,7 +229,9 @@ export function CvDraftEditor({
   const skillSectionCount = candidate.sections.filter(section => section.kind === "skill").length;
   const skillSectionCap = Math.max(CV_LIMITS.skillSections, content.sections.filter(section => section.kind === "skill").length);
   const skillLimitIssue = cvReviewSkillLimitIssue(candidate.sections);
-  const skillIssue = projectionIssue || (candidate.sections.length > 20 ? "This CV has reached its section limit. Remove a section before saving." : null)
+  const skillIssue = targetingIssue || targetedProjection.issue || (targetingDirty && selectedNewSuggestionIds.length
+    ? "Save selected skills first, then choose how to target this CV." : null) || projectionIssue ||
+    (candidate.sections.length > 20 ? "This CV has reached its section limit. Remove a section before saving." : null)
     || cvReviewSkillSectionLimitIssue(candidate.sections, content.sections)
     || skillLimitIssue || cvReviewSkillCharacterIssue(candidate.sections);
   const fingerprint = useMemo(() => JSON.stringify(candidate), [candidate]);
@@ -208,7 +242,13 @@ export function CvDraftEditor({
     delete saved.fitNotes;
     return JSON.stringify(saved);
   }, [content, baseTheme]);
-  const dirty = fingerprint !== baseline;
+  const dirty = fingerprint !== baseline || targetingDirty;
+  useEffect(() => {
+    if (!dirty) return;
+    const protectUnsavedWork = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", protectUnsavedWork);
+    return () => window.removeEventListener("beforeunload", protectUnsavedWork);
+  }, [dirty]);
   const currentPreview = preview?.fingerprint === fingerprint;
   useEffect(
     () => () => {
@@ -380,6 +420,12 @@ export function CvDraftEditor({
           <input type="hidden" name="pageLibraryVersion" value={latestLibraryVersion ?? ""} />
           <input type="hidden" name="skillSuggestionRunId" value={skillRun?.id ?? ""} />
           <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(saveableSuggestionIds)} />
+          <input type="hidden" name="bulletSignposts" value={JSON.stringify(bulletSignposts)} />
+          {targetingDirty && targetingChoices && targetingView && <>
+            <input type="hidden" name="targetingChoices" value={JSON.stringify(targetingChoices)} />
+            <input type="hidden" name="targetingExpectedSource" value={JSON.stringify(targetingView.source)} />
+            <input type="hidden" name="targetingExpectedRubricKey" value={targetingView.rubricKey ?? ""} />
+          </>}
         </SettingsForm>
       </fieldset>
       <p className="mt-2 text-12 text-muted">Saving keeps your wording as a new draft without checking or rebuilding this CV. Check the saved CV when you are ready. Rewriting uses the latest Experience evidence and one CV credit.</p>
@@ -398,7 +444,8 @@ export function CvDraftEditor({
         {error && <p role="alert" className="w-full text-14 text-danger">{error}</p>}
         {preview && !currentPreview && <p role="status" className="w-full text-12 text-muted">Edits changed since this preview. Refresh it to see the current wording.</p>}
         {preview && currentPreview && <>
-          <a className="underline" href={preview.url} target="_blank" rel="noopener noreferrer">Open preview · {preview.pages} {preview.pages === 1 ? "page" : "pages"}</a>
+          <a className="underline" href={preview.url} target="_blank" rel="noopener noreferrer">Open preview · {preview.pages} {preview.pages === 1 ? "page" : "pages"} rendered · limit {theme.maxPages}</a>
+          {preview.pages > theme.maxPages && <p role="status" className="w-full text-12 text-warn">This wording renders to {preview.pages} pages, above your {theme.maxPages}-page limit. Saving and Check keep the wording unchanged. Shorten or summarise it, choose a larger limit, or deliberately Rewrite before finalising.</p>}
           <CvDisclosure label="preview on this page"><iframe title="Current CV PDF preview" src={preview.url} className="h-[650px] w-full border-2 border-line-muted bg-raised" /></CvDisclosure>
         </>}
       </section>
@@ -406,7 +453,12 @@ export function CvDraftEditor({
         <section className="border border-line-muted p-4">
           <h2 className="text-14 font-semibold">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
-            <fieldset disabled={!!blocked || !hydrated} className="contents"><CvAppearance value={theme} onChange={setTheme} /></fieldset>
+            <fieldset disabled={!!blocked || !hydrated} className="contents"><CvAppearance value={theme} onChange={next => {
+              setTheme(next);
+              if (targetingChoices && targetingView?.status === "confirmed" && next.bodySizePt)
+                setTargetingChoices(value => value ? { ...value, presentation: {
+                  maxPages: next.maxPages, bodySizePt: next.bodySizePt as 11 | 12 } } : value);
+            }} /></fieldset>
           </div>
         </section>
       </CvWorkspacePanel>
@@ -423,6 +475,8 @@ export function CvDraftEditor({
         {assessment}
       </CvWorkspacePanel>
       <CvWorkspacePanel tab="content">
+        {targetingView && targetingChoices && <CvTargetingControls view={targetingView} value={targetingChoices}
+          onChange={changeTargeting} disabled={!!blocked || !hydrated || saveStatus.pending} />}
         <fieldset disabled={!!blocked || !hydrated} className="contents">
         <section className="space-y-3 border border-line-muted p-4">
           <h2 className="text-14 font-semibold">CV wording</h2>
@@ -572,7 +626,22 @@ export function CvDraftEditor({
                     if (selected) setRows((previous) => previous.map((row, i) => i === index ? row ? `${row}\n${selected}` : selected : row));
                   }}><option value="">Add skill from Experience</option>{availableLibrarySkills.map((item) => <option key={item} value={item}>{item}</option>)}</select>}
                 </div>
-              </> : <textarea form={formId} id={blockId} name={`section-${index}`} value={rows[index]} onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? event.target.value : row))} rows={Math.max(3, section.bullets.length * 2)} className={`ds-prose ${input}`} />}
+              </> : <div className="space-y-2">
+                <textarea form={formId} id={blockId} name={`section-${index}`} value={rows[index]}
+                  onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? event.target.value : row))}
+                  rows={Math.max(3, section.bullets.length * 2)} className={`ds-prose ${input}`} />
+                <details className="border border-line-muted p-2"><summary className="cursor-pointer font-medium">Optional bold competency labels</summary>
+                  <p className="mt-2 text-12 text-muted">A short label sits before its own bullet. Leave it blank for normal prose. Labels are checked with the bullet against your evidence.</p>
+                  <div className="mt-2 space-y-2">{rows[index]!.split("\n").map(value => value.trim()).filter(Boolean).map((bullet, bulletIndex) =>
+                    <label key={bulletIndex} className="block text-12">Bullet {bulletIndex + 1}: {bullet.slice(0, 70)}{bullet.length > 70 ? "…" : ""}
+                      <input type="text" aria-label={`Competency label for bullet ${bulletIndex + 1} in ${section.heading}`}
+                        maxLength={60} value={bulletSignposts[section.entryId]?.[bulletIndex] ?? ""}
+                        onChange={event => setBulletSignposts(current => { const next = [...(current[section.entryId] ?? [])];
+                          next[bulletIndex] = event.target.value || null; return { ...current, [section.entryId]: next }; })}
+                        className={input} placeholder="Optional, e.g. Team leadership" />
+                    </label>)}</div>
+                </details>
+              </div>}
             </div>;
           })}
           {addedSkills.map((section, sectionIndex) => <div key={section.entryId} className="space-y-2 border border-line-muted p-3 text-14">

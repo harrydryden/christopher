@@ -369,6 +369,14 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     return <label className="block min-w-0 space-y-1.5 text-14"><span className={labelClass}>{label}</span><input required={key === "name"} type={props.type ?? "text"} className={input} value={value[key] ?? ""} placeholder={props.placeholder} autoComplete={props.autoComplete} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
   }
 
+  function openLinkedInImport() {
+    const panel = document.getElementById("library-import-panel");
+    if (panel instanceof HTMLDetailsElement) panel.open = true;
+    const section = document.getElementById("library-import-linkedin");
+    section?.scrollIntoView?.({ behavior: "auto", block: "start" });
+    document.getElementById("library-linkedin-pdf")?.focus({ preventScroll: true });
+  }
+
   /** Put back the library as it was last saved, after asking: this is the one control that loses typing. */
   function discard() {
     if (!window.confirm(DISCARD)) return;
@@ -479,6 +487,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       {line("location", "Location", { autoComplete: "address-level2", placeholder: "Manchester, UK" })}
     </div>
     {line("linkedinUrl", "LinkedIn", { type: "url", placeholder: "https://www.linkedin.com/in/your-profile" })}
+    <p className="text-12 text-muted">This link is shown on your CV; it does not read your LinkedIn profile.</p>
+    <button type="button" className="w-fit text-12 underline" onClick={openLinkedInImport}>Import my LinkedIn PDF</button>
     {line("websiteUrl", "Website", { type: "url", placeholder: "https://example.com" })}
     {/* Whatever else the header should carry. A library saved when contact details were one line
         keeps everything that was not an email address or a phone number here. */}

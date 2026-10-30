@@ -57,6 +57,7 @@ type CvSectionText = {
   heading: string;
   bullets: string[];
   skillItems?: string[];
+  bulletSignposts?: Array<string | null>;
 };
 export function cvSectionHeading(section: CvSectionText): string | null {
   if (section.kind === "skill") return null;
@@ -67,6 +68,7 @@ export function cvSectionTexts(section: CvSectionText): string[] {
     section.skillItems ??
     (section.kind === "skill"
       ? section.bullets.flatMap((bullet) => bullet.split(" · "))
-      : section.bullets);
+      : section.bullets.map((bullet, index) => section.bulletSignposts?.[index]
+        ? `${section.bulletSignposts[index]} · ${bullet}` : bullet));
   return values.map(cleanCvText).filter(Boolean);
 }

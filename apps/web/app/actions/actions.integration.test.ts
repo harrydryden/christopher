@@ -9,7 +9,8 @@ import {
   reviewFixture,
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { createDb, confirmCvTargetingPrioritiesForUser, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@col/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@col/core";
@@ -49,6 +50,21 @@ async function completeAssessment(id: string) {
   const form = new FormData();
   form.set("reviewed", "on");
   expect(await finaliseCvDraft(id, { ok: true }, form)).toEqual({ ok: true });
+}
+
+async function confirmPreparedPriorities(id: string) {
+  const [draft] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id));
+  expect(draft?.status).toBe("awaiting_priorities");
+  const brief = CvTargetingBriefSchema.parse(draft!.targetingBrief);
+  await confirmCvTargetingPrioritiesForUser(database, user.id, id, {
+    expectedRevision: draft!.revision, expectedSource: brief.source, expectedRubricKey: brief.priority.rubricKey!,
+    requestKey: crypto.randomUUID(), choices: {
+      entries: draft!.librarySnapshot.entries.map(entry => ({ entryId: entry.id, treatment: "feature" })),
+      presentation: brief.presentation,
+      emphasisRequirementIds: brief.priority.rubric!.requirements.slice(0, 5).map(item => item.id),
+      acknowledgedEssentialOmissionIds: [],
+    },
+  });
 }
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -788,7 +804,7 @@ describe("priority workflows", () => {
     const [draft] = await database.select().from(schema.cvDrafts);
     // `toMatchObject`, so a normalisation marker the library gains later (`facetedRows` and its
     // like) does not fail a test about what the snapshot carries.
-    expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: DEFAULT_CV_THEME, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
+    expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 }, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: ["entry:one:row:0"], sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
@@ -1423,6 +1439,11 @@ it("carries library styling through generation, revision, matching preview/downl
       userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }),
       now: () => new Date(),
     } as unknown as import("../../../worker/src/context").WorkerDeps);
+    if ((await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id)))[0]?.status === "awaiting_priorities") {
+      await confirmPreparedPriorities(draft!.id);
+      await handleGenerateCv(task!, { db: database, env: { anthropicApiKey: "fixture-key" },
+        userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }), now: () => new Date() } as unknown as import("../../../worker/src/context").WorkerDeps);
+    }
   } finally {
     model.mockRestore();
     planner.mockRestore();
@@ -1434,7 +1455,7 @@ it("carries library styling through generation, revision, matching preview/downl
     .from(schema.cvDrafts)
     .where(eq(schema.cvDrafts.id, draft!.id));
   expect(ready!.status).toBe("ready");
-  expect(ready!.content!.theme).toEqual(DEFAULT_CV_THEME);
+  expect(ready!.content!.theme).toEqual({ ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 });
   const edit = new FormData();
   edit.set("summary", ready!.content!.summary);
   edit.set(
@@ -1676,6 +1697,10 @@ it("assesses, improves with current evidence, finalises and exports through the 
       .where(sql`payload->>'draftId' = ${id}`)
       .orderBy(schema.tasks.createdAt);
     await handleGenerateCv(task!, deps);
+    if ((await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id)))[0]?.status === "awaiting_priorities") {
+      await confirmPreparedPriorities(id);
+      await handleGenerateCv(task!, deps);
+    }
     await database
       .update(schema.tasks)
       .set({ status: "done" })
@@ -2116,10 +2141,10 @@ it("saves default appearance independently of library edits and existing CVs", a
   generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
   await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
   const [draft] = await database.select().from(schema.cvDrafts);
-  expect(draft!.librarySnapshot.theme).toEqual(CV_THEMES.Forest);
+  expect(draft!.librarySnapshot.theme).toEqual({ ...CV_THEMES.Forest, bodySizePt: 12 });
   form.set("theme", JSON.stringify(CV_THEMES.Gold));
   expect(await saveCvAppearance({ ok: true }, form)).toEqual({ ok: true });
-  expect((await database.select().from(schema.cvDrafts))[0]!.librarySnapshot.theme).toEqual(CV_THEMES.Forest);
+  expect((await database.select().from(schema.cvDrafts))[0]!.librarySnapshot.theme).toEqual({ ...CV_THEMES.Forest, bodySizePt: 12 });
   form.set("theme", JSON.stringify({ ...CV_THEMES.Gold, primary: "invalid" }));
   expect((await saveCvAppearance({ ok: true }, form)).ok).toBe(false);
   expect(await getDefaultCvAppearance(user.id)).toEqual(CV_THEMES.Gold);

@@ -71,7 +71,7 @@ export function pipelineFilter(raw?: string | string[]): PipelineFilter {
   return PIPELINE_FILTERS.find((filter) => filter === value) ?? "active";
 }
 
-export type CvStatus = "queued" | "generating" | "awaiting_evidence" | "ready" | "failed";
+export type CvStatus = "queued" | "generating" | "awaiting_evidence" | "awaiting_priorities" | "ready" | "failed";
 
 export interface PipelineCv {
   id: string;

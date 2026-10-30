@@ -14,9 +14,9 @@ vi.mock("next/dynamic", () => ({
   },
 }));
 
-it("splits the three widgets without a fallback or a client-only render", async () => {
+it("splits the five CV widgets without a fallback or a client-only render", async () => {
   await import("./CvLazyWidgets");
-  expect(calls).toHaveLength(3);
+  expect(calls).toHaveLength(5);
   for (const { options } of calls) {
     expect(options?.loading).toBeUndefined();
     expect(options?.ssr).not.toBe(false);

@@ -14,6 +14,7 @@ export function cvReviewEditedContent(saved: CvContent, edits: {
   removedSkillIds: string[];
   addedSkills: AddedSkillSection[];
   skillHeadings: Readonly<Record<string, string>>;
+  bulletSignposts?: Readonly<Record<string, readonly (string | null)[]>>;
   addedSupportIds: string[];
 }, available: readonly LibrarySupportSection[]): CvContent {
   const summary = edits.summary.trim();
@@ -22,7 +23,7 @@ export function cvReviewEditedContent(saved: CvContent, edits: {
     theme: edits.theme,
     summary,
     sections: cvReviewSupportingSections(
-      cvReviewSections(saved, edits.rows, edits.removedSkillIds, edits.addedSkills, edits.skillHeadings),
+      cvReviewSections(saved, edits.rows, edits.removedSkillIds, edits.addedSkills, edits.skillHeadings, edits.bulletSignposts),
       edits.addedSupportIds,
       available,
     ),
@@ -79,6 +80,7 @@ export function cvReviewSections(
   removedSkillIds: string[],
   addedSkills: AddedSkillSection[],
   skillHeadings: Readonly<Record<string, string>> = {},
+  bulletSignposts: Readonly<Record<string, readonly (string | null)[]>> = {},
 ): CvContent["sections"] {
   const removed = new Set(removedSkillIds);
   if (removedSkillIds.some((id) => !saved.sections.some((section) => section.kind !== "experience" && section.entryId === id)))
@@ -92,12 +94,17 @@ export function cvReviewSections(
     if (section.kind === "skill" && (!heading || heading.length > 250))
       throw new Error("Give each skill section a heading of 1 to 250 characters.");
     const textChanged = JSON.stringify(edited) !== JSON.stringify(before);
-    const changed = heading !== section.heading || textChanged;
+    const signposts = section.kind === "skill" ? undefined : edited.map((_, bulletIndex) =>
+      (bulletSignposts[section.entryId] ?? section.bulletSignposts)?.[bulletIndex]?.trim() || null);
+    const nextSignposts = signposts?.some(Boolean) ? signposts : undefined;
+    const signpostsChanged = JSON.stringify(nextSignposts ?? null) !== JSON.stringify(section.bulletSignposts ?? null);
+    const changed = heading !== section.heading || textChanged || signpostsChanged;
     if (!changed) return [section];
     return [{
       ...section,
       ...(section.kind === "skill" ? { heading, skillItems: edited, bullets: edited.slice(0, CV_LIMITS.bulletsPerSection) } : { bullets: edited }),
       ...(textChanged ? { bulletSources: undefined } : {}),
+      ...(section.kind !== "skill" ? { bulletSignposts: nextSignposts } : {}),
     }];
   });
   const seen = new Set(saved.sections.map((section) => section.entryId));

@@ -1,0 +1,202 @@
+{
+  "content": {
+    "gaps": [
+      "r4 (five years leading operations in a regulated environment) is marked missing in the tailoring plan. The library shows operations roles at Northwind Health from Jan 2018 to present with the company described as healthcare/regulated services, but no row explicitly states regulated-environment leadership; reviewer should confirm before relying on this.",
+      "r6 (supplier negotiation) is only partly evidenced: the library describes a supplier scorecard and quarterly service-level reviews, not contract negotiation. No negotiation claim has been made in the CV.",
+      "The tailoring plan maps r2, r3, r6 and r7 to entry:ev-head:row:0, which does not itself support those requirements. Claims were cited to the rows that actually support them (row:2 for rostering, row:3 for finance partnership, row:4 for supplier reviews, education rows for the degree).",
+      "The skills bullet now cites entry:ev-skills:skill:0 (the exact 'SQL' label) rather than the prose row, per the validator correction.",
+      "The advert covers twelve sites; the library evidences eleven clinics. No adjustment made; noted for reviewer awareness only.",
+      "The advert does not state the reporting line or budget size, so scope is judged from responsibilities only (per rubric caveat)."
+    ],
+    "name": "Rowan Mercer",
+    "theme": {
+      "font": "Course of Life",
+      "pill": "#e6e6e6",
+      "primary": "#000000",
+      "surface": "#f2f2f2",
+      "version": 1,
+      "maxPages": 2,
+      "background": "#ffffff",
+      "bodySizePt": 12,
+      "introPanel": true,
+      "skillPills": true
+    },
+    "contact": "Manchester, UK · rowan.mercer@example.test",
+    "summary": "Head of Operations at Northwind Health, owning the operational plan for eleven clinics and reporting delivery, cost and quality to the executive team monthly. Partners with finance on the annual budget and monthly variance across a £14m cost base; built the first operational reporting pack in SQL and Power BI.",
+    "fitNotes": [
+      "Wording tightened against smaller per-block budgets after measuring the PDF."
+    ],
+    "sections": [
+      {
+        "kind": "experience",
+        "bullets": [
+          "Own the operational plan for eleven community clinics, reporting delivery, cost and quality to the executive team every month.",
+          "Rebuilt rostering around a single demand model, cutting agency spend by 22% in the first year.",
+          "Partner with finance on the annual budget and monthly variance across a £14m cost base.",
+          "Lead four operations managers and a scheduling team of eighteen through a weekly performance review against published measures; introduced a supplier scorecard for the eight largest contracts, reviewed quarterly against agreed service levels."
+        ],
+        "entryId": "ev-head",
+        "heading": "Head of Operations · Northwind Health · Apr 2021 – Present",
+        "bulletSources": [
+          [
+            "entry:ev-head:row:0"
+          ],
+          [
+            "entry:ev-head:row:2"
+          ],
+          [
+            "entry:ev-head:row:3"
+          ],
+          [
+            "entry:ev-head:row:1",
+            "entry:ev-head:row:4"
+          ]
+        ],
+        "bulletSignposts": [
+          "Operational planning and executive reporting",
+          "Rostering and agency spend",
+          "Budget and variance with finance",
+          "Team leadership and supplier performance"
+        ],
+        "industryDescriptions": [
+          "Healthcare",
+          "Regulated services"
+        ]
+      },
+      {
+        "kind": "experience",
+        "bullets": [
+          "Built the first operational reporting pack in SQL and Power BI, replacing a manual month-end spreadsheet, while running day-to-day operations for four clinics and owning the rota, patient flow and site budget."
+        ],
+        "entryId": "ev-manager",
+        "heading": "Operations Manager · Northwind Health · Jan 2018 – Mar 2021",
+        "bulletSources": [
+          [
+            "entry:ev-manager:row:1",
+            "entry:ev-manager:row:0"
+          ]
+        ],
+        "bulletSignposts": [
+          "SQL and Power BI reporting"
+        ],
+        "industryDescriptions": [
+          "Healthcare",
+          "Regulated services"
+        ]
+      },
+      {
+        "kind": "education",
+        "bullets": [
+          "BSc (Hons) Economics, University of Manchester, 2014",
+          "PRINCE2 Practitioner, APMG International, 2019"
+        ],
+        "entryId": "ev-education",
+        "heading": "Education",
+        "bulletSources": [
+          [
+            "entry:ev-education:row:0"
+          ],
+          [
+            "entry:ev-education:row:1"
+          ]
+        ]
+      },
+      {
+        "kind": "skill",
+        "bullets": [
+          "SQL"
+        ],
+        "entryId": "ev-skills",
+        "heading": "Systems and tools",
+        "skillItems": [
+          "SQL"
+        ],
+        "bulletSources": [
+          [
+            "entry:ev-skills:skill:0"
+          ]
+        ]
+      }
+    ],
+    "summarySources": [
+      "entry:ev-head:row:0",
+      "entry:ev-head:row:3",
+      "entry:ev-manager:row:1"
+    ]
+  },
+  "pageCount": 1,
+  "maxPages": 2,
+  "layout": {
+    "summaryLines": 4,
+    "firstPageEntryIds": [
+      "ev-head",
+      "ev-manager",
+      "ev-education",
+      "ev-skills"
+    ],
+    "sectionPages": [
+      {
+        "entryId": "ev-head",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-manager",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-education",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-skills",
+        "startPage": 1,
+        "endPage": 1
+      }
+    ],
+    "claimPages": [
+      {
+        "claimId": "section:ev-head:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:1",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:2",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:3",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-manager:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-education:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-education:1",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-skills:0",
+        "startPage": 1,
+        "endPage": 1
+      }
+    ]
+  }
+}

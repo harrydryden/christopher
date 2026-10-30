@@ -3,9 +3,9 @@ import { cvForeground } from "./cv-theme";
 
 export const PILL_STYLES = {
   industry: { fontSize: 8, paddingX: 8, paddingY: 4, gapX: 5, gapY: 4, radius: 7 },
-  skill: { fontSize: 8.5, paddingX: 6, paddingY: 3, gapX: 5, gapY: 4, radius: 8 },
+  skill: { fontSize: 8.5, paddingX: 6, paddingY: 2, gapX: 5, gapY: 2, radius: 8 },
 } as const;
-type PillStyle = (typeof PILL_STYLES)[keyof typeof PILL_STYLES];
+type PillStyle = { fontSize: number; paddingX: number; paddingY: number; gapX: number; gapY: number; radius: number };
 type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number; heading: boolean };
 export type PillRow = { pills: Pill[]; height: number };
 const HEADING_TIP_WIDTH = 5;
@@ -33,7 +33,7 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
     return { label, x: 0, width: pillWidth, height: Math.ceil(textHeight + style.paddingY * 2), textHeight,
       lineHeight: doc.currentLineHeight(true) + 1, heading: isHeading };
   });
-  if (style === PILL_STYLES.skill && heading) {
+  if (heading) {
     // Bold and regular faces differ slightly in ascent. Give every ordinary pill the same
     // minimum height, even when a row contains no heading pill.
     const oneLine = [font, heading.font].map(face => {

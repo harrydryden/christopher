@@ -8,7 +8,14 @@ export type CvBlockBudget = { entryId: string; kind: string; priority: number; m
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
 /** What a CV is fitted against: plain text, every word counting once, or words weighted by requirement. */
 export type CvRelevanceTarget = string | ReadonlyMap<string, number>;
-export type CvSemanticTarget = { plan: CvTailoringPlan; rubric: CvRubric };
+export type CvSemanticTarget = { plan: CvTailoringPlan; rubric: CvRubric;
+  treatments?: ReadonlyMap<string, "feature" | "summarise" | "omit">;
+  emphasisRequirementIds?: ReadonlySet<string> };
+/** One weighting rule for allocation and every later pruning choice. */
+export function cvSemanticRequirementWeights(semantic: CvSemanticTarget): Map<string, number> {
+  return new Map([...cvTailoringRequirementWeights(semantic.plan, semantic.rubric)]
+    .map(([id, weight]) => [id, weight * (semantic.emphasisRequirementIds?.has(id) ? 2 : 1)]));
+}
 const stop = new Set('a an of to in on at as is it be by or we with from that this your have will role team work company experience skills across their into and the for are our you'.split(' '));
 const relevantWords = (text: string) => [...new Set(text.toLowerCase().match(/[a-z][a-z0-9+#&-]*/g) ?? [])].filter(word => !stop.has(word));
 
@@ -17,10 +24,10 @@ const relevantWords = (text: string) => [...new Set(text.toLowerCase().match(/[a
  * that under space pressure the fitter keeps what the score rewards most: a bullet covering an
  * essential requirement outranks a longer one covering a mere responsibility.
  */
-export function cvRelevanceTerms(requirements: CvRubric["requirements"]): Map<string, number> {
+export function cvRelevanceTerms(requirements: CvRubric["requirements"], emphasisRequirementIds?: ReadonlySet<string>): Map<string, number> {
   const terms = new Map<string, number>();
   for (const requirement of requirements) {
-    const weight = cvRequirementWeight(requirement);
+    const weight = cvRequirementWeight(requirement) * (emphasisRequirementIds?.has(requirement.id) ? 2 : 1);
     for (const word of relevantWords(`${requirement.label} ${requirement.quote}`)) terms.set(word, Math.max(terms.get(word) ?? 0, weight));
   }
   return terms;
@@ -34,7 +41,7 @@ export function cvRelevance(value: string, target: CvRelevanceTarget): number {
 function semanticEntryRelevance(entryId: string, semantic?: CvSemanticTarget): number {
   if (!semantic) return 0;
   const coverage = cvTailoringCoverage(semantic.plan);
-  const weights = cvTailoringRequirementWeights(semantic.plan, semantic.rubric);
+  const weights = cvSemanticRequirementWeights(semantic);
   const requirements = new Set<string>();
   for (const [sourceId, ids] of coverage) if (sourceId.startsWith(`entry:${entryId}:`)) ids.forEach(id => requirements.add(id));
   return [...requirements].reduce((sum, id) => sum + (weights.get(id) ?? 0), 0);
@@ -101,13 +108,17 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
   const blocks: CvBlockBudget[] = roles.map((entry, index) => {
     const maxCharacters = Math.floor(roleCharacters * weights[index]! / sum);
     return { entryId: entry.id, kind: entry.kind, priority: weights[index]!, maxCharacters,
-      maxBullets: Math.max(1, Math.min(bulletCap, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
+      maxBullets: semantic?.treatments?.get(entry.id) === "summarise" ? 1 : Math.max(1, Math.min(bulletCap, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
   });
-  blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10, maxBullets: 6, maxCharacters: Math.round(150 * scale), maxBulletCharacters: Math.round(150 * scale), maxSkills: 0 })));
+  blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10,
+    maxBullets: semantic?.treatments?.get(entry.id) === "summarise" ? 1 : 6,
+    maxCharacters: Math.round(150 * scale), maxBulletCharacters: Math.round(150 * scale), maxSkills: 0 })));
   blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: skillAllowance(entry), maxBulletCharacters: Math.max(Math.round(90 * scale), ...relevantCvSkillItems(entry, target, semantic).map(item => item.length)),
     maxSkills: entry.skillItems ? Math.min(CV_LIMITS.skillsPerSection, Math.max(2, Math.round(5 * pages * scale))) : 0,
     ...(entry.skillItems ? { relevantSkillItems: relevantCvSkillItems(entry, target, semantic) } : {}) })));
-  blocks.push(...interests.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 0, maxBullets: 2, maxCharacters: Math.round(120 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: 0 })));
+  blocks.push(...interests.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 0,
+    maxBullets: semantic?.treatments?.get(entry.id) === "summarise" ? 1 : 2,
+    maxCharacters: Math.round(120 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: 0 })));
   return { summaryCharacters, totalCharacters, blocks };
 }
 

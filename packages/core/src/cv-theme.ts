@@ -15,6 +15,7 @@ export const CvThemeSchema = z.object({
   // Stored themes and saved revisions carry the old name, so it reads as the face it always was.
   font: z.preprocess((font) => ((LEGACY_CV_FONTS as readonly unknown[]).includes(font) ? DEFAULT_CV_FONT : font), z.enum(CV_FONTS)).default(DEFAULT_CV_FONT),
   maxPages: z.number().int().min(CV_PAGE_LIMITS.min).max(CV_PAGE_LIMITS.max).default(CV_PAGE_LIMITS.default),
+  bodySizePt: z.union([z.literal(11), z.literal(12)]).optional(),
 });
 // The zod-free `CvTheme` must stay exactly what the schema produces; either drifting fails typecheck.
 // Identity, not mutual assignability: two object types that differ only by an optional property

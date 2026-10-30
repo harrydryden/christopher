@@ -9,6 +9,8 @@ import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
 import { CV_THEMES, DEFAULT_CV_THEME, CvLibrarySchema } from "@col/core/cv";
 import { cvTailoringEvidence, validateCvTailoringPlan } from "@col/core/cv-tailoring";
+import { cvTargetingSource } from "@col/core/cv-targeting-identity";
+import { reviseFailedCvTargeting } from "./cv-targeting";
 import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
@@ -369,6 +371,51 @@ const outcome = async (pending: Promise<unknown>) => {
     return String((error as Error).message);
   }
 };
+
+it("resumes a failed targeted page fit on the same draft with its own revised page choice", async () => {
+  const rubric = rubricFixture("Finance operations");
+  const source = cvTargetingSource(1, CvLibrarySchema.parse(library), "Finance operations");
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const key = "a".repeat(64);
+  const oldRequestKey = crypto.randomUUID();
+  const draft = await failedDraft({ content: null, buildCheckpoint: { tailoringEnabled: false, rubric,
+    sourceRubric: rubric, tailoringPlan: plan },
+    targetingBrief: { version: 1, source, entries: [{ entryId: "one", treatment: "feature" }],
+      presentation: { maxPages: 1, bodySizePt: 12 }, priority: { state: "confirmed", rubric, rubricKey: key,
+        emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [], confirmationKey: oldRequestKey } },
+    failure: { kind: "page_limit_unfittable", resolvedBy: "user", retryable: false, action: "shorten_or_raise_pages",
+      message: "The CV is two pages; the limit is one.", motion: "shorten", attempt: 3, maxAttempts: 3 },
+  });
+  const requestKey = crypto.randomUUID();
+  const input = { expectedRevision: draft.revision, expectedSource: source, expectedRubricKey: key, requestKey,
+    choices: { entries: [{ entryId: "one", treatment: "feature" as const }], presentation: { maxPages: 2, bodySizePt: 12 as const },
+      emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [] } };
+  expect(await reviseFailedCvTargeting(draft.id, input)).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  expect(await reviseFailedCvTargeting(draft.id, input)).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  const resumed = await draftRow(draft.id);
+  expect(resumed).toMatchObject({ status: "queued", failure: null, targetingBrief: { presentation: { maxPages: 2 } } });
+  expect(await buildTasks()).toHaveLength(1);
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+});
+
+it("uses the two-page targeted default after a JSONB theme round trip, but honours an explicit three-page choice", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1,
+    content: { ...library, theme: { ...DEFAULT_CV_THEME } } });
+  await setBudget(200);
+  await grantCvCredits(database, { userId: user.id, source: "admin", units: 2, externalRef: "targeted-theme-test" });
+  const roles = await visibleRoles(2);
+  expect(await outcome(requestCv({ ok: true }, generate(roles[0]!.job.id)))).toMatch(/^redirect:\/cv\//);
+  const [first] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.jobId, roles[0]!.job.id));
+  expect(first?.targetingBrief?.presentation.maxPages).toBe(2);
+  expect(first?.librarySnapshot.theme?.maxPages).toBe(2);
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "cvTheme",
+    value: { ...DEFAULT_CV_THEME, maxPages: 3 }, updatedAt: new Date() });
+  expect(await outcome(requestCv({ ok: true }, generate(roles[1]!.job.id)))).toMatch(/^redirect:\/cv\//);
+  const [second] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.jobId, roles[1]!.job.id));
+  expect(second?.targetingBrief?.presentation.maxPages).toBe(3);
+  expect(second?.librarySnapshot.theme?.maxPages).toBe(3);
+});
 
 it("refuses an account's fourth build in flight in a sentence, and writes nothing for it", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });

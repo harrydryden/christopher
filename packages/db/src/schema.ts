@@ -15,7 +15,8 @@ import type { CvAssessment, CvJobSource } from "@col/core/cv-assessment";
 import type { CvSkillSuggestion } from "@col/core";
 import type { CvReviewDecision } from "@col/core/cv-review";
 import type { CvTailoringPlan } from "@col/core/cv-tailoring";
-import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@col/core";
+import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz, CvTargetingBriefV1 } from "@col/core";
+import type { CvPendingSkillProposal } from "@col/core/cv-pending-skills";
 import { APPLICATION_STATUSES, type ApplicationStatus } from "@col/core/role-workflow";
 import { EVIDENCE_RATINGS, LIBRARY_REVIEW_SOURCES, type EvidenceRating, type LibraryReviewSource } from "@col/core/library-review";
 import { LOGO_SOURCES } from "@col/core/logo-capture";
@@ -1038,18 +1039,24 @@ export const cvDrafts = pgTable("cv_drafts", {
   jobDescription: text("job_description").notNull(),
   jobSource: jsonb("job_source").$type<CvJobSource>(),
   assessment: jsonb("assessment").$type<CvAssessment>(),
+  /** Exact factual audit input and its completed review; layout-only revisions remeasure the PDF. */
+  semanticAuditCache: jsonb("semantic_audit_cache").$type<{ identity: string; review: CvAssessment["review"] }>(),
   /** User decisions about the findings on this exact assessment, never a change to its verdict. */
   reviewDecision: jsonb("review_decision").$type<CvReviewDecision>(),
   finalisedAt: ts("finalised_at"),
   libraryVersion: integer("library_version").notNull(),
   librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>().notNull(),
   model: text("model").notNull(),
-  status: text("status", { enum: ["queued", "generating", "awaiting_evidence", "ready", "failed"] }).notNull().default("queued"),
+  status: text("status", { enum: ["queued", "generating", "awaiting_evidence", "awaiting_priorities", "ready", "failed"] }).notNull().default("queued"),
   buildStage: text("build_stage", { enum: ["analysing", "writing", "fitting", "assessing"] }),
   /** Last moment the build advanced (a stage change, a batch finishing). Stale while `generating` means the worker stopped, not that the model is slow. */
   progressAt: ts("progress_at"),
   /** What this build has already paid for, so a retry resumes rather than starting over. */
   buildCheckpoint: jsonb("build_checkpoint").$type<CvBuildCheckpoint>(),
+  /** Null on legacy drafts; targeting and manual Feature wording travel with each revision. */
+  targetingBrief: jsonb("targeting_brief").$type<CvTargetingBriefV1>(),
+  /** Model-only opportunities stay outside printable CV content until the member confirms facts. */
+  pendingSkillProposals: jsonb("pending_skill_proposals").$type<CvPendingSkillProposal[]>(),
   /** Why the last attempt stopped and whose move it is; cleared when a build starts afresh. */
   failure: jsonb("failure").$type<CvBuildFailure>(),
   /** Optional factual questions raised after role analysis, including their immutable resolution. */

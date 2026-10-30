@@ -4,11 +4,12 @@ import {
   createCvWritingBudget,
   cvBudgetViolations,
   cvRelevance,
+  cvSemanticRequirementWeights,
   relevantCvSkillItems,
   type CvSemanticTarget,
   type CvWritingBudget,
 } from "./cv-budget";
-import { cvTailoringCoverage, cvTailoringRequirementWeights, validateCvPlanProvenance } from "./cv-tailoring";
+import { cvTailoringCoverage, validateCvPlanProvenance } from "./cv-tailoring";
 import { renderCvPdfWithReport, CvLayoutError } from "./cv-pdf";
 import { cvMaxPages } from "./cv-theme";
 import { CV_LIMITS } from "./cv-format";
@@ -128,7 +129,7 @@ const essentialIds = (semantic?: CvSemanticTarget) => new Set(semantic?.rubric.r
 function selectBulletIndexes(section: CvPlan["sections"][number], limit: number, target: CvRelevanceTarget, semantic: CvSemanticTarget | undefined, library: CvLibrary): Set<number> {
   if (!semantic || !section.bulletSources) return new Set(section.bullets.map((text, index) => ({ index, score: cvRelevance(text, target) + 1 / (index + 1) }))
     .sort((a, b) => b.score - a.score).slice(0, limit).map(item => item.index));
-  const weights = cvTailoringRequirementWeights(semantic.plan, semantic.rubric);
+  const weights = cvSemanticRequirementWeights(semantic);
   const essential = essentialIds(semantic);
   // Preserve at least one carrier for every represented essential requirement. Protecting only a
   // globally unique carrier is insufficient: two duplicates can both be trimmed while another
@@ -171,7 +172,7 @@ function requirementCounts(plan: CvPlan, semantic: CvSemanticTarget | undefined,
 
 function semanticRemovalCost(section: CvPlan["sections"][number], index: number, semantic: CvSemanticTarget | undefined, counts: Map<string, number>, library: CvLibrary): number {
   if (!semantic) return 0;
-  const weights = cvTailoringRequirementWeights(semantic.plan, semantic.rubric);
+  const weights = cvSemanticRequirementWeights(semantic);
   return [...valueRequirements(section, index, semantic, library)]
     .filter(id => counts.get(id) === 1).reduce((sum, id) => sum + (weights.get(id) ?? 0) * 10, 0);
 }
@@ -222,6 +223,7 @@ export async function selectCvToFit(
         .filter((_, partIndex) => chosen.has(`${bulletIndex}:${partIndex}`)).join(" · "));
       section.bullets = selected.filter(Boolean);
       if (section.bulletSources) section.bulletSources = section.bulletSources.filter((_, index) => !!selected[index]);
+      if (section.bulletSignposts) section.bulletSignposts = section.bulletSignposts.filter((_, index) => !!selected[index]);
       if (section.bullets.length !== before.length || selected.some((bullet, index) => bullet !== before[index]))
         changes.push(`${entry.heading}: omitted skills unrelated to this role.`);
       return section.bullets.length > 0;
@@ -259,12 +261,13 @@ export async function selectCvToFit(
     const block = budget.blocks.find(
       (block) => block.entryId === section.entryId,
     );
+    const sourceKind = library.entries.find((entry) => entry.id === section.entryId)?.kind;
     if (
       (block?.kind === "skill" || library.entries.some(entry => entry.id === section.entryId && entry.kind === "skill")) &&
       section.skillItems &&
       section.skillItems.length > Math.min(block?.maxSkills ?? CV_LIMITS.skillsPerSection, CV_LIMITS.skillsPerSection)
     ) {
-      const weights = semantic ? cvTailoringRequirementWeights(semantic.plan, semantic.rubric) : new Map<string, number>();
+      const weights = semantic ? cvSemanticRequirementWeights(semantic) : new Map<string, number>();
       const essential = essentialIds(semantic);
       const represented = new Set(section.skillItems.flatMap((_, index) =>
         [...valueRequirements(section, index, semantic, library)].filter(id => essential.has(id))));
@@ -298,7 +301,8 @@ export async function selectCvToFit(
       );
     }
     if (
-      block?.kind === "experience" &&
+      block && !section.skillItems &&
+      (sourceKind === "experience" || sourceKind === "interest") &&
       section.bullets.length > block.maxBullets
     ) {
       const selected = selectBulletIndexes(section, block.maxBullets, target, semantic, library);
@@ -307,6 +311,7 @@ export async function selectCvToFit(
         selected.has(index),
       );
       if (section.bulletSources) section.bulletSources = section.bulletSources.filter((_, index) => selected.has(index));
+      if (section.bulletSignposts) section.bulletSignposts = section.bulletSignposts.filter((_, index) => selected.has(index));
       changes.push(
         `${library.entries.find((entry) => entry.id === section.entryId)!.heading}: prioritised ${section.bullets.length} achievements.`,
       );
@@ -358,6 +363,7 @@ export async function selectCvToFit(
     const values = section.skillItems ?? section.bullets;
     values.splice(remove.index, 1);
     if (!section.skillItems && section.bulletSources) section.bulletSources.splice(remove.index, 1);
+    if (!section.skillItems && section.bulletSignposts) section.bulletSignposts.splice(remove.index, 1);
     const note = `${library.entries.find((entry) => entry.id === section.entryId)!.heading}: omitted a lower-priority ${section.skillItems ? "skill" : "bullet"} to fit.`;
     if (!values.length) next.sections.splice(remove.sectionIndex, 1);
     reachable.push({ plan: next, changes: [...previous.changes, note] });
@@ -434,7 +440,7 @@ export async function buildFittedCv(
   const say = async (event: CvFitSignal) => { await onEvent?.(event); };
   let feedback: CvFitFeedback | undefined;
   /** Why the last attempt did not stand, which decides what the build says if it was the third. */
-  let problem: "skill_format" | "unusable" | "essential_overflow" | "overflow" = "overflow";
+  let problem: "skill_format" | "unusable" | "selection_conflict" | "essential_overflow" | "overflow" = "overflow";
   /** Every unusable answer's problem, one per attempt, so a build that gives up names them all. */
   const unusable: string[] = [];
   /** What the next rewrite is told about the attempt before it, for the narrative. */
@@ -543,6 +549,14 @@ export async function buildFittedCv(
     }
     await say({ motion: "measure", phase: "done", attempt: attempt + 1, pages: selected.pageCount, maxPages,
       renders: selected.renders, outcome: selected.pageCount <= maxPages ? "fits" : "overflow" });
+    const overSummaries = selected.plan.sections.filter(section =>
+      semantic?.treatments?.get(section.entryId) === "summarise" && section.bullets.length > 1);
+    if (overSummaries.length) {
+      problem = "selection_conflict";
+      feedback = { pageCount: selected.pageCount, maxPages, previousPlan: selected.plan,
+        corrections: overSummaries.map(section => `${section.entryId}: Summarise needs one sourced bullet that retains the essential evidence.`) };
+      continue;
+    }
     if (selected.semanticOverflows.length && selected.pageCount > maxPages) {
       problem = "essential_overflow";
       feedback = { pageCount: selected.pageCount, maxPages, previousPlan: selected.plan,
@@ -594,6 +608,10 @@ export async function buildFittedCv(
       { attempts: 3 },
       { resolvedBy: "user", retryable: false, action: "choose_model" },
     );
+  if (problem === "selection_conflict")
+    throw new CvFitFailure("page_limit_unfittable",
+      "The selected Summarise treatment still needs more than one sourced bullet to retain its essential evidence. Feature that section, revise the selection or change this CV's page limit before retrying.",
+      { pages: feedback?.pageCount ?? maxPages + 1, maxPages, attempts: 3, essential: true });
   if (problem === "essential_overflow")
     // Three rewrites have already tried to consolidate within the budget. Another task would buy
     // three more against the same page limit, so it is the person's page limit to change, or
@@ -605,7 +623,7 @@ export async function buildFittedCv(
     );
   throw new CvFitFailure(
     "page_limit_unfittable",
-    `The builder could not fit the minimum employment and qualification content into ${maxPages} ${maxPages === 1 ? "page" : "pages"} after three budgeted attempts. Reduce the selected evidence blocks or profile detail, or raise the page limit in Settings, then save again.`,
+    `The builder could not fit the minimum employment and qualification content into ${maxPages} ${maxPages === 1 ? "page" : "pages"} after three budgeted attempts. Reduce the selected evidence blocks or profile detail, or change this CV's page limit before retrying.`,
     { pages: feedback?.pageCount ?? maxPages + 1, maxPages, attempts: 3 },
   );
 }

@@ -17,7 +17,7 @@ import { TaskQueue } from "./queue";
 import { handleGenerateCv } from "./handlers/cv";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
-import { seedReplayFixtureDraft } from "./cv-replay-fixture";
+import { publishReplayFixture, seedReplayFixtureDraft } from "./cv-replay-fixture";
 import { mergeStageRoutes, readRecordingHeader, recordCvDraft, replayCvDraft, replayFromRecording, serialiseNestedTransactions } from "./cv-replay";
 
 const providerClient = vi.hoisted(() => vi.fn());
@@ -46,6 +46,35 @@ beforeEach(async () => {
   deps.aiClient = undefined;
   deps.env.anthropicApiKey = "fixture-key";
 });
+
+it("pauses a targeted fixture for owned priorities, then publishes its confirmed brief", async () => {
+  const draft = await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 200, targetedSignpost: true }).client,
+    "cv-targeted-replay@example.invalid", { targeted: true });
+  expect(draft.status).toBe("ready");
+  expect(draft.targetingBrief).toMatchObject({
+    version: 1,
+    presentation: { maxPages: 2, bodySizePt: 12 },
+    priority: { state: "confirmed" },
+  });
+  expect(draft.targetingBrief?.entries).toEqual(expect.arrayContaining([
+    expect.objectContaining({ entryId: "ev-manager", treatment: "summarise" }),
+    expect.objectContaining({ entryId: "ev-calder", treatment: "omit" }),
+  ]));
+  expect(draft.content?.sections.some(section => section.bulletSignposts?.some(Boolean))).toBe(true);
+}, 120_000);
+
+it("records and replays a confirmed targeted build without provider calls", async () => {
+  const draft = await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 200, targetedSignpost: true }).client,
+    "cv-targeted-recording@example.invalid", { targeted: true });
+  const path = join(mkdtempSync(join(tmpdir(), "col-targeted-replay-")), "recording.jsonl");
+  deps.aiClient = createScriptedAiClient({ barrierMs: 200, targetedSignpost: true }).client;
+  const recorded = await recordCvDraft(deps, draft.id, { path });
+  deps.aiClient = undefined;
+  expect(recorded.report).toMatchObject({ outcome: "published", unverified: true, misses: [] });
+  const replay = await replayFromRecording(deps, draft.id, path);
+  expect(replay.report).toMatchObject({ outcome: "published", unverified: true, misses: [], grade: { passed: true } });
+  expect(readRecordingHeader(path).meta?.draftId).toBe(draft.id);
+}, 120_000);
 
 it("reuses only the exact recorded provider author answer while sending fresh review calls", async () => {
   const draft = await publishedDraft();
@@ -98,6 +127,46 @@ it("rejects injected or altered author provenance before any resumed provider ca
   await expect(recordCvDraft(deps, draft.id, { path: destination, resumeAuthorFrom: source })).rejects.toThrow(/not eligible/);
   expect(second.calls).toHaveLength(0);
   await expect(recordCvDraft(deps, draft.id, { path: source, resumeAuthorFrom: source })).rejects.toThrow(/source recording.*destination must differ/i);
+}, 120_000);
+
+it("reuses an ordered author correction sequence without paying for either author call again", async () => {
+  const draft = await publishedDraft();
+  const directory = mkdtempSync(join(tmpdir(), "col-replay-author-corrections-"));
+  const source = join(directory, "source.jsonl"), destination = join(directory, "resumed.jsonl");
+  const first = createScriptedAiClient({ barrierMs: 200 });
+  const originalStream = first.client.messages.stream!;
+  let corrected = false;
+  first.client.messages.stream = (params, options, meta) => {
+    const stream = originalStream(params, options, meta);
+    if (meta?.promptId !== "cv.author" || corrected) return stream;
+    corrected = true;
+    const originalFinal = stream.finalMessage.bind(stream);
+    stream.finalMessage = async () => {
+      const response = structuredClone(await originalFinal());
+      const plan = response.parsed_output as { sections: Array<{ bullets: string[]; bulletSources?: string[][] }> };
+      const section = plan.sections[0]!;
+      section.bulletSources = section.bullets.map(() => ["entry:missing-evidence-entry:row:0"]);
+      return response;
+    };
+    return stream;
+  };
+  providerClient.mockReturnValueOnce(first.client);
+  const original = await recordCvDraft(deps, draft.id, { path: source });
+  expect(original.report.outcome).toBe("published");
+  const lines = readFileSync(source, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  const authors = lines.filter(line => line.kind === "call" && line.promptId === "cv.author");
+  expect(authors).toHaveLength(2);
+  authors.forEach((author, index) => { author.response.id = `msg_fixture_author_${index}`; });
+  writeFileSync(source, lines.map(line => JSON.stringify(line)).join("\n") + "\n");
+  const fresh = createScriptedAiClient({ barrierMs: 200 });
+  providerClient.mockReturnValueOnce(fresh.client);
+  const resumed = await recordCvDraft(deps, draft.id, { path: destination, resumeAuthorFrom: source });
+  expect(resumed.report.outcome).toBe("published");
+  expect(fresh.calls.some(call => call.kind === "author")).toBe(false);
+  expect(fresh.calls.some(call => call.kind === "review")).toBe(true);
+  const reused = readFileSync(destination, "utf8").trim().split("\n").map(line => JSON.parse(line))
+    .filter(line => line.kind === "call" && line.promptId === "cv.author");
+  expect(reused.map(call => call.inputHash)).toEqual(authors.map(call => call.inputHash));
 }, 120_000);
 
 /** A published fixture draft, built through the queue against the scripted client. */

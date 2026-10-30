@@ -131,6 +131,30 @@ it("keeps a qualification heading with its first detail at a page break", async 
   expect(pageAt("BSc Economics")).toBe(pageAt("BSc Economics, Example University, 2014."));
   expect(pageAt("PRINCE2 Practitioner")).toBe(pageAt("APMG International, 2019."));
 });
+it("keeps a targeted Training group label with the qualification and its first bullet", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const pages = vi.spyOn(PDFDocument.prototype, "addPage");
+  const report = await renderCvPdfWithReport({ ...fixture,
+    theme: { ...DEFAULT_CV_THEME, maxPages: 5, bodySizePt: 12 },
+    summary: "Experienced operations leader with evidence of delivery and improvement.",
+    sections: [
+      { entryId: "role", kind: "experience", heading: "Director · Example", bullets:
+        Array.from({ length: 6 }, () => "Led operational delivery across regional teams. ".repeat(8)) },
+      { entryId: "degree", kind: "education", heading: "BSc Economics", bullets: ["Example University, 2014."] },
+      { entryId: "course", kind: "training", heading: "PRINCE2 Practitioner", bullets: ["APMG International, 2019."] },
+    ],
+  });
+  expect(report.pageCount).toBeGreaterThan(1);
+  const pageAt = (label: string) => {
+    const index = draw.mock.calls.findIndex(call => call[0] === label);
+    expect(index).toBeGreaterThanOrEqual(0);
+    return pages.mock.invocationCallOrder.filter(order => order < draw.mock.invocationCallOrder[index]!).length;
+  };
+  expect(pageAt("Training")).toBe(pageAt("PRINCE2 Practitioner"));
+  expect(pageAt("Training")).toBe(pageAt("APMG International, 2019."));
+  const claim = report.layout.claimPages.find(item => item.claimId === "section:course:0");
+  expect(claim?.startPage).toBe(claim?.endPage);
+});
 it("places each bold section pill first in its full-width skill group", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
@@ -405,6 +429,46 @@ it("renders both profile and website links as separate PDF annotations", async (
   const raw = pdf.toString("latin1");
   expect(raw).toContain(`/URI (${linkedinUrl})`);
   expect(raw).toContain(`/URI (${websiteUrl})`);
+});
+
+it("keeps legacy profile layout and measures the targeted Executive Summary in the same render", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const legacy = await renderCvPdfWithReport(fixture);
+  expect(legacy.pageCount).toBe(1);
+  expect(legacy.layout.summaryLines).toBe(1);
+  expect(legacy.layout.firstPageEntryIds).toEqual(["degree", "extra", "skill"]);
+  expect(legacy.layout.sectionPages.every(section => section.startPage === 1 && section.endPage === 1)).toBe(true);
+  expect(legacy.layout.claimPages.map(claim => claim.claimId)).toEqual([
+    "section:degree:0", "section:extra:0", "section:skill:0",
+  ]);
+  expect(draw.mock.calls.some(call => call[0] === "Profile")).toBe(true);
+  expect(draw.mock.calls.some(call => call[0] === "EXECUTIVE SUMMARY")).toBe(false);
+
+  draw.mockClear();
+  const targeted = await renderCvPdfWithReport({ ...fixture, theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 },
+    summary: "Operations leader with documented delivery and service experience. ".repeat(3).trim() });
+  expect(targeted.layout.summaryLines).toBeGreaterThanOrEqual(2);
+  expect(targeted.layout.firstPageEntryIds).toContain("degree");
+  expect(draw.mock.calls.some(call => call[0] === "EXECUTIVE SUMMARY")).toBe(true);
+  expect(draw.mock.calls.some(call => call[0] === "Profile")).toBe(false);
+});
+
+it("prints a competency signpost in bold with its own attributed bullet", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const font = vi.spyOn(PDFDocument.prototype, "font");
+  const content: CvContent = { ...fixture, theme: { ...DEFAULT_CV_THEME, bodySizePt: 11 }, sections: [
+    { entryId: "role", kind: "experience", heading: "Director · Acme", bullets: ["Led the team through a service change."],
+      bulletSignposts: ["Team leadership"] },
+  ] };
+  const report = await renderCvPdfWithReport(content);
+  expect(report.layout.firstPageEntryIds).toEqual(["role"]);
+  expect(report.layout.sectionPages).toEqual([{ entryId: "role", startPage: 1, endPage: 1 }]);
+  expect(report.layout.claimPages).toEqual([{ claimId: "section:role:0", startPage: 1, endPage: 1 }]);
+  const signpost = draw.mock.calls.findIndex(call => call[0] === "Team leadership · " && (call[3] as { continued?: boolean })?.continued);
+  expect(signpost).toBeGreaterThanOrEqual(0);
+  const beforeSignpost = font.mock.calls.findLastIndex((_, index) => font.mock.invocationCallOrder[index]! < draw.mock.invocationCallOrder[signpost]!);
+  expect(font.mock.calls[beforeSignpost]?.[0]).toBe("Helvetica-Bold");
+  expect(draw.mock.calls.some(call => call[0] === "Led the team through a service change.")).toBe(true);
 });
 it.each(["Course of Life", "Arial"] as const)("flows an experience across pages instead of leaving a large gap in %s", async font => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");

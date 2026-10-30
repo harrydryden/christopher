@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir } from "node:fs/promises";
+import "tsx/esm";
 const require = createRequire(import.meta.url);
 require("tsx/cjs");
 const { createCvAssessment } = require("../packages/core/src/cv-review.ts");
@@ -17,6 +18,7 @@ const {
 const { modelForCallSite, resolveSystemSettings } = require("../packages/core/src/settings.ts");
 const { cvHighlightedSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash } = require("../packages/core/src/cv-skill-suggestions.ts");
 const { cvSkillDraftContext } = require("../packages/core/src/cv-skill-draft-context.ts");
+const { createScriptedAiClient } = require("../apps/web/test/scripted-ai-client.ts");
 
 const { Pool } = createRequire(
   new URL("../apps/web/package.json", import.meta.url),
@@ -44,6 +46,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
   const tableIds = [randomUUID()];
   let suggestionFixtureVersion = null;
   let suggestionDraftId = null;
+  let targetedDraftId = null;
   // The role the applications table is exercised against: its own company, so it goes at the end.
   const TABLE_DOMAIN = "cvtable.invalid";
   const tableCompanyId = randomUUID(), tableSourceId = randomUUID(), tableJobId = randomUUID();
@@ -132,6 +135,26 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       [JSON.stringify({ draftId: busyId }), `generate_cv:${busyId}`],
     );
     await pool.query("update cv_drafts set progress_at = now() where id = $1", [busyId]);
+    // Pause a real targeted build through the worker's rubric and full-evidence planning stages;
+    // the browser must confirm priorities before the same build may continue.
+    const [{ createDeps }, { readEnv }, { TaskQueue }, { handleGenerateCv }, { onAbandon }, { seedReplayFixtureDraft }] =
+      await Promise.all([
+        import("../apps/worker/src/context.ts"), import("../apps/worker/src/env.ts"),
+        import("../apps/worker/src/queue.ts"), import("../apps/worker/src/handlers/cv.ts"),
+        import("../apps/worker/src/handlers/abandon.ts"), import("../apps/worker/src/cv-replay-fixture.ts"),
+      ]);
+    const targetedDeps = await createDeps(readEnv({ ...process.env, DATABASE_URL: databaseUrl, COL_DISABLE_BROWSER: "1" }));
+    try {
+      targetedDeps.aiClient = createScriptedAiClient({ barrierMs: 200, targetedSignpost: true }).client;
+      targetedDeps.env.anthropicApiKey ||= "scripted-client";
+      const seeded = await seedReplayFixtureDraft(targetedDeps.db, userId, { targeted: true });
+      targetedDraftId = seeded.id;
+      await new TaskQueue(targetedDeps, { generate_cv: handleGenerateCv }, {
+        concurrency: 1, workerId: "cv-targeted-smoke", onAbandon,
+      }).drain();
+      const paused = (await pool.query("select status from cv_drafts where id = $1", [targetedDraftId])).rows[0];
+      assert.equal(paused.status, "awaiting_priorities");
+    } finally { await targetedDeps.close(); }
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
@@ -148,6 +171,27 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     }
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`${baseUrl}/cv/${targetedDraftId}`);
+    await page.getByRole("heading", { name: "Target this CV" }).waitFor();
+    await page.getByRole("combobox", { name: "Operations Manager · Northwind Health treatment" }).selectOption("summarise");
+    await page.getByRole("combobox", { name: "Service Delivery Lead · Calder Logistics treatment" }).selectOption("omit");
+    await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("1");
+    await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("2");
+    const omittedEssentials = page.getByRole("group", { name: "Check essential requirements" }).getByRole("checkbox");
+    for (let index = 0; index < await omittedEssentials.count(); index++) await omittedEssentials.nth(index).check();
+    await page.getByRole("button", { name: "Confirm priorities and continue build" }).click();
+    // The button changes to “Confirming…” immediately; that is not a completed save.
+    // Wait for the server-confirmed queued view before inspecting its persisted state.
+    await page.getByText("Your CV is queued", { exact: true }).waitFor();
+    const targetedConfirmed = (await pool.query("select status, targeting_brief from cv_drafts where id = $1", [targetedDraftId])).rows[0];
+    assert.equal(targetedConfirmed.status, "queued");
+    assert.equal(targetedConfirmed.targeting_brief.priority.state, "confirmed");
+    assert.deepEqual(targetedConfirmed.targeting_brief.presentation, { maxPages: 2, bodySizePt: 12 });
+    assert.equal(targetedConfirmed.targeting_brief.entries.find(item => item.entryId === "ev-manager").treatment, "summarise");
+    assert.equal(targetedConfirmed.targeting_brief.entries.find(item => item.entryId === "ev-calder").treatment, "omit");
+    assert.ok(targetedConfirmed.targeting_brief.priority.emphasisRequirementIds.length >= 3);
+    const queuedContinuations = (await pool.query("select count(*)::int as count from tasks where type = 'generate_cv' and status = 'queued' and payload->>'draftId' = $1", [targetedDraftId])).rows[0].count;
+    assert.equal(queuedContinuations, 1);
     // The CV list has gone; the link every older page carries lands on the applications table.
     await page.goto(`${baseUrl}/cv`);
     assert.equal(new URL(page.url()).pathname, "/applications");
@@ -679,6 +723,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       note(`start at ${location.href} history.state=${history.state ? Object.keys(history.state).join(",") : "null"}`);
     });
     const saveButton = page.getByRole("button", { name: /^Save (changes|as new revision) · free$/ });
+    const saveStarted = performance.now();
     await saveButton.click();
     try {
       // Longer than the database's thirty-second statement timeout, so a render held up by a lock
@@ -730,6 +775,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     );
     assert.equal((await pool.query("select count(*)::int n from tasks where payload->>'draftId' = $1 and status in ('queued', 'running')", [childId])).rows[0].n, 0,
       "a direct save must not queue model work");
+    console.log(`  manual CV save: ${Math.round(performance.now() - saveStarted)} ms from click to persisted ready revision; no queued model work (local diagnostic)`);
     await page.getByRole("tab", { name: "Review", exact: true }).click();
     await page.getByRole("button", { name: "Check saved CV", exact: true }).click();
     await page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor().catch(async error => {
@@ -1200,12 +1246,29 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const accepted = (await pool.query("select content from cv_libraries where user_id = $1 order by version desc limit 1", [userId])).rows[0].content;
     assert.ok(accepted.entries.some(entry => entry.kind === "skill" && entry.skillItems?.includes("Team leadership")));
     assert.equal(accepted.entries.some(entry => entry.skillItems?.includes("Team management")), false);
-    const savedSuggestion = (await pool.query("select content, library_snapshot from cv_drafts where parent_id = $1 order by created_at desc limit 1", [suggestionDraftId])).rows[0];
+    const savedSuggestion = (await pool.query("select id, content, library_snapshot from cv_drafts where parent_id = $1 order by created_at desc limit 1", [suggestionDraftId])).rows[0];
     assert.ok(savedSuggestion.content.sections.some(section => section.kind === "skill" && section.skillItems?.includes("Team leadership")));
     assert.equal(savedSuggestion.content.sections.some(section => section.skillItems?.includes("Team management")), false);
     assert.ok(savedSuggestion.content.sections.some(section => section.kind === "training" && section.entryId === "training-new"));
     assert.equal(savedSuggestion.content.sections.some(section => section.entryId === "training-old"), false);
     assert.ok(savedSuggestion.library_snapshot.entries.some(entry => entry.kind === "skill" && entry.skillItems?.includes("Team leadership")));
+    // A saved revision offers unresolved skills as explicit factual decisions on its separate
+    // preparation page. Rejecting an unverified model label must not write it to Experience.
+    const pendingId = randomUUID();
+    await pool.query("update cv_drafts set pending_skill_proposals = $2::jsonb where id = $1",
+      [savedSuggestion.id, JSON.stringify([{ id: pendingId, label: "Budget ownership", category: "Commercial",
+        origin: "model", status: "pending" }])]);
+    await page.goto(`${baseUrl}/cv/${savedSuggestion.id}/preparation`);
+    await page.getByRole("heading", { name: "Saved CV quick scan" }).waitFor();
+    await page.getByRole("heading", { name: "Skills to confirm" }).waitFor();
+    assert.equal(await page.getByText("Budget ownership", { exact: true }).count(), 1);
+    assert.equal(await page.getByText(/No LinkedIn export is available here/).count(), 1);
+    await page.getByRole("button", { name: "Reject suggestion" }).click();
+    await page.getByRole("heading", { name: "Skills to confirm" }).waitFor({ state: "detached" });
+    const decided = (await pool.query("select pending_skill_proposals from cv_drafts where id = $1", [savedSuggestion.id])).rows[0];
+    assert.equal(decided.pending_skill_proposals[0].status, "rejected");
+    const postDecisionLibrary = (await pool.query("select content from cv_libraries where user_id = $1 order by version desc limit 1", [userId])).rows[0].content;
+    assert.equal(postDecisionLibrary.entries.some(entry => entry.skillItems?.includes("Budget ownership")), false);
     assert.deepEqual(errors, []);
     console.log(
       "  CV browser flow passed: tabs, evaluation, skill editing and preview, saved edits, responsive layout, progress, quiz, dismissal persistence, finalisation override and PDF download, unsaved-edit protection, applications and sharing",
@@ -1217,6 +1280,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         (select id::text from cv_drafts where id = $1::uuid or parent_id = $1::uuid)
         or payload->>'runId' in (select id::text from cv_skill_suggestion_runs where draft_id = $1::uuid)`, [suggestionDraftId]);
       await pool.query("delete from cv_drafts where id = $1 or parent_id = $1", [suggestionDraftId]);
+    }
+    if (targetedDraftId) {
+      await pool.query("delete from tasks where payload->>'draftId' = $1", [targetedDraftId]);
+      await pool.query("delete from cv_drafts where id = $1", [targetedDraftId]);
     }
     if (suggestionFixtureVersion !== null) await pool.query("delete from cv_libraries where user_id = $1 and version > $2", [userId, suggestionFixtureVersion]);
     await pool.query("delete from cv_drafts where id = any($1::uuid[])", [

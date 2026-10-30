@@ -5,6 +5,7 @@ import {
   validateCvRubric,
   validateCvReview,
   cvAssessmentCurrent,
+  cvReviewHash,
   assertCvFinalisable,
   cvLibraryVerdicts,
 } from "./cv-review";
@@ -36,6 +37,12 @@ const content = materialiseCv(library, {
   summary: "Operations leader",
   sections: [{ entryId: "e", bullets: ["Led operations"] }],
   gaps: [],
+});
+it("audits a competency signpost as part of its bullet and changes assessment identity", () => {
+  const labelled = { ...content, sections: content.sections.map(section => ({ ...section,
+    bulletSignposts: ["Operational leadership"] })) };
+  expect(cvClaimItems(labelled)[1]?.text).toBe("Operational leadership · Led operations");
+  expect(cvReviewHash(labelled, description, library)).not.toBe(cvReviewHash(content, description, library));
 });
 const rubric = {
   requirements: [

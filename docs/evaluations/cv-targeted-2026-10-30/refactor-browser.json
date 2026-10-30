@@ -1,0 +1,11 @@
+{
+  "outcome": "passed",
+  "syntheticLocalOnly": true,
+  "measuredHint": "This Executive Summary takes 2 rendered lines in the current PDF. Two to three lines is a guide, not a requirement to add filler.",
+  "saveMs": 92,
+  "providerCalls": 0,
+  "queuedCvChecks": 0,
+  "specificReviewLink": "#cv-content-profile",
+  "mobileOverflow": false,
+  "note": "One local production-build sample; not a hosted before/after benchmark. Fixture retained in isolated database."
+}

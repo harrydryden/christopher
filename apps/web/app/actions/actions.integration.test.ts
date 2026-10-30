@@ -1,3 +1,4 @@
+import { withCvEditBase } from "@/test/cv-form";
 import { createCvAssessment } from "@col/core/cv-review";
 import {
   cvTextItems,
@@ -9,7 +10,8 @@ import {
   reviewFixture,
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { createDb, confirmCvTargetingPrioritiesForUser, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@col/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@col/core";
@@ -50,7 +52,26 @@ async function completeAssessment(id: string) {
   form.set("reviewed", "on");
   expect(await finaliseCvDraft(id, { ok: true }, form)).toEqual({ ok: true });
 }
+
+async function confirmPreparedPriorities(id: string) {
+  const [draft] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id));
+  expect(draft?.status).toBe("awaiting_priorities");
+  const brief = CvTargetingBriefSchema.parse(draft!.targetingBrief);
+  await confirmCvTargetingPrioritiesForUser(database, user.id, id, {
+    expectedRevision: draft!.revision, expectedSource: brief.source, expectedRubricKey: brief.priority.rubricKey!,
+    requestKey: crypto.randomUUID(), choices: {
+      entries: draft!.librarySnapshot.entries.map(entry => ({ entryId: entry.id, treatment: "feature" })),
+      presentation: brief.presentation,
+      emphasisRequirementIds: brief.priority.rubric!.requirements.slice(0, 5).map(item => item.id),
+      acknowledgedEssentialOmissionIds: [],
+    },
+  });
+}
 let database: Db;
+async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
+  return saveCvDraft(id, previous, await withCvEditBase(database, id, form));
+}
+
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
@@ -766,14 +787,14 @@ describe("priority workflows", () => {
     expect(await recordApplication(draft!.id, { ok: true }, application)).toEqual({ ok: true });
     const frozen = (await database.select().from(schema.applications))[0]!.pdfBase64;
     const edit = new FormData(); edit.set("summary", "Analyst"); edit.set("skills-0", "SQL\nPython"); edit.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }));
-    await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+    await expect(saveWithBase(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
     expect(versions[0]!.content).toEqual(content);
     expect(versions[1]!.content!.sections[0]!.skillItems).toEqual(["SQL", "Python"]);
     expect(versions[1]!.content!.theme!.primary).toBe("#285447");
     expect((await database.select().from(schema.applications))[0]!.pdfBase64).toBe(frozen);
     edit.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, background: "invalid" }));
-    expect((await saveCvDraft(draft!.id, { ok: true }, edit)).ok).toBe(false);
+    expect((await saveWithBase(draft!.id, { ok: true }, edit)).ok).toBe(false);
   });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
@@ -788,11 +809,11 @@ describe("priority workflows", () => {
     const [draft] = await database.select().from(schema.cvDrafts);
     // `toMatchObject`, so a normalisation marker the library gains later (`facetedRows` and its
     // like) does not fail a test about what the snapshot carries.
-    expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: DEFAULT_CV_THEME, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
+    expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 }, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: ["entry:one:row:0"], sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
-    await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+    await expect(saveWithBase(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
     expect(versions.map((v) => v.content?.summary)).toEqual(["Original", "Edited summary"]);
     expect(versions[1]!.parentId).toBe(draft!.id);
@@ -810,7 +831,7 @@ describe("priority workflows", () => {
     await completeAssessment(versions[1]!.id);
     // Corrections are remembered whichever build the save requests, and the improved revision writes with them.
     const improve = new FormData(); improve.set("summary", "Edited summary"); improve.set("section-0", "Led the operations team to record output"); improve.set("rememberWording", "on"); improve.set("intent", "improve");
-    await expect(saveCvDraft(versions[1]!.id, { ok: true }, improve)).rejects.toThrow("redirect:/cv/");
+    await expect(saveWithBase(versions[1]!.id, { ok: true }, improve)).rejects.toThrow("redirect:/cv/");
     const [remembered] = await database.select().from(schema.userSettings).where(eq(schema.userSettings.key, "cvWritingPreferences"));
     expect((remembered!.value as { preferredWording: string }).preferredWording).toContain("Led the operations team to record output");
     const improving = (await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision)).at(-1)!;
@@ -1278,7 +1299,7 @@ it("saves oversized edits immediately, then queues fitting on explicit Check whi
     .returning();
   const edit = new FormData();
   edit.set("summary", "Leader");
-  await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
   const revisions = await database.select().from(schema.cvDrafts);
   expect(revisions).toHaveLength(2);
   const child = revisions.find(row => row.parentId === draft!.id)!;
@@ -1423,6 +1444,11 @@ it("carries library styling through generation, revision, matching preview/downl
       userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }),
       now: () => new Date(),
     } as unknown as import("../../../worker/src/context").WorkerDeps);
+    if ((await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id)))[0]?.status === "awaiting_priorities") {
+      await confirmPreparedPriorities(draft!.id);
+      await handleGenerateCv(task!, { db: database, env: { anthropicApiKey: "fixture-key" },
+        userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }), now: () => new Date() } as unknown as import("../../../worker/src/context").WorkerDeps);
+    }
   } finally {
     model.mockRestore();
     planner.mockRestore();
@@ -1434,14 +1460,14 @@ it("carries library styling through generation, revision, matching preview/downl
     .from(schema.cvDrafts)
     .where(eq(schema.cvDrafts.id, draft!.id));
   expect(ready!.status).toBe("ready");
-  expect(ready!.content!.theme).toEqual(DEFAULT_CV_THEME);
+  expect(ready!.content!.theme).toEqual({ ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 });
   const edit = new FormData();
   edit.set("summary", ready!.content!.summary);
   edit.set(
     "theme",
     JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }),
   );
-  await expect(saveCvDraft(ready!.id, { ok: true }, edit)).rejects.toThrow(
+  await expect(saveWithBase(ready!.id, { ok: true }, edit)).rejects.toThrow(
     "redirect:/cv/",
   );
   const [revised] = await database
@@ -1473,7 +1499,7 @@ it("carries library styling through generation, revision, matching preview/downl
   ).toEqual({ ok: true });
   const [frozen] = await database.select().from(schema.applications);
   edit.set("summary", "Updated wording for a future application.");
-  await expect(saveCvDraft(revised!.id, { ok: true }, edit)).rejects.toThrow(
+  await expect(saveWithBase(revised!.id, { ok: true }, edit)).rejects.toThrow(
     "redirect:/cv/",
   );
   const [newRevision] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, revised!.id));
@@ -1539,7 +1565,7 @@ it("queues a rebuild from unsaved draft edits without overwriting the source or 
     "theme",
     JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }),
   );
-  await expect(saveCvDraft(draft!.id, { ok: true }, edits)).rejects.toThrow(
+  await expect(saveWithBase(draft!.id, { ok: true }, edits)).rejects.toThrow(
     "redirect:/cv/",
   );
   const [source] = await database
@@ -1676,6 +1702,10 @@ it("assesses, improves with current evidence, finalises and exports through the 
       .where(sql`payload->>'draftId' = ${id}`)
       .orderBy(schema.tasks.createdAt);
     await handleGenerateCv(task!, deps);
+    if ((await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id)))[0]?.status === "awaiting_priorities") {
+      await confirmPreparedPriorities(id);
+      await handleGenerateCv(task!, deps);
+    }
     await database
       .update(schema.tasks)
       .set({ status: "done" })
@@ -1734,7 +1764,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
     const improve = new FormData();
     improve.set("summary", ready.content!.summary);
     improve.set("intent", "improve");
-    await expect(saveCvDraft(ready.id, { ok: true }, improve)).rejects.toThrow(
+    await expect(saveWithBase(ready.id, { ok: true }, improve)).rejects.toThrow(
       "redirect:/cv/",
     );
     const child = (
@@ -1776,7 +1806,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
     const frozen = (await database.select().from(schema.applications))[0]!;
     const edit = new FormData();
     edit.set("summary", "Operations and reporting leader");
-    await expect(saveCvDraft(child.id, { ok: true }, edit)).rejects.toThrow(
+    await expect(saveWithBase(child.id, { ok: true }, edit)).rejects.toThrow(
       "redirect:/cv/",
     );
     // The child has two children by now: the adopted improvement and this direct edit. The edit
@@ -1958,8 +1988,8 @@ it("starts a rebuild clean of the attempt it replaces, and starts it once", asyn
 
   // Two clicks on Rebuild from Library, as fast as the browser can send them.
   const attempts = await Promise.allSettled([
-    saveCvDraft(parent!.id, { ok: true }, rebuild()),
-    saveCvDraft(parent!.id, { ok: true }, rebuild()),
+    saveWithBase(parent!.id, { ok: true }, rebuild()),
+    saveWithBase(parent!.id, { ok: true }, rebuild()),
   ]);
   const outcomes = attempts.map((attempt) =>
     attempt.status === "rejected" ? String((attempt.reason as Error).message) : attempt.value,
@@ -2116,10 +2146,10 @@ it("saves default appearance independently of library edits and existing CVs", a
   generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
   await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
   const [draft] = await database.select().from(schema.cvDrafts);
-  expect(draft!.librarySnapshot.theme).toEqual(CV_THEMES.Forest);
+  expect(draft!.librarySnapshot.theme).toEqual({ ...CV_THEMES.Forest, bodySizePt: 12 });
   form.set("theme", JSON.stringify(CV_THEMES.Gold));
   expect(await saveCvAppearance({ ok: true }, form)).toEqual({ ok: true });
-  expect((await database.select().from(schema.cvDrafts))[0]!.librarySnapshot.theme).toEqual(CV_THEMES.Forest);
+  expect((await database.select().from(schema.cvDrafts))[0]!.librarySnapshot.theme).toEqual({ ...CV_THEMES.Forest, bodySizePt: 12 });
   form.set("theme", JSON.stringify({ ...CV_THEMES.Gold, primary: "invalid" }));
   expect((await saveCvAppearance({ ok: true }, form)).ok).toBe(false);
   expect(await getDefaultCvAppearance(user.id)).toEqual(CV_THEMES.Gold);

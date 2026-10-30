@@ -1,6 +1,6 @@
 /** One next step above the CV workspace, derived from the draft rather than a separate status. */
 export function cvNextAction(input: {
-  status: "queued" | "generating" | "awaiting_evidence" | "ready" | "failed";
+  status: "queued" | "generating" | "awaiting_evidence" | "awaiting_priorities" | "ready" | "failed";
   finalised: boolean;
   hasFinalPdf?: boolean;
   hasContent: boolean;
@@ -14,6 +14,8 @@ export function cvNextAction(input: {
     return { title: "Building your CV", detail: "When it finishes, check the wording and evidence in Review.", target: "content", action: "View build progress" };
   if (input.status === "awaiting_evidence")
     return { title: "Answer or skip the evidence questions", detail: "Confirm any new facts for Experience, or skip the questions to continue this build.", target: "content", action: "Open evidence questions" };
+  if (input.status === "awaiting_priorities")
+    return { title: "Choose your role priorities", detail: "Choose three to five priorities and confirm how your saved evidence should appear. The build will continue after you confirm.", target: "content", action: "Open priorities" };
   if (input.status === "failed")
     return { title: "Resolve the build failure", detail: "Read the failure, then retry or rewrite from Experience.", target: "content", action: "Review failure" };
   if (input.finalised)

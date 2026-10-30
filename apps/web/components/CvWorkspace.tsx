@@ -50,6 +50,20 @@ export function CvContentBlockLink({
   );
 }
 
+/** A server-rendered review action can reopen a collapsed row and the right tab with one small client link. */
+export function CvReviewActionLink({ href, children }: { href: string; children: ReactNode }) {
+  return <a href={href} className="underline" onClick={event => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0 || !href.startsWith("#")) return;
+    event.preventDefault();
+    if (href.startsWith("#cv-review-row-")) {
+      const details = document.getElementById("cv-full-assessment");
+      if (details instanceof HTMLDetailsElement) details.open = true;
+    }
+    window.history.pushState(null, "", href);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  }}>{children}</a>;
+}
+
 /** Hidden panels remain mounted so edits, previews and review controls survive navigation. */
 export function CvWorkspacePanel({
   tab,
@@ -100,7 +114,7 @@ export function CvWorkspace({
       } catch {
         return;
       }
-      if (id === "cv-panel-evaluation" || id === "cv-panel-appearance" || id === "cv-guided-review") {
+      if (id === "cv-panel-evaluation" || id === "cv-panel-appearance" || id === "cv-guided-review" || id.startsWith("cv-review-row-")) {
         selectTab(id === "cv-panel-appearance" ? "appearance" : "evaluation");
         setFocusRequest({ id });
       } else if (id === "cv-panel-content" || id.startsWith("cv-content-"))

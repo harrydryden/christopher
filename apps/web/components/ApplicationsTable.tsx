@@ -52,6 +52,7 @@ function cvLabel(row: PipelineRow): string {
     case "queued": return "Queued";
     case "generating": return row.cv.progress ? `Building · ${row.cv.progress}` : "Building…";
     case "awaiting_evidence": return "Waiting for your evidence";
+    case "awaiting_priorities": return "Waiting for role priorities";
     case "failed": return "Failed";
     case "ready": return `Ready · V${Math.max(1, row.cv.revision)}${row.cv.finalisedAt ? " · finalised" : ""}`;
   }

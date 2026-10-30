@@ -30,9 +30,10 @@ export async function POST(request: Request) {
     if (error instanceof CvLayoutError) return new Response(error.message, { status: 422 });
     throw error;
   }
-  const { pdf, pageCount } = result;
+  const { pdf, pageCount, layout } = result;
   return new Response(new Uint8Array(pdf), { headers: {
     "content-type": "application/pdf", "content-disposition": 'inline; filename="cv-preview.pdf"',
     "cache-control": "private, no-store", "x-cv-page-count": String(pageCount),
+    "x-cv-summary-lines": String(layout.summaryLines),
   } });
 }

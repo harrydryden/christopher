@@ -5,7 +5,7 @@ import { cvBuildState } from "@/lib/cv-build-state";
 import { cvProgressReading } from "@/lib/cv-progress";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
-import { CvGapQuiz } from "@/components/CvLazyWidgets";
+import { CvDraftEditor, CvGapQuiz, CvTargetingConfirmation } from "@/components/CvLazyWidgets";
 import { gapQuizForm, gapQuizLibrary } from "@/lib/cv-gap-quiz-library";
 import { answerCvGapQuiz } from "@/app/actions/cv";
 import { openEvidenceDrafts } from "@/app/actions/evidence";
@@ -25,8 +25,8 @@ import { assertCvFinalisable, cvAssessmentCurrent, cvReviewDecisionCurrent } fro
 import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary } from "@col/core/cv";
 import { CV_LIMITS } from "@col/core/cv-format";
 import type { CvAssessment } from "@col/core/cv-assessment";
-import { CvDraftEditor } from "@/components/CvDraftEditor";
 import { librarySupportSections } from "@/lib/cv-review-edits";
+import { cvDraftEditBaseHash } from "@/lib/cv-edit-base";
 import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
@@ -38,6 +38,8 @@ import { recordApplication } from "@/app/actions/applications";
 import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
+import { cvTargetedSummaryFinalisationIssue, type CvTargetingBriefV1 } from "@col/core/cv-targeting";
+import { cvTargetingViewForOwnedDraft } from "@/lib/cv-targeting-view";
 import { hasStoredFinalisedCvPdf } from "@/lib/cv-pdf-store";
 import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
 
@@ -57,9 +59,12 @@ function finaliseObstacle(draft: {
   jobDescription: string;
   librarySnapshot: CvLibrary;
   assessment: CvAssessment | null;
+  targetingBrief?: CvTargetingBriefV1 | null;
   reviewDecision?: import("@col/core/cv-review").CvReviewDecision | null;
 }): string | null {
   if (!draft.content) return null;
+  const summaryIssue = cvTargetedSummaryFinalisationIssue(draft.content, draft.targetingBrief, draft.assessment);
+  if (summaryIssue) return summaryIssue;
   try {
     assertCvFinalisable({ ...draft, content: draft.content });
     return null;
@@ -86,15 +91,15 @@ export default async function CvDraftPage({
   if (!draft) notFound();
   // Everything below is read once the draft is known to be this account's, side by side.
   const now = new Date();
-  const [versions, progress, system, admin, latestLibrary, sharing, [application], hasFinalPdf] = await Promise.all([
+  const [versions, progress, system, admin, latestLibrary, sharing, [application], hasFinalPdf, targetingView] = await Promise.all([
     dailyCvVersions(db(), [draft.id]),
     // The build's state, the queue row behind it and every motion of its ledger, in one read: the
     // same read the progress feed makes, so the page and the feed assemble the same token.
     readCvProgress(user.id, id),
     getSystemSettings(),
     isAdmin(),
-    // This account's newest Library version, so the panel can say when the evidence behind this
-    // revision has moved on. The content is not read: only the number the two are compared by.
+    // This account's newest Library version and content: the version shows evidence drift, while
+    // the content supplies current supporting-section choices and skill targets for this CV.
     db()
       .select({ version: cvLibraries.version, content: cvLibraries.content })
       .from(cvLibraries)
@@ -111,12 +116,15 @@ export default async function CvDraftPage({
       .where(and(eq(applications.cvId, id), eq(applications.userId, user.id)))
       .limit(1),
     draft.finalisedAt ? hasStoredFinalisedCvPdf(user.id, id) : Promise.resolve(false),
+    cvTargetingViewForOwnedDraft(user.id, draft),
   ]);
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
   const busy = draft.status === "queued" || draft.status === "generating";
   const awaitingEvidence = draft.status === "awaiting_evidence";
+  const awaitingPriorities = draft.status === "awaiting_priorities";
   const failed = draft.status === "failed";
+  const targetedPageFit = failed && draft.failure?.kind === "page_limit_unfittable" && !!targetingView;
   // A build that has stopped moving is indistinguishable from a slow one without the queue row
   // behind it: which attempt this is, whether anything still holds it, and what the last one left:
   // the progress read above.
@@ -270,10 +278,15 @@ export default async function CvDraftPage({
             jobId={draft.jobId}
             admin={admin}
             canRetry={!draft.finalisedAt}
+            targetedPageFit={targetedPageFit}
             blocked={blocked}
             footnote={`Retry or edit this attempt now. Only the newest failed attempt for a company and role is kept, so the next revision you start for ${draft.jobTitle} replaces it, and a revision that builds successfully removes it.`}
           />
         )}
+        {targetedPageFit && targetingView && <section id="cv-targeting-recovery" className="space-y-3">
+          <p className="text-14">Change this CV's evidence or maximum pages below. Your Experience is kept. The same build resumes after you confirm; it does not start a new CV purchase.</p>
+          <CvTargetingConfirmation view={targetingView} blocked={blocked} recovery />
+        </section>}
         {(!content || busy) && (
           <CvWorkspacePanel tab="appearance">
             <h2 className="text-14 font-semibold">Appearance and CV settings</h2>
@@ -306,6 +319,7 @@ export default async function CvDraftPage({
                 openDrafts={await openEvidenceDrafts("cv_quiz", id)}
               />
             )}
+            {awaitingPriorities && targetingView && <CvTargetingConfirmation view={targetingView} blocked={blocked} />}
             {draft.gapQuiz?.continuationDraftId && (
               <p className="border border-line-muted p-4 text-14">
                 Your answers were saved to Experience. <Link prefetch={false} className="underline" href={`/cv/${draft.gapQuiz.continuationDraftId}`}>Open the continuing CV build</Link>.
@@ -348,6 +362,9 @@ export default async function CvDraftPage({
               ? [{ id: entry.id, heading: entry.heading, items: entry.skillItems }] : [])}
             latestLibraryVersion={latestLibrary[0]?.version}
             baseRevision={draft.revision}
+            baseEditHash={cvDraftEditBaseHash(content, draft.targetingBrief)}
+            targetingView={targetingView}
+            targetingBrief={draft.targetingBrief}
             blocked={blocked}
             finalised={!!draft.finalisedAt}
             hasFinalPdf={hasFinalPdf}

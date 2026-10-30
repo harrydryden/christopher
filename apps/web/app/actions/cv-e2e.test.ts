@@ -1,3 +1,4 @@
+import { withCvEditBase } from "@/test/cv-form";
 /**
  * End-to-end test of the CV-builder pipeline.
  *
@@ -12,7 +13,8 @@
  *   COL_DISABLE_BROWSER=1 pnpm test cv-e2e
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { consumeCvCredit, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { consumeCvCredit, confirmCvTargetingPrioritiesForUser, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { randomUUID } from "node:crypto";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
@@ -31,6 +33,10 @@ import {
 } from "@/test/scripted-ai-client";
 
 let database: Db;
+async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
+  return saveCvDraft(id, previous, await withCvEditBase(database, id, form));
+}
+
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
@@ -355,6 +361,17 @@ describe("the CV pipeline end to end, against a scripted model", () => {
 
     // 3. The build.
     markCalls();
+    expect(await runHandler(first.id)).toMatchObject({ draftId: first.id, awaitingPriorities: true });
+    const prepared = await draftRow(first.id);
+    expect(prepared.status).toBe("awaiting_priorities");
+    const brief = CvTargetingBriefSchema.parse(prepared.targetingBrief);
+    await confirmCvTargetingPrioritiesForUser(database, user.id, first.id, {
+      expectedRevision: prepared.revision, expectedSource: brief.source, expectedRubricKey: brief.priority.rubricKey!,
+      requestKey: randomUUID(), choices: { entries: prepared.librarySnapshot.entries.map(entry => ({ entryId: entry.id,
+        treatment: "feature" as const })), presentation: brief.presentation,
+        emphasisRequirementIds: brief.priority.rubric!.requirements.slice(0, 5).map(item => item.id),
+        acknowledgedEssentialOmissionIds: [] },
+    });
     expect(await runHandler(first.id)).toMatchObject({ draftId: first.id, awaitingEvidence: true });
     const paused = await draftRow(first.id);
     expect(paused).toMatchObject({ status: "awaiting_evidence", gapQuiz: { status: "awaiting_answers" } });
@@ -541,7 +558,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     edit.set("summary", editedSummary);
     edit.set(`section-${experienceIndex}`, editedBullets.join("\n"));
     edit.set("rememberWording", "on");
-    await expect(saveCvDraft(first.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+    await expect(saveWithBase(first.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const editedDraft = await childOf(first.id);
     expect(editedDraft.status).toBe("ready");
     expect(await database.select().from(schema.tasks).where(sql`payload->>'draftId' = ${editedDraft.id}`)).toHaveLength(0);
@@ -606,12 +623,23 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     const rebuild = new FormData();
     rebuild.set("summary", edited.content!.summary);
     rebuild.set("intent", "improve");
-    await expect(saveCvDraft(edited.id, { ok: true }, rebuild)).rejects.toThrow("redirect:/cv/");
+    await expect(saveWithBase(edited.id, { ok: true }, rebuild)).rejects.toThrow("redirect:/cv/");
     const rebuiltDraft = await childOf(edited.id);
     expect(rebuiltDraft.libraryVersion).toBe(2);
     expect(rebuiltDraft.content).toBeNull();
     expect(rebuiltDraft.jobDescription).toBe(DESCRIPTION);
 
+    expect(await runHandler(rebuiltDraft.id)).toMatchObject({ awaitingPriorities: true });
+    const rebuiltPrepared = await draftRow(rebuiltDraft.id);
+    const rebuiltBrief = CvTargetingBriefSchema.parse(rebuiltPrepared.targetingBrief);
+    await confirmCvTargetingPrioritiesForUser(database, user.id, rebuiltDraft.id, {
+      expectedRevision: rebuiltPrepared.revision, expectedSource: rebuiltBrief.source,
+      expectedRubricKey: rebuiltBrief.priority.rubricKey!, requestKey: randomUUID(),
+      choices: { entries: rebuiltPrepared.librarySnapshot.entries.map(entry => ({ entryId: entry.id,
+        treatment: "feature" as const })), presentation: rebuiltBrief.presentation,
+        emphasisRequirementIds: rebuiltBrief.priority.rubric!.requirements.slice(0, 5).map(item => item.id),
+        acknowledgedEssentialOmissionIds: [] },
+    });
     expect(await runHandler(rebuiltDraft.id)).toMatchObject({ ready: true });
     const rebuilt = await draftRow(rebuiltDraft.id);
     expect(rebuilt.status).toBe("ready");

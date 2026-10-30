@@ -16,11 +16,16 @@ import {
   cvEvidenceItems,
   cvImprovementOwner,
   CvRubricSchema,
+  CvReviewPlanSchema,
   type CvAssessment,
   type CvReviewPlan,
   type CvRubric,
 } from "@col/core/cv-assessment";
 import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "@col/core/cv-tailoring";
+import { CvTargetingBriefSchema, cvSkillSourcePolicy, projectCvWritingLibrary, projectCvWritingPlan } from "@col/core/cv-targeting";
+import { cvTargetingRubricKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
+import { separateCvModelSkillProposals, type CvPendingSkillProposal } from "@col/core/cv-pending-skills";
+import { cvSemanticAuditIdentity } from "@col/core/cv-semantic-audit";
 import { buildCvGapQuiz } from "@col/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@col/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -38,6 +43,7 @@ import {
   cvMaxPages,
   cvRelevanceTerms,
   createCvWritingBudget,
+  missingRequiredCvBlocks,
   groupCvLibrary,
   readCvBuildCheckpoint,
   reusedCvRubric,
@@ -102,7 +108,7 @@ export const CV_HOLD_LOST_MESSAGE =
   "This CV build stopped before completion. No CV credit will be used.";
 
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
-  "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt" | "buildCheckpoint" | "failure" | "gapQuiz">>;
+  "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt" | "buildCheckpoint" | "failure" | "gapQuiz" | "targetingBrief">>;
 
 /** The four milestones the draft carries for the page's strip. */
 type BuildStage = NonNullable<BuildUpdate["buildStage"]>;
@@ -224,7 +230,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       await releaseCvCredit(deps.db, draftId, "CV build cancelled");
       return { skipped: true };
     }
-    if (draft.status === "awaiting_evidence") return { skipped: true };
+    if (draft.status === "awaiting_evidence" || draft.status === "awaiting_priorities") return { skipped: true };
     // A payload naming another account is not this draft's task: nothing is read or written for it.
     if (payloadUserId && payloadUserId !== draft.userId) {
       log.warn("CV task names a different account from its draft; ignored", { draftId, taskId: task.id });
@@ -326,7 +332,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       // This build's own rubric first, then the task's, then the parent's for the same description:
       // a direct edit whose checkpoint the interface stripped still takes its parent's rubric
       // before it pays for a new one.
-      const reused = reusedCvRubric({ ...draft, buildCheckpoint: checkpoint }, parent, sourceRubric);
+      const reused = read.discarded && draft.targetingBrief ? undefined
+        : reusedCvRubric({ ...draft, buildCheckpoint: checkpoint }, parent, sourceRubric);
       const inputs = await journal.run("load_inputs", {
         libraryVersion: draft.libraryVersion,
         descriptionCharacters: draft.jobDescription.length,
@@ -334,7 +341,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         maxAttempts,
       }, async step => {
         try {
-          const library = groupCvLibrary(CvLibrarySchema.parse(draft.librarySnapshot));
+          const fullLibrary = groupCvLibrary(CvLibrarySchema.parse(draft.librarySnapshot));
+          const brief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+          if (brief && JSON.stringify(brief.source) !== JSON.stringify(cvTargetingSource(draft.libraryVersion, CvLibrarySchema.parse(draft.librarySnapshot), draft.jobDescription)))
+            throw new CvBuildStop("library_invalid", "The targeting choices belong to older Experience or role text. Reload this CV before building.");
+          const library = projectCvWritingLibrary(fullLibrary, brief);
+          if (!library.entries.length) throw new CvBuildStop("library_invalid", "Choose at least one Experience or qualification section for this CV.");
           const counted = (kind: string) => library.entries.filter(entry => entry.kind === kind).length;
           // Saved wording is reused when this build already wrote it (the checkpoint says so) or
           // when the task asked for an assessment of what is stored. Old drafts and manual edits
@@ -362,7 +374,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             roles: counted("experience"), qualifications: counted("education") + counted("training"), skillBlocks: counted("skill"),
             reusedRubric: !!reused, reusedContent,
           });
-          return { library, saved, reusedContent, fromCheckpoint, savedPages };
+          return { library, fullLibrary, brief, saved, reusedContent, fromCheckpoint, savedPages };
         } catch (error) {
           if (error instanceof CvBuildStop) throw error;
           // Nothing the model produced has been read yet, so whatever is unusable here is the
@@ -370,7 +382,15 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           throw new CvBuildStop("library_invalid", (error as Error).message);
         }
       });
-      const { library } = inputs;
+      const { library, fullLibrary } = inputs;
+      // Check judges the person's saved wording. An overlong direct edit must remain theirs to
+      // shorten or explicitly Rewrite; silently authoring a replacement would undo their edits.
+      if (mode === "assess" && inputs.saved && !inputs.reusedContent) {
+        const limit = cvMaxPages(inputs.saved.theme);
+        const measured = Number.isFinite(inputs.savedPages) ? `${inputs.savedPages} pages` : "more pages than fit";
+        throw new CvBuildStop("page_limit_unfittable",
+          `This saved CV measures ${measured} against your ${limit}-page limit. Shorten it or change the page limit, then Check again; Rewrite is a separate choice.`);
+      }
       const sizes = {
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
         descriptionBytes: Buffer.byteLength(draft.jobDescription),
@@ -384,7 +404,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       // assessment still describes the saved wording, so it is published as it stands.
       const legacyFenced = !!checkpoint.improvementAttempted;
       const baseline = inputs.reusedContent && legacyFenced &&
-        cvAssessmentCurrent(draft.assessment, inputs.saved!, draft.jobDescription, library)
+        cvAssessmentCurrent(draft.assessment, inputs.saved!, draft.jobDescription, fullLibrary)
         ? draft.assessment! : undefined;
       // Which build a hold is for, so giving up on one build never releases another's.
       const limits = budgetLimits(deps.env, deps.now(), { userId: draft.userId, settings: await deps.userSettings(draft.userId) },
@@ -564,7 +584,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           try {
             const [row] = await deps.db.select({ plan: schema.cvTailoringPlans.plan }).from(schema.cvTailoringPlans)
               .where(and(eq(schema.cvTailoringPlans.draftId, candidateId), eq(schema.cvTailoringPlans.userId, draft.userId)));
-            if (row) return validateCvTailoringPlan(row.plan, rubric, cvTailoringEvidence(library), library);
+            if (row) return validateCvTailoringPlan(row.plan, rubric, cvTailoringEvidence(fullLibrary), fullLibrary);
           } catch (error) {
             log.info("saved evidence plan not reusable; continuing without it", { draftId, candidateId, error: (error as Error).message });
           }
@@ -592,7 +612,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           validate: (value, input) => validatePlan(value, input),
           mirror: value => ({ tailoringPlan: value }),
         };
-        const planInputs = { rubric, library };
+        const planInputs = { rubric, library: fullLibrary };
         // A version 1 checkpoint carries its plan without a key; it was validated against this
         // rubric and library when it was made, and is checked again here.
         const legacyPlan = !checkpoint.stages?.plan && tailoringPlan ? tailoringPlan : undefined;
@@ -606,6 +626,21 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if (legacyPlan || inherited) await runner.save(planStage, planInputs, savedPlan);
         } else {
           tailoringPlan = (await runner.run(planStage, planInputs)).value;
+        }
+        // The factual mapping is produced once from the complete, confirmed source snapshot.
+        // It is durable before the user chooses emphasis or omissions; continuation projects that
+        // same mapping onto the eligible writing view without a second planner call.
+        if (inputs.brief) {
+          const rubricKey = cvTargetingRubricKey(inputs.brief.source, rubric, draft.model, prompts);
+          if (inputs.brief.priority.state !== "confirmed" || inputs.brief.priority.rubricKey !== rubricKey) {
+            const pending = CvTargetingBriefSchema.parse({ ...inputs.brief, priority: {
+              state: "awaiting_priorities", rubric, rubricKey,
+              emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [],
+            } });
+            await save({ status: "awaiting_priorities", targetingBrief: pending,
+              buildStage: null, error: null, failure: null, buildCheckpoint: checkpoint });
+            return { draftId, awaitingPriorities: true };
+          }
         }
         if (!checkpoint.quizCompleted) {
           const gapQuiz = buildCvGapQuiz(tailoringPlan.gapQuestions, draft.librarySnapshot, draft.libraryVersion, rubric);
@@ -622,11 +657,20 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       // A direct edit writes nothing, so it never plans; its parent's plan is still the library-side
       // verdict its audit takes, and is saved beside it at publication for the revisions after it.
       if (!tailoringPlan && !checkpoint.tailoringEnabled) tailoringPlan = await parentPlan();
-      const semantic = tailoringPlan ? { plan: tailoringPlan, rubric } : undefined;
-      const target = cvRelevanceTerms(rubric.requirements);
+      // The complete plan remains the durable factual verdict. Only the writer sees a projection
+      // that excludes entries the member deliberately omitted from this CV.
+      const fullTailoringPlan = tailoringPlan;
+      if (tailoringPlan && inputs.brief) tailoringPlan = projectCvWritingPlan(tailoringPlan, rubric, library);
+      const semantic = tailoringPlan ? { plan: tailoringPlan, rubric,
+        ...(inputs.brief ? { treatments: new Map(inputs.brief.entries.map(row => [row.entryId, row.treatment] as const)),
+          emphasisRequirementIds: new Set(inputs.brief.priority.emphasisRequirementIds) } : {}) } : undefined;
+      const target = cvRelevanceTerms(rubric.requirements,
+        inputs.brief ? new Set(inputs.brief.priority.emphasisRequirementIds) : undefined);
 
       // ---- The writing -------------------------------------------------------------------------
       let content: CvContent | undefined = inputs.reusedContent ? inputs.saved : undefined;
+      const pendingSkillProposals = new Map<string, CvPendingSkillProposal>(
+        (draft.pendingSkillProposals ?? []).map(item => [item.id, item]));
       const savedWrite = checkpoint.stages?.write?.value as WriteCheckpoint | undefined;
       if (content && inputs.fromCheckpoint && mode !== "assess") {
         writeScale = savedWrite?.scale ?? 1;
@@ -661,8 +705,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             return await buildFittedCv(
               writingLibrary,
               target,
-              async (input) =>
-                requireResult(
+              async (input) => {
+                const authored = requireResult(
                   await ai.buildCv(
                     {
                       library: writingLibrary,
@@ -670,6 +714,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
                       company: draft.companyName,
                       description: draft.jobDescription,
                       rubric,
+                      ...(inputs.brief?.priority.state === "confirmed" ? { emphasisRequirementIds: inputs.brief.priority.emphasisRequirementIds } : {}),
                       improvements,
                       tailoringPlan,
                       ...input,
@@ -677,7 +722,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
                     ref("author", "cv-author", stageCtx.signal, (writeStep as CvOpenStep | null)?.id),
                   ),
                   "author", AUTHOR_CALL, `(attempt ${writeAttempt} of 3)`,
-                ),
+                );
+                const separated = separateCvModelSkillProposals(writingLibrary, authored);
+                for (const proposal of separated.proposals)
+                  if (!pendingSkillProposals.has(proposal.id)) pendingSkillProposals.set(proposal.id, proposal);
+                return separated.plan;
+              },
               initial,
               async (event: CvFitEvent) => {
                 // The first attempt writes; the ones after it rewrite to a smaller budget, which is
@@ -775,15 +825,38 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
        * retry pays for; the revision's re-check runs after publication, saves nothing, and asks only
        * about the claims the baseline's audit did not already judge.
        */
+      let semanticAuditCache: { identity: string; review: CvReviewPlan } | null = null;
       const assessContent = async (candidate: CvContent, pass: CvAuditPass, knownPages?: number): Promise<CvAssessment> => {
         await stage("assessing");
         const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate)).pageCount;
         assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
-        const items = { rubric, cv: cvTextItems(candidate), claims: cvClaimItems(candidate), evidence: cvEvidenceItems(library) };
+        const claimEvidence = cvEvidenceItems(inputs.brief ? library : fullLibrary)
+          .filter(item => !inputs.brief || item.text.trim().length > 0);
+        const auditRoute = pass === "draft" ? await ai.claimMemoRoute("draft") : null;
+        const semanticIdentity = auditRoute ? cvSemanticAuditIdentity({ content: candidate, library: fullLibrary,
+          rubric, description: draft.jobDescription, reviewRoute: { model: auditRoute.model, effort: auditRoute.effort },
+          reviewPromptVersion: auditRoute.promptVersion, eligibleEvidence: claimEvidence,
+          sourcePolicy: cvSkillSourcePolicy(inputs.brief) }) : null;
+        const priorReview = pass === "draft" && semanticIdentity && draft.semanticAuditCache?.identity === semanticIdentity
+          ? CvReviewPlanSchema.safeParse(draft.semanticAuditCache.review) : null;
+        if (priorReview?.success) {
+          try {
+            const reused = createCvAssessment({ content: candidate, description: draft.jobDescription,
+              library: fullLibrary, rubric, review: priorReview.data, model: draft.model, pageCount,
+              now: deps.now(), ...(fullTailoringPlan ? { plan: fullTailoringPlan } : {}) });
+            semanticAuditCache = { identity: semanticIdentity!, review: priorReview.data };
+            await journal.record("assemble", { pageCount, reused: true }, "skipped");
+            return reused;
+          } catch { /* A stale or invalid legacy verdict must run the normal audit. */ }
+        }
+        // The full Library still determines requirement coverage, while claims about the printed
+        // CV are checked against the entries this application actually includes. In particular,
+        // an omitted role or broad profile must not be offered as support for its summary.
+        const items = { rubric, cv: cvTextItems(candidate), claims: cvClaimItems(candidate), evidence: claimEvidence };
         // The evidence plan is the library-side verdict: made once per rubric and evidence, handed
         // to every audit of this build as settled context. A build without a plan audits both sides.
-        const libraryVerdicts = tailoringPlan
-          ? cvLibraryVerdicts(tailoringPlan, items.evidence, new Set(library.entries.map(entry => entry.id))) : undefined;
+        const libraryVerdicts = fullTailoringPlan
+          ? cvLibraryVerdicts(fullTailoringPlan, cvEvidenceItems(fullLibrary), new Set(fullLibrary.entries.map(entry => entry.id))) : undefined;
         const libraryFixed = !!libraryVerdicts;
         const batches = cvAuditBatches(items);
         type AuditInputs = { cv: typeof items.cv; claims: typeof items.claims; evidence: typeof items.evidence; rubric: CvRubric; index: number; total: number };
@@ -829,7 +902,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               // The audit's calls are charged to the first batch step it opens: the engine reads the
               // reference as each call is made, and every batch's first call follows its step opening.
               const auditRef: ReturnType<typeof ref> & { stepId?: string } = ref("review", "cv-review", stageCtx.signal);
-              return ai.assessCvBatches(libraryVerdicts ? { ...items, libraryVerdicts } : items,
+              return ai.assessCvBatches(libraryVerdicts ? { ...items, libraryVerdicts,
+                libraryVerdictEvidence: cvEvidenceItems(fullLibrary) } : items,
               // The engine re-runs a batch whose attribution it had to correct, and names that
               // second charge `review_retry` (`review_candidate_retry` for the revision's re-check),
               // so a build that paid twice for one batch says so.
@@ -933,13 +1007,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             value = createCvAssessment({
               content: candidate,
               description: draft.jobDescription,
-              library,
+              library: fullLibrary,
               rubric,
               review,
               model: draft.model,
               pageCount,
               now: deps.now(),
-              ...(tailoringPlan ? { plan: tailoringPlan } : {}),
+              ...(fullTailoringPlan ? { plan: fullTailoringPlan } : {}),
             });
           } catch (error) {
             // Every quote is checked against its source here; an assessment that cited something
@@ -952,6 +1026,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         // The verdicts the revision's re-check may reuse: filed under the baseline audit's own route.
         if (pass === "draft")
           await runner.save(claimMemoStage, memoInputs, cvClaimMemoFrom(review, cvClaimMemoKeys(items, await ai.claimMemoRoute("draft"))));
+        if (pass === "draft" && semanticIdentity) semanticAuditCache = { identity: semanticIdentity, review };
         return assessed;
       };
       /** The failure one batch's result names, as the build throws it. */
@@ -983,12 +1058,14 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         await locked.assertOwnership?.(tx as unknown as Db);
         const ok = await completeCv(tx, draftId, {
           status: "ready", buildStage: null, content, assessment, revision,
+          pendingSkillProposals: [...pendingSkillProposals.values()].slice(0, 250),
+          semanticAuditCache,
           // Nothing is left to resume and nothing is left to explain.
           buildCheckpoint: null, failure: null,
         });
         if (!ok) return false;
         // The plan the wording was written against stays beside the assessment, for replay.
-        if (tailoringPlan) await saveCvTailoringPlan(tx, draftId, draft.userId, tailoringPlan);
+        if (fullTailoringPlan) await saveCvTailoringPlan(tx, draftId, draft.userId, fullTailoringPlan);
         const spent = await tx.execute<{ spent: number }>(
           sql`select coalesce(sum(cost_usd::float8), 0) as spent from ai_calls where ref_id = ${draftId}`);
         // Closed inside the transaction that makes the CV ready: a page that sees it ready sees it saved.
@@ -1016,6 +1093,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       }) => {
         const keep = (reason: string) => journal.record("adopt_revision", { reason }, "skipped");
         let fitted: Awaited<ReturnType<typeof selectCvToFit>>;
+        let optionalSkillProposals: CvPendingSkillProposal[] = [];
         const opportunities = args.opportunities.length;
         // Opened once the stage is admitted, so its row follows its admission in the narrative.
         const opened: { step?: CvOpenStep<"improve_content"> } = {};
@@ -1026,11 +1104,15 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             // The same scale the baseline actually fitted at: a baseline that had to rewrite twice
             // to fit is not improved by a candidate written to the first attempt's larger budget.
             const budget = createCvWritingBudget(library, target, writeScale, args.semanticTarget);
-            const plan = requireResult(await ai.buildCv({ library, rubric, tailoringPlan,
+            let plan = requireResult(await ai.buildCv({ library, rubric, tailoringPlan,
+              ...(inputs.brief?.priority.state === "confirmed" ? { emphasisRequirementIds: inputs.brief.priority.emphasisRequirementIds } : {}),
               description: draft.jobDescription, jobTitle: draft.jobTitle, company: draft.companyName,
               improvements: args.opportunities.map(item => item.improvement).filter(Boolean),
               writingBudget: budget, maxPages: cvMaxPages(library.theme),
             }, ref("improvement", "cv-author", stageCtx.signal, opened.step?.id)), "improvement", AUTHOR_CALL);
+            const separated = separateCvModelSkillProposals(library, plan);
+            plan = separated.plan;
+            optionalSkillProposals = separated.proposals;
             // Every citation must name a source row that exists and says what it quotes. The
             // optional pass has one call and no correction loop: an unverifiable answer keeps the original.
             try {
@@ -1038,11 +1120,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             } catch (error) {
               throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
             }
-            const omitted = library.entries.filter(entry =>
-              (entry.kind === "experience" || entry.kind === "education" || entry.kind === "training") &&
-              !plan.sections.some(section => section.entryId === entry.id));
+            const omitted = missingRequiredCvBlocks(plan, budget);
             if (omitted.length)
-              throw new CvBuildStop("output_invalid", "The optional revision omitted employment or qualifications.");
+              throw new CvBuildStop("output_invalid", "The optional revision omitted employment, qualifications or a selected Interest.");
             // The optional pass strengthens role evidence. Preserve the already checked qualification
             // wording, so retaining a block cannot conceal the loss of one qualification.
             const baselineQualifications = new Map(CvStoredPlanSchema.parse(args.baselineContent).sections
@@ -1052,6 +1132,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             // One author call only. Deterministic fitting may remove whole lower-value bullets; an
             // unfittable or unsupported candidate is discarded rather than starting another loop.
             const candidate = await selectCvToFit(library, plan, target, budget, args.semanticTarget);
+            if (candidate.plan.sections.some(section => args.semanticTarget.treatments?.get(section.entryId) === "summarise"
+              && section.bullets.length > 1))
+              throw new CvBuildStop("output_invalid", "The optional revision did not keep Summarise to one sourced bullet.");
             assertCvPageLimit(candidate.pageCount, cvMaxPages(library.theme));
             return candidate;
           });
@@ -1089,7 +1172,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         }
         const adopted = await deps.db.transaction(async tx => {
           await locked.assertOwnership?.(tx as unknown as Db);
-          return saveImprovedCvRevision(tx, draftId, { content: fitted.content, assessment: candidateAssessment }, tailoringPlan);
+          return saveImprovedCvRevision(tx, draftId, { content: fitted.content, assessment: candidateAssessment,
+            pendingSkillProposals: [...pendingSkillProposals.values(), ...optionalSkillProposals].slice(0, 250) }, fullTailoringPlan);
         });
         if (!adopted.adopted) {
           await keep(adopted.reason);

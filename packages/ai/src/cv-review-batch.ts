@@ -1,7 +1,7 @@
 import { cvQuoteIsAnchored } from "@col/core/cv-review";
 import { cvAuditPartitions, cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvRubric, type CvTextItem } from "@col/core/cv-assessment";
 
-type Context = { cv: CvTextItem[]; claims: CvClaimItem[]; evidence: CvTextItem[] };
+type Context = { cv: CvTextItem[]; claims: CvClaimItem[]; evidence: CvTextItem[]; libraryVerdictEvidence?: CvTextItem[] };
 type Match = CvReviewPlan["matches"][number];
 type LibrarySide = Pick<Match, "libraryStatus" | "libraryEvidence">;
 
@@ -67,7 +67,7 @@ export function reviewBatchIssues(review: CvReviewBatchAnswer, context: Context)
       issues.push({ kind: "cv", index, correction: `${match.requirementId}: cite exact contiguous CV quotes under their supplied IDs for a positive match; otherwise use unknown and no CV evidence.` });
     if (!match.libraryStatus || !match.libraryEvidence)
       issues.push({ kind: "library", index, correction: `${match.requirementId}: return libraryStatus and libraryEvidence, judging the confirmed evidence library for this requirement.` });
-    else if (!valid(match.libraryEvidence, context.evidence) || (cvMatchPoints(match.libraryStatus) && !match.libraryEvidence.length))
+    else if (!valid(match.libraryEvidence, context.libraryVerdictEvidence ?? context.evidence) || (cvMatchPoints(match.libraryStatus) && !match.libraryEvidence.length))
       issues.push({ kind: "library", index, correction: `${match.requirementId}: cite exact contiguous library quotes under their supplied IDs for positive libraryStatus; otherwise use unknown and no library evidence.` });
   });
   review.claims.forEach((claim, index) => {

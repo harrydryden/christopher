@@ -66,12 +66,29 @@ const words = (value: string) =>
   value.toLowerCase().match(/[a-z0-9][a-z0-9'+-]*/g) ?? [];
 const normalise = (value: string) => words(value).join(" ");
 
+/** The same concrete lines drive editorial counts and links back to the editable block. */
+export function cvEditorialIssueClaims(content: CvContent) {
+  const items = cvClaimItems(content);
+  const seen = new Set<string>();
+  let duplicates = 0;
+  let nonemptyTotal = 0;
+  let repeatedClaimId: string | null = null;
+  let long = 0;
+  let longClaimId: string | null = null;
+  for (const item of items) {
+    const key = normalise(item.text);
+    if (key && seen.has(key)) { duplicates++; repeatedClaimId ??= item.id; }
+    if (key) { seen.add(key); nonemptyTotal++; }
+    if (words(item.text).length > 32 || item.text.length > 240) { long++; longClaimId ??= item.id; }
+  }
+  return { total: items.length, nonemptyTotal, duplicates, repeatedClaimId, long, longClaimId };
+}
+
 function repetitionSignal(content: CvContent): EditorialSignal {
-  const items = cvClaimItems(content).map((item) => normalise(item.text)).filter(Boolean);
-  const duplicates = items.length - new Set(items).size;
+  const { nonemptyTotal, duplicates } = cvEditorialIssueClaims(content);
   return {
     kind: "heuristic_editorial_signal",
-    score: editorialPercentage(Math.max(0, items.length - duplicates), items.length),
+    score: editorialPercentage(Math.max(0, nonemptyTotal - duplicates), nonemptyTotal),
     label: duplicates ? "Review" : "Clear",
     note: duplicates
       ? `${duplicates} repeated ${duplicates === 1 ? "line" : "lines"} may use space without adding evidence.`
@@ -80,11 +97,10 @@ function repetitionSignal(content: CvContent): EditorialSignal {
 }
 
 function concisionSignal(content: CvContent): EditorialSignal {
-  const items = cvClaimItems(content);
-  const long = items.filter((item) => words(item.text).length > 32 || item.text.length > 240).length;
+  const { total, long } = cvEditorialIssueClaims(content);
   return {
     kind: "heuristic_editorial_signal",
-    score: editorialPercentage(items.length - long, items.length),
+    score: editorialPercentage(total - long, total),
     label: long ? "Review" : "Clear",
     note: long
       ? `${long} ${long === 1 ? "line is" : "lines are"} over the editing guide of 32 words or 240 characters.`
@@ -112,7 +128,8 @@ function priorityRequirements(assessment: CvAssessment) {
       : { requirements: [], basis: "not_assessed" as const };
 }
 
-function summaryFocusSignal(assessment: CvAssessment): EditorialSignal {
+function summaryFocusSignal(assessment: CvAssessment, content: CvContent): EditorialSignal {
+  const label = content.theme?.bodySizePt ? "Executive Summary" : "profile";
   const priority = priorityRequirements(assessment).requirements;
   const focused = priority.filter((requirement) => {
     const match = assessment.review.matches.find((item) => item.requirementId === requirement.id);
@@ -126,10 +143,10 @@ function summaryFocusSignal(assessment: CvAssessment): EditorialSignal {
     score: editorialPercentage(Math.min(focused, target), target),
     label: target > 0 && focused >= target ? "Clear" : "Review",
     note: target === 0
-      ? "No supported priority coverage is available to assess the profile's emphasis."
+      ? `No supported priority coverage is available to assess the ${label}'s emphasis.`
       : focused >= target
-        ? "The assessment anchors supported priority coverage in the profile."
-        : `The assessment anchors ${focused} of ${target} supported priorities in the profile; review its emphasis.`,
+        ? `The assessment anchors supported priority coverage in the ${label}.`
+        : `The assessment anchors ${focused} of ${target} supported priorities in the ${label}; review its emphasis.`,
   };
 }
 
@@ -187,7 +204,7 @@ export function diagnoseCvQuality(
       disclaimer: "Heuristic editorial signals only — they do not predict hiring outcomes.",
       repetition: repetitionSignal(content),
       concision: concisionSignal(content),
-      summaryFocus: summaryFocusSignal(assessment),
+      summaryFocus: summaryFocusSignal(assessment, content),
     },
   };
 }

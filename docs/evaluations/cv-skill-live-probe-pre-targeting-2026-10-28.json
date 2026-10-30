@@ -1,0 +1,285 @@
+{
+  "kind": "cv-skill-suggestions-live-probe",
+  "at": "2026-10-28T13:10:16.478Z",
+  "promptSetVersion": "987e0b5ac958",
+  "syntheticCandidate": true,
+  "source": "provider",
+  "model": "claude-fable-5-1",
+  "outcome": "ready",
+  "verifiedCalls": [
+    {
+      "promptId": "cv.skill_suggestions",
+      "costUsd": 0.084121
+    },
+    {
+      "promptId": "cv.skill_verify",
+      "costUsd": 0.039689
+    }
+  ],
+  "cvQualification": "passed",
+  "selectedOnlyPersistence": "covered by isolated integration tests; this paid probe makes no Library or CV change",
+  "suggestionCount": 10,
+  "categoryCount": 3,
+  "suggestions": [
+    {
+      "category": "Operations leadership",
+      "label": "Multi-site operations",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "Own the operational plan for eleven community clinics, reporting delivery, cost and quality to the executive team every month.",
+      "roleQuote": "own service delivery for a portfolio of twelve sites"
+    },
+    {
+      "category": "Finance and commercial",
+      "label": "Budget management",
+      "sourceId": "entry:ev-head:row:3",
+      "evidenceQuote": "Partner with finance on the annual budget and on monthly variance across a £14m cost base.",
+      "roleQuote": "partner with finance to build the annual budget and to track monthly variance"
+    },
+    {
+      "category": "Systems and tools",
+      "label": "SQL",
+      "sourceId": "entry:ev-manager:row:1",
+      "evidenceQuote": "Built the first operational reporting pack in SQL and Power BI",
+      "roleQuote": "build and interpret reporting in SQL or a comparable analytics tool"
+    },
+    {
+      "category": "Operations leadership",
+      "label": "Team leadership",
+      "sourceId": "entry:ev-head:row:1",
+      "evidenceQuote": "Lead four operations managers and a shared scheduling team of eighteen",
+      "roleQuote": "lead a team of four operations managers"
+    },
+    {
+      "category": "Finance and commercial",
+      "label": "Supplier negotiation",
+      "sourceId": "entry:ev-calder:row:2",
+      "evidenceQuote": "Negotiated supplier renewals for courier and warehousing contracts worth £2m a year.",
+      "roleQuote": "Experience of supplier negotiation is preferred."
+    },
+    {
+      "category": "Systems and tools",
+      "label": "Power BI",
+      "sourceId": "entry:ev-manager:row:1",
+      "evidenceQuote": "Built the first operational reporting pack in SQL and Power BI",
+      "roleQuote": "SQL or a comparable analytics tool"
+    },
+    {
+      "category": "Operations leadership",
+      "label": "Operational planning",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "Own the operational plan for eleven community clinics",
+      "roleQuote": "You will own the operational plan for the portfolio"
+    },
+    {
+      "category": "Finance and commercial",
+      "label": "Vendor management",
+      "sourceId": "entry:ev-head:row:4",
+      "evidenceQuote": "Introduced a supplier scorecard covering the eight largest contracts, with quarterly reviews against agreed service levels.",
+      "roleQuote": "continuous improvement work across scheduling, rostering and supplier performance"
+    },
+    {
+      "category": "Operations leadership",
+      "label": "Rostering",
+      "sourceId": "entry:ev-head:row:2",
+      "evidenceQuote": "Rebuilt rostering around a single demand model, which cut agency spend by 22% in the first year.",
+      "roleQuote": "continuous improvement work across scheduling, rostering and supplier performance"
+    },
+    {
+      "category": "Operations leadership",
+      "label": "Performance reporting",
+      "sourceId": "entry:ev-head:row:1",
+      "evidenceQuote": "running a weekly performance review against published measures",
+      "roleQuote": "report performance to the executive team each month"
+    }
+  ],
+  "transport": {
+    "totalUpperBoundUsd": 0.8922009999999997,
+    "upperBoundsUsd": {
+      "fixture": 0,
+      "cv": 0.5805939999999996,
+      "skills": 0.3116070000000001
+    },
+    "attempts": {
+      "fixture": 0,
+      "cv": 3,
+      "skills": 4
+    },
+    "events": [
+      {
+        "phase": "cv",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.25352,
+        "complete": true,
+        "usage": {
+          "input_tokens": 400,
+          "output_tokens": 3744,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 5574,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 5574,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.260875
+      },
+      {
+        "phase": "cv",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.9008,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1651,
+          "output_tokens": 3103,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4618,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4618,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.229385
+      },
+      {
+        "phase": "cv",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.8514,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1338,
+          "output_tokens": 1516,
+          "cache_read_input_tokens": 4618,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.090334
+      },
+      {
+        "phase": "skills",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.41344,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1725,
+          "output_tokens": 1330,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1083,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1083,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.097287
+      },
+      {
+        "phase": "skills",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.37912,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2206,
+          "output_tokens": 1200,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 676,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 676,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "max_tokens"
+      },
+      {
+        "phase": "skills",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.09051
+      },
+      {
+        "phase": "skills",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.41344,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1725,
+          "output_tokens": 1332,
+          "cache_read_input_tokens": 1083,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.084121
+      },
+      {
+        "phase": "skills",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.51824,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2207,
+          "output_tokens": 349,
+          "cache_read_input_tokens": 676,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.039689
+      }
+    ]
+  }
+}

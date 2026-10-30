@@ -1,3 +1,4 @@
+import { withCvEditBase } from "@/test/cv-form";
 /**
  * Starting, retrying and rebuilding a CV through the real actions: which model a build is asked
  * of, what a retry carries from the attempt it replaces, and how many builds one account may have
@@ -9,12 +10,19 @@ import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
 import { CV_THEMES, DEFAULT_CV_THEME, CvLibrarySchema } from "@col/core/cv";
 import { cvTailoringEvidence, validateCvTailoringPlan } from "@col/core/cv-tailoring";
+import { cvTargetingSource } from "@col/core/cv-targeting-identity";
+import { reviseFailedCvTargeting } from "./cv-targeting";
 import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
+import { reusedCvRubric } from "@col/core";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import type { User } from "@col/db/schema";
 
 let database: Db;
+async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
+  return saveCvDraft(id, previous, await withCvEditBase(database, id, form));
+}
+
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
@@ -22,6 +30,10 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined) }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
+vi.mock("@/lib/cv-library-write", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cv-library-write")>();
+  return { ...actual, latestLibrary: vi.fn(actual.latestLibrary) };
+});
 /** Runs inside every render the actions ask for, so a test can look at the database mid-render. */
 const rendering = vi.hoisted(() => ({ during: undefined as undefined | (() => Promise<void>) }));
 vi.mock("@/lib/cv-pdf", async (actual) => {
@@ -43,6 +55,7 @@ import { CV_BUILD_CAP_MESSAGE, MAX_CV_BUILDS_IN_FLIGHT } from "@/lib/cv-build-ca
 import { CV_WORKER_STOPPED_MESSAGE, cvBuildState } from "@/lib/cv-build-state";
 import { getOwnCvBuildTask } from "@/lib/queries/cv";
 import { ensureTestUser } from "@/test/auth";
+import { latestLibrary } from "@/lib/cv-library-write";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -180,15 +193,77 @@ it("saves wording immediately without a task and keeps the rubric for an explici
   const form = new FormData();
   form.set("summary", "Edited profile");
   form.set("section-0", "Led a team");
-  await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  vi.mocked(latestLibrary).mockClear();
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  expect(latestLibrary).not.toHaveBeenCalled();
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.assessment).toBeNull();
   expect(saved!.buildCheckpoint).toEqual({ sourceRubric: rubric });
+  expect(saved!.librarySnapshot).toEqual(parent.librarySnapshot);
   expect(await buildTasks()).toHaveLength(0);
   expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await buildTasks();
   expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess" });
+});
+
+it.each(["not-json", "{}", "[\"one\",\"one\"]"])(
+  "rejects invalid supporting choices %s before reading the current Library", async (payload) => {
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+    const parent = await failedDraft({ status: "ready", error: null, failure: null });
+    const form = new FormData();
+    form.set("addedSupportIds", payload);
+    await withCvEditBase(database, parent.id, form);
+    vi.mocked(latestLibrary).mockClear();
+    expect(await saveCvDraft(parent.id, { ok: true }, form)).toMatchObject({
+      ok: false, error: expect.stringContaining("supporting section choices"),
+    });
+    expect(latestLibrary).not.toHaveBeenCalled();
+    expect(await database.select().from(schema.cvDrafts)).toHaveLength(1);
+  },
+);
+
+it("takes a newly completed assessment from the current source without losing the editor's unchanged wording", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const parent = await finalisableDraft();
+  const form = new FormData();
+  form.set("summary", content.summary);
+  form.set("section-0", "Led a team");
+  await withCvEditBase(database, parent.id, form);
+  const assessedAt = new Date("2026-10-30T12:00:00.000Z").toISOString();
+  const originalTransaction = database.transaction.bind(database);
+  const transaction = vi.spyOn(database, "transaction").mockImplementationOnce(async (work, config) => {
+    // This runs after the action's pre-lock read, but before its locked source read.
+    await database.update(schema.cvDrafts).set({ assessment: { ...parent.assessment!, assessedAt } })
+      .where(eq(schema.cvDrafts.id, parent.id));
+    return originalTransaction(work, config);
+  });
+  try {
+    await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  } finally { transaction.mockRestore(); }
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(child?.assessment?.assessedAt).toBe(assessedAt);
+  expect(child?.buildCheckpoint).toEqual({ sourceRubric: parent.assessment!.rubric });
+  expect(await buildTasks()).toHaveLength(0);
+});
+
+it("rejects a stale editor after the same revision's saved wording changes", async () => {
+  const parent = await failedDraft({ status: "ready", failure: null, error: null, buildCheckpoint: null });
+  const form = new FormData();
+  form.set("summary", "Old editor wording");
+  form.set("section-0", "Led a team");
+  await withCvEditBase(database, parent.id, form);
+  const originalTransaction = database.transaction.bind(database);
+  const transaction = vi.spyOn(database, "transaction").mockImplementationOnce(async (work, config) => {
+    await database.update(schema.cvDrafts).set({ content: { ...content, summary: "Recovery wording" } })
+      .where(eq(schema.cvDrafts.id, parent.id));
+    return originalTransaction(work, config);
+  });
+  try {
+    expect(await saveCvDraft(parent.id, { ok: true }, form)).toMatchObject({ ok: false,
+      error: expect.stringContaining("Reload before saving") });
+  } finally { transaction.mockRestore(); }
+  expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id))).toHaveLength(0);
 });
 
 it("deduplicates repeated direct saves, permits distinct wording, and carries the immediate evidence plan", async () => {
@@ -202,18 +277,18 @@ it("deduplicates repeated direct saves, permits distinct wording, and carries th
     form.set("section-0", "Led a team");
     return form;
   };
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
   let children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children).toHaveLength(1);
   expect(children[0]!.status).toBe("ready");
   expect(children[0]!.assessment).toBeNull();
   expect((await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, children[0]!.id)))[0]?.plan).toEqual(plan);
-  await expect(saveCvDraft(children[0]!.id, { ok: true }, edit("A further quick edit"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(children[0]!.id, { ok: true }, edit("A further quick edit"))).rejects.toThrow("redirect:/cv/");
   const [grandchild] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, children[0]!.id));
   expect(grandchild?.buildCheckpoint).toEqual({ sourceRubric: parent.assessment!.rubric });
   expect((await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, grandchild!.id)))[0]?.plan).toEqual(plan);
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("Second saved wording"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("Second saved wording"))).rejects.toThrow("redirect:/cv/");
   children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children).toHaveLength(2);
   expect(await buildTasks()).toHaveLength(0);
@@ -225,7 +300,7 @@ it("keeps a genuinely current assessment when a new saved revision changes no as
   const form = new FormData();
   form.set("summary", content.summary);
   form.set("section-0", "Led a team");
-  await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(saved!.assessment?.inputHash).toBe(parent.assessment!.inputHash);
   expect(saved!.status).toBe("ready");
@@ -244,16 +319,59 @@ it("uses the newly chosen model for Rewrite but preserves the parent model on di
     return form;
   };
 
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("improve"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("improve"))).rejects.toThrow("redirect:/cv/");
   const [rebuild] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(rebuild!.model).toBe("claude-opus-5");
 
   // The rebuild is queued; once it has stopped, the parent can be edited again.
   await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, rebuild!.id));
-  await expect(saveCvDraft(parent.id, { ok: true }, edit())).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit())).rejects.toThrow("redirect:/cv/");
   const children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children.map(child => child.model)).toEqual(["claude-opus-5", "claude-haiku-4-5"]);
   expect((await draftRow(parent.id)).model).toBe("claude-haiku-4-5");
+});
+
+it.each(["save", "rewrite"] as const)("carries a checkpoint-only role rubric through %s without the parent", async (intent) => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const sourceRubric = rubricFixture("Finance operations");
+  const parent = await failedDraft({ status: "ready", failure: null, error: null,
+    assessment: null, buildCheckpoint: { sourceRubric, tailoringPlan: { requirements: [], gapQuestions: [] } } });
+  const form = new FormData();
+  form.set("summary", content.summary);
+  form.set("section-0", "Led a team");
+  if (intent === "rewrite") form.set("intent", "improve");
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(child?.buildCheckpoint?.sourceRubric).toEqual(sourceRubric);
+  expect(child?.buildCheckpoint?.tailoringPlan).toBeUndefined();
+  expect(child?.assessment).toBeNull();
+  await database.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, parent.id));
+  const surviving = await draftRow(child!.id);
+  expect(reusedCvRubric(surviving, undefined, surviving.buildCheckpoint?.sourceRubric))
+    .toMatchObject({ rubric: sourceRubric });
+  if (intent === "save") {
+    expect(await assessCvDraft(child!.id, { ok: true }, new FormData())).toEqual({ ok: true });
+    expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: child!.id, mode: "assess" });
+  } else {
+    expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: child!.id, mode: "improve" });
+  }
+});
+
+it("queues Rewrite with the valid checkpoint rubric when the assessment rubric belongs to another role", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const parent = await finalisableDraft();
+  const sourceRubric = rubricFixture(parent.jobDescription);
+  await database.update(schema.cvDrafts).set({ assessment: { ...parent.assessment!, rubric: rubricFixture("Another role") },
+    buildCheckpoint: { sourceRubric } }).where(eq(schema.cvDrafts.id, parent.id));
+  const form = new FormData();
+  form.set("intent", "improve");
+  form.set("summary", content.summary);
+  form.set("section-0", "Led a team");
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(child?.buildCheckpoint?.sourceRubric).toEqual(sourceRubric);
+  expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: child!.id,
+    mode: "improve", rubric: sourceRubric });
 });
 
 it("retries a rebuild that stopped before writing with its rubric and improvements kept", async () => {
@@ -370,6 +488,97 @@ const outcome = async (pending: Promise<unknown>) => {
   }
 };
 
+it("resumes a failed targeted page fit on the same draft with its own revised page choice", async () => {
+  const rubric = rubricFixture("Finance operations");
+  const source = cvTargetingSource(1, CvLibrarySchema.parse(library), "Finance operations");
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const key = "a".repeat(64);
+  const oldRequestKey = crypto.randomUUID();
+  const draft = await failedDraft({ content: null, buildCheckpoint: { tailoringEnabled: false, rubric,
+    sourceRubric: rubric, tailoringPlan: plan },
+    targetingBrief: { version: 1, source, entries: [{ entryId: "one", treatment: "feature" }],
+      presentation: { maxPages: 1, bodySizePt: 12 }, priority: { state: "confirmed", rubric, rubricKey: key,
+        emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [], confirmationKey: oldRequestKey } },
+    failure: { kind: "page_limit_unfittable", resolvedBy: "user", retryable: false, action: "shorten_or_raise_pages",
+      message: "The CV is two pages; the limit is one.", motion: "shorten", attempt: 3, maxAttempts: 3 },
+  });
+  const requestKey = crypto.randomUUID();
+  const input = { expectedRevision: draft.revision, expectedSource: source, expectedRubricKey: key, requestKey,
+    choices: { entries: [{ entryId: "one", treatment: "feature" as const }], presentation: { maxPages: 2, bodySizePt: 12 as const },
+      emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [] } };
+  expect(await reviseFailedCvTargeting(draft.id, input)).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  expect(await reviseFailedCvTargeting(draft.id, input)).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  const resumed = await draftRow(draft.id);
+  expect(resumed).toMatchObject({ status: "queued", failure: null, targetingBrief: { presentation: { maxPages: 2 } } });
+  expect(await buildTasks()).toHaveLength(1);
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+});
+
+it("reprojects saved targeted wording on page-fit recovery without authoring or losing Feature text", async () => {
+  const rubric = rubricFixture("Finance operations");
+  const source = cvTargetingSource(1, CvLibrarySchema.parse(library), "Finance operations");
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const rubricKey = "b".repeat(64);
+  const failure = { kind: "page_limit_unfittable" as const, resolvedBy: "user" as const, retryable: false,
+    action: "shorten_or_raise_pages" as const, message: "Two pages exceed one.", motion: "shorten" as const,
+    attempt: 3, maxAttempts: 3 };
+  const saved = { ...content, theme: { ...DEFAULT_CV_THEME, maxPages: 1, bodySizePt: 12 as const },
+    sections: [{ ...content.sections[0]!, bullets: ["Led a team", "Improved delivery"] }] };
+  const cachedReview = reviewFixture({ rubric, cv: cvTextItems(saved), claims: cvClaimItems(saved),
+    evidence: cvEvidenceItems(CvLibrarySchema.parse(library)) });
+  const draft = await failedDraft({ content: saved, failure,
+    semanticAuditCache: { identity: "c".repeat(64), review: cachedReview },
+    buildCheckpoint: { tailoringEnabled: false, contentAt: "2026-09-01T00:01:00.000Z", rubric, tailoringPlan: plan },
+    targetingBrief: { version: 1, source, entries: [{ entryId: "one", treatment: "feature" }],
+      presentation: { maxPages: 1, bodySizePt: 12 }, priority: { state: "confirmed", rubric, rubricKey,
+        emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [], confirmationKey: crypto.randomUUID() } },
+  });
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toMatchObject({ ok: false,
+    error: expect.stringContaining("Change this CV's page and evidence choices") });
+  expect(await buildTasks()).toHaveLength(0);
+  const choices = (treatment: "feature" | "summarise", maxPages: number) => ({
+    expectedRevision: draft.revision, expectedSource: source, expectedRubricKey: rubricKey,
+    requestKey: crypto.randomUUID(), choices: { entries: [{ entryId: "one", treatment }],
+      presentation: { maxPages, bodySizePt: 12 as const }, emphasisRequirementIds: ["r1"],
+      acknowledgedEssentialOmissionIds: [] } });
+  expect(await reviseFailedCvTargeting(draft.id, choices("feature", 2))).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  const enlarged = await draftRow(draft.id);
+  expect(enlarged.content?.sections[0]?.bullets).toEqual(["Led a team", "Improved delivery"]);
+  expect(enlarged.content?.theme).toMatchObject({ maxPages: 2, bodySizePt: 12 });
+  expect(enlarged.semanticAuditCache?.identity).toBe("c".repeat(64));
+  expect(enlarged.assessment).toBeNull();
+  expect(enlarged.buildCheckpoint?.contentAt).toBeUndefined();
+  expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: draft.id, mode: "assess" });
+  await database.update(schema.cvDrafts).set({ status: "failed", failure }).where(eq(schema.cvDrafts.id, draft.id));
+  expect(await reviseFailedCvTargeting(draft.id, choices("summarise", 2))).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  const shortened = await draftRow(draft.id);
+  expect(shortened.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+  expect(shortened.targetingBrief?.manualSections?.[0]?.bullets).toEqual(["Led a team", "Improved delivery"]);
+  await database.update(schema.cvDrafts).set({ status: "failed", failure }).where(eq(schema.cvDrafts.id, draft.id));
+  expect(await reviseFailedCvTargeting(draft.id, choices("feature", 2))).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  expect((await draftRow(draft.id)).content?.sections[0]?.bullets).toEqual(["Led a team", "Improved delivery"]);
+});
+
+it("uses the two-page targeted default after a JSONB theme round trip, but honours an explicit three-page choice", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1,
+    content: { ...library, theme: { ...DEFAULT_CV_THEME } } });
+  await setBudget(200);
+  await grantCvCredits(database, { userId: user.id, source: "admin", units: 2, externalRef: "targeted-theme-test" });
+  const roles = await visibleRoles(2);
+  expect(await outcome(requestCv({ ok: true }, generate(roles[0]!.job.id)))).toMatch(/^redirect:\/cv\//);
+  const [first] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.jobId, roles[0]!.job.id));
+  expect(first?.targetingBrief?.presentation.maxPages).toBe(2);
+  expect(first?.librarySnapshot.theme?.maxPages).toBe(2);
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "cvTheme",
+    value: { ...DEFAULT_CV_THEME, maxPages: 3 }, updatedAt: new Date() });
+  expect(await outcome(requestCv({ ok: true }, generate(roles[1]!.job.id)))).toMatch(/^redirect:\/cv\//);
+  const [second] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.jobId, roles[1]!.job.id));
+  expect(second?.targetingBrief?.presentation.maxPages).toBe(3);
+  expect(second?.librarySnapshot.theme?.maxPages).toBe(3);
+});
+
 it("refuses an account's fourth build in flight in a sentence, and writes nothing for it", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   await setBudget(200);
@@ -417,7 +626,7 @@ it("holds a retry and a saved edit to the same cap, and counts only this account
   const edit = new FormData();
   edit.set("summary", content.summary);
   edit.set("section-0", "Led a team");
-  await expect(saveCvDraft(ready.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(ready.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
   expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, ready.id))).toHaveLength(1);
 
   await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, failed.id));
@@ -520,7 +729,7 @@ it("freezes one PDF with the finalised revision and keeps it when a new revision
   const edit = new FormData();
   edit.set("summary", "New revision wording");
   edit.set("section-0", "Led a team");
-  await expect(saveCvDraft(draft.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(draft.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
   const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
   expect(child?.finalisedAt).toBeNull();
   expect(await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, child!.id))).toHaveLength(0);

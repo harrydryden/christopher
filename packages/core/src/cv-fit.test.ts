@@ -64,6 +64,47 @@ it('finds the fewest removals that fit by bisection, rendering a handful of plan
  expect(renders.count).toBeLessThanOrEqual(2 + Math.ceil(Math.log2(candidates)));
  expect(renders.count).toBeLessThan(removed + 1);
 });
+it('keeps citations and signposts aligned when measured fitting removes bullets', async () => {
+ const marked: CvPlan = { ...plan, sections: plan.sections.map(section => section.entryId.startsWith('r')
+  ? { ...section, bullets: section.bullets.map((text, index) => `${text} Marker ${section.entryId}-${index}`),
+    bulletSources: section.bullets.map((_, index) => [`entry:${section.entryId}:row:${index}`]),
+    bulletSignposts: section.bullets.map((_, index) => `Signpost ${section.entryId}-${index}`) } : section) };
+ const budget = createCvWritingBudget(library, 'Financial planning budgets reporting');
+ const wide = { ...budget, blocks: budget.blocks.map(block => ({ ...block, maxBullets: 6, maxSkills: 20 })) };
+ const fitted = await selectCvToFit(library, marked, 'Financial planning budgets reporting', wide);
+ expect(fitted.changes.some(change => change.includes('omitted a lower-priority bullet'))).toBe(true);
+ for (const section of fitted.content.sections.filter(item => item.kind === 'experience')) {
+  expect(section.bullets.length).toBe(section.bulletSources?.length);
+  expect(section.bullets.length).toBe(section.bulletSignposts?.length);
+  section.bullets.forEach((bullet, index) => {
+   const marker = bullet.match(/Marker (r\d+-\d+)$/)?.[1];
+   expect(marker).toBeTruthy();
+   expect(section.bulletSources?.[index]).toEqual([`entry:${section.entryId}:row:${marker!.split('-')[1]}`]);
+   expect(section.bulletSignposts?.[index]).toBe(`Signpost ${marker}`);
+  });
+ }
+});
+it('selects an emphasised requirement carrier and retains its citation and signpost', async () => {
+ const source: CvLibrary = { name: 'Example', contact: 'London', profile: 'Leader', entries: [{ id: 'role',
+  kind: 'experience', heading: 'Manager · Example', details: 'Improved reporting.\nLed delivery.',
+  confirmedResponsibilities: ['Improved reporting.', 'Led delivery.'] }] };
+ const rubric: CvRubric = { caveats: [], requirements: [
+  { id: 'report', label: 'Reporting', quote: 'reporting', importance: 'desirable', category: 'delivery' },
+  { id: 'delivery', label: 'Delivery', quote: 'delivery', importance: 'desirable', category: 'delivery' },
+ ] };
+ const tailoring: CvTailoringPlan = { requirements: [
+  { requirementId: 'report', status: 'demonstrated', evidence: [{ sourceId: 'entry:role:row:0', quote: 'Improved reporting.' }], reason: 'Direct.' },
+  { requirementId: 'delivery', status: 'demonstrated', evidence: [{ sourceId: 'entry:role:row:1', quote: 'Led delivery.' }], reason: 'Direct.' },
+ ], gapQuestions: [] };
+ const semantic = { rubric, plan: tailoring, emphasisRequirementIds: new Set(['delivery']) };
+ const authored: CvPlan = { summary: 'Leader.', sections: [{ entryId: 'role', bullets: ['Improved reporting.', 'Led delivery.'],
+  bulletSources: [['entry:role:row:0'], ['entry:role:row:1']], bulletSignposts: ['Reporting', 'Delivery'] }], gaps: [] };
+ const original = createCvWritingBudget(source, 'reporting delivery', 1, semantic);
+ const budget = { ...original, blocks: original.blocks.map(block => ({ ...block, maxBullets: 1 })) };
+ const fitted = await selectCvToFit(source, authored, 'reporting delivery', budget, semantic);
+ expect(fitted.content.sections[0]).toMatchObject({ bullets: ['Led delivery.'],
+  bulletSources: [['entry:role:row:1']], bulletSignposts: ['Delivery'] });
+});
 it('gives the writer budgets before its first attempt and avoids unnecessary model retries',async()=>{
  const write=vi.fn().mockResolvedValue(plan);
  // The milestone each motion belongs to is the motion catalogue's to say; the fitter reports the
@@ -99,7 +140,7 @@ it('reports each motion of writing and fitting with the figures behind it',async
 it('never silently drops employment or education to satisfy the page count',async()=>{
  const events: CvFitEvent[] = [];
  const failing = buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}),undefined,async event => { events.push(event); });
- await expect(failing).rejects.toThrow('omitted employment or a qualification');
+  await expect(failing).rejects.toThrow('omitted employment, a qualification or a selected Interest');
  // Named in the taxonomy the whole build is classified by: what the writer returned is unusable.
  await expect(failing).rejects.toMatchObject({ kind:'output_invalid', detail:{ omitted:['e'] } });
  // The reading that found it is reported before the build stops, so the page can say what was lost.
@@ -115,6 +156,22 @@ it('budgets and protects Training as a qualification', async () => {
  await expect(missing).rejects.toMatchObject({ kind:'output_invalid', detail:{ omitted:['t'] } });
  const content = materialiseCv(source, { ...plan, sections:[...plan.sections, { entryId:'t', bullets:['PRINCE2 Practitioner, 2019'] }] });
  expect(content.sections.find(section => section.entryId === 't')).toMatchObject({ kind:'training', heading:'PRINCE2 Practitioner' });
+});
+it('keeps seven distinct qualifications across legacy Education and Training blocks despite tight prose budgets', async () => {
+ const education = ['BSc Economics', 'MSc Finance', 'ACCA', 'CIMA'];
+ const training = ['PRINCE2', 'AgilePM', 'Six Sigma'];
+ const source: CvLibrary = { ...library, entries: [library.entries[0]!,
+  { id: 'education-seven-a', kind: 'education', heading: 'Education', details: education.join('\n') },
+  { id: 'education-seven-b', kind: 'training', heading: 'Training', details: training.join('\n') }] };
+ const authored: CvPlan = { summary: 'Finance leader.', sections: [
+  { entryId: 'r0', bullets: ['Financial planning budget reporting'] },
+  { entryId: 'education-seven-a', bullets: education },
+  { entryId: 'education-seven-b', bullets: training }], gaps: [] };
+ const original = createCvWritingBudget(source, 'Finance');
+ const budget = { ...original, blocks: original.blocks.map(block => ({ ...block, maxBullets: 1 })) };
+ const fitted = await selectCvToFit(source, authored, 'Finance', budget);
+ expect(fitted.content.sections.find(section => section.entryId === 'education-seven-a')?.bullets).toEqual(education);
+ expect(fitted.content.sections.find(section => section.entryId === 'education-seven-b')?.bullets).toEqual(training);
 });
 it('ranks structured skill labels including AI and R, and enforces their allocated count', async () => {
  const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',theme:{ ...DEFAULT_CV_THEME, maxPages: 2 },entries:[
@@ -340,6 +397,62 @@ it('budgets one interest block on a multi-page CV and lets the fitter drop it fi
  const crowded = await selectCvToFit(withInterest, { ...plan, sections: [...plan.sections, { entryId: 'i', bullets: ['Marathon running'] }] }, 'Finance', budget);
  expect(crowded.content.sections.some(section => section.entryId === 'i')).toBe(false);
  expect(crowded.content.sections.filter(section => section.kind === 'experience')).toHaveLength(6);
+});
+it('keeps explicitly selected Interests in a one-page targeted budget, while legacy Interests remain optional', () => {
+ const withInterest: CvLibrary = { ...library, theme: { ...DEFAULT_CV_THEME, maxPages: 1 }, entries: [
+  ...library.entries, { id: 'i', kind: 'interest', heading: 'Board service', details: 'Chaired a charity board',
+   confirmedResponsibilities: ['Chaired a charity board'] }] };
+ const rubric = { caveats: [], requirements: [{ id: 'governance', label: 'Board governance', quote: 'board governance',
+  importance: 'essential' as const, category: 'experience' as const }] };
+ const tailoring = { requirements: [{ requirementId: 'governance', status: 'demonstrated' as const,
+  evidence: [{ sourceId: 'entry:i:row:0', quote: 'Chaired a charity board' }], reason: 'Direct.' }], gapQuestions: [] };
+ expect(createCvWritingBudget(withInterest, 'board', 1).blocks.some(block => block.entryId === 'i')).toBe(false);
+ const targeted = createCvWritingBudget(withInterest, 'board', 1,
+  { rubric, plan: tailoring, treatments: new Map([['i', 'feature']]) });
+ expect(targeted.blocks.find(block => block.entryId === 'i')).toMatchObject({ kind: 'interest', required: true });
+ const missing = { ...plan, sections: plan.sections.filter(section => section.entryId !== 'i') };
+ expect(cvBudgetViolations(missing, targeted)).toContain('Retain i: interest block.');
+});
+it('refuses an authored plan that omits a selected sole-essential Interest', async () => {
+ const source: CvLibrary = { name: 'Example', contact: 'London', profile: 'Leader',
+  theme: { ...DEFAULT_CV_THEME, maxPages: 1 }, entries: [
+   { id: 'role', kind: 'experience', heading: 'Manager · Example', details: 'Led operations.',
+    confirmedResponsibilities: ['Led operations.'] },
+   { id: 'i', kind: 'interest', heading: 'Charity governance', details: 'Chaired a charity board.',
+    confirmedResponsibilities: ['Chaired a charity board.'] },
+  ] };
+ const rubric = { caveats: [], requirements: [{ id: 'board', label: 'Board governance', quote: 'board governance',
+  importance: 'essential' as const, category: 'experience' as const }] };
+ const tailoring = { requirements: [{ requirementId: 'board', status: 'demonstrated' as const,
+  evidence: [{ sourceId: 'entry:i:row:0', quote: 'Chaired a charity board.' }], reason: 'Direct.' }], gapQuestions: [] };
+ const semantic = { rubric, plan: tailoring, treatments: new Map([['role', 'feature' as const], ['i', 'feature' as const]]) };
+ const complete: CvPlan = { summary: 'Operations leader.', sections: [
+  { entryId: 'role', bullets: ['Led operations.'], bulletSources: [['entry:role:row:0']] },
+  { entryId: 'i', bullets: ['Chaired a charity board.'], bulletSources: [['entry:i:row:0']] },
+ ], gaps: [] };
+ const write = vi.fn().mockResolvedValue({ ...complete, sections: complete.sections.slice(0, 1) });
+ await expect(buildFittedCv(source, 'Board governance', write, undefined, undefined, semantic))
+  .rejects.toMatchObject({ kind: 'output_invalid', detail: { omitted: ['i'] } });
+ expect(write).toHaveBeenCalledTimes(1);
+});
+it('treats a targeted 20-section selection conflict as per-CV recovery before any author call', async () => {
+ const source: CvLibrary = { name: 'Example', contact: 'London', profile: 'Leader',
+  theme: { ...DEFAULT_CV_THEME, maxPages: 2 }, entries: [
+   ...Array.from({ length: 20 }, (_, index) => ({ id: `role-${index}`, kind: 'experience' as const,
+    heading: `Role ${index}`, details: 'Led operations.', confirmedResponsibilities: ['Led operations.'] })),
+   { id: 'interest', kind: 'interest', heading: 'Charity board', details: 'Chaired a board.',
+    confirmedResponsibilities: ['Chaired a board.'] },
+  ] };
+ const rubric = { caveats: [], requirements: [] };
+ const tailoring = { requirements: [], gapQuestions: [] };
+ const semantic = { rubric, plan: tailoring, treatments: new Map([['interest', 'feature' as const]]) };
+ const write = vi.fn();
+ await expect(buildFittedCv(source, 'Operations', write, undefined, undefined, semantic))
+  .rejects.toMatchObject({ kind: 'page_limit_unfittable', detail: { maxPages: 2, attempts: 0 } });
+ await expect(buildFittedCv(source, 'Operations', write, undefined, undefined, semantic))
+  .rejects.toThrow('Omit a selected section here so at most 20 remain');
+ expect(write).not.toHaveBeenCalled();
+ expect(() => createCvWritingBudget(source, 'Operations')).not.toThrow();
 });
 it('corrects a retry against the budget it will be given, not the one it just missed', async () => {
  const minimal: CvPlan = { ...plan, sections: plan.sections.map(section => section.entryId.startsWith('r') ? { ...section, bullets: [plan.sections[1]!.bullets[1]!] } : section) };

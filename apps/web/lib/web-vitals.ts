@@ -59,7 +59,7 @@ export function vitalRoute(pathname: string): string {
  */
 export const VITAL_ROUTES: ReadonlySet<string> = new Set([
   "/", "/account", "/admin", "/admin/catalogue", "/admin/health", "/admin/settings", "/applications",
-  "/companies", "/companies/:id", "/cv/:id", "/cv/library", "/health", "/learning", "/library",
+  "/companies", "/companies/:id", "/cv/:id", "/cv/:id/preparation", "/cv/library", "/health", "/learning", "/library",
   "/roles/add", "/roles/add/:id", "/roles/:id", "/settings", "/suggestions", "/login", "/share/:id",
 ]);
 

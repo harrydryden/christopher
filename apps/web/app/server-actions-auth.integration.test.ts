@@ -114,6 +114,8 @@ const GATES: Record<string, Record<string, Gate>> = {
     refreshCompanyProfile: "verified", unfollowCompany: "user", followCompany: "verified",
   },
   "actions/cv-share.ts": { createCvShareLink: "user", revokeCvShareLink: "user", resolveCvShareComment: "user" },
+  "actions/cv-targeting.ts": { confirmCvTargetingPriorities: "verified", reviseFailedCvTargeting: "verified" },
+  "actions/cv-pending-skills.ts": { decideCvPendingSkill: "verified" },
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
     saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", requestCvSkillSuggestions: "verified", readCvSkillSuggestions: "verified", assessCvDraft: "verified",

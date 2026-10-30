@@ -9,8 +9,10 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CV_THEME } from "@col/core/cv-theme-values";
 import type { CvContent } from "@col/core/cv";
+import type { CvTargetingBriefV1, CvTargetingView } from "@col/core/cv-targeting";
 
 vi.mock("@/app/actions/cv", () => ({ saveCvDraft: vi.fn(), requestCvSkillSuggestions: vi.fn(), readCvSkillSuggestions: vi.fn() }));
+vi.mock("@/app/actions/cv-targeting", () => ({ confirmCvTargetingPriorities: vi.fn() }));
 vi.mock("@/lib/cv-review-edits", async importOriginal => {
   const actual = await importOriginal<typeof import("@/lib/cv-review-edits")>();
   return { ...actual, cvReviewEditedContent: vi.fn(actual.cvReviewEditedContent) };
@@ -36,6 +38,128 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("saves unsaved wording, a treatment change and an optional signpost through one form", async () => {
+  const view = { draftId: "cv-1", revision: 3, status: "confirmed", source: { libraryVersion: 1,
+    evidenceHash: "a".repeat(64), jobDescriptionHash: "b".repeat(64) }, rubricKey: "c".repeat(64),
+    entries: [{ entryId: "e-1", kind: "experience", heading: "Analyst, Engines Ltd", treatment: "feature" }],
+    priorities: Array.from({ length: 3 }, (_, index) => ({ id: `r-${index}`, label: `Requirement ${index}`,
+      quote: "The role requires analysis", importance: "desirable", category: "experience", selected: true,
+      evidenceEntryIds: ["e-1"] })), essentialOmissionIds: [], acknowledgedEssentialOmissionIds: [],
+    summaryNeedsReview: false, presentation: { maxPages: 2, bodySizePt: 12 } } as CvTargetingView;
+  await act(async () => { root.render(<CvDraftEditor id="cv-1" content={content} theme={{ ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 }}
+    baseRevision={3} targetingView={view} />); });
+  await vi.waitFor(() => expect(container.querySelector('select[aria-label="Analyst, Engines Ltd treatment"]')).not.toBeNull());
+  const bullet = container.querySelector<HTMLTextAreaElement>('textarea[name="section-0"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bullet, "Edited supported work.");
+    bullet.dispatchEvent(new Event("input", { bubbles: true })); });
+  const treatment = container.querySelector<HTMLSelectElement>('select[aria-label="Analyst, Engines Ltd treatment"]')!;
+  act(() => { treatment.value = "summarise"; treatment.dispatchEvent(new Event("change", { bubbles: true })); });
+  const signpost = container.querySelector<HTMLInputElement>('input[aria-label="Competency label for bullet 1 in Analyst, Engines Ltd"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(signpost, "Analysis");
+    signpost.dispatchEvent(new Event("input", { bubbles: true })); });
+  const data = new FormData(container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!);
+  expect(data.get("section-0")).toBe("Edited supported work.");
+  expect(JSON.parse(String(data.get("targetingChoices"))).entries).toEqual([{ entryId: "e-1", treatment: "summarise" }]);
+  expect(JSON.parse(String(data.get("bulletSignposts")))["e-1"]).toEqual(["Analysis"]);
+  expect(data.get("targetingExpectedRubricKey")).toBe("c".repeat(64));
+  const navigation = new Event("beforeunload", { cancelable: true });
+  act(() => window.dispatchEvent(navigation));
+  expect(navigation.defaultPrevented).toBe(true);
+});
+
+it("submits labels aligned with surviving bullets when a labelled line is removed", () => {
+  const signed = { ...content, sections: [{ ...content.sections[0]!, bullets: ["Built systems.", "Improved service."],
+    bulletSignposts: ["Delivery", "Service"] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={signed} theme={DEFAULT_CV_THEME}
+    baseRevision={3} baseEditHash={"a".repeat(64)} />));
+  const bullet = container.querySelector<HTMLTextAreaElement>('textarea[name="section-0"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bullet, "Improved service.");
+    bullet.dispatchEvent(new Event("input", { bubbles: true })); });
+  const data = new FormData(container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!);
+  expect(data.get("section-0")).toBe("Improved service.");
+  expect(JSON.parse(String(data.get("bulletSignposts")))["e-1"]).toEqual(["Service"]);
+  expect(data.get("baseRevision")).toBe("3");
+  expect(data.get("baseEditHash")).toBe("a".repeat(64));
+  expect(container.textContent).toContain("label was cleared");
+});
+
+it("keeps a mounted edit base through same-ID refresh and fences changed wording", () => {
+  const props = { id: "cv-1", content, theme: DEFAULT_CV_THEME, baseRevision: 3,
+    baseEditHash: "a".repeat(64), latestLibraryVersion: 7 };
+  act(() => root.render(<CvDraftEditor {...props} />));
+  const summary = container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(summary, "My unsaved wording.");
+    summary.dispatchEvent(new Event("input", { bubbles: true })); });
+  const form = container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!;
+  const save = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  expect(save.disabled).toBe(false);
+
+  // A status-only refresh may update adjacent page content without changing the edit base.
+  act(() => root.render(<CvDraftEditor {...props} latestLibraryVersion={8} assessment={<p>Check complete</p>} />));
+  expect(summary.value).toBe("My unsaved wording.");
+  expect(save.disabled).toBe(false);
+  expect(new FormData(form).get("baseRevision")).toBe("3");
+  expect(new FormData(form).get("pageLibraryVersion")).toBe("7");
+
+  act(() => root.render(<CvDraftEditor {...props} baseRevision={4} />));
+  expect(save.disabled).toBe(true);
+  expect(new FormData(form).get("baseRevision")).toBe("3");
+
+  const refreshed = { ...content, summary: "A different saved revision.", sections: [
+    { ...content.sections[0]!, entryId: "other-entry", bullets: ["Different claim."] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor {...props} content={refreshed} baseRevision={5} baseEditHash={"b".repeat(64)} />));
+  expect(summary.value).toBe("My unsaved wording.");
+  expect((container.querySelector('textarea[name="section-0"]') as HTMLTextAreaElement).value).toBe("Wrote the first program.");
+  expect(save.disabled).toBe(true);
+  expect(new FormData(form).get("baseEditHash")).toBe("a".repeat(64));
+  expect(container.textContent).toContain("reload this page before saving");
+});
+
+it("fences the external selected-skills save after a same-ID base refresh", async () => {
+  vi.mocked(requestCvSkillSuggestions).mockResolvedValue({ ok: true, run: { id: "run-1", status: "ready", error: null,
+    suggestions: [{ id: "proposal-1", category: "Leadership", label: "Team leadership", sourceId: "entry-1",
+      evidenceQuote: "Led a team", roleQuote: "Lead a team" }] } });
+  const props = { id: "cv-1", content, theme: DEFAULT_CV_THEME, baseRevision: 3,
+    baseEditHash: "a".repeat(64) };
+  act(() => root.render(<CvDraftEditor {...props} />));
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Generate skills")!.click());
+  const selected = [...container.querySelectorAll("label")].find(label => label.textContent?.includes("Team leadership"))!
+    .querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  act(() => selected.click());
+  const saveSkills = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Save selected skills to CV")!;
+  expect(saveSkills.disabled).toBe(false);
+  act(() => root.render(<CvDraftEditor {...props} baseEditHash={"b".repeat(64)} />));
+  expect(saveSkills.disabled).toBe(true);
+});
+
+it("keeps mounted targeting controls and original hash when the same-ID brief changes", async () => {
+  const view = { draftId: "cv-1", revision: 3, status: "confirmed",
+    source: { libraryVersion: 1, evidenceHash: "a".repeat(64), jobDescriptionHash: "b".repeat(64) },
+    rubricKey: "c".repeat(64), entries: [{ entryId: "e-1", kind: "experience",
+      heading: "Analyst, Engines Ltd", treatment: "feature" }],
+    priorities: Array.from({ length: 3 }, (_, index) => ({ id: `r-${index}`, label: `Requirement ${index}`,
+      quote: "Analysis", importance: "responsibility", category: "experience", selected: true,
+      evidenceEntryIds: ["e-1"] })), essentialOmissionIds: [], acknowledgedEssentialOmissionIds: [],
+    summaryNeedsReview: false, presentation: { maxPages: 2, bodySizePt: 12 } } as CvTargetingView;
+  const brief = { version: 1, source: view.source, entries: [{ entryId: "e-1", treatment: "feature" }],
+    presentation: view.presentation, priority: { state: "confirmed", rubricKey: view.rubricKey,
+      emphasisRequirementIds: ["r-0", "r-1", "r-2"], acknowledgedEssentialOmissionIds: [] } } as CvTargetingBriefV1;
+  const props = { id: "cv-1", content, theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 as const },
+    baseRevision: 3, baseEditHash: "a".repeat(64), targetingView: view, targetingBrief: brief };
+  await act(async () => root.render(<CvDraftEditor {...props} />));
+  const treatment = await vi.waitFor(() => container.querySelector<HTMLSelectElement>('select[aria-label="Analyst, Engines Ltd treatment"]')!);
+  expect(treatment.value).toBe("feature");
+  const changedBrief = { ...brief, entries: [{ entryId: "e-1", treatment: "omit" as const }] };
+  const changedView = { ...view, entries: [{ ...view.entries[0]!, treatment: "omit" as const }] };
+  act(() => root.render(<CvDraftEditor {...props} targetingBrief={changedBrief} targetingView={changedView}
+    baseEditHash={"b".repeat(64)} />));
+  expect(treatment.value).toBe("feature");
+  const form = container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!;
+  expect(new FormData(form).get("baseEditHash")).toBe("a".repeat(64));
+  expect(form.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+  expect(form.querySelector<HTMLButtonElement>('button[name="intent"][value="improve"]')?.disabled).toBe(true);
 });
 
 it("edits headings and individual skills in saved manual and accepted sections through the one CV form", () => {

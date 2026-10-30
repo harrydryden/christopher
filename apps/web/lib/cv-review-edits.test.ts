@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@col/core/cv";
-import { cvReviewEditedContent, cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, cvReviewSkillCharacterIssue, splitCvReviewSkillRow } from "./cv-review-edits";
+import { cvReviewEditedContent, cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, cvReviewSkillCharacterIssue, reconcileCvBulletSignposts, splitCvReviewSkillRow } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -27,6 +27,47 @@ it("omits an emptied skill section while preserving unchanged section IDs and ci
   const sections = cvReviewSections(saved, ["Built systems.", "  \n "], [], []);
   expect(sections).toEqual([saved.sections[0]]);
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
+});
+
+it("adds and removes a competency signpost on a sourced prose bullet without changing its entry", () => {
+  const signed = cvReviewSections(saved, ["Built systems.", "Python"], [], [], {}, { "role-1": ["Systems delivery"] });
+  expect(signed[0]).toMatchObject({ entryId: "role-1", bulletSignposts: ["Systems delivery"],
+    bulletSources: [["entry:role-1"]] });
+  expect(CvContentSchema.safeParse({ ...saved, sections: signed }).success).toBe(true);
+  const plain = cvReviewSections({ ...saved, sections: signed }, ["Built systems.", "Python"], [], [], {},
+    { "role-1": [null] });
+  expect(plain[0]?.bulletSignposts).toBeUndefined();
+  expect(plain[0]?.bulletSources).toEqual([["entry:role-1"]]);
+});
+
+it("keeps signposts with surviving claims through deletion, reordering and duplicate wording", () => {
+  const before = "Led delivery.\nImproved service.\nLed delivery.";
+  const labels = ["Leadership", "Service", "Delivery"];
+  const deleted = reconcileCvBulletSignposts(before, "Improved service.\nLed delivery.", labels);
+  expect(deleted).toEqual({ labels: ["Service", null], cleared: true });
+  const reordered = reconcileCvBulletSignposts(before, "Improved service.\nLed delivery.\nLed delivery.", labels);
+  expect(reordered).toEqual({ labels: ["Service", "Leadership", "Delivery"], cleared: false });
+  const source = { ...saved, sections: [{ ...saved.sections[0]!, bullets: before.split("\n"), bulletSignposts: labels }, saved.sections[1]!] };
+  const edited = cvReviewEditedContent(source, { summary: source.summary, theme: source.theme,
+    rows: ["Improved service.\nLed delivery.", "Python"], removedSkillIds: [], addedSkills: [], skillHeadings: {},
+    bulletSignposts: { "role-1": deleted.labels }, addedSupportIds: [] }, []);
+  expect(edited.sections[0]?.bulletSignposts).toEqual(["Service", null]);
+  expect(CvContentSchema.safeParse(edited).success).toBe(true);
+  const fallback = cvReviewSections(source, ["Improved service.\nLed delivery.", "Python"], [], []);
+  expect(fallback[0]?.bulletSignposts).toEqual(["Service", null]);
+  expect(reconcileCvBulletSignposts("Same.\nSame.", "Same.", ["Shared", "Shared"]))
+    .toEqual({ labels: ["Shared"], cleared: false });
+  expect(reconcileCvBulletSignposts("Same.\nSame.", "Same.\nSame.\nSame.", ["First", "Second"]))
+    .toEqual({ labels: [null, null, null], cleared: true });
+});
+
+it("retains a single in-place wording edit but clears labels on ambiguous replacements", () => {
+  expect(reconcileCvBulletSignposts("Led delivery.\nImproved service.",
+    "Led the delivery.\nImproved service.", ["Leadership", "Service"]))
+    .toEqual({ labels: ["Leadership", "Service"], cleared: false });
+  expect(reconcileCvBulletSignposts("Led delivery.\nImproved service.",
+    "New claim.\nAnother new claim.", ["Leadership", "Service"]))
+    .toEqual({ labels: [null, null], cleared: true });
 });
 
 it("adds manually entered skills without claiming Library sources", () => {

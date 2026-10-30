@@ -14,6 +14,7 @@ export function cvReviewEditedContent(saved: CvContent, edits: {
   removedSkillIds: string[];
   addedSkills: AddedSkillSection[];
   skillHeadings: Readonly<Record<string, string>>;
+  bulletSignposts?: Readonly<Record<string, readonly (string | null)[]>>;
   addedSupportIds: string[];
 }, available: readonly LibrarySupportSection[]): CvContent {
   const summary = edits.summary.trim();
@@ -22,7 +23,7 @@ export function cvReviewEditedContent(saved: CvContent, edits: {
     theme: edits.theme,
     summary,
     sections: cvReviewSupportingSections(
-      cvReviewSections(saved, edits.rows, edits.removedSkillIds, edits.addedSkills, edits.skillHeadings),
+      cvReviewSections(saved, edits.rows, edits.removedSkillIds, edits.addedSkills, edits.skillHeadings, edits.bulletSignposts),
       edits.addedSupportIds,
       available,
     ),
@@ -72,6 +73,46 @@ export function cvReviewSkillCharacterIssue(sections: CvContent["sections"]): st
 
 const lines = (value: string) => value.split("\n").map((line) => line.trim()).filter(Boolean);
 
+/** Keep a signpost with its claim when prose lines move, rather than with its old row number. */
+export function reconcileCvBulletSignposts(before: string, after: string, labels: readonly (string | null)[]): {
+  labels: (string | null)[]; cleared: boolean;
+} {
+  const oldLines = lines(before);
+  const newLines = lines(after);
+  const positions = new Map<string, number[]>();
+  oldLines.forEach((line, index) => positions.set(line, [...(positions.get(line) ?? []), index]));
+  const matchedOld = new Set<number>();
+  const matchedNew = new Set<number>();
+  const next = newLines.map((line, newIndex) => {
+    const oldIndex = positions.get(line)?.shift();
+    if (oldIndex === undefined) return null;
+    matchedOld.add(oldIndex);
+    matchedNew.add(newIndex);
+    return labels[oldIndex] ?? null;
+  });
+  const unmatchedOld = oldLines.flatMap((_, index) => matchedOld.has(index) ? [] : [index]);
+  const unmatchedNew = newLines.flatMap((_, index) => matchedNew.has(index) ? [] : [index]);
+  // One line changed in place: retain its deliberately entered label. A deletion, insertion or
+  // ambiguous multi-line replacement cannot safely inherit a label from another claim.
+  if (oldLines.length === newLines.length && unmatchedOld.length === 1 && unmatchedNew.length === 1
+    && unmatchedOld[0] === unmatchedNew[0]) {
+    next[unmatchedNew[0]!] = labels[unmatchedOld[0]!] ?? null;
+    matchedOld.add(unmatchedOld[0]!);
+  }
+  let ambiguousCleared = false;
+  for (const line of new Set(oldLines)) {
+    const oldIndices = oldLines.flatMap((value, index) => value === line ? [index] : []);
+    const newIndices = newLines.flatMap((value, index) => value === line ? [index] : []);
+    if (oldIndices.length <= 1 || newIndices.length === oldIndices.length || !newIndices.length) continue;
+    if (new Set(oldIndices.map(index => labels[index] ?? null)).size <= 1) continue;
+    for (const index of newIndices) next[index] = null;
+    ambiguousCleared = true;
+  }
+  return { labels: next, cleared: ambiguousCleared || oldLines.some((line, index) =>
+    !!labels[index] && !matchedOld.has(index) &&
+    !newLines.some((remaining, position) => remaining === line && next[position] === labels[index])) };
+}
+
 /** Build the exact sections that a review preview and a direct save will use. */
 export function cvReviewSections(
   saved: CvContent,
@@ -79,6 +120,7 @@ export function cvReviewSections(
   removedSkillIds: string[],
   addedSkills: AddedSkillSection[],
   skillHeadings: Readonly<Record<string, string>> = {},
+  bulletSignposts: Readonly<Record<string, readonly (string | null)[]>> = {},
 ): CvContent["sections"] {
   const removed = new Set(removedSkillIds);
   if (removedSkillIds.some((id) => !saved.sections.some((section) => section.kind !== "experience" && section.entryId === id)))
@@ -92,12 +134,20 @@ export function cvReviewSections(
     if (section.kind === "skill" && (!heading || heading.length > 250))
       throw new Error("Give each skill section a heading of 1 to 250 characters.");
     const textChanged = JSON.stringify(edited) !== JSON.stringify(before);
-    const changed = heading !== section.heading || textChanged;
+    const suppliedSignposts = bulletSignposts[section.entryId];
+    const alignedSignposts = suppliedSignposts ?? reconcileCvBulletSignposts(before.join("\n"), edited.join("\n"),
+      section.bulletSignposts ?? []).labels;
+    const signposts = section.kind === "skill" ? undefined : edited.map((_, bulletIndex) =>
+      alignedSignposts[bulletIndex]?.trim() || null);
+    const nextSignposts = signposts?.some(Boolean) ? signposts : undefined;
+    const signpostsChanged = JSON.stringify(nextSignposts ?? null) !== JSON.stringify(section.bulletSignposts ?? null);
+    const changed = heading !== section.heading || textChanged || signpostsChanged;
     if (!changed) return [section];
     return [{
       ...section,
       ...(section.kind === "skill" ? { heading, skillItems: edited, bullets: edited.slice(0, CV_LIMITS.bulletsPerSection) } : { bullets: edited }),
       ...(textChanged ? { bulletSources: undefined } : {}),
+      ...(section.kind !== "skill" ? { bulletSignposts: nextSignposts } : {}),
     }];
   });
   const seen = new Set(saved.sections.map((section) => section.entryId));

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createTestDb } from "@/test/db";
+import { withCvEditBase } from "@/test/cv-form";
 import {
   actionCvs,
   addCvShareComment,
@@ -168,7 +169,7 @@ it("spares the failed draft an edit is written from, even with a newer failure b
   const form = new FormData();
   form.set("summary", "Updated operations profile");
   await expect(
-    saveCvDraft(failedRetry.id, { ok: true }, form),
+    saveCvDraft(failedRetry.id, { ok: true }, await withCvEditBase(database, failedRetry.id, form)),
   ).rejects.toThrow("redirect:/cv/");
   const saved = (await rows()).at(-1)!;
   expect(saved.revision).toBe(6);
@@ -590,7 +591,7 @@ it("rejects a stale editor save when its source was deleted before the transacti
     const { saveCvDraft } = await import("@/app/actions/cv");
     const form = new FormData();
     form.set("summary", "Updated operations profile");
-    expect(await saveCvDraft(current.id, { ok: true }, form)).toEqual({
+    expect(await saveCvDraft(current.id, { ok: true }, await withCvEditBase(database, current.id, form))).toEqual({
       ok: false,
       error: "This CV was deleted. Open the latest saved CV before editing.",
     });

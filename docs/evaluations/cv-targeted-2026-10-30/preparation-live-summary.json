@@ -1,0 +1,37 @@
+{
+  "kind": "cv-preparation-live-probe",
+  "at": "2026-10-30T19:30:53.900Z",
+  "source": "provider",
+  "syntheticCandidate": true,
+  "sourceCommit": "8fa8759285bc5e7ac29b2e0357e7ea5a58b14554",
+  "probeSha256": "97fce8d8de6363b6e06d74e25eb735a52e078cf524ca738df152d6de9fab8e46",
+  "promptSetVersion": "951386df60b9",
+  "model": "claude-fable-5-1",
+  "outcome": "passed",
+  "requirements": 9,
+  "mappedRequirements": 9,
+  "recommendedEmphasis": ["r6", "r7", "r9", "r8", "r1"],
+  "essentialOmissions": [],
+  "validation": {
+    "exactJobQuotes": true,
+    "completeRequirementMapping": true,
+    "exactEvidenceQuotes": true
+  },
+  "calls": 2,
+  "costUsd": 0.246028,
+  "timing": {
+    "rubricMs": 9662,
+    "planningMs": 29426,
+    "totalMs": 39093,
+    "scope": "One process-level live-provider sample in the existing worker's shell, with DATABASE_URL removed; not a hosted frontend or before/after benchmark."
+  },
+  "recordingSha256": "71e6e386c8bbff939e48dbd803093da1d4f8f109386e098d8dd3eaf38bdcdd44",
+  "totalLedgerUsd": 1.600163,
+  "preparationPhaseUsd": 0.246028,
+  "preparationRequests": 2,
+  "maxTotalUsd": 10,
+  "maxPreparationUsd": 2,
+  "maxPreparationRequests": 4,
+  "credentialsCopied": false,
+  "reportScope": "Summary captured from the completed probe. Earlier author/review/skill evidence remains separate; this is not one fresh end-to-end build."
+}

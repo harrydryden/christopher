@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { CvLibrarySchema, MAX_CV_SKILL_DRAFT_CONTEXT_BYTES, cvDraftContextHighlightedSkills, cvReusableSkillRows,
   cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions, isCvSkillDraftContext, type TaskPayloads } from "@col/core";
 import { estimateCostUsd } from "@col/ai";
+import { CvTargetingBriefSchema, cvEligibleSkillLibrary, cvSkillSourcePolicy } from "@col/core/cv-targeting";
 import { cvDrafts, cvSkillSuggestionRuns, latestCvLibrary, type Db, type Task } from "@col/db";
 import { openAccountAiPass } from "../account-ai-pass";
 import type { WorkerDeps } from "../context";
@@ -19,15 +20,16 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
       await deps.assertOwnership?.(tx as unknown as Db);
       if (status === "ready") {
         const [currentDraft] = await tx.select({ status: cvDrafts.status, content: cvDrafts.content, revision: cvDrafts.revision,
-          jobDescription: cvDrafts.jobDescription }).from(cvDrafts)
+          jobDescription: cvDrafts.jobDescription, targetingBrief: cvDrafts.targetingBrief }).from(cvDrafts)
           .where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, userId))).limit(1).for("share");
         const currentLibrary = await latestCvLibrary(tx as unknown as Db, userId);
-        const currentRows = currentLibrary ? cvSkillEvidenceRows(CvLibrarySchema.parse(currentLibrary.content)) : [];
+        const currentBrief = currentDraft?.targetingBrief ? CvTargetingBriefSchema.parse(currentDraft.targetingBrief) : null;
+        const currentRows = currentLibrary ? cvSkillEvidenceRows(cvEligibleSkillLibrary(CvLibrarySchema.parse(currentLibrary.content), currentBrief)) : [];
         if (!currentDraft?.content || !["ready", "failed"].includes(currentDraft.status) || !currentLibrary
           || currentDraft.revision !== baseRevision || !draftContext
           || currentLibrary.version !== run.libraryVersion
           || cvSkillSuggestionInputHash(currentLibrary.version, draftId, currentDraft.jobDescription, currentRows,
-            cvDraftContextHighlightedSkills(draftContext), draftContext, baseRevision) !== run.inputHash) {
+            cvDraftContextHighlightedSkills(draftContext), draftContext, baseRevision, cvSkillSourcePolicy(currentBrief)) !== run.inputHash) {
           status = "failed"; suggestions = []; error = "Your Experience or target role changed. Refresh suggestions.";
         }
       }
@@ -38,7 +40,7 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
     return written.length ? { status, count: suggestions.length } : { skipped: "suggestion run superseded" };
   };
   const [draft] = await deps.db.select({ jobDescription: cvDrafts.jobDescription, status: cvDrafts.status, content: cvDrafts.content,
-    revision: cvDrafts.revision })
+    revision: cvDrafts.revision, targetingBrief: cvDrafts.targetingBrief })
     .from(cvDrafts).where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, userId))).limit(1);
   const latest = await latestCvLibrary(deps.db, userId);
   if (!draft?.content || !["ready", "failed"].includes(draft.status) || !latest)
@@ -50,12 +52,13 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
     return finish("failed", [], "This CV draft is too long for skill suggestions. Shorten it, then generate skills again.");
   if (draft.revision !== baseRevision)
     return finish("failed", [], "This CV changed. Generate skills again.");
-  const library = CvLibrarySchema.parse(latest.content);
+  const brief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+  const library = cvEligibleSkillLibrary(CvLibrarySchema.parse(latest.content), brief);
   const rows = cvSkillEvidenceRows(library);
   const highlightedSkills = cvDraftContextHighlightedSkills(draftContext);
   const reusableSkills = cvReusableSkillRows(library);
   const inputHash = cvSkillSuggestionInputHash(latest.version, draftId, draft.jobDescription, rows, highlightedSkills,
-    draftContext, baseRevision);
+    draftContext, baseRevision, cvSkillSourcePolicy(brief));
   if (latest.version !== run.libraryVersion || inputHash !== run.inputHash)
     return finish("failed", [], "Your Experience or target role changed. Refresh suggestions.");
   if (!rows.length) return finish("ready");

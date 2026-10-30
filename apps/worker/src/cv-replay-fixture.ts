@@ -5,8 +5,13 @@
  * plan exactly as a published CV does. Used by `cv-replay.test.ts` and `scripts/cv-replay-fixture.mts`.
  * No real person's data: the candidate, the employers and the advert are invented.
  */
-import { createUser, enqueueTask, schema, type Db } from "@col/db";
+import { createUser, enqueueTask, schema, confirmCvTargetingPrioritiesForUser, type Db } from "@col/db";
 import { dedupeKeyFor } from "@col/core";
+import { CvLibrarySchema } from "@col/core/cv";
+import { CvTargetingBriefSchema, cvEssentialOmissionIds, cvRecommendedPriorityIds, projectCvWritingLibrary } from "@col/core/cv-targeting";
+import { cvTargetingSource } from "@col/core/cv-targeting-identity";
+import { CvTailoringPlanSchema } from "@col/core/cv-tailoring";
+import { randomUUID } from "node:crypto";
 import type { AiClientLike } from "@col/ai";
 import { eq } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
@@ -71,15 +76,38 @@ export const REPLAY_FIXTURE_LIBRARY = {
  * The fixture draft, published: seeded for a fixture account (created once) and built through the
  * real queue and handler against `client`. Throws when it does not publish.
  */
-export async function publishReplayFixture(deps: WorkerDeps, client: AiClientLike, email = "cv-replay-fixture@example.invalid") {
+export async function publishReplayFixture(deps: WorkerDeps, client: AiClientLike,
+  email = "cv-replay-fixture@example.invalid", options: { targeted?: boolean } = {}) {
   const [existing] = await deps.db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1);
   const user = existing ?? (await createUser(deps.db, { email, name: "Replay fixture", role: "member", emailVerified: true })).user;
-  const draft = await seedReplayFixtureDraft(deps.db, user.id);
+  const draft = await seedReplayFixtureDraft(deps.db, user.id, options);
   const previous = { client: deps.aiClient, key: deps.env.anthropicApiKey };
   deps.aiClient = client;
   deps.env.anthropicApiKey ||= "scripted-client";
   try {
     await new TaskQueue(deps, { generate_cv: handleGenerateCv }, { concurrency: 1, workerId: "cv-replay-fixture", onAbandon }).drain();
+    if (options.targeted) {
+      const [paused] = await deps.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+      if (paused?.status !== "awaiting_priorities" || !paused.targetingBrief)
+        throw new Error("The targeted fixture did not pause for owned priorities.");
+      const brief = CvTargetingBriefSchema.parse(paused.targetingBrief);
+      if (!brief.priority.rubric || !brief.priority.rubricKey || !paused.buildCheckpoint?.tailoringPlan)
+        throw new Error("The targeted fixture has no rubric-bound evidence map to confirm.");
+      const library = CvLibrarySchema.parse(paused.librarySnapshot);
+      const plan = CvTailoringPlanSchema.parse(paused.buildCheckpoint.tailoringPlan);
+      const entries = brief.entries.map(row => ({ ...row,
+        treatment: row.entryId === "ev-manager" ? "summarise" as const
+          : row.entryId === "ev-calder" ? "omit" as const : "feature" as const }));
+      const writing = projectCvWritingLibrary(library, { ...brief, entries });
+      await confirmCvTargetingPrioritiesForUser(deps.db, user.id, draft.id, {
+        expectedRevision: paused.revision, expectedSource: brief.source, expectedRubricKey: brief.priority.rubricKey,
+        requestKey: randomUUID(), choices: { entries, presentation: { maxPages: 2, bodySizePt: 12 },
+          emphasisRequirementIds: cvRecommendedPriorityIds(brief.priority.rubric),
+          acknowledgedEssentialOmissionIds: cvEssentialOmissionIds(plan, brief.priority.rubric, writing) },
+      });
+      await new TaskQueue(deps, { generate_cv: handleGenerateCv }, { concurrency: 1,
+        workerId: "cv-replay-fixture-resumed", onAbandon }).drain();
+    }
   } finally {
     deps.aiClient = previous.client;
     deps.env.anthropicApiKey = previous.key;
@@ -90,10 +118,18 @@ export async function publishReplayFixture(deps: WorkerDeps, client: AiClientLik
 }
 
 /** A queued, planned draft for `userId`, with its build task: drain the queue to publish it. */
-export async function seedReplayFixtureDraft(db: Db, userId: string) {
+export async function seedReplayFixtureDraft(db: Db, userId: string, options: { targeted?: boolean } = {}) {
+  const library = CvLibrarySchema.parse(REPLAY_FIXTURE_LIBRARY);
+  const targetingBrief = options.targeted ? CvTargetingBriefSchema.parse({ version: 1,
+    source: cvTargetingSource(1, library, REPLAY_FIXTURE_DESCRIPTION),
+    entries: library.entries.map(entry => ({ entryId: entry.id, treatment: "feature" as const })),
+    presentation: { maxPages: 2, bodySizePt: 12 },
+    priority: { state: "unprepared", emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [] },
+  }) : null;
   const [draft] = await db.insert(schema.cvDrafts).values({
     userId, jobTitle: "Head of Operations", companyName: "Meridian Care Group", jobDescription: REPLAY_FIXTURE_DESCRIPTION,
     libraryVersion: 1, librarySnapshot: REPLAY_FIXTURE_LIBRARY, model: REPLAY_FIXTURE_MODEL,
+    targetingBrief,
     // Planned, with the optional questions already answered, so the build runs straight through to
     // publication, keeps its plan and tries the optional improvement.
     buildCheckpoint: { tailoringEnabled: true, quizCompleted: true },

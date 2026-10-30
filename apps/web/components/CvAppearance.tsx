@@ -40,7 +40,7 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
             [
               ["primary", "Header and heading underlines"],
               ["background", "Page background"],
-              ["surface", "Profile card fill"],
+              ["surface", theme.bodySizePt ? "Executive Summary card fill" : "Profile card fill"],
               ["pill", "Skill and industry pill fill"],
             ] as const
           ).map(([key, label]) => (
@@ -94,8 +94,8 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
             </select>
           </label>
           <p className="text-12 text-muted sm:col-span-2 sm:self-end">
-            The builder writes to this length and trims the lowest-priority
-            achievements to fit, keeping every job and qualification.
+            Save keeps your current wording. Check measures that exact saved CV;
+            it does not rewrite it. Preview shows the actual page count.
           </p>
         </div>
         <div className="mt-3 flex flex-wrap gap-4 text-14">
@@ -107,7 +107,7 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
                 change({ ...theme, introPanel: e.target.checked })
               }
             />{" "}
-            Profile card
+            {theme.bodySizePt ? "Executive Summary card" : "Profile card"}
           </label>
         </div>
       </section>
@@ -141,7 +141,7 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
               ),
             }}
           >
-            <strong>Profile</strong>
+            <strong>{theme.bodySizePt ? "Executive Summary" : "Profile"}</strong>
             <p className="mt-1 text-14">
               A concise introduction to your experience and strengths.
             </p>

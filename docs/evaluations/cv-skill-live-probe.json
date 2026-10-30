@@ -1,7 +1,7 @@
 {
   "kind": "cv-skill-suggestions-live-probe",
-  "at": "2026-10-28T13:10:16.478Z",
-  "promptSetVersion": "987e0b5ac958",
+  "at": "2026-10-30T17:56:34.299Z",
+  "promptSetVersion": "951386df60b9",
   "syntheticCandidate": true,
   "source": "provider",
   "model": "claude-fable-5-1",
@@ -9,27 +9,34 @@
   "verifiedCalls": [
     {
       "promptId": "cv.skill_suggestions",
-      "costUsd": 0.084121
+      "costUsd": 0.084948
     },
     {
       "promptId": "cv.skill_verify",
-      "costUsd": 0.039689
+      "costUsd": 0.07789
     }
   ],
   "cvQualification": "passed",
   "selectedOnlyPersistence": "covered by isolated integration tests; this paid probe makes no Library or CV change",
   "suggestionCount": 10,
-  "categoryCount": 3,
+  "categoryCount": 4,
   "suggestions": [
     {
-      "category": "Operations leadership",
-      "label": "Multi-site operations",
-      "sourceId": "entry:ev-head:row:0",
-      "evidenceQuote": "Own the operational plan for eleven community clinics, reporting delivery, cost and quality to the executive team every month.",
-      "roleQuote": "own service delivery for a portfolio of twelve sites"
+      "category": "Leadership",
+      "label": "Team leadership",
+      "sourceId": "entry:ev-head:row:1",
+      "evidenceQuote": "Lead four operations managers and a shared scheduling team of eighteen",
+      "roleQuote": "lead a team of four operations managers"
     },
     {
-      "category": "Finance and commercial",
+      "category": "Operations",
+      "label": "Operational planning",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "Own the operational plan for eleven community clinics",
+      "roleQuote": "You will own the operational plan for the portfolio"
+    },
+    {
+      "category": "Finance",
       "label": "Budget management",
       "sourceId": "entry:ev-head:row:3",
       "evidenceQuote": "Partner with finance on the annual budget and on monthly variance across a £14m cost base.",
@@ -43,18 +50,18 @@
       "roleQuote": "build and interpret reporting in SQL or a comparable analytics tool"
     },
     {
-      "category": "Operations leadership",
-      "label": "Team leadership",
-      "sourceId": "entry:ev-head:row:1",
-      "evidenceQuote": "Lead four operations managers and a shared scheduling team of eighteen",
-      "roleQuote": "lead a team of four operations managers"
+      "category": "Leadership",
+      "label": "Executive reporting",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "reporting delivery, cost and quality to the executive team every month",
+      "roleQuote": "report performance to the executive team each month"
     },
     {
-      "category": "Finance and commercial",
-      "label": "Supplier negotiation",
-      "sourceId": "entry:ev-calder:row:2",
-      "evidenceQuote": "Negotiated supplier renewals for courier and warehousing contracts worth £2m a year.",
-      "roleQuote": "Experience of supplier negotiation is preferred."
+      "category": "Operations",
+      "label": "Multi-site operations",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "Own the operational plan for eleven community clinics, reporting delivery, cost and quality",
+      "roleQuote": "own service delivery for a portfolio of twelve sites"
     },
     {
       "category": "Systems and tools",
@@ -64,44 +71,37 @@
       "roleQuote": "SQL or a comparable analytics tool"
     },
     {
-      "category": "Operations leadership",
-      "label": "Operational planning",
-      "sourceId": "entry:ev-head:row:0",
-      "evidenceQuote": "Own the operational plan for eleven community clinics",
-      "roleQuote": "You will own the operational plan for the portfolio"
-    },
-    {
-      "category": "Finance and commercial",
-      "label": "Vendor management",
-      "sourceId": "entry:ev-head:row:4",
-      "evidenceQuote": "Introduced a supplier scorecard covering the eight largest contracts, with quarterly reviews against agreed service levels.",
-      "roleQuote": "continuous improvement work across scheduling, rostering and supplier performance"
-    },
-    {
-      "category": "Operations leadership",
+      "category": "Operations",
       "label": "Rostering",
       "sourceId": "entry:ev-head:row:2",
       "evidenceQuote": "Rebuilt rostering around a single demand model, which cut agency spend by 22% in the first year.",
-      "roleQuote": "continuous improvement work across scheduling, rostering and supplier performance"
+      "roleQuote": "lead continuous improvement work across scheduling, rostering and supplier performance"
     },
     {
-      "category": "Operations leadership",
-      "label": "Performance reporting",
-      "sourceId": "entry:ev-head:row:1",
-      "evidenceQuote": "running a weekly performance review against published measures",
-      "roleQuote": "report performance to the executive team each month"
+      "category": "Systems and tools",
+      "label": "Vendor management",
+      "sourceId": "entry:ev-head:row:4",
+      "evidenceQuote": "Introduced a supplier scorecard covering the eight largest contracts, with quarterly reviews against agreed service levels.",
+      "roleQuote": "supplier performance"
+    },
+    {
+      "category": "Operations",
+      "label": "Continuous improvement",
+      "sourceId": "entry:ev-head:row:2",
+      "evidenceQuote": "Rebuilt rostering around a single demand model, which cut agency spend by 22% in the first year.",
+      "roleQuote": "lead continuous improvement work across scheduling, rostering and supplier performance"
     }
   ],
   "transport": {
-    "totalUpperBoundUsd": 0.8922009999999997,
+    "totalUpperBoundUsd": 1.3541350000000003,
     "upperBoundsUsd": {
       "fixture": 0,
-      "cv": 0.5805939999999996,
-      "skills": 0.3116070000000001
+      "cv": 1.0328500000000003,
+      "skills": 0.321285
     },
     "attempts": {
       "fixture": 0,
-      "cv": 3,
+      "cv": 6,
       "skills": 4
     },
     "events": [
@@ -110,15 +110,15 @@
         "attempt": 1,
         "kind": "response",
         "status": 200,
-        "upperBoundUsd": 2.25352,
+        "upperBoundUsd": 2.27108,
         "complete": true,
         "usage": {
-          "input_tokens": 400,
-          "output_tokens": 3744,
+          "input_tokens": 324,
+          "output_tokens": 3258,
           "cache_read_input_tokens": 0,
-          "cache_creation_input_tokens": 5574,
+          "cache_creation_input_tokens": 5898,
           "cache_creation": {
-            "ephemeral_5m_input_tokens": 5574,
+            "ephemeral_5m_input_tokens": 5898,
             "ephemeral_1h_input_tokens": 0
           }
         },
@@ -128,44 +128,19 @@
         "phase": "cv",
         "attempt": 1,
         "kind": "settled",
-        "costUsd": 0.260875
+        "costUsd": 0.239865
       },
       {
         "phase": "cv",
         "attempt": 2,
         "kind": "response",
         "status": 200,
-        "upperBoundUsd": 1.9008,
+        "upperBoundUsd": 2.4322,
         "complete": true,
         "usage": {
-          "input_tokens": 1651,
-          "output_tokens": 3103,
-          "cache_read_input_tokens": 0,
-          "cache_creation_input_tokens": 4618,
-          "cache_creation": {
-            "ephemeral_5m_input_tokens": 4618,
-            "ephemeral_1h_input_tokens": 0
-          }
-        },
-        "stopReason": "end_turn"
-      },
-      {
-        "phase": "cv",
-        "attempt": 2,
-        "kind": "settled",
-        "costUsd": 0.229385
-      },
-      {
-        "phase": "cv",
-        "attempt": 3,
-        "kind": "response",
-        "status": 200,
-        "upperBoundUsd": 1.8514,
-        "complete": true,
-        "usage": {
-          "input_tokens": 1338,
-          "output_tokens": 1516,
-          "cache_read_input_tokens": 4618,
+          "input_tokens": 1747,
+          "output_tokens": 3249,
+          "cache_read_input_tokens": 5898,
           "cache_creation_input_tokens": 0,
           "cache_creation": {
             "ephemeral_5m_input_tokens": 0,
@@ -176,20 +151,70 @@
       },
       {
         "phase": "cv",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.181394
+      },
+      {
+        "phase": "cv",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.83868,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1327,
+          "output_tokens": 2533,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4364,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4364,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
         "attempt": 3,
         "kind": "settled",
-        "costUsd": 0.090334
+        "costUsd": 0.19447
+      },
+      {
+        "phase": "cv",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.79048,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1046,
+          "output_tokens": 1939,
+          "cache_read_input_tokens": 4364,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.108501
       },
       {
         "phase": "skills",
         "attempt": 1,
         "kind": "response",
         "status": 200,
-        "upperBoundUsd": 0.41344,
+        "upperBoundUsd": 0.36356,
         "complete": true,
         "usage": {
-          "input_tokens": 1725,
-          "output_tokens": 1330,
+          "input_tokens": 1316,
+          "output_tokens": 1136,
           "cache_read_input_tokens": 0,
           "cache_creation_input_tokens": 1083,
           "cache_creation": {
@@ -203,18 +228,18 @@
         "phase": "skills",
         "attempt": 1,
         "kind": "settled",
-        "costUsd": 0.097287
+        "costUsd": 0.083498
       },
       {
         "phase": "skills",
         "attempt": 2,
         "kind": "response",
         "status": 200,
-        "upperBoundUsd": 0.37912,
+        "upperBoundUsd": 0.48816,
         "complete": true,
         "usage": {
-          "input_tokens": 2206,
-          "output_tokens": 1200,
+          "input_tokens": 1955,
+          "output_tokens": 939,
           "cache_read_input_tokens": 0,
           "cache_creation_input_tokens": 676,
           "cache_creation": {
@@ -222,25 +247,50 @@
             "ephemeral_1h_input_tokens": 0
           }
         },
-        "stopReason": "max_tokens"
+        "stopReason": "end_turn"
       },
       {
         "phase": "skills",
         "attempt": 2,
         "kind": "settled",
-        "costUsd": 0.09051
+        "costUsd": 0.07495
       },
       {
-        "phase": "skills",
-        "attempt": 3,
+        "phase": "cv",
+        "attempt": 5,
         "kind": "response",
         "status": 200,
-        "upperBoundUsd": 0.41344,
+        "upperBoundUsd": 1.81368,
         "complete": true,
         "usage": {
-          "input_tokens": 1725,
-          "output_tokens": 1332,
-          "cache_read_input_tokens": 1083,
+          "input_tokens": 1327,
+          "output_tokens": 3006,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4160,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4160,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 5,
+        "kind": "settled",
+        "costUsd": 0.21557
+      },
+      {
+        "phase": "cv",
+        "attempt": 6,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.76548,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1046,
+          "output_tokens": 1631,
+          "cache_read_input_tokens": 4160,
           "cache_creation_input_tokens": 0,
           "cache_creation": {
             "ephemeral_5m_input_tokens": 0,
@@ -250,25 +300,50 @@
         "stopReason": "end_turn"
       },
       {
+        "phase": "cv",
+        "attempt": 6,
+        "kind": "settled",
+        "costUsd": 0.09305
+      },
+      {
+        "phase": "skills",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.36356,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1316,
+          "output_tokens": 1165,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1083,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1083,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
         "phase": "skills",
         "attempt": 3,
         "kind": "settled",
-        "costUsd": 0.084121
+        "costUsd": 0.084947
       },
       {
         "phase": "skills",
         "attempt": 4,
         "kind": "response",
         "status": 200,
-        "upperBoundUsd": 0.51824,
+        "upperBoundUsd": 0.48552,
         "complete": true,
         "usage": {
-          "input_tokens": 2207,
-          "output_tokens": 349,
-          "cache_read_input_tokens": 676,
-          "cache_creation_input_tokens": 0,
+          "input_tokens": 1929,
+          "output_tokens": 1003,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 676,
           "cache_creation": {
-            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 676,
             "ephemeral_1h_input_tokens": 0
           }
         },
@@ -278,7 +353,7 @@
         "phase": "skills",
         "attempt": 4,
         "kind": "settled",
-        "costUsd": 0.039689
+        "costUsd": 0.07789
       }
     ]
   }

@@ -103,6 +103,13 @@ it("passes the fitter's failures through, with the page limit told in the reader
   // The sentence shown is not the sentence thrown, so Operations keeps the original.
   expect(failure.cause).toBe("The builder could not fit …");
   expect(cvPageLimitMessage(1, 1)).toContain("The CV is 1 page after three attempts");
+  const selection = new CvFitFailure("page_limit_unfittable",
+    "Omit a selected section here so at most 20 remain; the full Experience library is retained.",
+    { maxPages: 2, attempts: 0 });
+  expect(cvBuildFailureFor(selection, attempts)).toMatchObject({
+    kind: "page_limit_unfittable", resolvedBy: "user", action: "shorten_or_raise_pages",
+    message: "Omit a selected section here so at most 20 remain; the full Experience library is retained.",
+  });
 });
 
 it("names a layout that cannot be drawn, and a worker that lost its place, without reading messages", () => {

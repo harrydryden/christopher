@@ -10,6 +10,7 @@ describe('vitalRoute', () => {
   it('turns every id-shaped segment into :id and drops the query and fragment', () => {
     expect(vitalRoute(`/companies/${crypto.randomUUID()}`)).toBe('/companies/:id');
     expect(vitalRoute(`/cv/${crypto.randomUUID()}?tab=log#top`)).toBe('/cv/:id');
+    expect(vitalRoute(`/cv/${crypto.randomUUID()}/preparation?linkedinImport=${crypto.randomUUID()}`)).toBe('/cv/:id/preparation');
     expect(vitalRoute('/roles/add')).toBe('/roles/add');
     expect(vitalRoute(`/roles/add/${crypto.randomUUID()}`)).toBe('/roles/add/:id');
     expect(vitalRoute(`/roles/${crypto.randomUUID()}`)).toBe('/roles/:id');
@@ -31,6 +32,7 @@ describe('VITAL_ROUTES', () => {
     expect([...VITAL_ROUTES].sort()).toEqual(expected);
     expect(readVitalReport(report({ route: '/wp-admin' }))).toBeNull();
     expect(readVitalReport(report({ route: '/companies/:id' }))).not.toBeNull();
+    expect(readVitalReport(report({ route: '/cv/:id/preparation' }))).not.toBeNull();
   });
 });
 

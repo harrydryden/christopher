@@ -8,6 +8,7 @@
     "checkJs": false
   },
   "include": [
+    "scripts/evaluate-cv-preparation.mts",
     "scripts/evaluate-cv.ts",
     "scripts/evaluate-cv-tailoring.ts",
     "scripts/evaluate-discovery-ai.ts",

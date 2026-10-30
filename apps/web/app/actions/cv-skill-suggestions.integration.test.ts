@@ -205,3 +205,17 @@ it("rejects a supporting Training choice from a stale page after another-tab Lib
     error: expect.stringContaining("changed in another tab") });
   expect((await database.select().from(schema.cvDrafts))).toHaveLength(1);
 });
+
+it("adds selected Training from the current Library and records its version", async () => {
+  const draft = await fixture();
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 2, content: { ...library,
+    entries: [...library.entries, { id: "training-new", kind: "training", heading: "PRINCE2", details: "PRINCE2 Practitioner" }] } });
+  const selected = form("", []);
+  selected.set("addedSupportIds", JSON.stringify(["training-new"]));
+  selected.set("pageLibraryVersion", "2");
+  await expect(saveWithBase(draft.id, { ok: true }, selected)).rejects.toThrow(/^redirect:\/cv\//);
+  const [revision] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
+  expect(revision?.libraryVersion).toBe(2);
+  expect(revision?.content?.sections.some(section => section.entryId === "training-new" && section.kind === "training")).toBe(true);
+  expect(revision?.librarySnapshot?.entries.some(entry => entry.id === "training-new")).toBe(true);
+});

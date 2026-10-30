@@ -58,7 +58,8 @@ async function upsertUserSetting(tx: Pick<Tx, "insert">, userId: string, key: st
 }
 
 /** The editor's fields over the saved content. Fit notes describe a build these edits now replace. */
-function applyCvFormEdits(saved: CvContent, form: FormData, library: ReturnType<typeof CvLibrarySchema.parse>): CvContent {
+function applyCvFormEdits(saved: CvContent, form: FormData, addedSupportIds: string[],
+  supportSections: ReturnType<typeof librarySupportSections>): CvContent {
   const theme = form.has("theme") ? JSON.parse(String(form.get("theme"))) : saved.theme;
   const summary = String(form.get("summary") ?? "");
   const rows = saved.sections.map((section, i) => String(form.get(`${section.skillItems ? "skills" : "section"}-${i}`) ?? (section.kind === "skill" ? section.skillItems ?? cvSectionTexts(section) : section.bullets).join("\n")));
@@ -76,15 +77,12 @@ function applyCvFormEdits(saved: CvContent, form: FormData, library: ReturnType<
   if (!Array.isArray(removed) || !removed.every((id) => typeof id === "string") ||
       !Array.isArray(added) || !added.every((section) => section && typeof section.entryId === "string" && typeof section.heading === "string" && Array.isArray(section.items) && section.items.every((item: unknown) => typeof item === "string")))
     throw new UserFacingError("The skill edits could not be read. Refresh and try again.");
-  const supportIds = JSON.parse(String(form.get("addedSupportIds") ?? "[]")) as unknown;
-  if (!Array.isArray(supportIds) || supportIds.length > 20 || supportIds.some(id => typeof id !== "string")
-    || new Set(supportIds).size !== supportIds.length) throw new UserFacingError("The supporting section choices could not be read. Refresh and try again.");
   let content: CvContent;
   try {
     content = cvReviewEditedContent(saved, {
       summary, theme, rows, removedSkillIds: removed, addedSkills: added, skillHeadings, bulletSignposts,
-      addedSupportIds: supportIds as string[],
-    }, librarySupportSections(library));
+      addedSupportIds,
+    }, supportSections);
   } catch (error) {
     if (error instanceof Error) throw new UserFacingError(error.message);
     throw error;
@@ -93,6 +91,17 @@ function applyCvFormEdits(saved: CvContent, form: FormData, library: ReturnType<
     || cvReviewSkillLimitIssue(content.sections) || cvReviewSkillCharacterIssue(content.sections);
   if (skillIssue) throw new UserFacingError(skillIssue);
   return CvContentSchema.parse(content);
+}
+
+/** Validate a person's selected supporting sections once, before reading the latest Library. */
+function submittedSupportIds(form: FormData): string[] {
+  let ids: unknown;
+  try { ids = JSON.parse(String(form.get("addedSupportIds") ?? "[]")); }
+  catch { throw new UserFacingError("The supporting section choices could not be read. Refresh and try again."); }
+  if (!Array.isArray(ids) || ids.length > 20 || ids.some(id => typeof id !== "string")
+    || new Set(ids).size !== ids.length)
+    throw new UserFacingError("The supporting section choices could not be read. Refresh and try again.");
+  return ids;
 }
 
 /** Zod's message is a JSON dump; name the field the way the editor labels it. */
@@ -658,6 +667,7 @@ export async function saveCvDraft(
   let savedId: string;
   try {
     zUuid().parse(id);
+    const addedSupportIds = submittedSupportIds(form);
     const [draft] = await db()
       .select()
       .from(cvDrafts)
@@ -670,12 +680,12 @@ export async function saveCvDraft(
       || !/^[a-f0-9]{64}$/.test(baseEditHash)
       || baseEditHash !== cvDraftEditBaseHash(draft.content, draft.targetingBrief))
       return fail("This CV changed since you opened it. Reload before saving your edits.");
-    const supportSource = await latestLibrary(db(), user.id);
-    const supportLibrary = CvLibrarySchema.parse(supportSource?.content ?? draft.librarySnapshot);
-    const addedSupportIds = JSON.parse(String(form.get("addedSupportIds") ?? "[]")) as string[];
+    const supportSource = addedSupportIds.length ? await latestLibrary(db(), user.id) : undefined;
     if (addedSupportIds.length && (!supportSource || String(supportSource.version) !== String(form.get("pageLibraryVersion") ?? "")))
       return fail("Your Experience changed in another tab. Reload this CV before choosing supporting sections.");
-    let content = applyCvFormEdits(draft.content, form, supportLibrary);
+    const supportLibrary = supportSource ? CvLibrarySchema.parse(supportSource.content) : undefined;
+    let content = applyCvFormEdits(draft.content, form, addedSupportIds,
+      supportLibrary ? librarySupportSections(supportLibrary) : []);
     const targetingChoices = form.has("targetingChoices")
       ? CvTargetingChoicesSchema.parse(JSON.parse(String(form.get("targetingChoices")))) : null;
     const storedTargeting = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
@@ -853,7 +863,7 @@ export async function saveCvDraft(
       }
       // A selected skill cites the current confirmed Experience; assess the revision against that
       // same current Library, even if the original draft predates an Experience edit.
-      const directSnapshot = skillLibrary ?? (addedSupportIds.length ? supportLibrary : source.librarySnapshot);
+      const directSnapshot = skillLibrary ?? (addedSupportIds.length ? supportLibrary! : source.librarySnapshot);
       nextBrief = rebaseTargetingBrief(nextBrief,
         skillLibraryVersion ?? (addedSupportIds.length ? supportSource?.version ?? source.libraryVersion : source.libraryVersion),
         CvLibrarySchema.parse(directSnapshot), source.jobDescription);

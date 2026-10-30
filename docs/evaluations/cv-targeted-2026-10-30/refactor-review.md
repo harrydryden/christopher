@@ -16,6 +16,7 @@ The review prioritises inconsistent behaviour and avoidable work across boundari
 | Pending-skill acceptance could add a sixth skills category while normal editing enforced five. | Apply the same category-limit rule to acceptance, including compatibility for existing older CVs. | Sixth-category refusal rolls back both CV and library changes; existing categories remain editable. |
 | The editor's omission warning tracked entry references only. A profile-only essential could lose its support without offering the acknowledgement required by the server. | Retain profile dependence in the targeting view and use the same omission policy when calculating affected essentials. | Profile-only, entry-only and mixed-source cases agree between controls and server validation. |
 | Detail and preparation pages fetched their already-owned full draft again inside view helpers. The second read could also describe a different recovery state. | Build views from the page's account-owned saved snapshot, retaining account scoping on supplementary plan queries. | View tests prove that another full draft read is unnecessary; pages retain the existing account-owned lookup before deriving views. |
+| Ordinary wording saves fetched and parsed the latest full Experience library even though they use the draft's saved evidence. Supporting-section IDs were also parsed twice. | Validate supporting choices once and fetch current supporting evidence only when sections are being added. Skills, remembered wording and Rewrite retain their own current-library work. | Ordinary Save makes no latest-library lookup; malformed selections fail before that lookup; current Training selection and stale-version refusal still work. |
 
 ## Processing contracts retained
 
@@ -27,7 +28,7 @@ The review prioritises inconsistent behaviour and avoidable work across boundari
 
 ## Performance interpretation
 
-The page-read change removes one full draft-row read from each affected page request and prevents its controls being assembled from a second mutable snapshot. It does not establish a hosted latency percentage. No model concurrency or prompt change is justified by this review: the existing stage runner already checkpoints and reuses validated work, and manual Save already avoids AI processing.
+The page-read change removes one full draft-row read from each affected page request and prevents its controls being assembled from a second mutable snapshot. Ordinary wording Save also avoids one latest-library query, its full-content parsing and supporting-section projection. These are explicit work-avoidance results, not a hosted latency percentage. No model concurrency or prompt change is justified by this review: the existing stage runner already checkpoints and reuses validated work, and manual Save already avoids AI processing.
 
 ## Verification
 
@@ -36,9 +37,10 @@ Local verification passes:
 - Frontend/projection/targeting/read-view regressions: 42/42. Explicit profile dependence is distinct from entry IDs, including an entry whose ID is itself `source:profile`. Ambiguous duplicate bullets clear their labels instead of guessing which occurrence survived.
 - Save/build action tests: 27/27, including actual changes between the initial read and transaction. A newly completed assessment is copied from the locked row, and changed saved wording is rejected before creating a child revision.
 - Pending-skill action tests: 5/5; other affected CV action/lifecycle suites: 112/112.
+- After the final ordinary-Save optimisation, the Save/build and skill/support integration suites pass 39/39. They assert no latest-library lookup for ordinary saves or malformed supporting choices, plus successful current-version Training selection and stale-version refusal.
 - Core/web typechecks, evaluation-script typecheck, prompt-report gate and whitespace checks pass. The React review found no new client-side crypto or schema dependency.
 - The production build and all route bundle budgets pass. CV first-load JavaScript is 125,183/138,000 bytes gzip; Library is 141,458/142,000.
-- The local production-browser check passes using a separate synthetic account: free Save, no queued CV task or provider call, preserved two-page choice, measured summary guidance and invalidation after editing, review-link focus, and no horizontal overflow at 390 px. One Save sample took 97 ms; this is neither a hosted measurement nor a comparative speed claim. See `refactor-browser.json`.
+- The final local production-browser check passes using a separate synthetic account: free Save, no queued CV task or provider call, preserved two-page choice, measured summary guidance and invalidation after editing, review-link focus, and no horizontal overflow at 390 px. One Save sample took 114 ms; this is neither a hosted measurement nor a comparative speed claim. See `refactor-browser.json`.
 - Exact offline replay passes all four invariants with zero recording misses at prompt set `951386df60b9`, with one rendered page inside the two-page limit. See `refactor-replay.json`. Its cost fields describe the historical recorded calls; this replay incurred no new provider spend.
 
 Hosted CI remains the exact-commit gate on PR 121. The earlier live qualification remains historical evidence; this offline replay is not a new paid AI evaluation. No additional migration or provider qualification is required for these prompt-preserving changes. Application rollout still requires merging PR 121 and verifying the resulting worker and web deployments.

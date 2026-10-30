@@ -29,6 +29,10 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined) }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
+vi.mock("@/lib/cv-library-write", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cv-library-write")>();
+  return { ...actual, latestLibrary: vi.fn(actual.latestLibrary) };
+});
 /** Runs inside every render the actions ask for, so a test can look at the database mid-render. */
 const rendering = vi.hoisted(() => ({ during: undefined as undefined | (() => Promise<void>) }));
 vi.mock("@/lib/cv-pdf", async (actual) => {
@@ -50,6 +54,7 @@ import { CV_BUILD_CAP_MESSAGE, MAX_CV_BUILDS_IN_FLIGHT } from "@/lib/cv-build-ca
 import { CV_WORKER_STOPPED_MESSAGE, cvBuildState } from "@/lib/cv-build-state";
 import { getOwnCvBuildTask } from "@/lib/queries/cv";
 import { ensureTestUser } from "@/test/auth";
+import { latestLibrary } from "@/lib/cv-library-write";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -187,16 +192,35 @@ it("saves wording immediately without a task and keeps the rubric for an explici
   const form = new FormData();
   form.set("summary", "Edited profile");
   form.set("section-0", "Led a team");
+  vi.mocked(latestLibrary).mockClear();
   await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  expect(latestLibrary).not.toHaveBeenCalled();
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.assessment).toBeNull();
   expect(saved!.buildCheckpoint).toEqual({ sourceRubric: rubric });
+  expect(saved!.librarySnapshot).toEqual(parent.librarySnapshot);
   expect(await buildTasks()).toHaveLength(0);
   expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await buildTasks();
   expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess" });
 });
+
+it.each(["not-json", "{}", "[\"one\",\"one\"]"])(
+  "rejects invalid supporting choices %s before reading the current Library", async (payload) => {
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+    const parent = await failedDraft({ status: "ready", error: null, failure: null });
+    const form = new FormData();
+    form.set("addedSupportIds", payload);
+    await withCvEditBase(database, parent.id, form);
+    vi.mocked(latestLibrary).mockClear();
+    expect(await saveCvDraft(parent.id, { ok: true }, form)).toMatchObject({
+      ok: false, error: expect.stringContaining("supporting section choices"),
+    });
+    expect(latestLibrary).not.toHaveBeenCalled();
+    expect(await database.select().from(schema.cvDrafts)).toHaveLength(1);
+  },
+);
 
 it("takes a newly completed assessment from the current source without losing the editor's unchanged wording", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });

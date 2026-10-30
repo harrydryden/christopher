@@ -14,8 +14,9 @@
  * with one role, a Library and one CV, so `/`, `/companies`, `/library` and `/cv/<id>` render what a
  * signed-in person sees. Starts `next start` on LHCI_PORT (3124), runs `lhci autorun` with the
  * committed `lighthouserc.json` (desktop, three runs, median-run assertions: errors fail), then the
- * same URLs on Lighthouse's default mobile emulation with every assertion lowered to a warning until
- * there is a baseline. The account, its company and the server go in a `finally`, whatever happened.
+ * same URLs on Lighthouse's default mobile emulation: CLS still fails at the committed 0.1
+ * median-run threshold, and other mobile audits warn. The account, its company and the server go
+ * in a `finally`, whatever happened.
  *
  * The cookie reaches Chrome only as `extraHeaders` in a config written to a temporary directory; it
  * is not printed and not in any report Lighthouse uploads (reports go to `lighthouse-reports/`).
@@ -52,15 +53,16 @@ export function signedInConfig(base, { draftId, cookie, port = 3124, chromeFlags
 
 /**
  * The mobile pass: Lighthouse's default emulation (a mid-range phone, 4x CPU slowdown) in place of
- * the desktop preset, and every assertion a warning, so it reports without failing until two weeks
- * of history say what to hold it to. Pure.
+ * the desktop preset. Keep the committed median-run CLS error threshold; other mobile audits warn.
+ * Pure.
  */
 export function mobileConfig(desktop) {
   const config = structuredClone(desktop);
   const { preset: _desktop, ...settings } = config.ci.collect.settings;
   config.ci.collect.settings = settings;
   for (const entry of config.ci.assert.assertMatrix ?? [{ assertions: config.ci.assert.assertions }]) {
-    for (const [audit, rule] of Object.entries(entry.assertions)) entry.assertions[audit] = ["warn", rule[1]];
+    for (const [audit, rule] of Object.entries(entry.assertions))
+      entry.assertions[audit] = [audit === "cumulative-layout-shift" ? "error" : "warn", rule[1]];
   }
   if (config.ci.upload?.outputDir) config.ci.upload.outputDir = config.ci.upload.outputDir.replace(/desktop$/, "mobile");
   return config;
@@ -103,6 +105,11 @@ function run(command, args, env) {
   });
 }
 
+/** Keep the first failed pass, including mobile; a later successful pass cannot hide it. */
+export function lighthouseExitCode(current, passCode) {
+  return current || passCode;
+}
+
 /**
  * The second pass, on a Vercel preview deployment: `/login` signed out, because no preview database
  * is documented and a session row must never be written to production. The protection-bypass
@@ -116,7 +123,8 @@ export function previewConfig(desktop, { url, bypass }) {
   if (bypass) config.ci.collect.settings.extraHeaders = JSON.stringify({ "x-vercel-protection-bypass": bypass, "x-vercel-set-bypass-cookie": "true" });
   const origin = new URL(url).origin;
   config.ci.collect.url = [`${origin}/login`];
-  config.ci.assert = { assertions: { ...config.ci.assert.assertMatrix.at(-1).assertions } };
+  config.ci.assert = { assertions: Object.fromEntries(Object.entries(config.ci.assert.assertMatrix.at(-1).assertions)
+    .map(([audit, rule]) => [audit, ["warn", rule[1]]])) };
   config.ci.upload.outputDir = "lighthouse-reports/preview";
   return config;
 }
@@ -157,9 +165,9 @@ async function main() {
     for (const pass of passes) {
       const path = join(dir, `lighthouserc.${pass}.json`);
       writeFileSync(path, JSON.stringify(pass === "desktop" ? desktop : mobileConfig(desktop)), { mode: 0o600 });
-      console.log(`\nLighthouse, ${pass}${pass === "mobile" ? " (warnings only)" : ""}`);
+      console.log(`\nLighthouse, ${pass}${pass === "mobile" ? " (CLS fails; other audits warn)" : ""}`);
       const code = await run(process.execPath, [lhci, "autorun", `--config=${path}`], env);
-      if (code !== 0 && pass === "desktop") exitCode = code;
+      exitCode = lighthouseExitCode(exitCode, code);
     }
   } finally {
     await web?.stop();

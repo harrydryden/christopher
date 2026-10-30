@@ -12,6 +12,8 @@ The six job statements below remain the framework. The dated **Today** paragraph
 
 Setup now means **confirmed account → chosen keywords and locations → one active followed company → first complete successful scan**. Profile text and the evidence Library improve later work but do not block monitoring. Empty results distinguish missing preferences, no active companies, queued work, source attention and a successful check. A previous success does not hide a current source problem. Health and Learning have direct navigation. This supersedes the earlier five-step/three-company recommendation below.
 
+The [30 October frontend review](reviews/2026-10-30/FRONTEND-PERFORMANCE-REVIEW.md) rechecks these jobs against the current implementation, records the preview, progress and role-loading improvements, and separates measured work avoidance from unmeasured usability and hosted-latency claims.
+
 ## How to read this
 
 Each journey is framed as a job to be done: what the person is trying to accomplish, what "done"

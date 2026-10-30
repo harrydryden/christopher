@@ -138,14 +138,36 @@ for (const status of [404, 401]) {
 }
 
 it("keeps backing off over a failure that a later reading can recover from", async () => {
-  const fetch = vi.fn<(url: string) => Promise<Response>>().mockResolvedValue(gone(503));
+  const first = reading([wire(1, "load_inputs", "done")]);
+  const fetch = vi.fn<(url: string) => Promise<Response>>()
+    .mockResolvedValueOnce(gone(503))
+    .mockResolvedValue(ok(first));
   vi.stubGlobal("fetch", fetch);
   act(() => {
-    root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([wire(1, "load_inputs", "done")])} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+    root.render(<CvBuildLive id="draft-1" mode="build" initial={first} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
   });
-  await advance(FIRST_POLL_MS + 5 * 60_000);
-  expect(fetch.mock.calls.length).toBeGreaterThan(2);
+  await advance(FIRST_POLL_MS);
+  expect(container.textContent).toContain("Progress updates are unavailable");
+  expect(container.textContent).not.toContain("This build stopped");
+  await advance(60_000);
+  expect(fetch.mock.calls.length).toBeGreaterThan(1);
+  expect(container.textContent).not.toContain("Progress updates are unavailable");
   expect(router.refresh).not.toHaveBeenCalled();
+});
+
+it("keeps the live stage visible while the detailed narrative is closed", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  act(() => root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([wire(1, "load_inputs", "done")])}
+    nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />));
+  await advance(2_000);
+  expect(container.querySelector('h2')?.textContent).toContain("Preparing your CV");
+  expect(container.querySelector('[aria-label="CV build progress"]')?.hasAttribute("aria-busy")).toBe(false);
+  expect(container.querySelector('[aria-label="Build narrative"]')).toBeNull();
+  const toggle = [...container.querySelectorAll("button")].find(button => button.textContent === "Show detailed build log")!;
+  await act(async () => toggle.click());
+  expect(container.querySelector('[aria-label="Build narrative"]')).not.toBeNull();
+  await act(async () => toggle.click());
+  expect(container.querySelector('[aria-label="Build narrative"]')).toBeNull();
 });
 
 it("counts every elapsed figure on the server's clock, whatever the browser's says", async () => {

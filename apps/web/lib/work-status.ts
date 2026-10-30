@@ -57,7 +57,7 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
 
 /**
  * The Roles page's reading, in one statement: pending for company work or this account's scoring,
- * with a version that is a fingerprint of what the page shows rather than of the work behind it.
+ * with a version that fingerprints the page and whether its fit-score notice is visible.
  * A score may arrive after its scan ends or after a queued request has moved into a provider batch;
  * future batch waits remain active, using AutoRefresh's 10-second-to-one-minute backoff and
  * hidden-tab pause rather than a fast loop. A scan
@@ -77,9 +77,9 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
 export function rolesWorkQuery(userId: string) {
   const pendingCompany = db().select({ one: sql`1` }).from(tasks).where(companyWorkWhere(userId)).limit(1);
   const pendingScore = db().select({ one: sql`1` }).from(tasks).where(roleScoreWorkWhere(userId)).limit(1);
-  return db().execute<{ active: boolean; version: string }>(sql`
-    select (exists (${pendingCompany}) or exists (${pendingScore})) as active,
-      md5(concat_ws(':', t.n, t.closed, t.views_at, t.scores_at, t.postings_at, d.n, d.newest, s.n, s.newest)) as version
+  return db().execute<{ company_pending: boolean; score_pending: boolean; content_version: string }>(sql`
+    select work.company_pending, work.score_pending,
+      md5(concat_ws(':', t.n, t.closed, t.views_at, t.scores_at, t.postings_at, d.n, d.newest, s.n, s.newest)) as content_version
     from (
       select count(*) as n, count(*) filter (where j.status = 'closed') as closed,
         max(uj.updated_at) as views_at, max(uj.score_state_at) as scores_at, max(j.updated_at) as postings_at
@@ -88,14 +88,20 @@ export function rolesWorkQuery(userId: string) {
     ) t,
     (select count(*) as n, max(created_at) as newest from decisions where user_id = ${userId}::uuid and not superseded) d,
     (select count(*) as n, max(created_at) as newest from filter_suggestions
-      where user_id = ${userId}::uuid and status = 'pending' and type <> 'hide_threshold') s`);
+      where user_id = ${userId}::uuid and status = 'pending' and type <> 'hide_threshold') s,
+    (select exists (${pendingCompany}) as company_pending, exists (${pendingScore}) as score_pending) work`);
 }
 
 /** Once per request: the Roles page's notice and the poll it starts read the same thing. */
 export const getRolesWorkStatus = cache(async function getRolesWorkStatus(userId: string) {
   const result = await rolesWorkQuery(userId);
   const row = result.rows[0];
-  return { active: !!row?.active, version: row?.version ?? "" };
+  const scorePending = !!row?.score_pending;
+  return {
+    active: !!row?.company_pending || scorePending,
+    scorePending,
+    version: row ? `${row.content_version}:${scorePending ? "1" : "0"}` : "",
+  };
 });
 
 /**

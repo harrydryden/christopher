@@ -157,6 +157,7 @@ function SortTH({ label, sortKey, links, sort, dir, className = "" }: {
  */
 interface RowActions {
   toggleExpanded(jobId: string): void;
+  retryDetails(jobId: string): void;
   toggleSelected(jobId: string): void;
   openReasonBox(jobId: string, kind: ReasonKind, prefill?: string): void;
   submitDecision(jobId: string, decision: ReasonKind | null, reason: string): void;
@@ -366,7 +367,11 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 <div>
                   <h3 className="ds-label mb-1">Description</h3>
                   {detail?.state === "loading" && <span className="inline-block text-muted"><MarkSmall size={16} searching title="Loading the description" /></span>}
-                  {detail?.state === "error" && <p className="text-13 text-danger">{detail.error}</p>}
+                  {detail?.state === "error" && <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-13 text-danger">{detail.error}</p>
+                    <Button size="sm" variant="secondary" onClick={() => actions.retryDetails(row.id)}
+                      aria-label={`Retry details for ${row.title} at ${row.companyName}`}>Retry details</Button>
+                  </div>}
                   {detail?.state === "ready" && (detail.details.description?.trim() ? (
                     <>
                       <div className={descriptionOpen || detail.details.description.length <= COLLAPSED_DESCRIPTION_CHARS ? "" : "max-h-32 overflow-hidden"}>
@@ -626,6 +631,26 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   const [highlightIndex, setHighlightIndex] = useState(keyboard && inputRows.length > 0 ? 0 : -1);
   const [expandedId, setExpandedId] = useState<string | null>(initiallyExpandedId ?? null);
   const [details, setDetails] = useState<Record<string, DetailState>>({});
+  const detailRequests = useRef(new Map<string, number>());
+  const detailRequestSerial = useRef(0);
+  const currentRoleIdentity = useRef(new Map(rows.map(row => [row.id, `${row.companyId}\u0000${row.url ?? ""}`])));
+  const previousRoleIdentity = useRef(currentRoleIdentity.current);
+  currentRoleIdentity.current = new Map(rows.map(row => [row.id, `${row.companyId}\u0000${row.url ?? ""}`]));
+  useEffect(() => {
+    const changed = [...previousRoleIdentity.current]
+      .filter(([id, identity]) => currentRoleIdentity.current.get(id) !== identity && !departed.current.has(id))
+      .map(([id]) => id);
+    previousRoleIdentity.current = currentRoleIdentity.current;
+    if (changed.length === 0) return;
+    for (const id of changed) detailRequests.current.delete(id);
+    setExpandedId(current => current && changed.includes(current) ? null : current);
+    setDetails(current => {
+      if (!changed.some(id => current[id])) return current;
+      const next = { ...current };
+      for (const id of changed) delete next[id];
+      return next;
+    });
+  }, [rows]);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
   const [flashError, setFlashError] = useState<string | null>(null);
@@ -663,13 +688,25 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
 
   /** The evidence a decision needs, fetched once per row when it expands and kept for the page. */
   function loadDetails(jobId: string) {
+    const roleIdentity = currentRoleIdentity.current.get(jobId);
+    if (!roleIdentity || detailRequests.current.has(jobId)) return;
+    const request = ++detailRequestSerial.current;
+    detailRequests.current.set(jobId, request);
     setDetails(current => ({ ...current, [jobId]: { state: "loading" } }));
     startTransition(async () => {
       try {
         const result = await roleDetails(jobId);
+        if (!mounted.current || detailRequests.current.get(jobId) !== request) return;
+        if (currentRoleIdentity.current.get(jobId) !== roleIdentity) {
+          if (currentRoleIdentity.current.has(jobId)) setDetails(current => ({ ...current, [jobId]: { state: "error", error: "This role changed. Retry its details." } }));
+          return;
+        }
         setDetails(current => ({ ...current, [jobId]: result.ok ? { state: "ready", details: result.details } : { state: "error", error: result.error } }));
       } catch {
-        setDetails(current => ({ ...current, [jobId]: { state: "error", error: "Could not load this role. Reload to retry." } }));
+        if (mounted.current && currentRoleIdentity.current.get(jobId) === roleIdentity && detailRequests.current.get(jobId) === request)
+          setDetails(current => ({ ...current, [jobId]: { state: "error", error: "Could not load this role. Try again." } }));
+      } finally {
+        if (detailRequests.current.get(jobId) === request) detailRequests.current.delete(jobId);
       }
     });
   }
@@ -910,10 +947,11 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   // Every handler a row calls, read through a ref when it is called — so it is always this render's,
   // closing over this render's rows — behind one object that never changes, so passing it to 50
   // memoised rows costs none of them a render.
-  const handlers = useRef({ toggleExpanded, toggleSelected, openReasonBox, submitDecision, archiveRow });
-  handlers.current = { toggleExpanded, toggleSelected, openReasonBox, submitDecision, archiveRow };
+  const handlers = useRef({ toggleExpanded, retryDetails: loadDetails, toggleSelected, openReasonBox, submitDecision, archiveRow });
+  handlers.current = { toggleExpanded, retryDetails: loadDetails, toggleSelected, openReasonBox, submitDecision, archiveRow };
   const rowActions = useMemo<RowActions>(() => ({
     toggleExpanded: (jobId) => handlers.current.toggleExpanded(jobId),
+    retryDetails: (jobId) => handlers.current.retryDetails(jobId),
     toggleSelected: (jobId) => handlers.current.toggleSelected(jobId),
     openReasonBox: (jobId, kind, prefill) => handlers.current.openReasonBox(jobId, kind, prefill),
     submitDecision: (jobId, decision, reason) => handlers.current.submitDecision(jobId, decision, reason),

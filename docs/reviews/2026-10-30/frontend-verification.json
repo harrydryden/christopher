@@ -1,0 +1,438 @@
+{
+  "baselineCommit": "39556636df2b066953c4f5361cbd703353ee2410",
+  "mainMergeCommit": "9a87a930",
+  "syntheticLocalOnly": true,
+  "newProviderCalls": 0,
+  "fixture": "100 synthetic accounts, 20 companies, 1000 roles; existing scripts/perf/fixture.mjs",
+  "browserBefore": {
+    "previewRequests": {
+      "previewRequestsFirst": 1,
+      "previewRequestsUnchanged": 2,
+      "previewRequestsEdited": 3
+    },
+    "inlinePreviewMountedOnlyWhenOpened": false,
+    "pages": {
+      "roles": {
+        "domNodes": 2017,
+        "bodyTextWords": 688,
+        "mobileOverflow": false
+      },
+      "cv": {
+        "domNodes": 284,
+        "bodyTextWords": 305,
+        "mobileOverflow": false
+      },
+      "experience": {
+        "domNodes": 361,
+        "bodyTextWords": 423,
+        "mobileOverflow": false
+      }
+    },
+    "pageErrors": []
+  },
+  "browserAfter": {
+    "previewRequests": {
+      "previewRequestsFirst": 1,
+      "previewRequestsUnchanged": 1,
+      "previewRequestsEdited": 2
+    },
+    "inlinePreviewMountedOnlyWhenOpened": true,
+    "pages": {
+      "roles": {
+        "domNodes": 2015,
+        "bodyTextWords": 688,
+        "mobileOverflow": false
+      },
+      "cv": {
+        "domNodes": 288,
+        "bodyTextWords": 249,
+        "mobileOverflow": false
+      },
+      "experience": {
+        "domNodes": 361,
+        "bodyTextWords": 423,
+        "mobileOverflow": false
+      }
+    },
+    "pageErrors": []
+  },
+  "recovery": {
+    "syntheticLocalOnly": true,
+    "providerCalls": 0,
+    "roleDetail": {
+      "failedRequestRetriedInPlace": true,
+      "requests": 2,
+      "documentReloads": 0
+    },
+    "scoring": {
+      "noticeAppeared": true,
+      "noticeClearedWithoutJobWrite": true,
+      "otherCompanyWorkStillActive": true
+    },
+    "mobileStageColumns": 2,
+    "cvProgress": {
+      "initialDetailCollapsed": true,
+      "detailToggleWorks": true,
+      "lostConnectionWarning": true,
+      "recoveredWithoutReload": true,
+      "noFalseStoppedState": true,
+      "progressRequests": 2,
+      "mobileOverflow": false
+    }
+  },
+  "streaming": {
+    "syntheticLocalOnly": true,
+    "injectedDatabaseDelayMs": 100,
+    "loadingArrivesBeforeRoleTable": true,
+    "loadingChunk": 1,
+    "tableChunk": 35
+  },
+  "pagesBefore": {
+    "html /?view=auto-matched": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 32.7,
+      "p95Ms": 33.1,
+      "bytes": 234467,
+      "gzip": 19203,
+      "statements": 13,
+      "statementsMin": 13,
+      "statementsMax": 13
+    },
+    "html /cv/<draftId>": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 17.4,
+      "p95Ms": 21,
+      "bytes": 66530,
+      "gzip": 12489,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    },
+    "html /library": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 17.7,
+      "p95Ms": 17.7,
+      "bytes": 84521,
+      "gzip": 13576,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    },
+    "rsc /?view=auto-matched": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 26.8,
+      "p95Ms": 26.8,
+      "bytes": 55835,
+      "gzip": 9071,
+      "statements": 13,
+      "statementsMin": 13,
+      "statementsMax": 13
+    },
+    "rsc /cv/<draftId>": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 20.5,
+      "p95Ms": 28.1,
+      "bytes": 22900,
+      "gzip": 5412,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    },
+    "rsc /library": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 18.8,
+      "p95Ms": 19.4,
+      "bytes": 29368,
+      "gzip": 6168,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    }
+  },
+  "pagesAfter": {
+    "html /?view=auto-matched": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 34.7,
+      "p95Ms": 35.2,
+      "bytes": 231578,
+      "gzip": 18974,
+      "statements": 13,
+      "statementsMin": 13,
+      "statementsMax": 13
+    },
+    "html /cv/<draftId>": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 23.9,
+      "p95Ms": 24.7,
+      "bytes": 66630,
+      "gzip": 12509,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    },
+    "html /library": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 19.1,
+      "p95Ms": 29.7,
+      "bytes": 84521,
+      "gzip": 13575,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    },
+    "rsc /?view=auto-matched": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 34.5,
+      "p95Ms": 37.9,
+      "bytes": 56096,
+      "gzip": 9125,
+      "statements": 13,
+      "statementsMin": 13,
+      "statementsMax": 13
+    },
+    "rsc /cv/<draftId>": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 17.4,
+      "p95Ms": 17.6,
+      "bytes": 22900,
+      "gzip": 5412,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    },
+    "rsc /library": {
+      "n": 4,
+      "status": "200",
+      "p50Ms": 12.3,
+      "p95Ms": 12.5,
+      "bytes": 29368,
+      "gzip": 6168,
+      "statements": 14,
+      "statementsMin": 14,
+      "statementsMax": 14
+    }
+  },
+  "measurementLimits": [
+    "Local timings are diagnostics, not hosted user latency.",
+    "Recovery tasks were completed and their synthetic CVs archived before final page measurements.",
+    "No assertion of reduced AI processing time."
+  ],
+  "focusedTests": {
+    "cv": 38,
+    "roles": 29,
+    "workStatus": 19
+  },
+  "build": "passed",
+  "routeBundleBudgets": "all passed",
+  "typecheck": "passed",
+  "mobileLayoutShiftProbe": {
+    "viewport": {
+      "width": 412,
+      "height": 823
+    },
+    "beforeCommit": "35f027ff",
+    "normalBefore": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          36.5,
+          61
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.17295473348218854,
+            "hadRecentInput": true,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 61,
+                  "width": 412,
+                  "height": 762,
+                  "top": 61,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          36.5,
+          60
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.1729077963675337,
+            "hadRecentInput": true,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 60,
+                  "width": 412,
+                  "height": 763,
+                  "top": 60,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      }
+    },
+    "normalAfter": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      }
+    },
+    "delayedBefore": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          36.5,
+          61
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.028468719515019066,
+            "hadRecentInput": false,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 61,
+                  "width": 412,
+                  "height": 762,
+                  "top": 61,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          36.5,
+          60
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.02729932035867843,
+            "hadRecentInput": false,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 60,
+                  "width": 412,
+                  "height": 763,
+                  "top": 60,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      }
+    },
+    "delayedAfter": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      }
+    },
+    "delayedConditions": {
+      "databasePacketDelayMs": 250,
+      "cpuSlowdown": 4
+    },
+    "limits": [
+      "Shift event values with hadRecentInput=true are not page CLS.",
+      "Billing and optional setup arrivals remain separate small movements."
+    ]
+  }
+}

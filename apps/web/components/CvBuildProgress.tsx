@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Wordmark } from "./brand";
 import { Badge, toneText } from "./Badge";
 import { Elapsed } from "./Elapsed";
+import { CvDisclosure } from "./CvDisclosure";
 import { CV_MILESTONES, CV_STAGE_LABELS, cvStalledMessage, type CvMilestone } from "@/lib/cv-build-narrative";
 import type { CvProgressBuild } from "@/lib/cv-progress-types";
 
@@ -24,6 +25,7 @@ export function CvBuildProgress({
   progress,
   narrative,
   action,
+  connectionIssue = false,
 }: {
   /** The milestone the build is in, from its motions; `publishing` has passed all four. */
   milestone: CvMilestone | "publishing" | null;
@@ -37,6 +39,7 @@ export function CvBuildProgress({
   progress: string | null;
   narrative?: ReactNode;
   action?: ReactNode;
+  connectionIssue?: boolean;
 }) {
   const index = queued || !milestone ? -1 : milestone === "publishing" ? CV_MILESTONES.length : CV_MILESTONES.indexOf(milestone);
   const active = index >= 0 && index < CV_MILESTONES.length ? CV_MILESTONES[index] : undefined;
@@ -46,22 +49,24 @@ export function CvBuildProgress({
   // A build that has not moved for ten minutes keeps counting the minutes between readings.
   const message = build.phase === "stalled" ? cvStalledMessage(now - new Date(build.lastProgressAt).getTime()) : build.message;
   return (
-    <section aria-label="CV build progress" aria-busy={stopped ? undefined : "true"} className="space-y-6 border-2 border-line bg-raised p-5 sm:p-6">
+    <section aria-label="CV build progress" className="space-y-6 border-2 border-line bg-raised p-5 sm:p-6">
       <div className="flex items-center gap-5">
         <Wordmark size={32} searching={!stopped} className="shrink-0 text-brand" />
-        <div role="status" aria-live="polite" aria-atomic="true" className="min-w-0 space-y-1">
-          <h2 className="ds-pixel text-16 text-fg">
-            {stopped
-              ? "This build stopped"
-              : active
-                ? CV_STAGE_LABELS[active]
-                : milestone === "publishing"
-                  ? CV_STAGE_LABELS.publishing
-                  : queued
-                    ? "Your CV is queued"
-                    : "Preparing your CV"}
-          </h2>
-          <p className={`text-14 ${toneText(tone)}`}>{message}</p>
+        <div className="min-w-0 space-y-1">
+          <div role="status" aria-live="polite" aria-atomic="true">
+            <h2 className="ds-pixel text-16 text-fg">
+              {stopped
+                ? "This build stopped"
+                : active
+                  ? CV_STAGE_LABELS[active]
+                  : milestone === "publishing"
+                    ? CV_STAGE_LABELS.publishing
+                    : queued
+                      ? "Your CV is queued"
+                      : "Preparing your CV"}
+            </h2>
+            <p className={`text-14 ${toneText(tone)}`}>{message}</p>
+          </div>
           <p className="text-12 text-muted">
             Started <Elapsed since={startedAt} now={now} relative />
             {build.phase !== "waiting" && (
@@ -87,7 +92,7 @@ export function CvBuildProgress({
           </Badge>
         )}
       </div>
-      <ol className="grid gap-3 sm:grid-cols-4" aria-label="Build stages">
+      <ol className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Build stages">
         {CV_MILESTONES.map((id, i) => (
           <li
             key={id}
@@ -105,13 +110,14 @@ export function CvBuildProgress({
           </li>
         ))}
       </ol>
+      {connectionIssue && !stopped && <p role="status" className="border border-warn p-3 text-14 text-warn">Progress updates are unavailable. The last known stage is shown above; reconnecting automatically. Reload if this continues.</p>}
       {!stopped && (current || progress) && (
-        <div className="space-y-1" aria-live="polite">
+        <div className="space-y-1">
           {current && <p className="text-14">{current}</p>}
           {progress && <p className="text-12 text-muted">{progress}</p>}
         </div>
       )}
-      {narrative}
+      {narrative && <CvDisclosure label="detailed build log" mountWhenOpen>{narrative}</CvDisclosure>}
       {action}
     </section>
   );

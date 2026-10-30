@@ -35,7 +35,12 @@ export interface CvBuildViewProps {
   medians: CvMotionMedians;
 }
 
-/** A build as it happens: the milestone, what is moving now, and every motion so far. */
+/** The detailed log is mounted only when asked for, so clock ticks do not re-tell closed rows. */
+function CvActiveBuildDetail({ steps, now, context }: Pick<CvBuildViewProps, "steps" | "now" | "context">) {
+  return <CvBuildNarrative items={narrateBuild(steps, new Date(now), context)} />;
+}
+
+/** A build as it happens: the milestone and current work, with its log available on demand. */
 export function CvBuildScreen({
   steps,
   now,
@@ -44,7 +49,8 @@ export function CvBuildScreen({
   reading,
   build,
   action,
-}: CvBuildViewProps & { reading: CvProgressReading; build: CvProgressBuild; action?: ReactNode }) {
+  connectionIssue,
+}: CvBuildViewProps & { reading: CvProgressReading; build: CvProgressBuild; action?: ReactNode; connectionIssue?: boolean }) {
   const at = new Date(now);
   const fallback = (CV_MILESTONES as readonly string[]).includes(reading.stage ?? "") ? (reading.stage as CvMilestone) : null;
   return (
@@ -56,7 +62,8 @@ export function CvBuildScreen({
       now={now}
       current={currentMotionLine(steps, at, context, medians)}
       progress={cvBuildProgressLine(steps, at, medians)}
-      narrative={<CvBuildNarrative items={narrateBuild(steps, at, context)} />}
+      narrative={<CvActiveBuildDetail steps={steps} now={now} context={context} />}
+      connectionIssue={connectionIssue}
       action={build.phase === "stopped" ? action : undefined}
     />
   );

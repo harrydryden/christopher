@@ -93,6 +93,7 @@ export function CvBuildLive({
   const [steps, setSteps] = useState<CvJournalStep[]>(() => initial.steps.map(stepFromWire));
   const [reading, setReading] = useState(initial);
   const [build, setBuild] = useState<CvProgressBuild | null>(initial.build);
+  const [connectionIssue, setConnectionIssue] = useState(false);
   const [now, setNow] = useState(nowMs);
   // The browser's clock can be minutes out; every moment on this page is the server's. Taken once,
   // at mount, as the difference between the server's clock when it rendered and the browser's now,
@@ -146,6 +147,7 @@ export function CvBuildLive({
         if (!response.ok) throw new Error("Progress unavailable");
         const next_ = (await response.json()) as CvProgressReading;
         if (!alive()) return null;
+        setConnectionIssue(false);
         const merged = mergeSteps(held, next_.steps.map(stepFromWire), resync);
         const mine = signature(merged);
         const changed = mine !== sig;
@@ -182,6 +184,7 @@ export function CvBuildLive({
         return next;
       },
       fail() {
+        setConnectionIssue(true);
         if (mode === "build") {
           const failed = failedWorkPoll(state);
           state = failed.state;
@@ -204,13 +207,14 @@ export function CvBuildLive({
   };
   if (mode === "build") {
     if (!build) return null;
-    return <CvBuildScreen steps={steps} now={now} context={context} medians={medians} reading={reading} build={build} action={action} />;
+    return <CvBuildScreen steps={steps} now={now} context={context} medians={medians} reading={reading} build={build} action={action} connectionIssue={connectionIssue} />;
   }
 
   if (!steps.length) return null;
   const adopted = adoptedRevision(steps);
   return (
     <section className="space-y-3 border-2 border-line bg-raised p-4">
+      {connectionIssue && reading.live && <p role="status" className="border border-warn p-3 text-14 text-warn">Build log updates are unavailable. The last known activity is shown below; reconnecting automatically.</p>}
       {reading.live && <CvBuildCurrentLine steps={steps} now={now} context={context} medians={medians} />}
       {adopted && (
         <p className="text-14" role="status">

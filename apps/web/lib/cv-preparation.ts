@@ -16,8 +16,9 @@ export type CvLinkedInComparison = { field: string; saved: string; uploaded: str
 export function linkedInImportHasConfirmedEvidence(library: CvLibrary, importId: string, resolvedAt: Date | null): boolean {
   if (!resolvedAt) return false;
   const prefix = `${importId}:`;
-  return library.entries.some(entry => entry.kind === "experience" && entry.id.startsWith(prefix)
-    && entry.status !== "inactive" && (entry.confirmedResponsibilities?.length ?? 0) > 0);
+  return library.entries.some(entry => entry.id.startsWith(prefix) && entry.status !== "inactive"
+    && (entry.kind === "education" || entry.kind === "training" ||
+      (entry.kind === "experience" && (entry.confirmedResponsibilities?.length ?? 0) > 0)));
 }
 
 export function cvEmphasisScan(brief: CvTargetingBriefV1 | null, assessment: CvAssessment | null,
@@ -51,14 +52,19 @@ function explicitDate(value: string, quote: string): boolean {
 }
 
 /** Only compare explicit, quote-anchored fields for a unique employer in each source. */
-export function compareCvWithLinkedIn(library: CvLibrary, proposal: LibraryProposal, extractedText: string): CvLinkedInComparison[] {
+export function compareCvWithLinkedIn(library: CvLibrary, proposal: LibraryProposal, extractedText: string, importId: string): CvLinkedInComparison[] {
   const savedJobs = library.employment ?? [];
   const results: CvLinkedInComparison[] = [];
   for (const job of proposal.employment) {
     if (!job.quote || !cvQuoteIsAnchored(job.quote, extractedText)
       || !cvQuoteIsAnchored(job.company, job.quote) || !cvQuoteIsAnchored(job.title, job.quote)) continue;
+    const importedJobId = `${importId}:${job.id}`;
+    if (!library.entries.some(entry => entry.id === `${importedJobId}:evidence` && entry.kind === "experience"
+      && entry.employmentId === importedJobId && entry.status !== "inactive"
+      && (entry.confirmedResponsibilities?.length ?? 0) > 0)) continue;
     const matched = savedJobs.filter(item => identity(item.company) === identity(job.company));
-    if (matched.length !== 1 || proposal.employment.filter(item => identity(item.company) === identity(job.company)).length !== 1) continue;
+    if (matched.length !== 1 || matched[0]?.id !== importedJobId
+      || proposal.employment.filter(item => identity(item.company) === identity(job.company)).length !== 1) continue;
     const saved = matched[0]!;
     const fields = [
       ["Job title", saved.jobTitle, job.title],
@@ -75,6 +81,9 @@ export function compareCvWithLinkedIn(library: CvLibrary, proposal: LibraryPropo
   for (const qualification of proposal.education) {
     if (!qualification.quote || !cvQuoteIsAnchored(qualification.quote, extractedText)
       || !cvQuoteIsAnchored(qualification.heading, qualification.quote)) continue;
+    if (!library.entries.some(entry => entry.id === `${importId}:${qualification.id}` && entry.status !== "inactive"
+      && entry.kind === (qualification.kind ?? "education") && identity(entry.heading) === identity(qualification.heading)
+      && identity(entry.details) === identity(qualification.detail))) continue;
     const matched = library.entries.filter(item => item.kind === (qualification.kind ?? "education")
       && identity(item.heading) === identity(qualification.heading));
     if (matched.length !== 1 || proposal.education.filter(item => identity(item.heading) === identity(qualification.heading)).length !== 1) continue;

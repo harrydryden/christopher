@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { CvLibrarySchema } from "@col/core/cv";
 import { CvTargetingBriefSchema, CvTargetingChoicesSchema, cvEssentialOmissionIds,
+  projectCvTargetedContent,
   type CvTargetingChoices,
   projectCvWritingLibrary, validateCvTargetingEntries } from "@col/core/cv-targeting";
 import { cvTargetingSource } from "@col/core/cv-targeting-identity";
@@ -77,12 +78,28 @@ export async function confirmCvTargetingPrioritiesForUser(db: Db, userId: string
       acknowledgedEssentialOmissionIds: data.choices.acknowledgedEssentialOmissionIds,
       confirmationKey: data.requestKey };
     CvTargetingBriefSchema.shape.priority.parse(priority);
-    const next = CvTargetingBriefSchema.parse({ ...brief, entries: data.choices.entries,
+    let next = CvTargetingBriefSchema.parse({ ...brief, entries: data.choices.entries,
       presentation: data.choices.presentation, priority });
+    let projected: ReturnType<typeof projectCvTargetedContent> | null = null;
+    if (recovering && draft.content) {
+      try { projected = projectCvTargetedContent(draft.content, next, brief); }
+      catch (error) { throw new CvTargetingConfirmationError((error as Error).message); }
+    }
+    if (projected) next = CvTargetingBriefSchema.parse({ ...next, manualSections: projected.manualSections });
     await options.beforeQueue?.(tx, draft);
-    await tx.update(cvDrafts).set({ targetingBrief: next, status: "queued", buildStage: null, error: null, failure: null })
+    await tx.update(cvDrafts).set({ targetingBrief: next, status: "queued", buildStage: null, progressAt: null,
+      error: null, failure: null,
+      ...(projected ? { content: projected.content, assessment: null, reviewDecision: null,
+        buildCheckpoint: {
+          v: draft.buildCheckpoint?.v, promptSetVersion: draft.buildCheckpoint?.promptSetVersion, stages: {},
+          tailoringEnabled: draft.buildCheckpoint?.tailoringEnabled,
+          tailoringPlan: draft.buildCheckpoint?.tailoringPlan,
+          quizCompleted: draft.buildCheckpoint?.quizCompleted,
+          rubric: draft.buildCheckpoint?.rubric, rubricAt: draft.buildCheckpoint?.rubricAt,
+          mode: "assess" as const, sourceRubric: draft.buildCheckpoint?.sourceRubric,
+        } } : {}) })
       .where(eq(cvDrafts.id, draftId));
-    await enqueueTask(tx, "generate_cv", { draftId, userId },
+    await enqueueTask(tx, "generate_cv", { draftId, userId, ...(projected ? { mode: "assess" as const } : {}) },
       { dedupeKey: recovering ? `generate_cv:${draftId}:targeting-retry:${data.requestKey}`
         : `generate_cv:${draftId}:priorities-confirmed`, priority: 2 });
   });

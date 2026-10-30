@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { CvWorkspace, CvWorkspacePanel } from "./CvWorkspace";
+import { CvReviewActionLink, CvWorkspace, CvWorkspacePanel } from "./CvWorkspace";
 import { CvNextAction } from "./CvNextAction";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -34,6 +34,29 @@ it("opens the tab named by a next-action hash link", async () => {
     expect(container.querySelector('#cv-panel-content')?.hasAttribute("hidden")).toBe(true);
   } finally {
     act(() => root.unmount());
+    container.remove();
+    HTMLElement.prototype.scrollIntoView = originalScroll;
+  }
+});
+
+it("opens and focuses the exact review row named by an improvement", async () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<CvWorkspace description={<p>Advert</p>}>
+      <CvWorkspacePanel tab="content"><p>Content text</p></CvWorkspacePanel>
+      <CvWorkspacePanel tab="evaluation"><CvReviewActionLink href="#cv-review-row-claim%3Asection%3Ae%3A0">Open exact row</CvReviewActionLink>
+        <details id="cv-full-assessment"><summary>Full review</summary><div id="cv-review-row-claim:section:e:0" tabIndex={-1}>Requirement one</div></details>
+      </CvWorkspacePanel>
+    </CvWorkspace>));
+    await act(async () => container.querySelector<HTMLAnchorElement>('a[href="#cv-review-row-claim%3Asection%3Ae%3A0"]')!.click());
+    expect(container.querySelector('#cv-panel-evaluation')?.hasAttribute("hidden")).toBe(false);
+    expect(container.querySelector<HTMLDetailsElement>("#cv-full-assessment")?.open).toBe(true);
+    expect(document.activeElement?.id).toBe("cv-review-row-claim:section:e:0");
+  } finally {
+    await act(async () => root.unmount());
     container.remove();
     HTMLElement.prototype.scrollIntoView = originalScroll;
   }

@@ -140,7 +140,7 @@ it('reports each motion of writing and fitting with the figures behind it',async
 it('never silently drops employment or education to satisfy the page count',async()=>{
  const events: CvFitEvent[] = [];
  const failing = buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}),undefined,async event => { events.push(event); });
- await expect(failing).rejects.toThrow('omitted employment or a qualification');
+  await expect(failing).rejects.toThrow('omitted employment, a qualification or a selected Interest');
  // Named in the taxonomy the whole build is classified by: what the writer returned is unusable.
  await expect(failing).rejects.toMatchObject({ kind:'output_invalid', detail:{ omitted:['e'] } });
  // The reading that found it is reported before the build stops, so the page can say what was lost.
@@ -397,6 +397,43 @@ it('budgets one interest block on a multi-page CV and lets the fitter drop it fi
  const crowded = await selectCvToFit(withInterest, { ...plan, sections: [...plan.sections, { entryId: 'i', bullets: ['Marathon running'] }] }, 'Finance', budget);
  expect(crowded.content.sections.some(section => section.entryId === 'i')).toBe(false);
  expect(crowded.content.sections.filter(section => section.kind === 'experience')).toHaveLength(6);
+});
+it('keeps explicitly selected Interests in a one-page targeted budget, while legacy Interests remain optional', () => {
+ const withInterest: CvLibrary = { ...library, theme: { ...DEFAULT_CV_THEME, maxPages: 1 }, entries: [
+  ...library.entries, { id: 'i', kind: 'interest', heading: 'Board service', details: 'Chaired a charity board',
+   confirmedResponsibilities: ['Chaired a charity board'] }] };
+ const rubric = { caveats: [], requirements: [{ id: 'governance', label: 'Board governance', quote: 'board governance',
+  importance: 'essential' as const, category: 'experience' as const }] };
+ const tailoring = { requirements: [{ requirementId: 'governance', status: 'demonstrated' as const,
+  evidence: [{ sourceId: 'entry:i:row:0', quote: 'Chaired a charity board' }], reason: 'Direct.' }], gapQuestions: [] };
+ expect(createCvWritingBudget(withInterest, 'board', 1).blocks.some(block => block.entryId === 'i')).toBe(false);
+ const targeted = createCvWritingBudget(withInterest, 'board', 1,
+  { rubric, plan: tailoring, treatments: new Map([['i', 'feature']]) });
+ expect(targeted.blocks.find(block => block.entryId === 'i')).toMatchObject({ kind: 'interest', required: true });
+ const missing = { ...plan, sections: plan.sections.filter(section => section.entryId !== 'i') };
+ expect(cvBudgetViolations(missing, targeted)).toContain('Retain i: interest block.');
+});
+it('refuses an authored plan that omits a selected sole-essential Interest', async () => {
+ const source: CvLibrary = { name: 'Example', contact: 'London', profile: 'Leader',
+  theme: { ...DEFAULT_CV_THEME, maxPages: 1 }, entries: [
+   { id: 'role', kind: 'experience', heading: 'Manager · Example', details: 'Led operations.',
+    confirmedResponsibilities: ['Led operations.'] },
+   { id: 'i', kind: 'interest', heading: 'Charity governance', details: 'Chaired a charity board.',
+    confirmedResponsibilities: ['Chaired a charity board.'] },
+  ] };
+ const rubric = { caveats: [], requirements: [{ id: 'board', label: 'Board governance', quote: 'board governance',
+  importance: 'essential' as const, category: 'experience' as const }] };
+ const tailoring = { requirements: [{ requirementId: 'board', status: 'demonstrated' as const,
+  evidence: [{ sourceId: 'entry:i:row:0', quote: 'Chaired a charity board.' }], reason: 'Direct.' }], gapQuestions: [] };
+ const semantic = { rubric, plan: tailoring, treatments: new Map([['role', 'feature' as const], ['i', 'feature' as const]]) };
+ const complete: CvPlan = { summary: 'Operations leader.', sections: [
+  { entryId: 'role', bullets: ['Led operations.'], bulletSources: [['entry:role:row:0']] },
+  { entryId: 'i', bullets: ['Chaired a charity board.'], bulletSources: [['entry:i:row:0']] },
+ ], gaps: [] };
+ const write = vi.fn().mockResolvedValue({ ...complete, sections: complete.sections.slice(0, 1) });
+ await expect(buildFittedCv(source, 'Board governance', write, undefined, undefined, semantic))
+  .rejects.toMatchObject({ kind: 'output_invalid', detail: { omitted: ['i'] } });
+ expect(write).toHaveBeenCalledTimes(1);
 });
 it('corrects a retry against the budget it will be given, not the one it just missed', async () => {
  const minimal: CvPlan = { ...plan, sections: plan.sections.map(section => section.entryId.startsWith('r') ? { ...section, bullets: [plan.sections[1]!.bullets[1]!] } : section) };

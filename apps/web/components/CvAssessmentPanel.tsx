@@ -7,6 +7,7 @@ import { CvEvaluationTable } from "./CvLazyWidgets";
 import { CvCheckForm } from "./CvCheckForm";
 import { CvReviewControls } from "./CvReviewControls";
 import { cvReviewActions } from "@/lib/cv-review-actions";
+import { CvReviewActionLink } from "./CvWorkspace";
 
 /** Explain source changes where the evidence is judged; rewriting stays in the Write controls. */
 function LibraryDrift({ sentence }: { sentence: string | null }) {
@@ -133,11 +134,11 @@ export function CvAssessmentPanel({
         <h3 className="font-semibold">Next improvements</h3>
         <p className="text-12 text-muted">Factual support and essential coverage come first. Editorial suggestions are editing prompts, not hiring predictions.</p>
         {nextActions.length ? <ol className="mt-2 list-decimal space-y-1 pl-5">{nextActions.map((item, index) =>
-          <li key={`${item.kind}:${index}`}><a href={item.href} className="underline">{item.text}</a></li>)}</ol>
+          <li key={`${item.kind}:${index}`}><CvReviewActionLink href={item.href}>{item.text}</CvReviewActionLink></li>)}</ol>
           : <p className="mt-2 text-14">No specific improvement is flagged by this saved review.</p>}
       </div>
       {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise={!overPages} />}
-      <details className="border-t border-line-muted pt-3">
+      <details id="cv-full-assessment" className="border-t border-line-muted pt-3">
         <summary className="cursor-pointer text-14 font-medium">View full assessment</summary>
         <div className="mt-4 space-y-4">
       {quality && (
@@ -174,7 +175,7 @@ export function CvAssessmentPanel({
             <ul className="mt-2 grid gap-2 sm:grid-cols-3">
               <li><strong>Repetition · {quality.editorial.repetition.label}</strong><span className="block text-muted">{quality.editorial.repetition.note}</span></li>
               <li><strong>Concision · {quality.editorial.concision.label}</strong><span className="block text-muted">{quality.editorial.concision.note}</span></li>
-              <li><strong>Profile focus · {quality.editorial.summaryFocus.label}</strong><span className="block text-muted">{quality.editorial.summaryFocus.note}</span></li>
+              <li><strong>{content?.theme?.bodySizePt ? "Summary" : "Profile"} focus · {quality.editorial.summaryFocus.label}</strong><span className="block text-muted">{quality.editorial.summaryFocus.note}</span></li>
             </ul>
           </div>
         </div>

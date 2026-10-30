@@ -117,7 +117,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
             </thead>
             <tbody className="divide-y divide-line-muted">
               {shown.map((row) => (
-                <tr key={row.id} className="align-top even:bg-sunken">
+                <tr key={row.id} id={`cv-review-row-${row.id}`} tabIndex={-1} className="align-top even:bg-sunken">
                   <td className="px-2 py-4 text-12 text-muted">
                     {row.number}
                   </td>

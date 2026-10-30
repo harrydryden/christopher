@@ -2,11 +2,13 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { enqueueTask, listCvBuildSteps, schema, type Db } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
-import { RateLimitError, type AiClientLike, type ParseResponse } from "@col/ai";
+import { RateLimitError, promptSetVersion, type AiClientLike, type ParseResponse } from "@col/ai";
 import type { CvAssessment, CvReviewPlan, CvRubric } from "@col/core/cv-assessment";
 import { cvTailoringPlanForWriter, type CvTailoringPlan } from "@col/core/cv-tailoring";
 import { dedupeKeyFor } from "@col/core";
 import { DEFAULT_CV_THEME } from "@col/core/cv";
+import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
+import { cvTargetingRubricKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -61,7 +63,9 @@ beforeEach(async () => {
 });
 
 const answered = (parsed_output: unknown): ParseResponse => ({ parsed_output, usage: USAGE, stop_reason: "end_turn", model: "claude-sonnet-5" });
-type ScriptOptions = { plan?: CvTailoringPlan; rejectImprovement?: boolean; failImprovement?: boolean; omitRequiredEntryOnImprovement?: boolean; onImprovement?: () => Promise<void> };
+type ScriptOptions = { plan?: CvTailoringPlan; rejectImprovement?: boolean; failImprovement?: boolean;
+  omitRequiredEntryOnImprovement?: boolean; includeInterest?: boolean; omitInterestOnImprovement?: boolean;
+  onImprovement?: () => Promise<void> };
 
 function scriptedClient(options: ScriptOptions = {}) {
   const calls: string[] = [];
@@ -114,7 +118,9 @@ function scriptedClient(options: ScriptOptions = {}) {
           ? [["entry:one:row:0"], ["entry:one:row:1"]]
           : [["entry:one:row:0"]] },
       ...(!improved || !options.omitRequiredEntryOnImprovement ? [{ entryId: "degree", bullets: ["University of Example"],
-        bulletSources: [["entry:degree:row:0"]] }] : [])], gaps: [],
+        bulletSources: [["entry:degree:row:0"]] }] : []),
+      ...(options.includeInterest && (!improved || !options.omitInterestOnImprovement)
+        ? [{ entryId: "interest", bullets: ["Chaired a charity board"], bulletSources: [["entry:interest:row:0"]] }] : [])], gaps: [],
     });
   } } };
   return { client, calls, authorInputs };
@@ -379,6 +385,31 @@ it("keeps the checked baseline when an improved candidate drops a required educa
   expect(saved.content?.sections.map(section => section.entryId)).toEqual(["one", "degree"]);
   expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team"]);
   expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(1);
+  expect((await listCvBuildSteps(db, userId, draft.id)).find(step => step.motion === "compare_content")?.detail)
+    .toMatchObject({ accepted: false });
+});
+
+it("keeps the checked baseline when optional improvement omits a selected Interest", async () => {
+  const scripted = scriptedClient({ includeInterest: true, omitInterestOnImprovement: true });
+  deps.aiClient = scripted.client;
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  const selectedLibrary = { ...library, theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 as const },
+    entries: [...library.entries, { id: "interest", kind: "interest" as const, heading: "Charity governance",
+      details: "Chaired a charity board", confirmedResponsibilities: ["Chaired a charity board"] }] };
+  const source = cvTargetingSource(1, selectedLibrary, draft.jobDescription);
+  const brief = CvTargetingBriefSchema.parse({ version: 1, source,
+    entries: selectedLibrary.entries.map(entry => ({ entryId: entry.id, treatment: "feature" })),
+    presentation: { maxPages: 2, bodySizePt: 12 }, priority: { state: "confirmed", rubric,
+      rubricKey: cvTargetingRubricKey(source, rubric, draft.model, promptSetVersion()),
+      emphasisRequirementIds: ["lead", "change"], acknowledgedEssentialOmissionIds: [], confirmationKey: crypto.randomUUID() } });
+  await db.update(schema.cvDrafts).set({ librarySnapshot: selectedLibrary, targetingBrief: brief })
+    .where(eq(schema.cvDrafts.id, draft.id));
+  await queue().drain();
+  const baseline = await draftAfter(draft.id);
+  expect(baseline.status, baseline.error ?? "").toBe("ready");
+  expect(baseline.content?.sections.some(section => section.entryId === "interest")).toBe(true);
+  expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(1);
+  expect((await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id)))).toHaveLength(0);
   expect((await listCvBuildSteps(db, userId, draft.id)).find(step => step.motion === "compare_content")?.detail)
     .toMatchObject({ accepted: false });
 });

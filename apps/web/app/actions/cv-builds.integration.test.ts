@@ -399,6 +399,52 @@ it("resumes a failed targeted page fit on the same draft with its own revised pa
   expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
 });
 
+it("reprojects saved targeted wording on page-fit recovery without authoring or losing Feature text", async () => {
+  const rubric = rubricFixture("Finance operations");
+  const source = cvTargetingSource(1, CvLibrarySchema.parse(library), "Finance operations");
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const rubricKey = "b".repeat(64);
+  const failure = { kind: "page_limit_unfittable" as const, resolvedBy: "user" as const, retryable: false,
+    action: "shorten_or_raise_pages" as const, message: "Two pages exceed one.", motion: "shorten" as const,
+    attempt: 3, maxAttempts: 3 };
+  const saved = { ...content, theme: { ...DEFAULT_CV_THEME, maxPages: 1, bodySizePt: 12 as const },
+    sections: [{ ...content.sections[0]!, bullets: ["Led a team", "Improved delivery"] }] };
+  const cachedReview = reviewFixture({ rubric, cv: cvTextItems(saved), claims: cvClaimItems(saved),
+    evidence: cvEvidenceItems(CvLibrarySchema.parse(library)) });
+  const draft = await failedDraft({ content: saved, failure,
+    semanticAuditCache: { identity: "c".repeat(64), review: cachedReview },
+    buildCheckpoint: { tailoringEnabled: false, contentAt: "2026-09-01T00:01:00.000Z", rubric, tailoringPlan: plan },
+    targetingBrief: { version: 1, source, entries: [{ entryId: "one", treatment: "feature" }],
+      presentation: { maxPages: 1, bodySizePt: 12 }, priority: { state: "confirmed", rubric, rubricKey,
+        emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [], confirmationKey: crypto.randomUUID() } },
+  });
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toMatchObject({ ok: false,
+    error: expect.stringContaining("Change this CV's page and evidence choices") });
+  expect(await buildTasks()).toHaveLength(0);
+  const choices = (treatment: "feature" | "summarise", maxPages: number) => ({
+    expectedRevision: draft.revision, expectedSource: source, expectedRubricKey: rubricKey,
+    requestKey: crypto.randomUUID(), choices: { entries: [{ entryId: "one", treatment }],
+      presentation: { maxPages, bodySizePt: 12 as const }, emphasisRequirementIds: ["r1"],
+      acknowledgedEssentialOmissionIds: [] } });
+  expect(await reviseFailedCvTargeting(draft.id, choices("feature", 2))).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  const enlarged = await draftRow(draft.id);
+  expect(enlarged.content?.sections[0]?.bullets).toEqual(["Led a team", "Improved delivery"]);
+  expect(enlarged.content?.theme).toMatchObject({ maxPages: 2, bodySizePt: 12 });
+  expect(enlarged.semanticAuditCache?.identity).toBe("c".repeat(64));
+  expect(enlarged.assessment).toBeNull();
+  expect(enlarged.buildCheckpoint?.contentAt).toBeUndefined();
+  expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: draft.id, mode: "assess" });
+  await database.update(schema.cvDrafts).set({ status: "failed", failure }).where(eq(schema.cvDrafts.id, draft.id));
+  expect(await reviseFailedCvTargeting(draft.id, choices("summarise", 2))).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  const shortened = await draftRow(draft.id);
+  expect(shortened.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+  expect(shortened.targetingBrief?.manualSections?.[0]?.bullets).toEqual(["Led a team", "Improved delivery"]);
+  await database.update(schema.cvDrafts).set({ status: "failed", failure }).where(eq(schema.cvDrafts.id, draft.id));
+  expect(await reviseFailedCvTargeting(draft.id, choices("feature", 2))).toEqual({ ok: true, destination: `/cv/${draft.id}` });
+  expect((await draftRow(draft.id)).content?.sections[0]?.bullets).toEqual(["Led a team", "Improved delivery"]);
+});
+
 it("uses the two-page targeted default after a JSONB theme round trip, but honours an explicit three-page choice", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1,
     content: { ...library, theme: { ...DEFAULT_CV_THEME } } });

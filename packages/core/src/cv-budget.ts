@@ -4,8 +4,14 @@ import { CV_LIMITS } from "./cv-format";
 import { cvMaxPages } from "./cv-theme";
 import { cvTailoringCoverage, cvTailoringRequirementWeights, type CvTailoringPlan } from "./cv-tailoring";
 
-export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number; relevantSkillItems?: string[] };
+export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number; required?: boolean; relevantSkillItems?: string[] };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
+/** The same source-preservation rule applies to the first writer and optional improvements. */
+export function missingRequiredCvBlocks(plan: CvPlan, budget: CvWritingBudget): CvBlockBudget[] {
+  return budget.blocks.filter(block =>
+    (block.kind === 'experience' || block.kind === 'education' || block.kind === 'training' || block.required)
+      && !plan.sections.some(section => section.entryId === block.entryId));
+}
 /** What a CV is fitted against: plain text, every word counting once, or words weighted by requirement. */
 export type CvRelevanceTarget = string | ReadonlyMap<string, number>;
 export type CvSemanticTarget = { plan: CvTailoringPlan; rubric: CvRubric;
@@ -79,15 +85,22 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
     ? semanticEntryRelevance(entry.id, semantic)
     : cvRelevance([entry.heading, entry.details, ...(entry.skillItems ?? [])].join(' '), target);
   const byRelevance = (a: CvLibrary["entries"][number], b: CvLibrary["entries"][number]) => entryRelevance(b) - entryRelevance(a);
-  const skills = library.entries.filter(entry => entry.kind === 'skill' && relevantSkillBlock(entry, target, semantic))
-    .sort(byRelevance).slice(0, Math.min(CV_LIMITS.skillSections, CV_LIMITS.sections - roles.length - education.length));
   // The allocations were calibrated on a two-page CV. The user's page limit scales the body;
   // the profile only shrinks for a one-page CV, because it sits in the fixed masthead.
   const pages = cvMaxPages(library.theme) / 2;
-  // A one-page CV has no room for interests; a longer one carries one small block, which the
-  // fitter trims before anything else when the pages fill up. Without a block the writer is told
-  // interests have no space and the fitter drops them, so a recorded interest never appears.
-  const interests = pages < 1 ? [] : library.entries.filter(entry => entry.kind === 'interest').sort(byRelevance).slice(0, Math.min(1, 20 - roles.length - education.length - skills.length));
+  const targetedInterests = semantic?.treatments
+    ? library.entries.filter(entry => entry.kind === 'interest' && semantic.treatments?.get(entry.id) !== 'omit')
+    : null;
+  const available = CV_LIMITS.sections - roles.length - education.length;
+  if (targetedInterests && targetedInterests.length > available)
+    throw new Error('This CV selects more Interest sections than its available section space. Omit an optional section or change the selection.');
+  // An explicit per-CV choice is retained even on one page. Legacy budgets still make Interests
+  // optional and omit them on one page. Reserve selected Interest slots before optional skills.
+  const reserved = targetedInterests?.length ?? 0;
+  const skills = library.entries.filter(entry => entry.kind === 'skill' && relevantSkillBlock(entry, target, semantic))
+    .sort(byRelevance).slice(0, Math.min(CV_LIMITS.skillSections, available - reserved));
+  const interests = targetedInterests ?? (pages < 1 ? [] : library.entries.filter(entry => entry.kind === 'interest')
+    .sort(byRelevance).slice(0, Math.min(1, available - skills.length)));
   const bulletCap = Math.max(1, Math.min(CV_LIMITS.bulletsPerSection, Math.round(4 * pages)));
   // Headings, callouts, masthead and subsection spacing all consume space, even
   // before achievements are written. More roles therefore mean less prose each.
@@ -117,6 +130,7 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
     maxSkills: entry.skillItems ? Math.min(CV_LIMITS.skillsPerSection, Math.max(2, Math.round(5 * pages * scale))) : 0,
     ...(entry.skillItems ? { relevantSkillItems: relevantCvSkillItems(entry, target, semantic) } : {}) })));
   blocks.push(...interests.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 0,
+    ...(targetedInterests ? { required: true } : {}),
     maxBullets: semantic?.treatments?.get(entry.id) === "summarise" ? 1 : 2,
     maxCharacters: Math.round(120 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: 0 })));
   return { summaryCharacters, totalCharacters, blocks };
@@ -181,7 +195,7 @@ export function cvBudgetViolations(plan: CvPlan, budget: CvWritingBudget): strin
   if (plan.summary.length > budget.summaryCharacters) violations.push(`Profile: ${plan.summary.length} characters; budget ${budget.summaryCharacters}.`);
   for (const block of budget.blocks) {
     const section = plan.sections.find(section => section.entryId === block.entryId);
-    if (!section) { if (block.kind === 'experience' || block.kind === 'education' || block.kind === 'training') violations.push(`Retain ${block.entryId}: ${block.kind} block.`); continue; }
+    if (!section) { if (block.kind === 'experience' || block.kind === 'education' || block.kind === 'training' || block.required) violations.push(`Retain ${block.entryId}: ${block.kind} block.`); continue; }
     const values = section.skillItems ?? section.bullets;
     const length = values.reduce((sum, value) => sum + value.length, 0);
     if (length > block.maxCharacters) violations.push(`${block.entryId}: ${length} characters; budget ${block.maxCharacters}.`);

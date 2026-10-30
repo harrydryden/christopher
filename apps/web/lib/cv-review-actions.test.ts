@@ -4,6 +4,7 @@ import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@col/core/cv-assessm
 import { createCvAssessment } from "@col/core/cv-review";
 import { rubricFixture, reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 import { cvReviewActions } from "./cv-review-actions";
+import type { CvAssessment } from "@col/core/cv-assessment";
 
 it("puts factual and essential gaps ahead of editorial advice and never invents a fourth action", () => {
   const library: CvLibrary = { name: "Ada", contact: "", profile: "Analyst", entries: [
@@ -22,4 +23,17 @@ it("puts factual and essential gaps ahead of editorial advice and never invents 
   const actions = cvReviewActions(assessment, { ...content, theme: { ...(content.theme ?? {}), maxPages: 2 } as typeof content.theme });
   expect(actions).toHaveLength(3);
   expect(actions.map(item => item.kind)).toEqual(["factual", "coverage", "layout"]);
+  expect(actions[0]?.href).toBe("#cv-content-section-e");
+  expect(actions[1]?.href).toBe(`#cv-review-row-${encodeURIComponent(rubric.requirements[0]!.id)}`);
+  expect(actions[2]?.href).toBe("#cv-panel-appearance");
+});
+
+it("links punctuation-equivalent repeated wording to its actual editable section", () => {
+  const content = { name: "Ada", contact: "", summary: "Analyst", gaps: [], sections: [
+    { entryId: "role", kind: "experience", heading: "Analyst", bullets: ["Built reports.", "Built reports!"] },
+  ] } as Parameters<typeof cvReviewActions>[1];
+  const assessment = { pageCount: 1, rubric: { requirements: [] }, review: { claims: [], matches: [] } } as unknown as CvAssessment;
+  const action = cvReviewActions(assessment, content).find(item => item.text.includes("repeated"));
+  expect(action?.href).toBe("#cv-content-section-role");
+  expect(action?.text).toContain("Built reports!");
 });

@@ -173,6 +173,7 @@ export function CvDraftEditor({
     url: string;
     fingerprint: string;
     pages: number;
+    summaryLines: number | null;
   }>();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -384,6 +385,8 @@ export function CvDraftEditor({
         url,
         fingerprint,
         pages: Number(response.headers.get("x-cv-page-count")),
+        summaryLines: (() => { const lines = Number(response.headers.get("x-cv-summary-lines"));
+          return Number.isSafeInteger(lines) && lines > 0 ? lines : null; })(),
       });
     } catch (failure) {
       if (!request.signal.aborted)
@@ -500,7 +503,7 @@ export function CvDraftEditor({
           </p>
 
           <label className="block text-14">
-            <span className={labelClass}>Profile</span>
+            <span className={labelClass}>{theme.bodySizePt ? "Executive Summary" : "Profile"}</span>
             <CommentCount n={commentCounts[CV_PROFILE_ID] ?? 0} />
             <textarea
               form={formId}
@@ -513,6 +516,11 @@ export function CvDraftEditor({
               className={`ds-prose ${input}`}
             />
           </label>
+          {theme.bodySizePt && <p className="text-12 text-muted" role="status">
+            {currentPreview && preview?.summaryLines
+              ? `This Executive Summary takes ${preview.summaryLines} rendered ${preview.summaryLines === 1 ? "line" : "lines"} in the current PDF. ${preview.summaryLines > 3 ? "Aim for two to three lines where the evidence allows; shorten it or review the preview." : "Two to three lines is a guide, not a requirement to add filler."}`
+              : "Aim for two to three rendered lines where the evidence allows. Preview current edits to measure them."}
+          </p>}
           {/* Beside the words it remembers, not two tabs away: it applies to whichever of the two
               saves is used, and posts into the edit form above. The hint is a sibling, not part of
               the label, so the control's name stays the four words it is called by. */}

@@ -997,6 +997,8 @@ export async function assessCvDraft(
         throw new UserFacingError(
           "Choose an unfinished saved draft that is not already being processed.",
         );
+      if (draft.targetingBrief && draft.failure?.kind === "page_limit_unfittable")
+        throw new UserFacingError("Open Write, then use Change this CV's page and evidence choices to retry this targeted CV.");
       await assertCvBuildCapacity(tx, user.id);
       // A terminal failure returned the original credit. A person asking to retry an AI-written
       // build reserves one again, while a Direct Edit assessment remains free. Automatic worker

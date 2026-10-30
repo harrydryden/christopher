@@ -1,6 +1,6 @@
 # ADR 0001: A CV presents targeted evidence for an application
 
-Status: Accepted — implementation and local verification completed; hosted CI and deployment remain separate gates.
+Status: Accepted — implementation includes the completion audit below; hosted CI, migration and rollout remain separate gates.
 
 Date: 30 October 2026
 
@@ -134,7 +134,7 @@ The preparation step adds a deliberate decision before a new targeted build writ
 
 ## Implementation and verification record
 
-Implementation and local verification are complete. This record distinguishes that evidence from hosted CI and deployment; nothing here means that the functionality is already live.
+The initial implementation record below is supplemented by the completion audit. It distinguishes local evidence from hosted CI and deployment; nothing here means that the functionality is already live.
 
 | Acceptance | Implementation boundary | Verification status |
 | --- | --- | --- |
@@ -168,3 +168,19 @@ After correcting targeted claim review to use eligible evidence while retaining 
 After the last qualification-preservation fit guard, an offline replay of the final provider recording passed all four grade invariants with zero misses and one page within the two-page limit. It made no provider calls and confirms that the recorded author/review requests still match the final fit path. Repository qualification evidence is in `docs/evaluations/cv-targeted-2026-10-30/`.
 
 The subsequent requested skills-spacing refinement applies to newly rendered targeted and legacy drafts: vertical pill padding is 2 pt, wrapped-row spacing is 2 pt, and the gap between categories is 4 pt. Font sizes, horizontal geometry and industry pills are unchanged. Stored finalised PDF bytes remain immutable. Before/after renders of the supplied five-category, 21-skill example in both Course of Life and Arial retain all 26 pills, identical extracted text, font sizes and wrapped-row counts, while reducing the skills block's height by 23.8–25.6%. Independent raster review found no clipping or overlap. The focused pill/fit suite passes 44/44, the web PDF suite 29/29, and core typechecking passes. This spacing-only change adds no model calls or prompt changes; the earlier live PDF remains historical qualification evidence.
+
+### Completion audit after PRs 119 and 120
+
+PR 120 was merged into its former parent branch after PR 119 reached `main`, so its implementation did not reach `main`. The completion branch brings that merge forward and closes these source-audit gaps:
+
+- **A14 — recovery:** generic Check cannot replace a failed targeted CV's choices with global Settings. Dedicated recovery uses the shared reversible projection to update the brief and saved content together, clears stale assessment and layout state, and checks existing wording without calling the author. A page-only change preserves the factual cache while requiring fresh PDF measurement. Builds with no saved wording keep their resumable writing path.
+- **A14 — selected Interests:** every explicitly included targeted Interest receives a writing allocation, including on one page. The first writer, fitter and optional improver share the required-block rule. An improvement that drops a selected Interest is rejected while retaining the checked baseline. Legacy optional-Interest behaviour is unchanged.
+- **A9 — LinkedIn provenance:** confirmation is checked for each exact imported employment or qualification record. Accepting one row does not confirm the other rows. Unconfirmed, merged and pruned records remain unknown.
+- **A8 — editing actions:** actions include the actual claim/requirement and open the relevant editor control or assessment row. The shared editorial selector keeps the warning and target consistent.
+- **A5 — summary guidance:** targeted editors say Executive Summary and show its actual line count beside the text after Preview. Edits invalidate that observation. No render or model call is added to typing or Save; legacy Profile wording is preserved.
+
+The focused completion checks pass: UI 36/36, core quality 10/10, fit 36/36, recovery integration 25/25, worker contracts 3/3 and optional-improvement regressions 2/2. Core, DB, web, worker and evaluation-script typechecks pass. These are focused counts, not a claim that the earlier full-suite record has been rerun. The final production build and all route bundle limits pass; CV first-load JavaScript is 125,182 of 138,000 bytes gzip and Library remains 141,457 of 142,000.
+
+The completion browser check uses a separate synthetic account against the local production build. It verifies current measured summary guidance, invalidation after a wording edit, free Save with no queued CV task or provider call, preservation of the two-page choice, a review action opening/focusing the summary, and no horizontal overflow at 390 px. The single Save sample is 113 ms; it is a local diagnostic, not a hosted latency promise or before/after comparison.
+
+`completion-replay.json` in the qualification directory records another exact offline replay after the required-Interest guard: all four invariants pass with zero misses. No prompt changes or paid requests are needed for that replay. The dedicated `scripts/evaluate-cv-preparation.mts` probe separately qualifies fresh role extraction and evidence planning on invented data, using the existing $10 cumulative transport ledger, a $2 preparation-phase ceiling, at most four requests and no database connection. Its result must be recorded separately; the existing author/review/skill qualification must not be described as a full fresh-planning run.

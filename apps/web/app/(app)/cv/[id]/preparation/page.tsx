@@ -55,7 +55,7 @@ export default async function CvPreparationPage({ params, searchParams }: {
   const proposal = selectedData ? StoredLibraryProposalSchema.safeParse(selectedData.proposal) : null;
   const sourceReviewed = !!selected && !!selectedData && linkedInImportHasConfirmedEvidence(library, selected.id, selectedData.resolvedAt);
   const comparison = sourceReviewed && selectedData?.content && proposal?.success
-    ? compareCvWithLinkedIn(library, proposal.data, selectedData.content) : [];
+    ? compareCvWithLinkedIn(library, proposal.data, selectedData.content, selected.id) : [];
   const rubric = draft.targetingBrief?.priority.rubric ?? draft.assessment?.rubric ?? draft.buildCheckpoint?.sourceRubric;
   let mappedSourceIds: string[] = [];
   const planCandidate = storedPlan[0]?.plan ?? draft.buildCheckpoint?.tailoringPlan;

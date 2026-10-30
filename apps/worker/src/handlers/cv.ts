@@ -43,6 +43,7 @@ import {
   cvMaxPages,
   cvRelevanceTerms,
   createCvWritingBudget,
+  missingRequiredCvBlocks,
   groupCvLibrary,
   readCvBuildCheckpoint,
   reusedCvRubric,
@@ -1119,11 +1120,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             } catch (error) {
               throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
             }
-            const omitted = library.entries.filter(entry =>
-              (entry.kind === "experience" || entry.kind === "education" || entry.kind === "training") &&
-              !plan.sections.some(section => section.entryId === entry.id));
+            const omitted = missingRequiredCvBlocks(plan, budget);
             if (omitted.length)
-              throw new CvBuildStop("output_invalid", "The optional revision omitted employment or qualifications.");
+              throw new CvBuildStop("output_invalid", "The optional revision omitted employment, qualifications or a selected Interest.");
             // The optional pass strengthens role evidence. Preserve the already checked qualification
             // wording, so retaining a block cannot conceal the loss of one qualification.
             const baselineQualifications = new Map(CvStoredPlanSchema.parse(args.baselineContent).sections

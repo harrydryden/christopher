@@ -12,6 +12,7 @@ it("renders an authenticated unsaved preview and reports its actual page count",
   const response = await POST(new Request("http://localhost/api/cv/preview", { method: "POST", body: JSON.stringify(content) }));
   expect(auth).toHaveBeenCalledOnce(); expect(response.status).toBe(200);
   expect(response.headers.get("x-cv-page-count")).toBe("1");
+  expect(response.headers.get("x-cv-summary-lines")).toBe("1");
   expect(response.headers.get("cache-control")).toContain("no-store");
   expect(Buffer.from(await response.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
 });

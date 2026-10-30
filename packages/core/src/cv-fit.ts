@@ -2,6 +2,7 @@ import { materialiseCv, type CvContent, type CvLibrary, type CvPlan } from "./cv
 import {
   type CvRelevanceTarget,
   createCvWritingBudget,
+  missingRequiredCvBlocks,
   cvBudgetViolations,
   cvRelevance,
   cvSemanticRequirementWeights,
@@ -335,7 +336,7 @@ export async function selectCvToFit(
         if (entry.kind === "education" || entry.kind === "training") return [];
         const values = section.skillItems ?? section.bullets;
         return values.flatMap((value, index) =>
-          entry.kind === "experience" && values.length === 1
+          (entry.kind === "experience" || budget.blocks.some(block => block.entryId === section.entryId && block.required)) && values.length === 1
             ? []
             : [
                 {
@@ -480,11 +481,7 @@ export async function buildFittedCv(
       ...(feedback ? { layoutFeedback: feedback } : {}),
     });
     await say({ motion: "write", phase: "done", attempt: attempt + 1, ...planSize(plan, budget) });
-    const missing = budget.blocks.filter(
-      (block) =>
-        (block.kind === "experience" || block.kind === "education" || block.kind === "training") &&
-        !plan.sections.some((section) => section.entryId === block.entryId),
-    );
+    const missing = missingRequiredCvBlocks(plan, budget);
     // Prose libraries and explicit skill lists have different authoring contracts.
     // Repair a model representation mistake; never relax the evidence validator.
     const skillCorrections = plan.sections.flatMap(section => {
@@ -503,7 +500,7 @@ export async function buildFittedCv(
     if (missing.length)
       throw new CvFitFailure(
         "output_invalid",
-        "The writer omitted employment or a qualification. No incomplete CV was saved.",
+        "The writer omitted employment, a qualification or a selected Interest. No incomplete CV was saved.",
         { omitted: missing.map(block => block.entryId) },
       );
     if (skillCorrections.length) {

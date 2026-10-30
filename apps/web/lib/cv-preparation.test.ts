@@ -10,22 +10,32 @@ const library: CvLibrary = { name: "Ada", contact: "", profile: "Analyst", emplo
   employmentId: "job-1", confirmedResponsibilities: ["Built reports."] }] };
 
 it("compares only a uniquely matched, anchored LinkedIn upload", () => {
+  const importId = "62cf7aae-5521-48a9-a043-93f1a14f61cd";
+  const linked = { ...library, employment: [{ ...library.employment![0]!, id: `${importId}:p1` }],
+    entries: [{ ...library.entries[0]!, id: `${importId}:p1:evidence`, employmentId: `${importId}:p1` }] };
   const proposal = { employment: [{ id: "p1", company: "Acme", title: "Senior Analyst", startDate: "2020",
     endDate: "2022", current: false, quote: "Acme Senior Analyst 2020 to 2022", responsibilities: [] }],
     education: [], skills: [] };
-  const checked = compareCvWithLinkedIn(library, proposal, "Acme Senior Analyst 2020 to 2022");
+  const checked = compareCvWithLinkedIn(linked, proposal, "Acme Senior Analyst 2020 to 2022", importId);
   expect(checked).toMatchObject([{ field: "Acme · Job title", status: "needs_review" },
     { field: "Acme · Start date", status: "corroborating" },
     { field: "Acme · End date", status: "corroborating" }]);
-  expect(compareCvWithLinkedIn(library, proposal, "Unrelated upload")).toEqual([]);
-  expect(compareCvWithLinkedIn({ ...library, employment: [...library.employment!, library.employment![0]!] },
-    proposal, "Acme Senior Analyst 2020 to 2022")).toEqual([]);
-  expect(compareCvWithLinkedIn(library, { ...proposal, employment: [{ ...proposal.employment[0]!,
+  expect(compareCvWithLinkedIn(linked, proposal, "Unrelated upload", importId)).toEqual([]);
+  expect(compareCvWithLinkedIn({ ...linked, employment: [...linked.employment!, linked.employment![0]!] },
+    proposal, "Acme Senior Analyst 2020 to 2022", importId)).toEqual([]);
+  expect(compareCvWithLinkedIn(linked, { ...proposal, employment: [{ ...proposal.employment[0]!,
     quote: "A senior analyst from 2020 to 2022" }] },
-    "Acme Senior Analyst 2020 to 2022. A senior analyst from 2020 to 2022")).toEqual([]);
-  expect(compareCvWithLinkedIn(library, { ...proposal, employment: [{ ...proposal.employment[0]!,
+    "Acme Senior Analyst 2020 to 2022. A senior analyst from 2020 to 2022", importId)).toEqual([]);
+  expect(compareCvWithLinkedIn(linked, { ...proposal, employment: [{ ...proposal.employment[0]!,
     startDate: "2020-06", quote: "Acme Senior Analyst 2020 to 2022" }] },
-    "Acme Senior Analyst 2020 to 2022").some(item => item.field.endsWith("Start date"))).toBe(false);
+    "Acme Senior Analyst 2020 to 2022", importId).some(item => item.field.endsWith("Start date"))).toBe(false);
+  const second = { id: "p2", company: "Beta", title: "Director", startDate: "2021", endDate: "2024",
+    current: false, quote: "Beta Director 2021 to 2024", responsibilities: [] };
+  expect(compareCvWithLinkedIn({ ...linked, employment: [...linked.employment!, { ...linked.employment![0]!,
+    id: `${importId}:p2`, company: "Beta", jobTitle: "Director" }] },
+  { ...proposal, employment: [...proposal.employment, second] },
+  "Acme Senior Analyst 2020 to 2022. Beta Director 2021 to 2024", importId)
+    .some(item => item.field.startsWith("Beta"))).toBe(false);
 });
 
 it("does not treat a resolved but dismissed or unconfirmed LinkedIn upload as reviewed evidence", () => {
@@ -37,6 +47,21 @@ it("does not treat a resolved but dismissed or unconfirmed LinkedIn upload as re
     confirmedResponsibilities: ["Built reports."] }] }, id, null)).toBe(false);
   expect(linkedInImportHasConfirmedEvidence({ ...imported, entries: [{ ...imported.entries[0]!,
     confirmedResponsibilities: ["Built reports."] }] }, id, new Date())).toBe(true);
+});
+
+it("compares an accepted qualification only from its exact upload marker", () => {
+  const importId = "62cf7aae-5521-48a9-a043-93f1a14f61cd";
+  const proposal = { employment: [], education: [{ id: "q1", kind: "training" as const,
+    heading: "PRINCE2", detail: "Practitioner", quote: "PRINCE2 Practitioner" }], skills: [] };
+  const source = "PRINCE2 Practitioner";
+  const saved = { ...library, entries: [...library.entries, { id: `${importId}:q1`, kind: "training" as const,
+    status: "active" as const, heading: "PRINCE2", details: "Practitioner" }] };
+  expect(compareCvWithLinkedIn(saved, proposal, source, importId)).toMatchObject([
+    { field: "PRINCE2 · details", status: "corroborating" },
+  ]);
+  expect(compareCvWithLinkedIn({ ...saved, entries: saved.entries.filter(item => item.id !== `${importId}:q1`) },
+    proposal, source, importId)).toEqual([]);
+  expect(linkedInImportHasConfirmedEvidence(saved, importId, new Date())).toBe(true);
 });
 
 it("maps selected priorities only through current demonstrated audited claims and measured pages", () => {

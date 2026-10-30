@@ -40,7 +40,7 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
             [
               ["primary", "Header and heading underlines"],
               ["background", "Page background"],
-              ["surface", "Profile card fill"],
+              ["surface", theme.bodySizePt ? "Executive Summary card fill" : "Profile card fill"],
               ["pill", "Skill and industry pill fill"],
             ] as const
           ).map(([key, label]) => (
@@ -107,7 +107,7 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
                 change({ ...theme, introPanel: e.target.checked })
               }
             />{" "}
-            Profile card
+            {theme.bodySizePt ? "Executive Summary card" : "Profile card"}
           </label>
         </div>
       </section>
@@ -141,7 +141,7 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
               ),
             }}
           >
-            <strong>Profile</strong>
+            <strong>{theme.bodySizePt ? "Executive Summary" : "Profile"}</strong>
             <p className="mt-1 text-14">
               A concise introduction to your experience and strengths.
             </p>

@@ -847,6 +847,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       .getByRole("heading", { name: "Write your CV", exact: true })
       .waitFor();
     const narrative = page.getByRole("list", { name: "Build narrative", exact: true });
+    assert.equal(await narrative.count(), 0, "the detailed build log should not render before it is opened");
+    await page.getByRole("button", { name: "Show detailed build log", exact: true }).click();
     await narrative
       .getByText("Extracted 12 requirements (5 essential, 4 desirable, 3 responsibilities)")
       .waitFor();

@@ -1,6 +1,6 @@
 "use client";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
-import { cvReviewEditedContent, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
+import { cvReviewEditedContent, cvReviewSuggestedSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, reconcileCvBulletSignposts, splitCvReviewSkillRow, type AddedSkillSection, type LibrarySupportSection } from "@/lib/cv-review-edits";
 import { useFormStatus } from "react-dom";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -96,6 +96,7 @@ export function CvDraftEditor({
   latestSkillTargets = EMPTY_SKILL_TARGETS,
   latestLibraryVersion,
   baseRevision,
+  baseEditHash,
   targetingView,
   targetingBrief,
 }: {
@@ -125,6 +126,7 @@ export function CvDraftEditor({
   latestSkillTargets?: { id: string; heading: string; items: string[] }[];
   latestLibraryVersion?: number;
   baseRevision?: number;
+  baseEditHash?: string;
   targetingView?: CvTargetingView | null;
   targetingBrief?: CvTargetingBriefV1 | null;
 }) {
@@ -157,6 +159,7 @@ export function CvDraftEditor({
     content.sections.filter(section => section.kind !== "skill").map(section =>
       [section.entryId, section.bulletSignposts ?? section.bullets.map(() => null)]),
   ));
+  const [signpostNotice, setSignpostNotice] = useState<string | null>(null);
   const [removedSkillIds, setRemovedSkillIds] = useState<string[]>([]);
   const [addedSupportIds, setAddedSupportIds] = useState<string[]>([]);
   const [addedSkills, setAddedSkills] = useState<AddedSkillSection[]>([]);
@@ -424,6 +427,8 @@ export function CvDraftEditor({
           <input type="hidden" name="skillSuggestionRunId" value={skillRun?.id ?? ""} />
           <input type="hidden" name="selectedSuggestionIds" value={JSON.stringify(saveableSuggestionIds)} />
           <input type="hidden" name="bulletSignposts" value={JSON.stringify(bulletSignposts)} />
+          <input type="hidden" name="baseRevision" value={baseRevision ?? ""} />
+          <input type="hidden" name="baseEditHash" value={baseEditHash ?? ""} />
           {targetingDirty && targetingChoices && targetingView && <>
             <input type="hidden" name="targetingChoices" value={JSON.stringify(targetingChoices)} />
             <input type="hidden" name="targetingExpectedSource" value={JSON.stringify(targetingView.source)} />
@@ -636,8 +641,16 @@ export function CvDraftEditor({
                 </div>
               </> : <div className="space-y-2">
                 <textarea form={formId} id={blockId} name={`section-${index}`} value={rows[index]}
-                  onChange={(event) => setRows((previous) => previous.map((row, i) => i === index ? event.target.value : row))}
+                  onChange={(event) => {
+                    const nextText = event.target.value;
+                    const alignment = reconcileCvBulletSignposts(rows[index] ?? "", nextText,
+                      bulletSignposts[section.entryId] ?? []);
+                    setRows(previous => previous.map((row, i) => i === index ? nextText : row));
+                    setBulletSignposts(previous => ({ ...previous, [section.entryId]: alignment.labels }));
+                    if (alignment.cleared) setSignpostNotice(section.entryId);
+                  }}
                   rows={Math.max(3, section.bullets.length * 2)} className={`ds-prose ${input}`} />
+                {signpostNotice === section.entryId && <p role="status" className="text-12 text-warn">A label was cleared because its bullet was removed or changed. Review the remaining labels before saving.</p>}
                 <details className="border border-line-muted p-2"><summary className="cursor-pointer font-medium">Optional bold competency labels</summary>
                   <p className="mt-2 text-12 text-muted">A short label sits before its own bullet. Leave it blank for normal prose. Labels are checked with the bullet against your evidence.</p>
                   <div className="mt-2 space-y-2">{rows[index]!.split("\n").map(value => value.trim()).filter(Boolean).map((bullet, bulletIndex) =>

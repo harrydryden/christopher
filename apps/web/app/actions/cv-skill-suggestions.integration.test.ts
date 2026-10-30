@@ -1,3 +1,4 @@
+import { withCvEditBase } from "@/test/cv-form";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
@@ -8,6 +9,10 @@ import type { User } from "@col/db/schema";
 import { cvSkillDraftContext } from "@col/core/cv-skill-draft-context";
 
 let database: Db;
+async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
+  return saveCvDraft(id, previous, await withCvEditBase(database, id, form));
+}
+
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
@@ -90,7 +95,7 @@ it("binds unsaved Write wording to the run and accepts selected skills only with
     .where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
   const save = form(requested.run.id, [chosen], "Analyst using Excel ");
   save.set("section-0", "Used Excel to report monthly results");
-  await expect(saveCvDraft(draft.id, { ok: true }, save)).rejects.toThrow(/^redirect:\/cv\//);
+  await expect(saveWithBase(draft.id, { ok: true }, save)).rejects.toThrow(/^redirect:\/cv\//);
   const [accepted] = await database.select().from(schema.cvSkillSuggestionRuns).where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, accepted!.acceptedDraftId!));
   expect(saved!.content?.summary).toBe("Analyst using Excel");
@@ -106,7 +111,7 @@ it("rejects an underlying Write edit after generation before any Library skill w
   await database.update(schema.cvSkillSuggestionRuns).set({ status: "ready", suggestions: [{ id: chosen,
     category: "Data tools", label: "Excel", sourceId: "entry:role:row:0", evidenceQuote: "Used Excel", roleQuote: "spreadsheets" }] })
     .where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
-  expect(await saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen], "Changed summary")))
+  expect(await saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen], "Changed summary")))
     .toMatchObject({ ok: false, error: expect.stringContaining("Write section changed") });
   expect((await database.select().from(schema.cvLibraries))).toHaveLength(1);
   expect((await database.select().from(schema.cvDrafts))).toHaveLength(1);
@@ -121,7 +126,7 @@ it("saves selected labels only, replays exactly once and rejects changed wording
     sourceId: "entry:role:row:0", evidenceQuote: "Used Excel", roleQuote: "spreadsheets" }));
   await database.update(schema.cvSkillSuggestionRuns).set({ status: "ready", suggestions: proposals })
     .where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
-  await expect(saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen]))).rejects.toThrow(/^redirect:\/cv\//);
+  await expect(saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen]))).rejects.toThrow(/^redirect:\/cv\//);
   const [accepted] = await database.select().from(schema.cvSkillSuggestionRuns).where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
   expect(accepted?.acceptedDraftId).toBeTruthy();
   const [latest] = await database.select().from(schema.cvLibraries).where(and(eq(schema.cvLibraries.userId, user.id), eq(schema.cvLibraries.version, 2)));
@@ -129,11 +134,11 @@ it("saves selected labels only, replays exactly once and rejects changed wording
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, accepted!.acceptedDraftId!));
   expect(saved?.content?.sections.flatMap(section => section.skillItems ?? [])).toEqual(["Excel"]);
   expect(saved?.libraryVersion).toBe(2);
-  await expect(saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen]))).rejects.toThrow(`redirect:/cv/${saved!.id}`);
+  await expect(saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen]))).rejects.toThrow(`redirect:/cv/${saved!.id}`);
   expect((await database.select().from(schema.cvLibraries))).toHaveLength(2);
   expect((await database.select().from(schema.cvDrafts))).toHaveLength(2);
-  expect(await saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen], "Changed"))).toMatchObject({ ok: false });
-  expect(await saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen], "Analyst", "improve"))).toMatchObject({ ok: false });
+  expect(await saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen], "Changed"))).toMatchObject({ ok: false });
+  expect(await saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen], "Analyst", "improve"))).toMatchObject({ ok: false });
   expect((await database.select().from(schema.cvLibraries))).toHaveLength(2);
 });
 
@@ -145,22 +150,22 @@ it("rejects stale, forged and foreign selections without writing skills", async 
   await database.update(schema.cvSkillSuggestionRuns).set({ status: "ready", suggestions: [{ id: chosen, category: "Data tools",
     label: "Excel", sourceId: "entry:role:row:0", evidenceQuote: "Used Excel", roleQuote: "spreadsheets" }] })
     .where(eq(schema.cvSkillSuggestionRuns.id, requested.run.id));
-  expect(await saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [crypto.randomUUID()]))).toMatchObject({ ok: false });
+  expect(await saveWithBase(draft.id, { ok: true }, form(requested.run.id, [crypto.randomUUID()]))).toMatchObject({ ok: false });
   const ownerCookie = session;
   const other = await signInTestUser(database, process.env.SESSION_SECRET!, "foreign-skill@example.com");
   session = other.cookie;
-  expect(await saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen]))).toMatchObject({ ok: false });
+  expect(await saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen]))).toMatchObject({ ok: false });
   session = ownerCookie;
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 2, content: { ...library,
     entries: [{ ...library.entries[0]!, details: "Used different tools", confirmedResponsibilities: ["Used different tools"] }] } });
-  expect(await saveCvDraft(draft.id, { ok: true }, form(requested.run.id, [chosen]))).toMatchObject({ ok: false });
+  expect(await saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen]))).toMatchObject({ ok: false });
   expect((await database.select().from(schema.cvLibraries))).toHaveLength(2);
   expect((await database.select().from(schema.cvDrafts))).toHaveLength(1);
 });
 
 it("a save with no selected proposal creates no skills Library version", async () => {
   const draft = await fixture();
-  await expect(saveCvDraft(draft.id, { ok: true }, form("", []))).rejects.toThrow(/^redirect:\/cv\//);
+  await expect(saveWithBase(draft.id, { ok: true }, form("", []))).rejects.toThrow(/^redirect:\/cv\//);
   expect((await database.select().from(schema.cvLibraries))).toHaveLength(1);
   expect((await database.select().from(schema.cvSkillSuggestionRuns))).toHaveLength(0);
 });
@@ -175,13 +180,13 @@ it("saves a renamed CV skill section without renaming its Experience entry", asy
   await database.update(schema.cvDrafts).set({ content: skillContent, librarySnapshot: skillLibrary }).where(eq(schema.cvDrafts.id, draft.id));
   const invalid = form("", []);
   invalid.set("skill-heading-1", "   ");
-  expect(await saveCvDraft(draft.id, { ok: true }, invalid)).toMatchObject({ ok: false,
+  expect(await saveWithBase(draft.id, { ok: true }, invalid)).toMatchObject({ ok: false,
     error: expect.stringContaining("heading of 1 to 250 characters") });
   expect((await database.select().from(schema.cvDrafts))).toHaveLength(1);
   const edit = form("", []);
   edit.set("skill-heading-1", "  Data tools  ");
   edit.set("skills-1", "Python\nSQL");
-  await expect(saveCvDraft(draft.id, { ok: true }, edit)).rejects.toThrow(/^redirect:\/cv\//);
+  await expect(saveWithBase(draft.id, { ok: true }, edit)).rejects.toThrow(/^redirect:\/cv\//);
   const [revision] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
   expect(revision?.content?.sections[1]).toMatchObject({ entryId: "skill-1", heading: "Data tools", skillItems: ["Python", "SQL"] });
   const [latestLibrary] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, user.id));
@@ -196,7 +201,7 @@ it("rejects a supporting Training choice from a stale page after another-tab Lib
   const stale = form("", []);
   stale.set("addedSupportIds", JSON.stringify(["training-new"]));
   stale.set("pageLibraryVersion", "1");
-  expect(await saveCvDraft(draft.id, { ok: true }, stale)).toMatchObject({ ok: false,
+  expect(await saveWithBase(draft.id, { ok: true }, stale)).toMatchObject({ ok: false,
     error: expect.stringContaining("changed in another tab") });
   expect((await database.select().from(schema.cvDrafts))).toHaveLength(1);
 });

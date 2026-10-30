@@ -1,3 +1,4 @@
+import { withCvEditBase } from "@/test/cv-form";
 /**
  * Starting, retrying and rebuilding a CV through the real actions: which model a build is asked
  * of, what a retry carries from the attempt it replaces, and how many builds one account may have
@@ -17,6 +18,10 @@ import { signInTestUser } from "@/test/auth";
 import type { User } from "@col/db/schema";
 
 let database: Db;
+async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
+  return saveCvDraft(id, previous, await withCvEditBase(database, id, form));
+}
+
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
@@ -182,7 +187,7 @@ it("saves wording immediately without a task and keeps the rubric for an explici
   const form = new FormData();
   form.set("summary", "Edited profile");
   form.set("section-0", "Led a team");
-  await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.assessment).toBeNull();
@@ -191,6 +196,49 @@ it("saves wording immediately without a task and keeps the rubric for an explici
   expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await buildTasks();
   expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess" });
+});
+
+it("takes a newly completed assessment from the current source without losing the editor's unchanged wording", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const parent = await finalisableDraft();
+  const form = new FormData();
+  form.set("summary", content.summary);
+  form.set("section-0", "Led a team");
+  await withCvEditBase(database, parent.id, form);
+  const assessedAt = new Date("2026-10-30T12:00:00.000Z").toISOString();
+  const originalTransaction = database.transaction.bind(database);
+  const transaction = vi.spyOn(database, "transaction").mockImplementationOnce(async (work, config) => {
+    // This runs after the action's pre-lock read, but before its locked source read.
+    await database.update(schema.cvDrafts).set({ assessment: { ...parent.assessment!, assessedAt } })
+      .where(eq(schema.cvDrafts.id, parent.id));
+    return originalTransaction(work, config);
+  });
+  try {
+    await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  } finally { transaction.mockRestore(); }
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(child?.assessment?.assessedAt).toBe(assessedAt);
+  expect(child?.buildCheckpoint).toEqual({ sourceRubric: parent.assessment!.rubric });
+  expect(await buildTasks()).toHaveLength(0);
+});
+
+it("rejects a stale editor after the same revision's saved wording changes", async () => {
+  const parent = await failedDraft({ status: "ready", failure: null, error: null, buildCheckpoint: null });
+  const form = new FormData();
+  form.set("summary", "Old editor wording");
+  form.set("section-0", "Led a team");
+  await withCvEditBase(database, parent.id, form);
+  const originalTransaction = database.transaction.bind(database);
+  const transaction = vi.spyOn(database, "transaction").mockImplementationOnce(async (work, config) => {
+    await database.update(schema.cvDrafts).set({ content: { ...content, summary: "Recovery wording" } })
+      .where(eq(schema.cvDrafts.id, parent.id));
+    return originalTransaction(work, config);
+  });
+  try {
+    expect(await saveCvDraft(parent.id, { ok: true }, form)).toMatchObject({ ok: false,
+      error: expect.stringContaining("Reload before saving") });
+  } finally { transaction.mockRestore(); }
+  expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id))).toHaveLength(0);
 });
 
 it("deduplicates repeated direct saves, permits distinct wording, and carries the immediate evidence plan", async () => {
@@ -204,18 +252,18 @@ it("deduplicates repeated direct saves, permits distinct wording, and carries th
     form.set("section-0", "Led a team");
     return form;
   };
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("First saved wording"))).rejects.toThrow("redirect:/cv/");
   let children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children).toHaveLength(1);
   expect(children[0]!.status).toBe("ready");
   expect(children[0]!.assessment).toBeNull();
   expect((await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, children[0]!.id)))[0]?.plan).toEqual(plan);
-  await expect(saveCvDraft(children[0]!.id, { ok: true }, edit("A further quick edit"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(children[0]!.id, { ok: true }, edit("A further quick edit"))).rejects.toThrow("redirect:/cv/");
   const [grandchild] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, children[0]!.id));
   expect(grandchild?.buildCheckpoint).toEqual({ sourceRubric: parent.assessment!.rubric });
   expect((await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, grandchild!.id)))[0]?.plan).toEqual(plan);
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("Second saved wording"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("Second saved wording"))).rejects.toThrow("redirect:/cv/");
   children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children).toHaveLength(2);
   expect(await buildTasks()).toHaveLength(0);
@@ -227,7 +275,7 @@ it("keeps a genuinely current assessment when a new saved revision changes no as
   const form = new FormData();
   form.set("summary", content.summary);
   form.set("section-0", "Led a team");
-  await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(saved!.assessment?.inputHash).toBe(parent.assessment!.inputHash);
   expect(saved!.status).toBe("ready");
@@ -246,13 +294,13 @@ it("uses the newly chosen model for Rewrite but preserves the parent model on di
     return form;
   };
 
-  await expect(saveCvDraft(parent.id, { ok: true }, edit("improve"))).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit("improve"))).rejects.toThrow("redirect:/cv/");
   const [rebuild] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(rebuild!.model).toBe("claude-opus-5");
 
   // The rebuild is queued; once it has stopped, the parent can be edited again.
   await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, rebuild!.id));
-  await expect(saveCvDraft(parent.id, { ok: true }, edit())).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(parent.id, { ok: true }, edit())).rejects.toThrow("redirect:/cv/");
   const children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children.map(child => child.model)).toEqual(["claude-opus-5", "claude-haiku-4-5"]);
   expect((await draftRow(parent.id)).model).toBe("claude-haiku-4-5");
@@ -510,7 +558,7 @@ it("holds a retry and a saved edit to the same cap, and counts only this account
   const edit = new FormData();
   edit.set("summary", content.summary);
   edit.set("section-0", "Led a team");
-  await expect(saveCvDraft(ready.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(ready.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
   expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, ready.id))).toHaveLength(1);
 
   await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, failed.id));
@@ -613,7 +661,7 @@ it("freezes one PDF with the finalised revision and keeps it when a new revision
   const edit = new FormData();
   edit.set("summary", "New revision wording");
   edit.set("section-0", "Led a team");
-  await expect(saveCvDraft(draft.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  await expect(saveWithBase(draft.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
   const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
   expect(child?.finalisedAt).toBeNull();
   expect(await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, child!.id))).toHaveLength(0);

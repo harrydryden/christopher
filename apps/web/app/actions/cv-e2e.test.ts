@@ -1,3 +1,4 @@
+import { withCvEditBase } from "@/test/cv-form";
 /**
  * End-to-end test of the CV-builder pipeline.
  *
@@ -32,6 +33,10 @@ import {
 } from "@/test/scripted-ai-client";
 
 let database: Db;
+async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
+  return saveCvDraft(id, previous, await withCvEditBase(database, id, form));
+}
+
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
@@ -553,7 +558,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     edit.set("summary", editedSummary);
     edit.set(`section-${experienceIndex}`, editedBullets.join("\n"));
     edit.set("rememberWording", "on");
-    await expect(saveCvDraft(first.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+    await expect(saveWithBase(first.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const editedDraft = await childOf(first.id);
     expect(editedDraft.status).toBe("ready");
     expect(await database.select().from(schema.tasks).where(sql`payload->>'draftId' = ${editedDraft.id}`)).toHaveLength(0);
@@ -618,7 +623,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     const rebuild = new FormData();
     rebuild.set("summary", edited.content!.summary);
     rebuild.set("intent", "improve");
-    await expect(saveCvDraft(edited.id, { ok: true }, rebuild)).rejects.toThrow("redirect:/cv/");
+    await expect(saveWithBase(edited.id, { ok: true }, rebuild)).rejects.toThrow("redirect:/cv/");
     const rebuiltDraft = await childOf(edited.id);
     expect(rebuiltDraft.libraryVersion).toBe(2);
     expect(rebuiltDraft.content).toBeNull();

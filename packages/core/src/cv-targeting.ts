@@ -66,7 +66,8 @@ export type CvTargetingView = {
   rubricKey?: string;
   entries: Array<{ entryId: string; kind: CvLibrary["entries"][number]["kind"];
     heading: string; company?: string; treatment: CvEntryTreatment }>;
-  priorities: Array<CvRubric["requirements"][number] & { selected: boolean; evidenceEntryIds: string[] }>;
+  priorities: Array<CvRubric["requirements"][number] & { selected: boolean; evidenceEntryIds: string[];
+    hasProfileEvidence?: boolean }>;
   essentialOmissionIds: string[];
   acknowledgedEssentialOmissionIds: string[];
   summaryNeedsReview: boolean;

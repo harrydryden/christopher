@@ -9,7 +9,7 @@ import { cvAssessmentCurrent } from "@col/core/cv-review";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOwnCvDraft } from "@/lib/queries/cv";
-import { getCvPendingSkillView } from "@/lib/cv-pending-skills-view";
+import { cvPendingSkillViewForOwnedDraft } from "@/lib/cv-pending-skills-view";
 import { CvPendingSkillPanel } from "@/components/CvPendingSkillPanel";
 import { zUuid } from "@/lib/validation";
 import { compareCvWithLinkedIn, cvEmphasisScan, cvInterviewCards, cvQuickScan, linkedInImportHasConfirmedEvidence } from "@/lib/cv-preparation";
@@ -28,7 +28,7 @@ export default async function CvPreparationPage({ params, searchParams }: {
   if (!zUuid().safeParse(id).success) notFound();
   const draft = await getOwnCvDraft(user.id, id);
   if (!draft) notFound();
-  const pendingSkills = await getCvPendingSkillView(user.id, id);
+  const pendingSkills = cvPendingSkillViewForOwnedDraft(user.id, draft);
   const content = draft.content ? CvContentSchema.parse(draft.content) : null;
   const library = CvLibrarySchema.parse(draft.librarySnapshot);
   const renderRefusal = content && !draft.finalisedAt ? await refuseCvRender(user.id) : null;

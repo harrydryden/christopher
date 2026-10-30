@@ -7,11 +7,20 @@ import { cvTailoringPlans } from "@col/db";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getOwnCvDraft } from "@/lib/queries/cv";
+import { cvTargetingEvidenceEntryIds, cvTargetingHasProfileEvidence } from "@/lib/cv-targeting-choices";
+
+type OwnedDraft = NonNullable<Awaited<ReturnType<typeof getOwnCvDraft>>>;
 
 /** Account-owned view; no unverified source text is sent merely to render the controls. */
 export async function getCvTargetingView(userId: string, draftId: string): Promise<CvTargetingView | null> {
   const draft = await getOwnCvDraft(userId, draftId);
-  if (!draft || (!draft.content && draft.status !== "awaiting_priorities"
+  return draft ? cvTargetingViewForOwnedDraft(userId, draft) : null;
+}
+
+/** Caller has already checked account ownership; only the plan still needs a scoped read. */
+export async function cvTargetingViewForOwnedDraft(userId: string, draft: OwnedDraft): Promise<CvTargetingView | null> {
+  const draftId = draft.id;
+  if (draft.userId !== userId || (!draft.content && draft.status !== "awaiting_priorities"
     && !(draft.status === "failed" && draft.failure?.kind === "page_limit_unfittable"))) return null;
   const library = CvLibrarySchema.parse(draft.librarySnapshot);
   const source = cvTargetingSource(draft.libraryVersion, library, draft.jobDescription);
@@ -36,10 +45,8 @@ export async function getCvTargetingView(userId: string, draftId: string): Promi
       ...(entry.company ? { company: entry.company } : {}),
       treatment: brief?.entries.find(row => row.entryId === entry.id)?.treatment ?? "feature" })),
     priorities: rubric.requirements.map(item => ({ ...item, selected: selected.has(item.id),
-      evidenceEntryIds: [...new Set((mapped.get(item.id)?.evidence ?? []).flatMap(ref => {
-        const match = /^entry:(.+?)(?::(?:row|skill):\d+)?$/.exec(ref.sourceId);
-        return match ? [match[1]!] : [];
-      }))] })),
+      evidenceEntryIds: cvTargetingEvidenceEntryIds(mapped.get(item.id)?.evidence ?? []),
+      hasProfileEvidence: cvTargetingHasProfileEvidence(mapped.get(item.id)?.evidence ?? []) })),
     essentialOmissionIds: fullPlan && brief ? cvEssentialOmissionIds(fullPlan, rubric, writing) : [],
     acknowledgedEssentialOmissionIds: brief?.priority.acknowledgedEssentialOmissionIds ?? [],
     summaryNeedsReview: !!brief && !!draft.content && cvTargetingSummaryNeedsReview(CvContentSchema.parse(draft.content), brief),

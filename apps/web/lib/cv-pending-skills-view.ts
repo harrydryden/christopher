@@ -4,10 +4,18 @@ import { CvPendingSkillProposalsSchema, cvUserSkillProposals } from "@col/core/c
 import { CvTargetingBriefSchema, projectCvWritingLibrary } from "@col/core/cv-targeting";
 import { getOwnCvDraft } from "@/lib/queries/cv";
 
+type OwnedDraft = NonNullable<Awaited<ReturnType<typeof getOwnCvDraft>>>;
+
 /** Saved-revision opportunities; the member's manual labels stay visible until resolved. */
 export async function getCvPendingSkillView(userId: string, draftId: string) {
   const draft = await getOwnCvDraft(userId, draftId);
-  if (!draft?.content || !["ready", "failed"].includes(draft.status)) return null;
+  return draft ? cvPendingSkillViewForOwnedDraft(userId, draft) : null;
+}
+
+/** Derive the panel from a draft the page has already read and checked for this account. */
+export function cvPendingSkillViewForOwnedDraft(userId: string, draft: OwnedDraft) {
+  const draftId = draft.id;
+  if (draft.userId !== userId || !draft.content || !["ready", "failed"].includes(draft.status)) return null;
   const library = CvLibrarySchema.parse(draft.librarySnapshot);
   const brief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
   const eligible = projectCvWritingLibrary(library, brief);

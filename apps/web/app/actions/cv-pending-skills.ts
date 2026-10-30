@@ -8,6 +8,7 @@ import { CV_LIMITS, CV_SKILL_GUIDANCE, cvSkillIdentity } from "@col/core/cv-form
 import { CvPendingSkillProposalsSchema, cvUserSkillProposals } from "@col/core/cv-pending-skills";
 import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { cvTargetingSource } from "@col/core/cv-targeting-identity";
+import { cvReviewSkillSectionLimitIssue } from "@/lib/cv-review-edits";
 import { cvDrafts, cvLibraries, lockCvDraft, nextCvRevision } from "@col/db";
 import { requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -83,7 +84,8 @@ export async function decideCvPendingSkill(draftId: string, proposalId: string,
       }
       const evidence = input.evidence!;
       if (evidence.kind === "link_existing") {
-        const match = /^entry:([^:]+):row:(\d+)$/.exec(evidence.evidenceEntryId);
+        // Imported entry IDs can contain colons; the final numeric row suffix is the delimiter.
+        const match = /^entry:(.+):row:(\d+)$/.exec(evidence.evidenceEntryId);
         const entry = current.entries.find(item => item.id === match?.[1] && item.kind === "experience"
           && isActiveStoredEvidence(item) && !excluded.has(item.id));
         if (!entry || !entry.confirmedResponsibilities?.[Number(match?.[2])])
@@ -145,6 +147,8 @@ export async function decideCvPendingSkill(draftId: string, proposalId: string,
           bullets: [proposal.label], skillItems: [proposal.label] });
       }
       const newContent = CvContentSchema.parse({ ...content, sections });
+      const skillSectionIssue = cvReviewSkillSectionLimitIssue(newContent.sections, content.sections);
+      if (skillSectionIssue) throw new UserFacingError(skillSectionIssue);
       const nextBrief = brief ? CvTargetingBriefSchema.parse({ ...brief,
         source: cvTargetingSource(newVersion, newSnapshot, draft.jobDescription),
         priority: { state: "unprepared", emphasisRequirementIds: brief.priority.emphasisRequirementIds,

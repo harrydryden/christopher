@@ -69,6 +69,22 @@ it("saves unsaved wording, a treatment change and an optional signpost through o
   expect(navigation.defaultPrevented).toBe(true);
 });
 
+it("submits labels aligned with surviving bullets when a labelled line is removed", () => {
+  const signed = { ...content, sections: [{ ...content.sections[0]!, bullets: ["Built systems.", "Improved service."],
+    bulletSignposts: ["Delivery", "Service"] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={signed} theme={DEFAULT_CV_THEME}
+    baseRevision={3} baseEditHash={"a".repeat(64)} />));
+  const bullet = container.querySelector<HTMLTextAreaElement>('textarea[name="section-0"]')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bullet, "Improved service.");
+    bullet.dispatchEvent(new Event("input", { bubbles: true })); });
+  const data = new FormData(container.querySelector<HTMLFormElement>("form[id^='cv-edit-']")!);
+  expect(data.get("section-0")).toBe("Improved service.");
+  expect(JSON.parse(String(data.get("bulletSignposts")))["e-1"]).toEqual(["Service"]);
+  expect(data.get("baseRevision")).toBe("3");
+  expect(data.get("baseEditHash")).toBe("a".repeat(64));
+  expect(container.textContent).toContain("label was cleared");
+});
+
 it("edits headings and individual skills in saved manual and accepted sections through the one CV form", () => {
   const existing = { ...content, sections: [...content.sections,
     { entryId: "manual-skill-12345678-1234-1234-1234-123456789abc", kind: "skill", heading: "Ways of working", bullets: ["Planning"], skillItems: ["Planning"] },

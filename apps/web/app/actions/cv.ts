@@ -28,6 +28,7 @@ import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capac
 import { lockRoleView } from "@/lib/decisions";
 import { cvCreditOffer } from "@/lib/cv-credit";
 import { cvPdfContentHash } from "@/lib/cv-pdf-store";
+import { cvDraftEditBaseHash } from "@/lib/cv-edit-base";
 import { cvEvaluationRows } from "@/lib/cv-evaluation";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -663,6 +664,12 @@ export async function saveCvDraft(
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     if (!draft || !["ready", "failed"].includes(draft.status) || !draft.content)
       return fail("Wait for the current build to finish before editing.");
+    const baseRevision = Number(form.get("baseRevision"));
+    const baseEditHash = String(form.get("baseEditHash") ?? "");
+    if (!Number.isInteger(baseRevision) || baseRevision !== draft.revision
+      || !/^[a-f0-9]{64}$/.test(baseEditHash)
+      || baseEditHash !== cvDraftEditBaseHash(draft.content, draft.targetingBrief))
+      return fail("This CV changed since you opened it. Reload before saving your edits.");
     const supportSource = await latestLibrary(db(), user.id);
     const supportLibrary = CvLibrarySchema.parse(supportSource?.content ?? draft.librarySnapshot);
     const addedSupportIds = JSON.parse(String(form.get("addedSupportIds") ?? "[]")) as string[];
@@ -696,26 +703,6 @@ export async function saveCvDraft(
     const rebuild = form.get("intent") === "improve";
     const selectionHash = createHash("sha256").update(JSON.stringify({ selectedIds: [...selectedSuggestionIds].sort(),
       content, targetingChoices: changedTargetingChoices, rebuild, rememberWording: form.get("rememberWording") === "on" })).digest("hex");
-    // A rebuild carries its source rubric; a direct save stays ready for an explicit Check.
-    const rubric = draft.assessment ? { rubric: draft.assessment.rubric } : {};
-    const improvements = draft.assessment?.review.matches.filter(match => cvImprovementOwner(match) === "system").map(match => match.improvement).filter(Boolean) ?? [];
-    // The worker measures saved edits and automatically fits any overflow before assessing.
-    //
-    // What the parent's build left behind belongs to the parent: its last moment of progress, the
-    // work a retry of *it* would have resumed from, and why it stopped. Carried onto a revision
-    // that has never run, they made a queued build render its parent's failure — "Attempt 3
-    // stopped … retrying (attempt 4 of 3)" — over a build with no attempts at all.
-    const {
-      id: _id,
-      createdAt: _created,
-      assessment: _assessment,
-      finalisedAt: _finalised,
-      buildStage: _buildStage,
-      progressAt: _progressAt,
-      buildCheckpoint: _checkpoint,
-      failure: _failure,
-      ...original
-    } = draft;
     savedId = await db().transaction(async (tx) => {
       // Only Rewrite queues model work. Direct saves need neither capacity nor model access.
       if (rebuild) await lockCvBuildCapacity(tx, user.id);
@@ -734,22 +721,32 @@ export async function saveCvDraft(
       // Read again inside the lock. The status this save was offered on is as old as the page, and
       // two clicks on Rebuild are two of these transactions, one behind the other: without this the
       // second one wrote a second draft, queued a second build and held the budget twice.
-      const [source] = await tx.select({ id: cvDrafts.id, status: cvDrafts.status, revision: cvDrafts.revision,
-        archivedAt: cvDrafts.archivedAt, finalisedAt: cvDrafts.finalisedAt }).from(cvDrafts)
+      const [source] = await tx.select().from(cvDrafts)
         .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id))).for("update");
       if (!source) throw new UserFacingError("This CV was deleted. Open the latest saved CV before editing.");
       if (source.status !== "ready" && source.status !== "failed")
         throw new UserFacingError("Wait for the current build to finish before editing.");
+      if (source.revision !== baseRevision || !source.content
+        || cvDraftEditBaseHash(source.content, source.targetingBrief) !== baseEditHash)
+        throw new UserFacingError("This CV changed while you were editing. Reload before saving your edits.");
+      // A new revision carries the locked row's rubric and retry metadata. The source's own
+      // assessment, progress and failure are deliberately not inherited by a fresh build.
+      const rubric = source.assessment ? { rubric: source.assessment.rubric } : {};
+      const improvements = source.assessment?.review.matches.filter(match => cvImprovementOwner(match) === "system")
+        .map(match => match.improvement).filter(Boolean) ?? [];
+      const { id: _id, createdAt: _created, assessment: _assessment, finalisedAt: _finalised,
+        buildStage: _buildStage, progressAt: _progressAt, buildCheckpoint: _checkpoint,
+        failure: _failure, ...original } = source;
       const [building] = await tx
         .select({ id: cvDrafts.id })
         .from(cvDrafts)
         .where(and(eq(cvDrafts.parentId, id), eq(cvDrafts.userId, user.id), inArray(cvDrafts.status, ["queued", "generating"]), isNull(cvDrafts.archivedAt)))
         .limit(1);
       if (building) throw new UserFacingError("This CV is already being rebuilt.");
-      let nextBrief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+      let nextBrief = source.targetingBrief ? CvTargetingBriefSchema.parse(source.targetingBrief) : null;
       if (changedTargetingChoices) {
-        const fullLibrary = CvLibrarySchema.parse(draft.librarySnapshot);
-        const sourceIdentity = cvTargetingSource(draft.libraryVersion, fullLibrary, draft.jobDescription);
+        const fullLibrary = CvLibrarySchema.parse(source.librarySnapshot);
+        const sourceIdentity = cvTargetingSource(source.libraryVersion, fullLibrary, source.jobDescription);
         if (JSON.stringify(sourceIdentity) !== JSON.stringify(targetingExpectedSource)
           || (nextBrief && JSON.stringify(nextBrief.source) !== JSON.stringify(sourceIdentity)))
           throw new UserFacingError("Experience or this CV changed. Reload before choosing sections.");
@@ -757,15 +754,15 @@ export async function saveCvDraft(
           throw new UserFacingError("A selected Experience entry changed. Reload this CV.");
         try { validateCvTargetingEntries(fullLibrary, changedTargetingChoices.entries); }
         catch (error) { throw new UserFacingError((error as Error).message); }
-        const rubric = draft.assessment?.rubric ?? nextBrief?.priority.rubric ?? draft.buildCheckpoint?.sourceRubric;
+        const rubric = source.assessment?.rubric ?? nextBrief?.priority.rubric ?? source.buildCheckpoint?.sourceRubric;
         if (!rubric) throw new UserFacingError("Check this CV before changing its role priorities.");
-        const rubricKey = nextBrief?.priority.rubricKey ?? cvTargetingAdoptionKey(sourceIdentity, rubric, draft.model,
-          draft.assessment?.version ?? "stored-rubric");
+        const rubricKey = nextBrief?.priority.rubricKey ?? cvTargetingAdoptionKey(sourceIdentity, rubric, source.model,
+          source.assessment?.version ?? "stored-rubric");
         if (rubricKey !== targetingExpectedRubricKey)
           throw new UserFacingError("The role's priorities changed. Reload this CV.");
         const [storedPlan] = await tx.select({ plan: cvTailoringPlans.plan }).from(cvTailoringPlans)
           .where(and(eq(cvTailoringPlans.draftId, id), eq(cvTailoringPlans.userId, user.id))).limit(1);
-        const fullPlan = storedPlan?.plan ?? draft.buildCheckpoint?.tailoringPlan;
+        const fullPlan = storedPlan?.plan ?? source.buildCheckpoint?.tailoringPlan;
         if (!fullPlan) throw new UserFacingError("Check this CV to map its role evidence before changing sections.");
         const validatedPlan = validateCvTailoringPlan(CvTailoringPlanSchema.parse(fullPlan), rubric,
           cvTailoringEvidence(fullLibrary), fullLibrary);
@@ -800,10 +797,10 @@ export async function saveCvDraft(
         if (selected.some(item => !item)) throw new UserFacingError("One selected skill is no longer available. Refresh suggestions.");
         skillLibraryVersion = await writeCvLibraryVersion(tx, user.id, suggestionRun.libraryVersion, current => {
           if (!current) throw new UserFacingError("Your Experience changed. Refresh suggestions.");
-          const brief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+          const brief = source.targetingBrief ? CvTargetingBriefSchema.parse(source.targetingBrief) : null;
           const rows = cvSkillEvidenceRows(cvEligibleSkillLibrary(CvLibrarySchema.parse(current), brief));
-          if (cvSkillSuggestionInputHash(suggestionRun.libraryVersion, id, draft.jobDescription, rows,
-            cvHighlightedSkillRows(content), cvSkillDraftContext(content), draft.revision, cvSkillSourcePolicy(brief)) !== suggestionRun.inputHash)
+          if (cvSkillSuggestionInputHash(suggestionRun.libraryVersion, id, source.jobDescription, rows,
+            cvHighlightedSkillRows(content), cvSkillDraftContext(content), source.revision, cvSkillSourcePolicy(brief)) !== suggestionRun.inputHash)
             throw new UserFacingError("Your Experience, target role or Write section changed. Generate skills again.");
           const accepted = acceptCvSkillSuggestions(CvLibrarySchema.parse(current), content, selected as NonNullable<typeof selected[number]>[]);
           content = accepted.content;
@@ -812,27 +809,27 @@ export async function saveCvDraft(
         });
       }
       if (rebuild) {
-        const revision = await nextCvRevision(tx, draft, { spare: id });
-        const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, draft.content!, content) : undefined;
+        const revision = await nextCvRevision(tx, source, { spare: id });
+        const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, source.content!, content) : undefined;
         const settings = await getSettingsFor(user.id, tx);
         const model = cvModelFor(settings);
         // A rebuild is written afresh from the latest Library and writing preferences.
         const latest = await latestLibrary(tx, user.id);
         const evidence = latest
           ? groupCvLibrary(CvLibrarySchema.parse(latest.content))
-          : draft.librarySnapshot;
+          : source.librarySnapshot;
         const librarySnapshot = CvLibrarySchema.parse({
           ...evidence,
           ...(remembered ?? settings.cvWritingPreferences ?? {}),
           theme: content.theme ?? DEFAULT_CV_THEME,
         });
-        nextBrief = rebaseTargetingBrief(nextBrief, latest?.version ?? draft.libraryVersion, librarySnapshot, draft.jobDescription);
+        nextBrief = rebaseTargetingBrief(nextBrief, latest?.version ?? source.libraryVersion, librarySnapshot, source.jobDescription);
         const [fitting] = await tx
           .insert(cvDrafts)
           .values({
             ...original,
             model,
-            libraryVersion: latest?.version ?? draft.libraryVersion,
+            libraryVersion: latest?.version ?? source.libraryVersion,
             librarySnapshot,
             content: null,
             status: "queued",
@@ -843,7 +840,7 @@ export async function saveCvDraft(
             // What this rebuild was asked for, where a retry of it can find it again.
             buildCheckpoint: {
               tailoringEnabled: true, quizCompleted: true, mode: "improve", improvements,
-              ...(draft.assessment ? { sourceRubric: draft.assessment.rubric } : {}),
+              ...(source.assessment ? { sourceRubric: source.assessment.rubric } : {}),
             },
             reviewDecision: null,
             targetingBrief: nextBrief,
@@ -856,10 +853,10 @@ export async function saveCvDraft(
       }
       // A selected skill cites the current confirmed Experience; assess the revision against that
       // same current Library, even if the original draft predates an Experience edit.
-      const directSnapshot = skillLibrary ?? (addedSupportIds.length ? supportLibrary : draft.librarySnapshot);
+      const directSnapshot = skillLibrary ?? (addedSupportIds.length ? supportLibrary : source.librarySnapshot);
       nextBrief = rebaseTargetingBrief(nextBrief,
-        skillLibraryVersion ?? (addedSupportIds.length ? supportSource?.version ?? draft.libraryVersion : draft.libraryVersion),
-        CvLibrarySchema.parse(directSnapshot), draft.jobDescription);
+        skillLibraryVersion ?? (addedSupportIds.length ? supportSource?.version ?? source.libraryVersion : source.libraryVersion),
+        CvLibrarySchema.parse(directSnapshot), source.jobDescription);
       // A repeated submit of the same source and wording returns the existing revision. Distinct
       // edits may still branch from that source; the lifecycle lock serialises both decisions.
       const siblings = await tx.select({ id: cvDrafts.id })
@@ -870,20 +867,20 @@ export async function saveCvDraft(
           sql`${cvDrafts.targetingBrief} is not distinct from ${nextBrief ? JSON.stringify(nextBrief) : null}::jsonb`))
         .limit(1);
       if (siblings[0] && !suggestionRun) {
-        if (form.get("rememberWording") === "on") await rememberWording(tx, user.id, draft.content!, content);
+        if (form.get("rememberWording") === "on") await rememberWording(tx, user.id, source.content!, content);
         return siblings[0].id;
       }
-      const revision = await nextCvRevision(tx, draft, { spare: id });
-      if (form.get("rememberWording") === "on") await rememberWording(tx, user.id, draft.content!, content);
-      const assessment = draft.assessment && cvAssessmentCurrent(draft.assessment, content, draft.jobDescription, directSnapshot)
-        ? draft.assessment : null;
+      const revision = await nextCvRevision(tx, source, { spare: id });
+      if (form.get("rememberWording") === "on") await rememberWording(tx, user.id, source.content!, content);
+      const assessment = source.assessment && cvAssessmentCurrent(source.assessment, content, source.jobDescription, directSnapshot)
+        ? source.assessment : null;
       const [saved] = await tx
         .insert(cvDrafts)
         .values({
           ...original,
-          model: draft.model,
+          model: source.model,
           content,
-          libraryVersion: skillLibraryVersion ?? (addedSupportIds.length ? supportSource?.version ?? draft.libraryVersion : draft.libraryVersion),
+          libraryVersion: skillLibraryVersion ?? (addedSupportIds.length ? supportSource?.version ?? source.libraryVersion : source.libraryVersion),
           librarySnapshot: directSnapshot,
           status: "ready",
           error: null,
@@ -891,10 +888,10 @@ export async function saveCvDraft(
           parentId: id,
           revision,
           // Keep a known rubric through successive quick saves for the eventual explicit Check.
-          buildCheckpoint: draft.assessment?.rubric || draft.buildCheckpoint?.sourceRubric
-            ? { sourceRubric: draft.assessment?.rubric ?? draft.buildCheckpoint!.sourceRubric } : null,
+          buildCheckpoint: source.assessment?.rubric || source.buildCheckpoint?.sourceRubric
+            ? { sourceRubric: source.assessment?.rubric ?? source.buildCheckpoint!.sourceRubric } : null,
           assessment,
-          reviewDecision: assessment && cvReviewDecisionCurrent(draft.reviewDecision, assessment) ? draft.reviewDecision : null,
+          reviewDecision: assessment && cvReviewDecisionCurrent(source.reviewDecision, assessment) ? source.reviewDecision : null,
           targetingBrief: nextBrief,
         })
         .returning();

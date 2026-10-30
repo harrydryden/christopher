@@ -39,10 +39,10 @@ beforeEach(async () => {
   await database.insert(schema.cvLibraries).values({ userId, version: 1, content: library });
 });
 
-async function draft() {
+async function draft(snapshot = library, body = content, pendingSkillProposals?: typeof schema.cvDrafts.$inferInsert.pendingSkillProposals) {
   const [saved] = await database.insert(schema.cvDrafts).values({ userId, jobTitle: "Manager", companyName: "Acme",
-    jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5",
-    status: "ready", revision: 1, content }).returning();
+    jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: snapshot, model: "claude-sonnet-5",
+    status: "ready", revision: 1, content: body, pendingSkillProposals }).returning();
   return saved!;
 }
 
@@ -76,6 +76,37 @@ it("adds a short, explicitly confirmed Experience example with the skill", async
   expect(result.ok).toBe(true);
   const versions = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, userId));
   expect(versions[1]?.content.entries[0]?.confirmedResponsibilities).toContain("Coached six analysts through weekly delivery reviews.");
+});
+
+it("accepts a confirmed imported Experience row whose stable entry ID contains colons", async () => {
+  const importedId = "import-example:p1:evidence";
+  const snapshot = CvLibrarySchema.parse({ ...library,
+    entries: library.entries.map(entry => ({ ...entry, id: importedId })) });
+  const body = CvContentSchema.parse({ ...content,
+    sections: content.sections.map(section => section.kind === "experience" ? { ...section, entryId: importedId } : section) });
+  await database.update(schema.cvLibraries).set({ content: snapshot }).where(eq(schema.cvLibraries.userId, userId));
+  const source = await draft(snapshot, body);
+  const proposal = cvUserSkillProposals(snapshot, body)[0]!;
+  const result = await decideCvPendingSkill(source.id, proposal.id, { decision: "accept",
+    evidence: { kind: "link_existing", evidenceEntryId: `entry:${importedId}:row:0` },
+    confirmFactual: true, expectedRevision: 1, requestKey: crypto.randomUUID() });
+  expect(result.ok).toBe(true);
+  expect(await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, userId))).toHaveLength(2);
+});
+
+it("does not add a sixth CV skill category, while leaving the Library and source untouched", async () => {
+  const body = CvContentSchema.parse({ ...content, sections: [content.sections[0]!,
+    ...Array.from({ length: 5 }, (_, index) => ({ entryId: `known-${index}`, kind: "skill" as const,
+      heading: `Category ${index}`, bullets: [`Skill ${index}`], skillItems: [`Skill ${index}`] }))] });
+  const proposal = { id: crypto.randomUUID(), label: "New skill", category: "Sixth category",
+    origin: "model" as const, status: "pending" as const };
+  const source = await draft(library, body, [proposal]);
+  const result = await decideCvPendingSkill(source.id, proposal.id, { decision: "accept",
+    evidence: { kind: "link_existing", evidenceEntryId: "entry:role:row:0" },
+    confirmFactual: true, expectedRevision: 1, requestKey: crypto.randomUUID() });
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("up to 5 skill sections") });
+  expect(await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, userId))).toHaveLength(1);
+  expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.userId, userId))).toHaveLength(1);
 });
 
 it("keeps another account's CV and Experience untouched", async () => {

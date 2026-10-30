@@ -26,6 +26,7 @@ import { isActiveStoredEvidence, resolveCvTheme, type CvContent, type CvLibrary 
 import { CV_LIMITS } from "@col/core/cv-format";
 import type { CvAssessment } from "@col/core/cv-assessment";
 import { librarySupportSections } from "@/lib/cv-review-edits";
+import { cvDraftEditBaseHash } from "@/lib/cv-edit-base";
 import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
@@ -38,7 +39,7 @@ import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { cvTargetedSummaryFinalisationIssue, type CvTargetingBriefV1 } from "@col/core/cv-targeting";
-import { getCvTargetingView } from "@/lib/cv-targeting-view";
+import { cvTargetingViewForOwnedDraft } from "@/lib/cv-targeting-view";
 import { hasStoredFinalisedCvPdf } from "@/lib/cv-pdf-store";
 import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
 
@@ -97,8 +98,8 @@ export default async function CvDraftPage({
     readCvProgress(user.id, id),
     getSystemSettings(),
     isAdmin(),
-    // This account's newest Library version, so the panel can say when the evidence behind this
-    // revision has moved on. The content is not read: only the number the two are compared by.
+    // This account's newest Library version and content: the version shows evidence drift, while
+    // the content supplies current supporting-section choices and skill targets for this CV.
     db()
       .select({ version: cvLibraries.version, content: cvLibraries.content })
       .from(cvLibraries)
@@ -115,7 +116,7 @@ export default async function CvDraftPage({
       .where(and(eq(applications.cvId, id), eq(applications.userId, user.id)))
       .limit(1),
     draft.finalisedAt ? hasStoredFinalisedCvPdf(user.id, id) : Promise.resolve(false),
-    getCvTargetingView(user.id, id),
+    cvTargetingViewForOwnedDraft(user.id, draft),
   ]);
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
@@ -361,6 +362,7 @@ export default async function CvDraftPage({
               ? [{ id: entry.id, heading: entry.heading, items: entry.skillItems }] : [])}
             latestLibraryVersion={latestLibrary[0]?.version}
             baseRevision={draft.revision}
+            baseEditHash={cvDraftEditBaseHash(content, draft.targetingBrief)}
             targetingView={targetingView}
             targetingBrief={draft.targetingBrief}
             blocked={blocked}

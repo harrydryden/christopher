@@ -1,3 +1,4 @@
+import { withCvEditBase } from "@/test/cv-form";
 /**
  * A transaction never asks the pool for a second connection. The interface's pool is three
  * connections per instance; a transaction that holds one and waits for another deadlocks the
@@ -15,6 +16,10 @@ import { createTestDb, TEST_DATABASE_URL } from "@/test/db";
 import type { User } from "@col/db/schema";
 
 let database: Db;
+async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
+  return saveCvDraft(id, previous, await withCvEditBase(database, id, form));
+}
+
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
@@ -122,7 +127,7 @@ function rebuildForm() {
 
 it("rebuilds a CV on the one connection its transaction holds", async () => {
   const draft = await builtCv(user.id);
-  await expect(saveCvDraft(draft, { ok: true }, rebuildForm())).rejects.toThrow(/^redirect:\/cv\//);
+  await expect(saveWithBase(draft, { ok: true }, rebuildForm())).rejects.toThrow(/^redirect:\/cv\//);
   expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
 }, 30_000);
 
@@ -138,7 +143,7 @@ it("rebuilds three accounts' CVs at once on the interface's three connections", 
     for (const account of accounts) drafts.push(await builtCv(account.user.id));
     database = three.db;
     const outcomes = await Promise.all(accounts.map((account, index) => caller.run(account.cookie, () =>
-      saveCvDraft(drafts[index]!, { ok: true }, rebuildForm()).then((result) => JSON.stringify(result), (error: Error) => error.message))));
+      saveWithBase(drafts[index]!, { ok: true }, rebuildForm()).then((result) => JSON.stringify(result), (error: Error) => error.message))));
     expect(outcomes.map((outcome) => /^redirect:\/cv\//.test(outcome))).toEqual([true, true, true]);
     const queued = await single.select({ payload: schema.tasks.payload }).from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
     expect(queued).toHaveLength(3);

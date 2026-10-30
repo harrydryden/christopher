@@ -74,7 +74,7 @@ export default async function LibraryPage({ searchParams }: {
       {evidence.evaluating && library && (
         <LibraryEvidencePoller version={library.version} signature={signature} />
       )}
-      {library && <details className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 text-muted">Import another document</summary><div className="mt-3"><LibraryImportCard showTitle={false} /></div></details>}
+      {library && <details id="library-import-panel" className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 text-muted">Import another document</summary><div className="mt-3"><LibraryImportCard showTitle={false} /></div></details>}
       <details className="border-t border-line-muted pt-3">
         <summary className="cursor-pointer text-14 text-muted">Writing preferences</summary>
         <div className="mt-3"><Card>

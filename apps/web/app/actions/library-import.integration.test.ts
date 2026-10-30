@@ -206,6 +206,38 @@ it("takes an uploaded PDF as bytes and refuses anything that is not a document",
   expect(await imports()).toHaveLength(1);
 });
 
+it("stores a LinkedIn PDF as an upload and recognises identical bytes imported as a CV", async () => {
+  const pdf = await renderCvPdf({
+    name: "Jane Okafor", contact: "London", summary: "Operations leader",
+    sections: [{ entryId: "e1", kind: "experience", heading: "Director of Operations · Acme", bullets: [ROWS.handover] }],
+    gaps: [],
+  });
+  const uploaded = () => new File([new Uint8Array(pdf)], "linkedin-profile.pdf", { type: "application/pdf" });
+
+  expect(await importLibraryDocument(form({ kind: "linkedin", file: uploaded() }))).toMatchObject({ ok: true });
+  const [row] = await imports();
+  expect(row).toMatchObject({ kind: "linkedin", filename: "linkedin-profile.pdf", sourceMime: "application/pdf", url: null });
+  expect(row!.sourceBytes!.length).toBe(pdf.length);
+  expect(await tasks()).toHaveLength(1);
+
+  expect(await importLibraryDocument(form({ kind: "cv", file: uploaded() })))
+    .toMatchObject({ ok: true, message: expect.stringContaining("already imported") });
+  expect(await imports()).toHaveLength(1);
+  expect(await tasks()).toHaveLength(1);
+
+  const cvPdf = await renderCvPdf({
+    name: "Jane Okafor", contact: "Manchester", summary: "Delivery leader",
+    sections: [{ entryId: "e2", kind: "experience", heading: "Programme Lead", bullets: [ROWS.moved] }],
+    gaps: [],
+  });
+  const cvUpload = () => new File([new Uint8Array(cvPdf)], "earlier-cv.pdf", { type: "application/pdf" });
+  expect(await importLibraryDocument(form({ kind: "cv", file: cvUpload() }))).toMatchObject({ ok: true });
+  expect(await importLibraryDocument(form({ kind: "linkedin", file: cvUpload() })))
+    .toMatchObject({ ok: true, message: expect.stringContaining("already imported") });
+  expect((await imports()).map(item => item.kind).sort()).toEqual(["cv", "linkedin"]);
+  expect(await tasks()).toHaveLength(2);
+});
+
 it("takes the person's own page and never LinkedIn", async () => {
   expect(await importLibraryDocument(form({ kind: "website", url: "https://www.linkedin.com/in/jane-okafor" })))
     .toMatchObject({ ok: false, error: expect.stringContaining("Save to PDF") });

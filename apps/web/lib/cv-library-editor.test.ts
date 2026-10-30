@@ -21,6 +21,43 @@ vi.mock("@/app/actions/cv", () => ({ saveCvLibrary: vi.fn(), rescoreLibrary: vi.
 /** The markup a person can read: everything but the hidden field the save posts. */
 const onScreen = (html: string) => html.replace(/name="library" value="[^"]*"/, "");
 
+it("opens the LinkedIn PDF import without navigating or losing unsaved Experience edits", async () => {
+  const library: CvLibrary = { name: "Test", contact: "", profile: "Original bio", entries: [] };
+  const container = document.createElement("div");
+  const panel = document.createElement("details");
+  panel.id = "library-import-panel";
+  const section = document.createElement("section");
+  section.id = "library-import-linkedin";
+  const upload = document.createElement("input");
+  upload.id = "library-linkedin-pdf";
+  upload.type = "file";
+  section.append(upload);
+  panel.append(section);
+  document.body.append(container, panel);
+  const root = createRoot(container);
+  const scroll = vi.fn();
+  section.scrollIntoView = scroll;
+  try {
+    await act(async () => root.render(createElement(CvLibraryEditor, { scopeId: "test-user", library: openStoredLibrary(library), version: 1 })));
+    const intro = container.querySelector<HTMLElement>("#library-panel-intro")!;
+    const bio = intro.querySelector<HTMLTextAreaElement>("textarea")!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(bio, "Unsaved bio");
+    await act(async () => bio.dispatchEvent(new Event("input", { bubbles: true })));
+    const button = [...intro.querySelectorAll("button")].find(item => item.textContent === "Import my LinkedIn PDF")!;
+    expect(button.type).toBe("button");
+    await act(async () => button.click());
+    expect(panel.open).toBe(true);
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(upload);
+    expect(intro.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Unsaved bio");
+    expect(container.textContent).toContain("This link is shown on your CV; it does not read your LinkedIn profile.");
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    panel.remove();
+  }
+});
+
 it("shows a broad saved skill collection as Library guidance, not a CV-wide limit", () => {
   const library: CvLibrary = { name: "Test", contact: "", profile: "", entries: [{ id: "skills", kind: "skill",
     heading: "Capabilities", details: "Confirmed skills", skillItems: Array.from({ length: 12 }, (_, index) => `Skill ${index + 1}`) }] };

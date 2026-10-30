@@ -24,6 +24,7 @@ export function CvBuildFailureNotice({
   canRetry,
   footnote,
   blocked = null,
+  targetedPageFit = false,
 }: {
   id: string;
   build: CvBuildState;
@@ -34,8 +35,13 @@ export function CvBuildFailureNotice({
   footnote?: string;
   /** Why the retry is unavailable — an unverified account — or null when it is not. */
   blocked?: string | null;
+  targetedPageFit?: boolean;
 }) {
-  const way = failureWayForward(build.action, { jobId, admin, canRetry });
+  const way = targetedPageFit ? {
+    links: [{ label: "Change this CV's page and evidence choices", href: "#cv-targeting-recovery" }],
+    note: "This CV could not fit its chosen maximum. Summarise or omit selected evidence, or raise this CV's maximum pages, then retry the same build.",
+    retry: false, retryNote: null,
+  } : failureWayForward(build.action, { jobId, admin, canRetry });
   return (
     <div role="alert" className="space-y-3 border-2 border-danger p-4">
       <div className="space-y-1">
@@ -71,7 +77,7 @@ export function CvBuildFailureNotice({
           {blocked && <p className="text-14 text-warn">{blocked}</p>}
         </div>
       )}
-      {footnote && build.action !== "check_provider_request" && <p className="text-14 text-muted">{footnote}</p>}
+      {footnote && !targetedPageFit && build.action !== "check_provider_request" && <p className="text-14 text-muted">{footnote}</p>}
     </div>
   );
 }

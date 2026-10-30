@@ -29,6 +29,17 @@ it("omits an emptied skill section while preserving unchanged section IDs and ci
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
 });
 
+it("adds and removes a competency signpost on a sourced prose bullet without changing its entry", () => {
+  const signed = cvReviewSections(saved, ["Built systems.", "Python"], [], [], {}, { "role-1": ["Systems delivery"] });
+  expect(signed[0]).toMatchObject({ entryId: "role-1", bulletSignposts: ["Systems delivery"],
+    bulletSources: [["entry:role-1"]] });
+  expect(CvContentSchema.safeParse({ ...saved, sections: signed }).success).toBe(true);
+  const plain = cvReviewSections({ ...saved, sections: signed }, ["Built systems.", "Python"], [], [], {},
+    { "role-1": [null] });
+  expect(plain[0]?.bulletSignposts).toBeUndefined();
+  expect(plain[0]?.bulletSources).toEqual([["entry:role-1"]]);
+});
+
 it("adds manually entered skills without claiming Library sources", () => {
   const sections = cvReviewSections(saved, ["Built systems.", "Python\nSQL"], [], [
     { entryId: "manual-skill-12345678-1234-1234-1234-123456789abc", heading: "Tools", items: ["Excel", "  SQL  "] },

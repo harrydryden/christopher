@@ -12,6 +12,26 @@
       "types": "./src/cv.ts",
       "default": "./src/cv.ts"
     },
+    "./cv-targeting": {
+      "types": "./src/cv-targeting.ts",
+      "default": "./src/cv-targeting.ts"
+    },
+    "./cv-pending-skills": {
+      "types": "./src/cv-pending-skills.ts",
+      "default": "./src/cv-pending-skills.ts"
+    },
+    "./cv-targeting-projection": {
+      "types": "./src/cv-targeting-projection.ts",
+      "default": "./src/cv-targeting-projection.ts"
+    },
+    "./cv-targeting-identity": {
+      "types": "./src/cv-targeting-identity.ts",
+      "default": "./src/cv-targeting-identity.ts"
+    },
+    "./cv-semantic-audit": {
+      "types": "./src/cv-semantic-audit.ts",
+      "default": "./src/cv-semantic-audit.ts"
+    },
     "./cv-format": {
       "types": "./src/cv-format.ts",
       "default": "./src/cv-format.ts"

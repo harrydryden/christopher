@@ -10,6 +10,9 @@ import { readRecordingHeader, recordCvDraft, replayFromRecording } from "../apps
 import { readEnv } from "../apps/worker/src/env";
 import { handleSuggestCvSkills } from "../apps/worker/src/handlers/cv-skill-suggestions";
 import { cvHighlightedSkillRows, cvSkillDraftContext, cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions } from "../packages/core/src/index";
+import { renderCvPdfWithReport } from "../packages/core/src/cv-pdf";
+import { CvLibrarySchema } from "../packages/core/src/cv";
+import { CvTargetingBriefSchema, cvEligibleSkillLibrary, cvSkillSourcePolicy } from "../packages/core/src/cv-targeting";
 import { schema, type Task } from "../packages/db/src/index";
 import { runMigrations } from "../packages/db/src/migrate";
 import { installLiveEvaluationGuard } from "./live-evaluation-guard.mjs";
@@ -26,11 +29,14 @@ const model = process.env.CV_EVAL_MODEL;
 const key = process.env.ANTHROPIC_API_KEY;
 const maxUsd = Number(process.env.CV_EVAL_MAX_USD);
 const dbUrl = process.env.DATABASE_URL;
+const targeted = process.env.CV_EVAL_TARGETED_FIXTURE === "1";
+if (process.env.CV_EVAL_TARGETED_FIXTURE && !targeted)
+  throw new Error("CV_EVAL_TARGETED_FIXTURE must be 1 when set.");
 if (model !== "claude-fable-5-1" || !key || maxUsd !== 10 || !dbUrl)
   throw new Error("Evaluation needs the reviewed model, provider key, $10 cap and local database URL.");
 const database = new URL(dbUrl);
 const localDatabaseName = process.env.CV_EVAL_DATABASE_NAME ?? "col_cv_live_eval_1028";
-if (!["col_cv_live_eval_1028", "col_cv_live_eval_release_1028"].includes(localDatabaseName))
+if (!["col_cv_live_eval_1028", "col_cv_live_eval_release_1028", "col_cv_targeted_eval_1030"].includes(localDatabaseName))
   throw new Error("Evaluation database name is not a reviewed disposable fixture database.");
 if (!["127.0.0.1", "localhost"].includes(database.hostname)
   || database.port !== "55449" || database.pathname !== `/${localDatabaseName}`)
@@ -40,8 +46,10 @@ const outDir = resolve(process.env.CV_EVAL_OUTPUT_DIR ?? "/tmp/col-cv-live-evalu
 mkdirSync(outDir, { recursive: true });
 const historicalLedgerPath = "/tmp/col-cv-live-evaluation-1028/guard-ledger.json";
 const ledgerPath = process.env.CV_EVAL_LEDGER_PATH ?? historicalLedgerPath;
-if (!isAbsolute(ledgerPath) || (localDatabaseName === "col_cv_live_eval_release_1028" && ledgerPath === historicalLedgerPath))
+if (!isAbsolute(ledgerPath) || (localDatabaseName !== "col_cv_live_eval_1028" && ledgerPath === historicalLedgerPath))
   throw new Error("The release fixture requires its explicit, separate absolute spend ledger path.");
+if (targeted !== (localDatabaseName === "col_cv_targeted_eval_1030"))
+  throw new Error("Targeted evaluation needs its dedicated local database and explicit mode together.");
 const prior = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, "utf8")) : undefined;
 const guard = installLiveEvaluationGuard({ model, maxUsd, phases: {
   fixture: { maxUsd: 0, maxRequests: 0 }, cv: { maxUsd: 9, maxRequests: 7 }, skills: { maxUsd: 2, maxRequests: 4 },
@@ -56,14 +64,17 @@ try {
   const resumeAuthorFrom = process.env.CV_EVAL_RESUME_AUTHOR_FROM;
   const skillsOnlyFrom = process.env.CV_EVAL_SKILLS_ONLY_FROM;
   const sourceRecording = skillsOnlyFrom ?? resumeAuthorFrom;
+  const fixtureEmail = targeted ? "cv-targeted-live-fixture-1030@example.invalid" : "cv-live-release-fixture-1028@example.invalid";
   const draft = sourceRecording
     ? await deps.db.query.cvDrafts.findFirst({ where: eq(schema.cvDrafts.id, readRecordingHeader(sourceRecording).meta?.draftId ?? "") })
-    : await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 200 }).client,
-      "cv-live-release-fixture-1028@example.invalid");
+    : await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 200, targetedSignpost: targeted }).client,
+      fixtureEmail, { targeted });
   if (!draft) throw new Error("The provider-recorded synthetic draft is unavailable for resume.");
+  if (targeted !== (draft.targetingBrief?.priority.state === "confirmed"))
+    throw new Error("The source recording does not match the requested targeting mode.");
   if (draft.model !== model) throw new Error("Synthetic draft model does not match the authorised provider model.");
   const [fixtureUser] = await deps.db.select({ email: schema.users.email }).from(schema.users).where(eq(schema.users.id, draft.userId));
-  if (fixtureUser?.email !== "cv-live-release-fixture-1028@example.invalid")
+  if (fixtureUser?.email !== fixtureEmail)
     throw new Error("The source recording does not belong to the reviewed synthetic fixture account.");
   if (resumeAuthorFrom && !skillsOnlyFrom) {
     const dry = await replayFromRecording(deps, draft.id, resumeAuthorFrom);
@@ -101,6 +112,12 @@ try {
     writeFileSync(resolve(outDir, "cv-replay-report.json"), JSON.stringify(replayed.report, null, 2) + "\n");
   }
 
+  if (!replayed.content) throw new Error("The qualified replay did not retain its exact rebuilt wording.");
+  const rendered = await renderCvPdfWithReport(replayed.content);
+  writeFileSync(resolve(outDir, "qualified-cv.pdf"), rendered.pdf);
+  writeFileSync(resolve(outDir, "qualified-cv.json"), JSON.stringify({ content: replayed.content,
+    pageCount: rendered.pageCount, maxPages: rendered.maxPages, layout: rendered.layout }, null, 2) + "\n");
+
   const [fixtureLibrary] = await deps.db.select({ version: schema.cvLibraries.version, content: schema.cvLibraries.content })
     .from(schema.cvLibraries).where(eq(schema.cvLibraries.userId, draft.userId));
   if (fixtureLibrary) {
@@ -109,11 +126,13 @@ try {
   } else {
     await deps.db.insert(schema.cvLibraries).values({ userId: draft.userId, version: 1, content: REPLAY_FIXTURE_LIBRARY });
   }
-  const rows = cvSkillEvidenceRows(REPLAY_FIXTURE_LIBRARY);
+  const brief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+  const skillLibrary = cvEligibleSkillLibrary(CvLibrarySchema.parse(REPLAY_FIXTURE_LIBRARY), brief);
+  const rows = cvSkillEvidenceRows(skillLibrary);
   const highlighted = cvHighlightedSkillRows(draft.content!);
   const [run] = await deps.db.insert(schema.cvSkillSuggestionRuns).values({ userId: draft.userId, draftId: draft.id,
     libraryVersion: 1, inputHash: cvSkillSuggestionInputHash(1, draft.id, draft.jobDescription, rows, highlighted,
-      cvSkillDraftContext(draft.content!), draft.revision) }).returning();
+      cvSkillDraftContext(draft.content!), draft.revision, cvSkillSourcePolicy(brief)) }).returning();
   const beforeDraftRevision = draft.revision;
   guard.setPhase("skills");
   await handleSuggestCvSkills({ type: "suggest_cv_skills", payload: { userId: draft.userId, draftId: draft.id, runId: run!.id,

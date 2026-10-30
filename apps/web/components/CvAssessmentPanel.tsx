@@ -6,6 +6,7 @@ import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvLazyWidgets";
 import { CvCheckForm } from "./CvCheckForm";
 import { CvReviewControls } from "./CvReviewControls";
+import { cvReviewActions } from "@/lib/cv-review-actions";
 
 /** Explain source changes where the evidence is judged; rewriting stays in the Write controls. */
 function LibraryDrift({ sentence }: { sentence: string | null }) {
@@ -76,11 +77,12 @@ export function CvAssessmentPanel({
           <p className="text-14 text-warn">{finaliseReason}</p>
         )}
         {!finalised && <LibraryDrift sentence={libraryDrift} />}
+        {hasContent && <a className="block text-14 underline" href={`/cv/${id}/preparation`}>Quick scan, uploaded LinkedIn check and interview preparation</a>}
         {!busy && !finalised && (
           <>
             <fieldset disabled={!!blocked} className="min-w-0">
               <CvCheckForm id={id} hasContent={hasContent} />
-              {hasContent && <p className="mt-2 text-12 text-muted">The check may fit the saved wording to your page limit before assessing it.</p>}
+              {hasContent && <p className="mt-2 text-12 text-muted">Check assesses this exact saved wording. It does not rewrite or shorten it.</p>}
             </fieldset>
             {blocked && <p role="status" className="text-14 text-warn">{blocked}</p>}
           </>
@@ -100,6 +102,7 @@ export function CvAssessmentPanel({
     (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;
   const quality = content ? diagnoseCvQuality(assessment, content) : null;
+  const nextActions = content ? cvReviewActions(assessment, content) : [];
   return (
     <section
       className="space-y-4 border border-line-muted p-4"
@@ -112,7 +115,7 @@ export function CvAssessmentPanel({
           </h2>
           <p className="text-14 text-muted">
             {assessment.pageCount}{" "}
-            {assessment.pageCount === 1 ? "page" : "pages"}
+            {assessment.pageCount === 1 ? "page" : "pages"} rendered · limit {cvMaxPages(content?.theme)}
           </p>
         </div>
       </div>
@@ -126,6 +129,13 @@ export function CvAssessmentPanel({
 
       </p>
       <LibraryDrift sentence={libraryDrift} />
+      <div className="border border-line-muted p-3 text-14">
+        <h3 className="font-semibold">Next improvements</h3>
+        <p className="text-12 text-muted">Factual support and essential coverage come first. Editorial suggestions are editing prompts, not hiring predictions.</p>
+        {nextActions.length ? <ol className="mt-2 list-decimal space-y-1 pl-5">{nextActions.map((item, index) =>
+          <li key={`${item.kind}:${index}`}><a href={item.href} className="underline">{item.text}</a></li>)}</ol>
+          : <p className="mt-2 text-14">No specific improvement is flagged by this saved review.</p>}
+      </div>
       {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise={!overPages} />}
       <details className="border-t border-line-muted pt-3">
         <summary className="cursor-pointer text-14 font-medium">View full assessment</summary>
@@ -173,6 +183,9 @@ export function CvAssessmentPanel({
         </div>
       </details>
       <div className="flex flex-wrap items-center gap-3 text-14">
+        <a className="font-medium text-fg underline" href={`/cv/${id}/preparation`}>
+          Quick scan, uploaded LinkedIn check and interview preparation
+        </a>
         <a className="font-medium text-fg underline" href="/library">
           Open Experience
         </a>

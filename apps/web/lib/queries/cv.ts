@@ -99,14 +99,14 @@ export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, 
 }
 
 /**
- * The columns a build's own account of itself lives in, which arrived with the worker's last two
- * migrations (`progress_at` in 0025, `build_checkpoint` and `failure` in 0027).
+ * The columns a build's own account of itself lives in, including the targeted CV brief added in
+ * 0063. The web service can be promoted before the worker has applied that migration.
  *
  * The interface deploys separately from the worker that migrates, and `select *` over a column
  * that is not there yet is not a degraded page but a 500 on every CV page and every poll. Probed
  * once and remembered once they are all present (`presentOnceFound`).
  */
-const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz"] as const;
+const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz", "targeting_brief", "pending_skill_proposals", "semantic_audit_cache"] as const;
 const cvBuildColumnsPresent = presentOnceFound(() =>
   db()
     .execute<{ n: number }>(
@@ -150,7 +150,8 @@ export async function getOwnCvDraft(userId: string, id: string): Promise<typeof 
   }
   const [draft] = await db().select(settledCvDraftColumns).from(cvDrafts).where(owned).limit(1);
   // A build that has not been recorded yet reads as one that recorded nothing.
-  return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null, gapQuiz: null } : null;
+  return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null, gapQuiz: null,
+    targetingBrief: null, pendingSkillProposals: null, semanticAuditCache: null } : null;
 }
 
 /**

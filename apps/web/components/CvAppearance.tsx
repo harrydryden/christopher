@@ -94,8 +94,8 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
             </select>
           </label>
           <p className="text-12 text-muted sm:col-span-2 sm:self-end">
-            The builder writes to this length and trims the lowest-priority
-            achievements to fit, keeping every job and qualification.
+            Save keeps your current wording. Check measures that exact saved CV;
+            it does not rewrite it. Preview shows the actual page count.
           </p>
         </div>
         <div className="mt-3 flex flex-wrap gap-4 text-14">

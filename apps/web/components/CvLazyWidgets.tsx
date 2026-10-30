@@ -24,3 +24,5 @@ import dynamic from "next/dynamic";
 export const CvGapQuiz = dynamic(() => import("./CvGapQuiz").then((module) => module.CvGapQuiz));
 export const CvShareCreateForm = dynamic(() => import("./CvShareCreateForm").then((module) => module.CvShareCreateForm));
 export const CvEvaluationTable = dynamic(() => import("./CvEvaluationTable").then((module) => module.CvEvaluationTable));
+export const CvDraftEditor = dynamic(() => import("./CvDraftEditor").then((module) => module.CvDraftEditor));
+export const CvTargetingConfirmation = dynamic(() => import("./CvTargetingPanel").then((module) => module.CvTargetingConfirmation));

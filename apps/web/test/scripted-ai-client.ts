@@ -117,6 +117,8 @@ export function callsOf<K extends ScriptedCallKind>(
 }
 
 export interface ScriptedAiOptions {
+  /** Include one source-backed competency label in a targeted synthetic author response. */
+  targetedSignpost?: boolean;
   /**
    * A requirement whose quote matches is scripted as covered by the saved library but absent from
    * the printed CV, which is what makes its improvement system-owned. Must not be a global regex.
@@ -260,7 +262,7 @@ function fitBullets(source: readonly string[], block: CvBlockBudget, shorten: bo
  * One section for every allocated experience, education and training block (omitting one fails the build by
  * design), skills chosen verbatim from the stored labels, and a profile within its own budget.
  */
-export function scriptedPlan(payload: AuthorPayload): CvPlan {
+export function scriptedPlan(payload: AuthorPayload, targetedSignpost = false): CvPlan {
   const { library, writingBudget, layoutFeedback } = payload;
   const target = `${payload.jobTitle} ${payload.description}`;
   const shorten = Boolean(layoutFeedback);
@@ -299,6 +301,8 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
         const source = entry.rows.find(row => clean(row.text).includes(clean(bullet)))!;
         return [source.id];
       }),
+      ...(targetedSignpost && entry.id === "ev-head" ? { bulletSignposts: bullets.map((_, index) =>
+        index === 0 ? "Operational plan" : null) } : {}),
       ...(industries.length ? { industryDescriptions: industries } : {}),
     });
   }
@@ -306,10 +310,11 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
     1,
     Math.min(writingBudget.summaryCharacters, CV_LIMITS.summaryCharacters),
   );
-  const summary = clip(layoutFeedback?.previousPlan.summary || library.profile?.text || "", summaryLimit) || "Operations leader.";
+  const summarySource = library.profile?.text ? "source:profile" : library.entries[0]?.rows[0]?.id;
+  const summary = clip(layoutFeedback?.previousPlan.summary || library.profile?.text || library.entries[0]?.rows[0]?.text || "", summaryLimit) || "Operations leader.";
   return {
     summary,
-    summarySources: ["source:profile"],
+    summarySources: summarySource ? [summarySource] : [],
     sections,
     gaps: [],
   };
@@ -519,7 +524,7 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
               }] : [],
             };
           }
-          if (kind === "author") return scriptedPlan(payload as AuthorPayload);
+          if (kind === "author") return scriptedPlan(payload as AuthorPayload, options.targetedSignpost);
           return scriptedReview(payload as ReviewPayload, unmet);
         };
 

@@ -57,7 +57,8 @@ export function cvHighlightedSkillRows(content: CvContent): Array<{ category: st
 }
 
 export function cvSkillSuggestionInputHash(libraryVersion: number, draftId: string, description: string, rows: readonly { id: string; text: string }[],
-  highlightedSkills: readonly { category: string; labels: string[] }[], draftContext: CvSkillDraftContext, baseRevision: number): string {
+  highlightedSkills: readonly { category: string; labels: string[] }[], draftContext: CvSkillDraftContext, baseRevision: number,
+  sourcePolicy = "legacy"): string {
   // Queue payloads are stored as JSONB, which does not preserve object key order. Rebuild the
   // context in a fixed order so request, worker and later reads hash identical content.
   const canonicalContext = { summary: draftContext.summary, sections: draftContext.sections.map(section => ({
@@ -65,7 +66,7 @@ export function cvSkillSuggestionInputHash(libraryVersion: number, draftId: stri
     ...(section.skillItems ? { skillItems: section.skillItems } : {}),
   })) };
   return createHash("sha256").update(JSON.stringify({ version: 2, libraryVersion, draftId, description,
-    rows, highlightedSkills, draftContext: canonicalContext, baseRevision })).digest("hex");
+    rows, highlightedSkills, draftContext: canonicalContext, baseRevision, sourcePolicy })).digest("hex");
 }
 
 /** The model proposes labels; exact source and role citations are checked independently. */

@@ -1,11 +1,11 @@
 {
   "kind": "cv-replay",
-  "at": "2026-10-28T13:09:59.427Z",
-  "draftId": "fd2e4d66-e8b4-45f7-816b-86e0179b42ad",
-  "promptSetVersion": "987e0b5ac958",
+  "at": "2026-10-30T17:56:11.443Z",
+  "draftId": "2179ffaa-d017-43a6-a7c3-467bf93afd71",
+  "promptSetVersion": "951386df60b9",
   "unverified": false,
   "source": "recording",
-  "recording": "/tmp/col-cv-live-evaluation-release-1028/cv-live-provider-recording.jsonl",
+  "recording": "/tmp/col-cv-targeted-eval-final-1030/cv-live-provider-recording.jsonl",
   "routes": {
     "cv.rubric": {
       "model": "cvModel",
@@ -42,25 +42,25 @@
   "outcome": "published",
   "error": null,
   "misses": [],
-  "costUsd": 0.580595,
-  "calls": 3,
+  "costUsd": 0.72988,
+  "calls": 4,
   "byStage": {
     "author": {
-      "calls": 1,
-      "costUsd": 0.260875
+      "calls": 2,
+      "costUsd": 0.42126
     },
     "review": {
       "calls": 2,
-      "costUsd": 0.31972
+      "costUsd": 0.30862
     }
   },
-  "wallMs": 131,
+  "wallMs": 103,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",
-    "score": 90,
+    "score": 85,
     "availableEvidenceScore": 80,
-    "pageCount": 2,
+    "pageCount": 1,
     "essentials": {
       "r4": 0.5,
       "r5": 1,
@@ -76,32 +76,34 @@
       "noEssentialRegressed": true
     },
     "regressions": [],
-    "score": 90,
+    "score": 85,
     "availableEvidenceScore": 80,
-    "pageCount": 2,
-    "maxPages": 3,
+    "pageCount": 1,
+    "maxPages": 2,
     "diagnostics": {
-      "coverageScore": 90,
+      "coverageScore": 85,
       "factualSupport": {
         "score": 100,
-        "supported": 15,
-        "total": 15,
+        "supported": 9,
+        "total": 9,
         "unsupported": 0,
         "uncertain": 0
       },
       "priorityCoverage": {
-        "score": 86,
-        "earnedWeight": 6,
+        "score": 79,
+        "earnedWeight": 5.5,
         "availableWeight": 7,
         "basis": "stated_priorities",
         "demonstratedEssential": 2,
         "totalEssential": 3
       },
       "evidencedOpportunityGap": {
-        "count": 0,
-        "weightedPoints": 0,
+        "count": 1,
+        "weightedPoints": 0.5,
         "essential": 0,
-        "requirementIds": []
+        "requirementIds": [
+          "r6"
+        ]
       },
       "unverifiedLogistics": {
         "count": 0,
@@ -117,15 +119,15 @@
         },
         "concision": {
           "kind": "heuristic_editorial_signal",
-          "score": 93,
+          "score": 67,
           "label": "Review",
-          "note": "1 line is over the editing guide of 32 words or 240 characters."
+          "note": "3 lines are over the editing guide of 32 words or 240 characters."
         },
         "summaryFocus": {
           "kind": "heuristic_editorial_signal",
-          "score": 33,
+          "score": 0,
           "label": "Review",
-          "note": "The assessment anchors 1 of 3 supported priorities in the profile; review its emphasis."
+          "note": "The assessment anchors 0 of 3 supported priorities in the profile; review its emphasis."
         }
       }
     }

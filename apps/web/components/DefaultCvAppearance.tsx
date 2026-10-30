@@ -14,6 +14,7 @@ export function DefaultCvAppearance({ value }: { value: CvTheme }) {
   return <details onToggle={event => { if (event.currentTarget.open) setOpened(true); }}>
     <summary className="min-h-11 cursor-pointer py-2 text-14 font-semibold">Default CV appearance</summary>
     {opened && <SettingsForm action={saveCvAppearance} successMessage="Saved.">
+      <p className="mb-3 text-12 text-muted">These defaults apply to future CVs. Open a saved CV's Appearance to change that revision.</p>
       <Appearance name="theme" value={value} />
     </SettingsForm>}
   </details>;

@@ -1,43 +1,23 @@
 # CV replay report
 
-`report.json` is the evaluation report CI holds to the shipped prompt set
-(`scripts/check-evaluation-reports.ts`; docs/DEPLOY.md, "Evaluation reports and the prompt set").
-It is written by `pnpm --filter @col/worker cli replay <draft-id> --recordings <file> --out
-docs/evaluations/cv-replay/report.json`.
+`report.json` is the evaluation report CI holds to the shipped prompt set (`scripts/check-evaluation-reports.ts`; see `docs/DEPLOY.md`). The current report qualifies prompt set **`951386df60b9`** using genuine provider responses for an invented candidate and role. It published supported claims within the selected two-page maximum, passed all four replay invariants and had no missing recorded calls.
 
-The current `report.json` replays a genuine provider recording of the synthetic fixture at prompt
-set `987e0b5ac958`. It published a CV with supported claims inside its page limit, passed all four
-replay invariants and had no missing recorded calls. A prior verified provider replay remains in
-`report-live-2026-10-28.json` for its original prompt set.
+The confirmed targeting brief features the current role, summarises one earlier role in a single sourced bullet and omits another role. The final claim audit sees only eligible evidence; full-library requirement verdicts remain a separate assessment. The exact one-page PDF, content/layout report and scope/cost notes are in `../cv-targeted-2026-10-30/`. The summary's four measured lines exceed the editorial guide; this remains visible feedback rather than a hard build failure.
 
-That earlier recorded build published
-with supported claims inside the page limit. Its comparison with the older scripted draft baseline
-failed one essential requirement: the live reviewer marked regulated-environment experience partial
-where the scripted fixture had marked it fully met. That comparison is retained separately in
-`failed-scripted-comparison.json`; it is not hidden or treated as a passing qualification.
-The earlier offline replay compared the rebuilt CV with the live recording's own assessment and
-passed all four invariants at that prompt set. The new skill stages were called live on the saved
-synthetic fixture with current Write context; their successful bounded, grounded summary is in
-`../cv-skill-live-probe.json`. The first verifier call exhausted its 1,200-token ceiling, accepted
-no suggestions and is retained in `../cv-skill-live-probe-failed-2026-10-28.json`. After the ceiling
-and budget reservation were corrected, a second two-call skill probe passed using the **same $10
-attempt ledger**. The CV recording and the skill probe use the same invented candidate and role;
-the skill probe tailors from the saved fixture CV, while the provider CV replay runs in a rollback
-scratch transaction. The replay report alone does not exercise skill stages.
-The earlier bounded live continuation reused one existing genuine provider author response after
-an exact prompt/version/input match and made two fresh provider review calls. Its replay report's
-cost includes the reused author call; it is not the incremental amount charged in that continuation.
+The rubric and initial plan are cached synthetic fixture inputs, not live-qualified extraction stages. Two author responses were originally called live; a bounded continuation reused both only after exact request, model, prompt and provider-provenance checks and made two fresh review calls on the final policy. The report's four calls and $0.729880 cost include those reused author responses. Offline replay wall time is not live provider latency. The separate live skill probe in `../cv-skill-live-probe.json` passed with ten suggestions across four categories; replay alone does not exercise skill stages or selected-only persistence. The shared $10 ledger settled at $1.354135 across the initial run and final continuation, which added $0.471457. No customer data or production database was used.
 
-The raw provider recording is not committed: recordings contain synthetic candidate text and
-provider output, and are kept in ignored local evidence. The committed report records its local
-path and the prompt set; another machine needs its own provider run to reproduce the answers.
-For an offline scripted fixture when provider access is unavailable, point `DATABASE_URL` at a
-scratch or development database and run
+## Historical evidence
+
+- `report-live-2026-10-30-before-eligible-audit.json` retains the first passing run before the final separation of printed-claim eligibility from full-library scoring; it does not qualify that later input policy.
+- `report-live-2026-10-28-pre-targeting.json` retains the previously current qualification at prompt set `987e0b5ac958`.
+- `report-live-2026-10-28.json` retains an earlier verified replay at its original prompt set.
+- `failed-scripted-comparison.json` retains the earlier failure against an optimistic scripted baseline: regulated-environment experience was partial rather than fully met. It is not treated as a passing comparison.
+- Earlier skill results, including the rejected response that exhausted its token ceiling, are retained alongside the current skill probe. Historical results are not re-labelled as current qualification.
+
+Raw recordings remain local because they contain provider output and opaque provider signatures. The committed reports record local paths; another machine needs its own bounded provider run to reproduce answers. The artefact notes record SHA-256 digests. An offline scripted fixture can instead be seeded in a scratch database:
 
 ```bash
 DATABASE_URL=… pnpm exec tsx scripts/cv-replay-fixture.mts [recording.jsonl]
 ```
 
-which seeds and publishes the fixture draft through the scripted client, records a rebuild of it,
-and prints the draft id and the recording's path; then replay that recording with the `cli replay`
-command above.
+Then replay it with `pnpm --filter @col/worker cli replay <draft-id> --recordings <file> --out <report-path>`. A scripted report is explicitly unverified and does not satisfy the live release gate.

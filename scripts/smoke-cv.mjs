@@ -451,7 +451,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(await page.getByRole("button", { name: "Save changes · free", exact: true }).count(), 1);
     await page.getByText("More options", { exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "Rewrite from Experience · 1 credit", exact: true }).count(), 1);
-    assert.match(await page.locator("main").innerText(), /Saving keeps your wording as a new draft without checking or rebuilding this CV/);
+    assert.match(await page.locator("main").innerText(), /Save your wording now; Check the saved CV when ready/);
 
     // The wording option sits with the words it remembers, on the Content tab, and is still
     // called by its own four words rather than its hint.

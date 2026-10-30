@@ -435,6 +435,25 @@ it('refuses an authored plan that omits a selected sole-essential Interest', asy
   .rejects.toMatchObject({ kind: 'output_invalid', detail: { omitted: ['i'] } });
  expect(write).toHaveBeenCalledTimes(1);
 });
+it('treats a targeted 20-section selection conflict as per-CV recovery before any author call', async () => {
+ const source: CvLibrary = { name: 'Example', contact: 'London', profile: 'Leader',
+  theme: { ...DEFAULT_CV_THEME, maxPages: 2 }, entries: [
+   ...Array.from({ length: 20 }, (_, index) => ({ id: `role-${index}`, kind: 'experience' as const,
+    heading: `Role ${index}`, details: 'Led operations.', confirmedResponsibilities: ['Led operations.'] })),
+   { id: 'interest', kind: 'interest', heading: 'Charity board', details: 'Chaired a board.',
+    confirmedResponsibilities: ['Chaired a board.'] },
+  ] };
+ const rubric = { caveats: [], requirements: [] };
+ const tailoring = { requirements: [], gapQuestions: [] };
+ const semantic = { rubric, plan: tailoring, treatments: new Map([['interest', 'feature' as const]]) };
+ const write = vi.fn();
+ await expect(buildFittedCv(source, 'Operations', write, undefined, undefined, semantic))
+  .rejects.toMatchObject({ kind: 'page_limit_unfittable', detail: { maxPages: 2, attempts: 0 } });
+ await expect(buildFittedCv(source, 'Operations', write, undefined, undefined, semantic))
+  .rejects.toThrow('Omit a selected section here so at most 20 remain');
+ expect(write).not.toHaveBeenCalled();
+ expect(() => createCvWritingBudget(source, 'Operations')).not.toThrow();
+});
 it('corrects a retry against the budget it will be given, not the one it just missed', async () => {
  const minimal: CvPlan = { ...plan, sections: plan.sections.map(section => section.entryId.startsWith('r') ? { ...section, bullets: [plan.sections[1]!.bullets[1]!] } : section) };
  const write = vi.fn().mockResolvedValue(minimal);

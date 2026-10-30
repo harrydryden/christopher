@@ -156,7 +156,10 @@ export function classifyCvBuildFailure(error: unknown): { kind: CvFailureKind; m
     if (error.kind === "page_limit_unfittable")
       return {
         kind: error.kind,
-        message: (error.detail.essential ? cvEssentialPageLimitMessage : cvPageLimitMessage)(error.detail.pages ?? 0, error.detail.maxPages ?? 0),
+        // A structural selection conflict has no rendered page count. Keep its actionable
+        // per-CV instruction rather than fabricating a zero-page measurement.
+        message: error.detail.pages === undefined ? error.message
+          : (error.detail.essential ? cvEssentialPageLimitMessage : cvPageLimitMessage)(error.detail.pages, error.detail.maxPages ?? 0),
         extra: { ...error.policy },
       };
     return { kind: error.kind, message: error.message, extra: { ...error.policy } };

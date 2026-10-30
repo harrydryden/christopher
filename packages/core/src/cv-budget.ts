@@ -6,6 +6,10 @@ import { cvTailoringCoverage, cvTailoringRequirementWeights, type CvTailoringPla
 
 export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number; required?: boolean; relevantSkillItems?: string[] };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
+/** A per-CV selection that cannot fit the structural section allowance. */
+export class CvBudgetSelectionConflict extends Error {
+  constructor(message: string) { super(message); this.name = 'CvBudgetSelectionConflict'; }
+}
 /** The same source-preservation rule applies to the first writer and optional improvements. */
 export function missingRequiredCvBlocks(plan: CvPlan, budget: CvWritingBudget): CvBlockBudget[] {
   return budget.blocks.filter(block =>
@@ -80,7 +84,11 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
     return date(b).localeCompare(date(a));
   });
   const education = library.entries.filter(entry => entry.kind === 'education' || entry.kind === 'training');
-  if (roles.length + education.length > 20) throw new Error('Select at most 20 employment and qualification blocks for this CV. The full library is retained.');
+  if (roles.length + education.length > 20) {
+    const message = 'Select at most 20 employment and qualification blocks for this CV. Omit a selected section here; the full Experience library is retained.';
+    if (semantic?.treatments) throw new CvBudgetSelectionConflict(message);
+    throw new Error('Select at most 20 employment and qualification blocks for this CV. The full library is retained.');
+  }
   const entryRelevance = (entry: CvLibrary["entries"][number]) => semantic
     ? semanticEntryRelevance(entry.id, semantic)
     : cvRelevance([entry.heading, entry.details, ...(entry.skillItems ?? [])].join(' '), target);
@@ -93,7 +101,7 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
     : null;
   const available = CV_LIMITS.sections - roles.length - education.length;
   if (targetedInterests && targetedInterests.length > available)
-    throw new Error('This CV selects more Interest sections than its available section space. Omit an optional section or change the selection.');
+    throw new CvBudgetSelectionConflict('This CV selects more than 20 sections including Interests. Omit a selected section here so at most 20 remain; the full Experience library is retained.');
   // An explicit per-CV choice is retained even on one page. Legacy budgets still make Interests
   // optional and omit them on one page. Reserve selected Interest slots before optional skills.
   const reserved = targetedInterests?.length ?? 0;

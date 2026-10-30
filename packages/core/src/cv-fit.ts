@@ -9,6 +9,7 @@ import {
   relevantCvSkillItems,
   type CvSemanticTarget,
   type CvWritingBudget,
+  CvBudgetSelectionConflict,
 } from "./cv-budget";
 import { cvTailoringCoverage, validateCvPlanProvenance } from "./cv-tailoring";
 import { renderCvPdfWithReport, CvLayoutError } from "./cv-pdf";
@@ -463,12 +464,13 @@ export async function buildFittedCv(
     };
   }
   for (let attempt = 0; attempt < 3; attempt++) {
-    const budget = createCvWritingBudget(
-      library,
-      target,
-      Math.pow(0.76, attempt),
-      semantic,
-    );
+    let budget: CvWritingBudget;
+    try { budget = createCvWritingBudget(library, target, Math.pow(0.76, attempt), semantic); }
+    catch (error) {
+      if (error instanceof CvBudgetSelectionConflict)
+        throw new CvFitFailure('page_limit_unfittable', error.message, { maxPages, attempts: 0 });
+      throw error;
+    }
     // Corrections describe the budget the next attempt will be given, not the one just missed:
     // measured against the current one, a block that fitted it drew no correction at all, and the
     // ones that did quoted figures a quarter larger than the writer's next allocation.

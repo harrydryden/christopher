@@ -194,6 +194,7 @@ export function CvDraftEditor({
   const [saveStatus, setSaveStatus] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
   const onSaveStatusChange = useCallback((status: { pending: boolean; error: string | null }) => setSaveStatus(status), []);
   const controller = useRef<AbortController | null>(null);
+  const previewInFlight = useRef(false);
   const selectedSuggestions = useMemo(() => skillRun?.status === "ready"
     ? skillRun.suggestions.filter(item => selectedSuggestionIds.includes(item.id)) : EMPTY_SELECTED_SUGGESTIONS,
   [skillRun, selectedSuggestionIds]);
@@ -354,62 +355,73 @@ export function CvDraftEditor({
       setError(skillIssue);
       return;
     }
-    // The same check as before, loaded on first use: the schema and zod are not in the page's
-    // first load, and `/api/cv/preview` validates again on the server regardless.
-    // A chunk that cannot be fetched (offline, or a deployment that replaced it) must say so rather
-    // than leave the button doing nothing.
-    let CvContentSchema: typeof import("@col/core/cv").CvContentSchema;
-    try {
-      ({ CvContentSchema } = await import("@col/core/cv"));
-    } catch {
-      setError("Could not load the preview. Check your connection and try again.");
-      return;
-    }
-    const parsed = CvContentSchema.safeParse(candidate);
-    if (!parsed.success) {
-      setError(parsed.error.issues.map((issue) => {
-        const [field, index, item] = issue.path;
-        if (field === "sections" && typeof index === "number" && item === "bullets" && issue.code === "too_small")
-          return `Section ${index + 1} needs at least one bullet.`;
-        if (field === "sections" && typeof index === "number" && item === "skillItems" && issue.code === "too_small")
-          return `Skill section ${index + 1} needs at least one skill.`;
-        return issue.message;
-      }).join(" "));
-      return;
-    }
+    // The schema chunk can be slow to arrive. Claim the request before its first await so a
+    // second click cannot start another validation and PDF render in the meantime.
+    if (previewInFlight.current) return;
+    previewInFlight.current = true;
     controller.current?.abort();
     const request = new AbortController();
     controller.current = request;
     setPending(true);
     setError("");
     try {
-      const response = await fetch("/api/cv/preview", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(parsed.data),
-        signal: request.signal,
-      });
-      if (!response.ok) throw new Error(await response.text());
-      const url = URL.createObjectURL(await response.blob());
-      if (request.signal.aborted) {
-        URL.revokeObjectURL(url);
+      // The same check as before, loaded on first use: the schema and zod are not in the page's
+      // first load, and `/api/cv/preview` validates again on the server regardless.
+      // A chunk that cannot be fetched (offline, or a deployment that replaced it) must say so rather
+      // than leave the button doing nothing.
+      let CvContentSchema: typeof import("@col/core/cv").CvContentSchema;
+      try {
+        ({ CvContentSchema } = await import("@col/core/cv"));
+      } catch {
+        if (!request.signal.aborted) setError("Could not load the preview. Check your connection and try again.");
         return;
       }
-      setPreview({
-        url,
-        fingerprint,
-        pages: Number(response.headers.get("x-cv-page-count")),
-        summaryLines: (() => { const lines = Number(response.headers.get("x-cv-summary-lines"));
-          return Number.isSafeInteger(lines) && lines > 0 ? lines : null; })(),
-      });
-    } catch (failure) {
-      if (!request.signal.aborted)
-        setError(
-          failure instanceof Error
-            ? failure.message
-            : "Could not render the PDF.",
-        );
+      if (request.signal.aborted) return;
+      const parsed = CvContentSchema.safeParse(candidate);
+      if (!parsed.success) {
+        setError(parsed.error.issues.map((issue) => {
+          const [field, index, item] = issue.path;
+          if (field === "sections" && typeof index === "number" && item === "bullets" && issue.code === "too_small")
+            return `Section ${index + 1} needs at least one bullet.`;
+          if (field === "sections" && typeof index === "number" && item === "skillItems" && issue.code === "too_small")
+            return `Skill section ${index + 1} needs at least one skill.`;
+          return issue.message;
+        }).join(" "));
+        return;
+      }
+      try {
+        const response = await fetch("/api/cv/preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(parsed.data),
+          signal: request.signal,
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const pages = Number(response.headers.get("x-cv-page-count"));
+        if (!Number.isSafeInteger(pages) || pages < 1) throw new Error("The preview returned no valid page count. Try again.");
+        const url = URL.createObjectURL(await response.blob());
+        if (request.signal.aborted) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        setPreview({
+          url,
+          fingerprint,
+          pages,
+          summaryLines: (() => { const lines = Number(response.headers.get("x-cv-summary-lines"));
+            return Number.isSafeInteger(lines) && lines > 0 ? lines : null; })(),
+        });
+      } catch (failure) {
+        if (!request.signal.aborted)
+          setError(
+            failure instanceof Error
+              ? failure.message
+              : "Could not render the PDF.",
+          );
+      }
     } finally {
+      if (controller.current === request) controller.current = null;
+      previewInFlight.current = false;
       if (!request.signal.aborted) setPending(false);
     }
   }
@@ -425,7 +437,7 @@ export function CvDraftEditor({
           submitLabel={dirty ? "Save changes · free" : "Save as new revision · free"}
           submitVariant={!finalised && dirty ? "primary" : "secondary"}
           submitDisabled={!!skillIssue || staleEditBase}
-          secondaryActions={<details className="text-12"><summary className="cursor-pointer">More options</summary><div className="mt-2"><RebuildButton disabled={!!skillIssue || staleEditBase} /></div></details>}
+          secondaryActions={<details className="text-12"><summary className="cursor-pointer">More options</summary><div className="mt-2 space-y-2"><p>Rewrite uses the latest Experience and one CV credit. Save keeps your edits without checking or rebuilding this CV.</p><RebuildButton disabled={!!skillIssue || staleEditBase} /></div></details>}
         >
           {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
           {theme && (
@@ -448,7 +460,7 @@ export function CvDraftEditor({
         </SettingsForm>
       </fieldset>
       {staleEditBase && <p role="alert" className="mt-2 border border-warn p-3 text-14 text-warn">This CV revision changed in another update. Copy any unsaved wording you need, then reload this page before saving.</p>}
-      <p className="mt-2 text-12 text-muted">Saving keeps your wording as a new draft without checking or rebuilding this CV. Check the saved CV when you are ready. Rewriting uses the latest Experience evidence and one CV credit.</p>
+      <p className="mt-2 text-12 text-muted">Save your wording now; Check the saved CV when ready.</p>
       {blocked && (
         <p role="status" className="mt-2 border border-warn p-3 text-14 text-warn">
           {blocked}
@@ -457,6 +469,8 @@ export function CvDraftEditor({
       <section className="flex flex-wrap items-center gap-3 border-b border-line-muted pb-3 text-13" aria-label="CV preview">
         {finalised && hasFinalPdf && !dirty
           ? <a href={`/api/cv/${id}/pdf?preview=1`} target="_blank" rel="noopener noreferrer" className={buttonClass("secondary", "md", "no-underline")}>Preview final PDF</a>
+          : currentPreview && preview
+            ? <a href={preview.url} target="_blank" rel="noopener noreferrer" className={buttonClass("secondary", "md", "no-underline")}>Open current preview</a>
           : <button type="button" disabled={pending || !!blocked || !hydrated} onClick={updatePreview} className={buttonClass("secondary")}>
               {pending ? "Rendering preview…" : "Preview current edits"}
             </button>}
@@ -464,9 +478,9 @@ export function CvDraftEditor({
         {error && <p role="alert" className="w-full text-14 text-danger">{error}</p>}
         {preview && !currentPreview && <p role="status" className="w-full text-12 text-muted">Edits changed since this preview. Refresh it to see the current wording.</p>}
         {preview && currentPreview && <>
-          <a className="underline" href={preview.url} target="_blank" rel="noopener noreferrer">Open preview · {preview.pages} {preview.pages === 1 ? "page" : "pages"} rendered · limit {theme.maxPages}</a>
+          <span>{preview.pages} {preview.pages === 1 ? "page" : "pages"} rendered · limit {theme.maxPages}</span>
           {preview.pages > theme.maxPages && <p role="status" className="w-full text-12 text-warn">This wording renders to {preview.pages} pages, above your {theme.maxPages}-page limit. Saving and Check keep the wording unchanged. Shorten or summarise it, choose a larger limit, or deliberately Rewrite before finalising.</p>}
-          <CvDisclosure label="preview on this page"><iframe title="Current CV PDF preview" src={preview.url} className="h-[650px] w-full border-2 border-line-muted bg-raised" /></CvDisclosure>
+          <CvDisclosure label="preview on this page" mountWhenOpen><iframe title="Current CV PDF preview" src={preview.url} className="h-[650px] w-full border-2 border-line-muted bg-raised" /></CvDisclosure>
         </>}
       </section>
       <CvWorkspacePanel tab="appearance">
@@ -556,7 +570,8 @@ export function CvDraftEditor({
           </p>
           <section className="border border-line-muted p-3" aria-label="Skill recommendations">
             <h3 className="font-semibold">Suggested skills from your Experience</h3>
-            <p className="mt-2 text-12 text-muted">Suggest around 10 skills across relevant categories, based on your Experience, current CV and this role. Choose the suggestions you want to add; new skills and categories are saved to Experience when you save the CV. Existing skills are marked included; remove a current skill if you want to replace it.</p>
+            <p className="mt-2 text-12 text-muted">Generate grounded suggestions for this CV and role, then choose which to save.</p>
+            <details className="mt-1 text-12 text-muted"><summary className="cursor-pointer">How skill suggestions work</summary><p className="mt-1">Aim for around 10 across relevant categories. New selections are saved to Experience with your CV; existing skills are marked included. Remove a current skill if you want to replace it.</p></details>
             <button type="button" className={`${buttonClass("secondary")} mt-3`}
               onClick={() => void (suggestionPollStopped && !suggestionsStale ? reconnectSuggestions() : loadSuggestions(!!skillRun))}
               disabled={suggestionStarting || !!projectionIssue || (!!skillRun && !suggestionsStale && !suggestionPollStopped && (skillRun.status === "queued" || skillRun.status === "running"))}>

@@ -98,9 +98,11 @@ describe("getCompanyWorkStatus", () => {
   it("gives the Roles page the same pending flag, and a version that no task alone moves", async () => {
     const roles = await getRolesWorkStatus(a.id);
     expect(roles.active).toBe(false);
+    expect(roles.scorePending).toBe(false);
     const scan = await task("scan_company", { companyId: mine });
     const pending = await getRolesWorkStatus(a.id);
     expect(pending.active).toBe(true);
+    expect(pending.scorePending).toBe(false);
     expect((await getRolesWorkStatus(b.id)).active).toBe(false);
     // A task arriving, starting and finishing changes nothing the table shows.
     expect(pending.version).toBe(roles.version);
@@ -110,9 +112,9 @@ describe("getCompanyWorkStatus", () => {
     expect((await status(a)).version).not.toBe(companies);
     await task("discover", { companyId: mine, homepageUrl: "https://mine.example" });
     await database.update(schema.tasks).set({ status: "done" }).where(sql`id = ${scan.id}`);
-    expect(await getRolesWorkStatus(a.id)).toEqual({ active: true, version: roles.version });
+    expect(await getRolesWorkStatus(a.id)).toEqual({ active: true, scorePending: false, version: roles.version });
     await database.execute(sql`update tasks set status = 'done'`);
-    expect(await getRolesWorkStatus(a.id)).toEqual({ active: false, version: roles.version });
+    expect(await getRolesWorkStatus(a.id)).toEqual({ active: false, scorePending: false, version: roles.version });
   });
 
   it("keeps Roles watching this account's late score after its company scan has finished", async () => {
@@ -125,6 +127,7 @@ describe("getCompanyWorkStatus", () => {
     const score = await task("score_job", { userId: a.id, jobId: job!.id });
     const before = await getRolesWorkStatus(a.id);
     expect(before.active).toBe(true);
+    expect(before.scorePending).toBe(true);
     expect((await getRolesWorkStatus(b.id)).active).toBe(false);
     expect((await status(a)).active).toBe(false); // Companies does not wait for personal scores.
 
@@ -132,7 +135,23 @@ describe("getCompanyWorkStatus", () => {
       updatedAt: new Date(Date.now() + 60_000) }).where(eq(schema.userJobs.jobId, job!.id));
     expect((await getRolesWorkStatus(a.id)).version).not.toBe(before.version);
     await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, score.id));
-    expect((await getRolesWorkStatus(a.id)).active).toBe(false);
+    expect(await getRolesWorkStatus(a.id)).toMatchObject({ active: false, scorePending: false });
+  });
+
+  it("clears the score notice while a company scan remains queued and no role row changes", async () => {
+    await task("scan_company", { companyId: mine });
+    const companyOnly = await getRolesWorkStatus(a.id);
+    expect(companyOnly).toMatchObject({ active: true, scorePending: false });
+    const score = await task("score_job", { userId: a.id, jobId: "role-1" });
+    const withScore = await getRolesWorkStatus(a.id);
+    expect(withScore).toMatchObject({ active: true, scorePending: true });
+    expect(withScore.version).not.toBe(companyOnly.version);
+    await database.update(schema.tasks).set({ status: "running" }).where(eq(schema.tasks.id, score.id));
+    expect((await getRolesWorkStatus(a.id)).version).toBe(withScore.version);
+    await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, score.id));
+    const afterScore = await getRolesWorkStatus(a.id);
+    expect(afterScore).toMatchObject({ active: true, scorePending: false, version: companyOnly.version });
+    expect(afterScore.version).not.toBe(withScore.version);
   });
 
   it("keeps Roles watching only its account through score admission and a terminal no-AI answer", async () => {
@@ -177,7 +196,7 @@ describe("getCompanyWorkStatus", () => {
       await tx.insert(schema.tasks).values({ type: "poll_score_batch", status: "queued",
         runAfter: new Date(Date.now() + 60 * 60_000), payload: { items: [{ userId: a.id, jobId: "role-1" }] } });
     });
-    expect(await getRolesWorkStatus(a.id)).toEqual({ active: true, version: baseline.version });
+    expect(await getRolesWorkStatus(a.id)).toEqual({ active: true, scorePending: true, version: baseline.version });
     expect((await getRolesWorkStatus(b.id)).active).toBe(false);
     let poll = initialWorkPoll(baseline.version);
     for (let i = 0; i < 8; i++) poll = stepWorkPoll(poll, { active: true, version: baseline.version }).state;

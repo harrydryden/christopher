@@ -23,7 +23,10 @@ export const dynamic = "force-dynamic";
  */
 async function WorkNotice({ userId }: { userId: string }) {
   const work = await getRolesWorkStatus(userId);
-  return work.active ? <AutoRefresh scope="roles" initialVersion={work.version} message={null} /> : null;
+  return <>
+    {work.active && <AutoRefresh scope="roles" initialVersion={work.version} message={null} />}
+    {work.scorePending && <p role="status" className="mb-3 text-13 text-muted">Fit scores are updating. You can keep reviewing roles.</p>}
+  </>;
 }
 
 /** At most this many terms on one line; the Learning card carries the rest with their evidence. */
@@ -61,12 +64,18 @@ async function Suggestions({ userId }: { userId: string }) {
 
 export default async function RolesPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
   const user = await requireUser();
+  const filters = await searchParams;
+  // A new tab, page or filter gets its own boundary, so navigation shows the loading state
+  // instead of leaving the previous result looking current while the next query settles.
+  const queryKey = JSON.stringify(Object.entries(filters).sort(([left], [right]) => left.localeCompare(right)));
   return <div>
     <Suspense><WorkNotice userId={user.id} /></Suspense>
     <PageHeader title="Roles" description="Review matches from the companies you follow."
       actions={<Link prefetch={false} href="/roles/add" className={buttonLinkClass("secondary")}>Add a role · Link or PDF</Link>} />
     <Suspense><Setup userId={user.id} /></Suspense>
     <Suspense><Suggestions userId={user.id} /></Suspense>
-    <RoleWorkspace userId={user.id} searchParams={await searchParams} />
+    <Suspense key={queryKey} fallback={<section id="roles" role="status" aria-label="Loading roles" className="border border-line-muted p-4 text-14 text-muted">Loading roles and filters…</section>}>
+      <RoleWorkspace userId={user.id} searchParams={filters} />
+    </Suspense>
   </div>;
 }

@@ -578,3 +578,53 @@ it("shows a role's archive notes once its review panel has loaded them, and ship
   // The other row, never opened, says nothing of it.
   expect(container.querySelector(`#role-review-${SECOND.id}`)).toBeNull();
 });
+
+it("retries description details in the open panel once and shows the fresh result", async () => {
+  render([FIRST]);
+  await act(async () => { button(FIRST.title).click(); });
+  expect(container.querySelector(`#role-review-${FIRST.id}`)?.textContent).toContain("Could not load this role.");
+  const retry = container.querySelector<HTMLButtonElement>(`[aria-label="Retry details for ${FIRST.title} at Meridian"]`)!;
+  expect(retry).toBeTruthy();
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(done => { finish = done; });
+  actions.roleDetails.mockReturnValueOnce(pending);
+  await act(async () => { retry.click(); retry.click(); });
+  expect(actions.roleDetails).toHaveBeenCalledTimes(2);
+  expect(container.querySelector(`#role-review-${FIRST.id}`)?.textContent).toContain("Description");
+  await act(async () => { finish({ ok: true, details: {
+    jobId: FIRST.id, description: "Fresh role details.", salaryText: null, department: null, employmentType: null,
+    keywordTerms: [], fitVerdict: null, fitRationale: null, locationReason: "Matched your filters.",
+    cvQuote: null, cvBlocked: null, archiveNotes: [],
+  } }); await pending; });
+  expect(container.querySelector(`#role-review-${FIRST.id}`)?.textContent).toContain("Fresh role details.");
+  expect(container.querySelector(`[aria-label="Retry details for ${FIRST.title} at Meridian"]`)).toBeNull();
+});
+
+it("does not show a late description answer after the role has left the table", async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(done => { finish = done; });
+  actions.roleDetails.mockReturnValueOnce(pending);
+  render([FIRST]);
+  act(() => button(FIRST.title).click());
+  render([SECOND]);
+  await act(async () => { finish({ ok: false, error: "Stale role error" }); await pending; });
+  expect(container.querySelector(`#role-review-${FIRST.id}`)).toBeNull();
+  expect(text()).not.toContain("Stale role error");
+  act(() => button(SECOND.title).click());
+  expect(actions.roleDetails).toHaveBeenCalledWith(SECOND.id);
+});
+
+it("discards a removed role's old request when the same role returns", async () => {
+  let finishOld!: (value: unknown) => void;
+  const old = new Promise(done => { finishOld = done; });
+  actions.roleDetails.mockReturnValueOnce(old);
+  render([FIRST]);
+  act(() => button(FIRST.title).click());
+  render([]);
+  render([FIRST]);
+  await act(async () => { finishOld({ ok: false, error: "Old answer" }); await old; });
+  expect(text()).not.toContain("Old answer");
+  await act(async () => { button(FIRST.title).click(); });
+  expect(actions.roleDetails).toHaveBeenCalledTimes(2);
+  expect(container.querySelector(`#role-review-${FIRST.id}`)?.textContent).toContain("Could not load this role.");
+});

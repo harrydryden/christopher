@@ -7,7 +7,7 @@ import { CvEvaluationTable } from "./CvLazyWidgets";
 import { CvCheckForm } from "./CvCheckForm";
 import { CvReviewControls } from "./CvReviewControls";
 import { cvReviewActions } from "@/lib/cv-review-actions";
-import { CvReviewActionLink } from "./CvWorkspace";
+import { CvContentBlockLink, CvReviewActionLink } from "./CvWorkspace";
 
 /** Explain source changes where the evidence is judged; rewriting stays in the Write controls. */
 function LibraryDrift({ sentence }: { sentence: string | null }) {
@@ -27,6 +27,8 @@ export function CvAssessmentPanel({
   finalised,
   hasFinalPdf = false,
   busy,
+  paused = null,
+  continuationDraftId = null,
   hasContent,
   content,
   library = null,
@@ -43,6 +45,8 @@ export function CvAssessmentPanel({
   finalised: boolean;
   hasFinalPdf?: boolean;
   busy: boolean;
+  paused?: "evidence" | "priorities" | null;
+  continuationDraftId?: string | null;
   hasContent: boolean;
   content: CvContent | null;
   /** This revision's own Library snapshot: what a gap row's "Add evidence" link is resolved against. */
@@ -65,6 +69,16 @@ export function CvAssessmentPanel({
   initialFindingId?: string | null;
   reviewDecision?: CvReviewDecision | null;
 }) {
+  if (continuationDraftId) return <section className="space-y-3 border border-line-muted p-4" aria-labelledby="cv-match-title">
+    <h2 id="cv-match-title" className="text-14 font-semibold">Job match assessment</h2>
+    <p className="text-14">This evidence checkpoint is complete. Review and finalise the continuing CV when it is ready.</p>
+    <a className="text-14 underline" href={`/cv/${continuationDraftId}`}>Open the continuing CV build</a>
+  </section>;
+  if (paused) return <section className="space-y-3 border border-warn p-4" aria-labelledby="cv-match-title">
+    <h2 id="cv-match-title" className="text-14 font-semibold">Job match assessment</h2>
+    <p className="text-14">This build is waiting for {paused === "evidence" ? "your evidence decision" : "your role priorities"}. Check and finalise become available after it continues.</p>
+    <CvContentBlockLink>Open the {paused === "evidence" ? "evidence questions" : "priority choices"} in Write</CvContentBlockLink>
+  </section>;
   if (!assessment || !current)
     return (
       <section className="border border-warn p-4 space-y-3">

@@ -47,6 +47,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
   let suggestionFixtureVersion = null;
   let suggestionDraftId = null;
   let targetedDraftId = null;
+  const evidencePausedId = randomUUID();
   // The role the applications table is exercised against: its own company, so it goes at the end.
   const TABLE_DOMAIN = "cvtable.invalid";
   const tableCompanyId = randomUUID(), tableSourceId = randomUUID(), tableJobId = randomUUID();
@@ -154,7 +155,21 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       }).drain();
       const paused = (await pool.query("select status from cv_drafts where id = $1", [targetedDraftId])).rows[0];
       assert.equal(paused.status, "awaiting_priorities");
+      // An interrupted attempt may retain wording. The priority checkpoint must still win.
+      await pool.query("update cv_drafts set content = $2::jsonb where id = $1", [targetedDraftId, JSON.stringify(content)]);
     } finally { await targetedDeps.close(); }
+    await pool.query(
+      `insert into cv_drafts (id, user_id, job_title, company_name, job_description, library_version,
+        library_snapshot, model, status, content, build_checkpoint, gap_quiz)
+       values ($1, $2, 'Operations Director', 'Example', $3, 1, $4::jsonb, 'test',
+        'awaiting_evidence', $5::jsonb, $6::jsonb, $7::jsonb)`,
+      [evidencePausedId, userId, description, JSON.stringify(library), JSON.stringify(content),
+        JSON.stringify({ rubric, tailoringEnabled: true }),
+        JSON.stringify({ version: 1, status: "awaiting_answers", libraryVersion: 1,
+          questions: [{ id: "q1", requirementId: rubric.requirements[0].id,
+            requirement: rubric.requirements[0].label, prompt: "What did you lead?",
+            suggestedDestination: { kind: "evidence", entryId: "job" } }] })],
+    );
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
@@ -172,6 +187,15 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(`${baseUrl}/cv/${targetedDraftId}`);
+    await page.getByRole("heading", { name: "Target this CV" }).waitFor();
+    assert.equal(await page.getByRole("button", { name: /Save (changes|as new revision) · free/ }).count(), 0);
+    await page.getByRole("tab", { name: "Review" }).click();
+    assert.equal(await page.getByRole("button", { name: "Check saved CV" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Finalise this CV" }).count(), 0);
+    // The fragment already points at Write, but a later Review tab selection must still be reversible.
+    await page.evaluate(() => window.history.replaceState(null, "", "#cv-panel-content"));
+    await page.getByRole("link", { name: "Open the priority choices in Write" }).click();
+    assert.equal(await page.getByRole("tab", { name: "Write" }).getAttribute("aria-selected"), "true");
     await page.getByRole("heading", { name: "Target this CV" }).waitFor();
     await page.getByRole("combobox", { name: "Operations Manager · Northwind Health treatment" }).selectOption("summarise");
     await page.getByRole("combobox", { name: "Service Delivery Lead · Calder Logistics treatment" }).selectOption("omit");
@@ -192,6 +216,29 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.ok(targetedConfirmed.targeting_brief.priority.emphasisRequirementIds.length >= 3);
     const queuedContinuations = (await pool.query("select count(*)::int as count from tasks where type = 'generate_cv' and status = 'queued' and payload->>'draftId' = $1", [targetedDraftId])).rows[0].count;
     assert.equal(queuedContinuations, 1);
+    await page.goto(`${baseUrl}/cv/${evidencePausedId}`);
+    await page.getByRole("heading", { name: "Could your Experience say more?" }).waitFor();
+    assert.equal(await page.getByRole("button", { name: /Save (changes|as new revision) · free/ }).count(), 0);
+    await page.getByRole("tab", { name: "Review" }).click();
+    assert.equal(await page.getByRole("button", { name: "Check saved CV" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Finalise this CV" }).count(), 0);
+    await page.evaluate(() => window.history.replaceState(null, "", "#cv-panel-content"));
+    await page.getByRole("link", { name: "Open the evidence questions in Write" }).click();
+    assert.equal(await page.getByRole("tab", { name: "Write" }).getAttribute("aria-selected"), "true");
+    await page.getByRole("heading", { name: "Could your Experience say more?" }).waitFor();
+    const reservationsBeforeSkip = (await pool.query("select count(*)::int as count from credit_reservations where draft_id = $1", [evidencePausedId])).rows[0].count;
+    await page.getByRole("button", { name: "No further evidence — continue" }).click();
+    await page.getByText("Your CV is queued", { exact: true }).waitFor();
+    const evidenceContinued = (await pool.query("select status, content, gap_quiz from cv_drafts where id = $1", [evidencePausedId])).rows[0];
+    assert.equal(evidenceContinued.status, "queued");
+    assert.equal(evidenceContinued.gap_quiz.status, "skipped");
+    assert.deepEqual(evidenceContinued.content, content);
+    assert.equal((await pool.query("select count(*)::int as count from credit_reservations where draft_id = $1", [evidencePausedId])).rows[0].count, reservationsBeforeSkip);
+    assert.equal((await pool.query("select count(*)::int as count from tasks where dedupe_key = $1", [`generate_cv:${evidencePausedId}:quiz-complete`])).rows[0].count, 1);
+    // Retire this synthetic continuation now: later smoke cases exercise the account's
+    // concurrent-build limit and must not inherit a slot from this checkpoint fixture.
+    await pool.query("delete from tasks where payload->>'draftId' = $1", [evidencePausedId]);
+    await pool.query("delete from cv_drafts where id = $1", [evidencePausedId]);
     // The CV list has gone; the link every older page carries lands on the applications table.
     await page.goto(`${baseUrl}/cv`);
     assert.equal(new URL(page.url()).pathname, "/applications");
@@ -1287,6 +1334,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       await pool.query("delete from tasks where payload->>'draftId' = $1", [targetedDraftId]);
       await pool.query("delete from cv_drafts where id = $1", [targetedDraftId]);
     }
+    await pool.query("delete from tasks where payload->>'draftId' = $1", [evidencePausedId]);
+    await pool.query("delete from cv_drafts where id = $1", [evidencePausedId]);
     if (suggestionFixtureVersion !== null) await pool.query("delete from cv_libraries where user_id = $1 and version > $2", [userId, suggestionFixtureVersion]);
     await pool.query("delete from cv_drafts where id = any($1::uuid[])", [
       tableIds,

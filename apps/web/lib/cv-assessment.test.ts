@@ -56,6 +56,30 @@ const content = materialiseCv(library, {
   sections: [{ entryId: "e", bullets: ["Owned a £10m budget"] }],
   gaps: [],
 });
+for (const [paused, label] of [["evidence", "evidence questions"], ["priorities", "priority choices"]] as const) {
+  it(`keeps Check and Finalise unavailable while a retained CV waits for ${paused}`, () => {
+    const html = renderToStaticMarkup(createElement(CvAssessmentPanel, {
+      id: "test", assessment: null, current: false, finalised: false, busy: false,
+      hasContent: true, content, paused,
+    }));
+    expect(html).toContain(`Open the ${label} in Write`);
+    expect(html).toContain("Check and finalise become available after it continues");
+    expect(html).not.toContain("Check saved CV");
+    expect(html).not.toContain("Finalise this CV");
+    expect(html).not.toContain("Saved — check when ready");
+  });
+}
+it("links a completed evidence parent to its continuation without offering another decision", () => {
+  const html = renderToStaticMarkup(createElement(CvAssessmentPanel, {
+    id: "parent", assessment: null, current: false, finalised: false, busy: false,
+    hasContent: true, content, paused: "evidence", continuationDraftId: "child",
+  }));
+  expect(html).toContain("This evidence checkpoint is complete");
+  expect(html).toContain('href="/cv/child"');
+  expect(html).not.toContain("Open the evidence questions");
+  expect(html).not.toContain("Check saved CV");
+  expect(html).not.toContain("Finalise this CV");
+});
 it("shows evidence questions and actual unsupported wording with a guided finalise-anyway choice", async () => {
   const description = "Own a budget";
   const rubric = rubricFixture(description);

@@ -27,6 +27,7 @@ This is an expert review and synthetic verification, not a moderated usability s
 4. **Role-detail failure requires excessive recovery.** Retry the description in place, rejecting stale responses and invalidating cached failures as role identity/lifecycle changes. Do not let a late response populate a different or removed role.
 5. **Role-list waiting lacks task context.** Stream an appropriately sized list fallback while the route's shell appears. Preserve filter transition feedback and distinguish active scoring from completed, unavailable or blocked work. Use the existing work feed rather than parallel polling.
 6. **Repeated explanatory text competes with editing.** Put the effect in the primary action label and keep detailed explanation in existing secondary disclosures. Keep Generate skills, selected-skill saving, free Save, paid Rewrite and factual warnings discoverable.
+7. **Mobile shell movement during streaming.** The pending scan-status bar was shorter than its loaded mobile touch control. It moved the entire workspace when the reading arrived. Reserve the same 61px mobile geometry from the start (44px control, 16px padding and 1px border), while allowing taller wrapped messages and leaving desktop sizing unchanged.
 
 Prefer removing work to adding memoisation. Existing optimistic updates, dynamic imports, lazy logos, per-request query reuse and hidden-tab polling are retained. Do not enable eager prefetching for every role or add a shared mutable cache for account-owned content.
 
@@ -50,7 +51,7 @@ Warm local page measurements use four samples after two warm-ups, through the re
 
 ## Implemented results and verification
 
-The six findings above are implemented. The CV preview action now becomes **Open current preview** when the wording and appearance still match. The inline viewer and detailed build log are mounted only when opened. Role details offer a local **Retry details** action. A streamed loading state identifies the role list; a notice shows actual pending scoring. A lost CV progress connection preserves the last known stage and reports reconnection separately from worker failure.
+The seven findings above are implemented. The CV preview action now becomes **Open current preview** when the wording and appearance still match. The inline viewer and detailed build log are mounted only when opened. Role details offer a local **Retry details** action. A streamed loading state identifies the role list; a notice shows actual pending scoring. A lost CV progress connection preserves the last known stage and reports reconnection separately from worker failure.
 
 The first visible CV editor has 249 words versus 305 in the same synthetic baseline (56 fewer, about 18%). The full explanation remains available in disclosures beside its action. This is reduced reading burden, not a claim that the full document has fewer DOM nodes: the initial CV DOM is 288 versus 284 because the accessible disclosure controls also need markup.
 
@@ -65,7 +66,7 @@ The first visible CV editor has 249 words versus 305 in the same synthetic basel
 
 Browser checks use the production build at 1440px desktop and 390px mobile. Roles, CV and Experience have no page exceptions or horizontal overflow. The synthetic fault checks confirm role retry, score-notice completion while company work remains active, and CV progress failure/recovery with no false stopped state. Detailed progress opens and closes correctly. A deliberately slowed local database (100 ms per client packet) confirms the Roles loading region arrives in an earlier response chunk than the table; this is a streaming-order assertion, not a hosted latency benchmark.
 
-Regression coverage includes duplicate preview clicks during lazy validation, leaving before validation resolves, invalid/missing page counts, edited-preview invalidation, hidden narrative computation, lost/recovered progress reads, role request identity/removal and task-only scoring transitions. All 86 focused tests pass (38 CV, 29 Roles, 19 work-status). The production build, typechecks and every route's existing bundle budget pass. The final hosted test and Lighthouse results are attached to the PR for its exact head.
+Regression coverage includes duplicate preview clicks during lazy validation, leaving before validation resolves, invalid/missing page counts, edited-preview invalidation, hidden narrative computation, lost/recovered progress reads, role request identity/removal and task-only scoring transitions. All 86 focused tests pass (38 CV, 29 Roles, 19 work-status). The production build, typechecks and every route's existing bundle budget pass. All five hosted jobs passed on `35f027ff`, including the full browser journey and Lighthouse. The final mobile shell reservation was added after inspecting those reports; the PR carries its final-head validation results.
 
 ### Payload and query trade-off
 
@@ -81,9 +82,19 @@ Small streamed-HTML/gzip differences include chunk ordering and build artefacts;
 
 ### Continuing performance contract
 
-- Gate first-load JavaScript and authenticated desktop LCP, CLS and TBT in the existing CI; keep the mobile measurements visible. Experience is close to its 142,000-byte gzip budget (141,458 bytes), so new editor features must preserve lazy loading and avoid adding shared dependencies.
+- Gate first-load JavaScript and authenticated desktop LCP, CLS and TBT in the existing CI; enforce mobile CLS at the same 0.1 median-run ceiling; keep the other mobile measurements visible as warnings. Experience is close to its 142,000-byte gzip budget (141,458 bytes), so new editor features must preserve lazy loading and avoid adding shared dependencies.
 - Treat optimistic decisions, draft Save, role descriptions, preview reuse and build recovery as separate journeys. A fast page load does not prove these actions respond well; preserve the request-count and lifecycle regressions added here.
 - Keep actionable warnings, costs, factual confirmation and unsaved-work protection visible. Hide optional explanation and history, not information needed to make a decision.
 - Use existing authenticated performance telemetry for real-device field distributions. This review establishes local reproducible behaviour; it does not establish production p75 latency or prove that the interface is intuitive to first-time users. A short moderated task study remains the way to validate that assumption.
 
 Machine-readable local evidence is in `frontend-verification.json`; before/after measurements use the same account, roles and library. Recovery tasks were completed and their synthetic CVs archived before the final page measurements. Screenshots and test fixtures contain only synthetic accounts.
+
+## Mobile layout-shift follow-up
+
+Both the baseline and initial frontend Lighthouse reports recorded a median mobile layout-shift score of approximately 0.173 on the CV page. The shifted element was the shared workspace beneath the scan-status strip. Desktop results remained small; mobile figures were warnings, so a green gate alone did not establish a stable layout.
+
+A production-browser observer reproduced the same 0.172955 shift value on the CV page and recorded the actual geometry: the loading strip was 36.5px high and its loaded mobile control was 61px. The workspace moved from y=37px to y=61px (rounded browser shift rectangles). Under a deliberately delayed database the same transition recorded 0.028469, confirming that the score depends on paint timing even though the unwanted movement is the same.
+
+After reserving the loaded mobile height, the same probes keep the workspace at y=61px throughout. This fixes the observed scan-status transition without waiting synchronously for its data or truncating messages. The separate small shift when the plan/credit readout arrives remains measurable (about 0.0049 in the probe); it is not attributed to this fix. Browser navigation can mark an early observation as recent input, so the diagnostic report distinguishes a recorded shift value from page-level CLS rather than presenting the two as interchangeable. Final hosted mobile Lighthouse results are checked separately.
+
+The mobile CLS regression is now enforced by the existing Lighthouse runner at the unchanged 0.1 median-run threshold. Other mobile timing thresholds remain warnings; a mobile CLS failure propagates a failing process exit to CI. This adds no extra Lighthouse pass or provider call.

@@ -57,7 +57,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   return (
     <WorkspaceShell><NavigationMetrics />
       <a href="#main-content" className="sr-only focus:not-sr-only focus:bg-bg focus:p-3 focus:text-fg">Skip to main content</a>
-      <div className="flex items-center gap-3 border-b border-line-muted bg-raised px-4 py-2 text-13">
+      {/* Reserve the mobile status control's 44px touch height, 16px padding and 1px border
+          while its streamed reading is pending, so the workspace below does not jump. */}
+      <div className="flex min-h-[61px] items-center gap-3 border-b border-line-muted bg-raised px-4 py-2 text-13 md:min-h-0">
         <MarkSmall size={16} className="text-brand" />
         <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>

@@ -235,5 +235,204 @@
   },
   "build": "passed",
   "routeBundleBudgets": "all passed",
-  "typecheck": "passed"
+  "typecheck": "passed",
+  "mobileLayoutShiftProbe": {
+    "viewport": {
+      "width": 412,
+      "height": 823
+    },
+    "beforeCommit": "35f027ff",
+    "normalBefore": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          36.5,
+          61
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.17295473348218854,
+            "hadRecentInput": true,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 61,
+                  "width": 412,
+                  "height": 762,
+                  "top": 61,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          36.5,
+          60
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.1729077963675337,
+            "hadRecentInput": true,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 60,
+                  "width": 412,
+                  "height": 763,
+                  "top": 60,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      }
+    },
+    "normalAfter": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      }
+    },
+    "delayedBefore": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          36.5,
+          61
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.028468719515019066,
+            "hadRecentInput": false,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 61,
+                  "width": 412,
+                  "height": 762,
+                  "top": 61,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          36.5,
+          60
+        ],
+        "workspaceShiftEvents": [
+          {
+            "value": 0.02729932035867843,
+            "hadRecentInput": false,
+            "rectangles": [
+              {
+                "previous": {
+                  "x": 0,
+                  "y": 37,
+                  "width": 412,
+                  "height": 786,
+                  "top": 37,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                },
+                "current": {
+                  "x": 0,
+                  "y": 60,
+                  "width": 412,
+                  "height": 763,
+                  "top": 60,
+                  "right": 412,
+                  "bottom": 823,
+                  "left": 0
+                }
+              }
+            ]
+          }
+        ],
+        "pageErrors": []
+      }
+    },
+    "delayedAfter": {
+      "/cv/<draft>": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      },
+      "/": {
+        "workspaceTops": [
+          61
+        ],
+        "workspaceShiftEvents": [],
+        "pageErrors": []
+      }
+    },
+    "delayedConditions": {
+      "databasePacketDelayMs": 250,
+      "cpuSlowdown": 4
+    },
+    "limits": [
+      "Shift event values with hadRecentInput=true are not page CLS.",
+      "Billing and optional setup arrivals remain separate small movements."
+    ]
+  }
 }

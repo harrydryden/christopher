@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { mobileConfig, previewConfig, sessionCookie, signedInConfig } from "./lighthouse.mjs";
+import { lighthouseExitCode, mobileConfig, previewConfig, sessionCookie, signedInConfig } from "./lighthouse.mjs";
 
 const committed = JSON.parse(readFileSync(new URL("../../lighthouserc.json", import.meta.url), "utf8"));
 
@@ -39,12 +39,26 @@ test("the signed-in config fills in the CV and the cookie, and moves the port wh
   assert.ok(new RegExp(moved.ci.assert.assertMatrix[0].matchingUrlPattern).test("http://127.0.0.1:4000/"));
 });
 
-test("the mobile pass drops the desktop preset and only warns", () => {
-  const mobile = mobileConfig(signedInConfig(committed, { draftId: "d", cookie: "c" }));
+test("the mobile pass keeps the exact CLS error threshold and warns on every other audit without changing its input", () => {
+  const desktop = signedInConfig(committed, { draftId: "d", cookie: "c" });
+  const before = structuredClone(desktop);
+  const mobile = mobileConfig(desktop);
   assert.equal(mobile.ci.collect.settings.preset, undefined);
   assert.ok(mobile.ci.collect.settings.extraHeaders, "still signed in");
-  for (const entry of mobile.ci.assert.assertMatrix) for (const rule of Object.values(entry.assertions)) assert.equal(rule[0], "warn");
+  for (const [index, entry] of mobile.ci.assert.assertMatrix.entries()) {
+    const originalCls = desktop.ci.assert.assertMatrix[index].assertions["cumulative-layout-shift"];
+    assert.deepEqual(entry.assertions["cumulative-layout-shift"], originalCls);
+    assert.deepEqual(entry.assertions["cumulative-layout-shift"], ["error", { maxNumericValue: 0.1, aggregationMethod: "median-run" }]);
+    for (const [audit, rule] of Object.entries(entry.assertions)) if (audit !== "cumulative-layout-shift") assert.equal(rule[0], "warn", audit);
+  }
+  assert.deepEqual(desktop, before);
   assert.equal(mobile.ci.upload.outputDir, "lighthouse-reports/mobile");
+});
+
+test("a failed mobile pass fails the combined local run even when desktop passed", () => {
+  assert.equal(lighthouseExitCode(0, 1), 1);
+  assert.equal(lighthouseExitCode(lighthouseExitCode(2, 0), 1), 2, "the first failure remains visible");
+  assert.equal(lighthouseExitCode(lighthouseExitCode(0, 0), 0), 0);
 });
 
 test("the cookie is the interface's own shape", () => {
@@ -54,10 +68,13 @@ test("the cookie is the interface's own shape", () => {
 });
 
 test("the preview pass is /login signed out, with the bypass header, warnings only, and no cookie", () => {
+  const before = structuredClone(committed);
   const config = previewConfig(committed, { url: "https://col-git-branch.vercel.app/some/path", bypass: "bypass-secret" });
   assert.deepEqual(config.ci.collect.url, ["https://col-git-branch.vercel.app/login"]);
   assert.equal(config.ci.collect.settings.preset, "desktop");
   assert.deepEqual(JSON.parse(config.ci.collect.settings.extraHeaders), { "x-vercel-protection-bypass": "bypass-secret", "x-vercel-set-bypass-cookie": "true" });
   for (const rule of Object.values(config.ci.assert.assertions)) assert.equal(rule[0], "warn");
+  assert.deepEqual(committed.ci.assert.assertMatrix.at(-1).assertions["cumulative-layout-shift"], ["error", { maxNumericValue: 0.1, aggregationMethod: "median-run" }]);
   assert.equal(previewConfig(committed, { url: "https://x.vercel.app" }).ci.collect.settings.extraHeaders, undefined);
+  assert.deepEqual(committed, before, "preview generation does not alter the committed config");
 });

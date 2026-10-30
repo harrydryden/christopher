@@ -158,9 +158,10 @@ jobs:
         run: node scripts/bundle-budget.mjs apps/web/.next
 
   # Lighthouse on the pages people load most and the heaviest one, signed in, against a production
-  # build of this commit: desktop preset, three runs, median-run assertions (LCP, CLS, TBT and script
-  # transfer fail; time to interactive and server response warn), then the same pages on mobile
-  # emulation as warnings only until there is a baseline. Beside `check`, reusing the Next.js build
+  # build of this commit: desktop preset, three runs, median-run assertions (LCP, CLS and TBT fail;
+  # script transfer, time to interactive and server response warn), then the same pages on mobile
+  # emulation with CLS at the same 0.1 median-run error threshold and other mobile audits warning.
+  # Beside `check`, reusing the Next.js build
   # cache, so it adds no wall clock to a pull request (docs/PERFORMANCE-GUIDE.md 5.6, 5.10).
   lighthouse:
     runs-on: ubuntu-latest
@@ -200,7 +201,7 @@ jobs:
         env:
           SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
       # Seeds a disposable signed-in account as smoke-web does, and deletes it in a finally.
-      - name: Lighthouse, desktop (LCP, CLS and TBT fail) and mobile (warns)
+      - name: Lighthouse, desktop (LCP, CLS and TBT fail) and mobile (CLS fails; other audits warn)
         run: node scripts/perf/lighthouse.mjs
       - if: always()
         uses: actions/upload-artifact@v4

@@ -81,8 +81,8 @@ function CommentCount({ n }: { n: number }) {
 }
 export function CvDraftEditor({
   id,
-  content,
-  theme: resolvedTheme,
+  content: incomingContent,
+  theme: incomingResolvedTheme,
   assessment,
   tracking,
   share,
@@ -91,14 +91,14 @@ export function CvDraftEditor({
   blocked = null,
   finalised = false,
   hasFinalPdf = false,
-  librarySkillSections = EMPTY_LIBRARY_SKILLS,
-  librarySupportingSections = EMPTY_LIBRARY_SUPPORT,
-  latestSkillTargets = EMPTY_SKILL_TARGETS,
-  latestLibraryVersion,
-  baseRevision,
-  baseEditHash,
-  targetingView,
-  targetingBrief,
+  librarySkillSections: incomingLibrarySkillSections = EMPTY_LIBRARY_SKILLS,
+  librarySupportingSections: incomingLibrarySupportingSections = EMPTY_LIBRARY_SUPPORT,
+  latestSkillTargets: incomingLatestSkillTargets = EMPTY_SKILL_TARGETS,
+  latestLibraryVersion: incomingLatestLibraryVersion,
+  baseRevision: incomingBaseRevision,
+  baseEditHash: incomingBaseEditHash,
+  targetingView: incomingTargetingView,
+  targetingBrief: incomingTargetingBrief,
 }: {
   id: string;
   content: CvContent;
@@ -131,6 +131,17 @@ export function CvDraftEditor({
   targetingBrief?: CvTargetingBriefV1 | null;
 }) {
   const formId = `cv-edit-${id}`;
+  // A same-ID router.refresh may deliver a different saved draft while this editor still holds
+  // unsaved indexed rows. Keep every source of those row indices together until a full reload.
+  const [editBase] = useState(() => ({ content: incomingContent, resolvedTheme: incomingResolvedTheme,
+    librarySkillSections: incomingLibrarySkillSections, librarySupportingSections: incomingLibrarySupportingSections,
+    latestSkillTargets: incomingLatestSkillTargets, latestLibraryVersion: incomingLatestLibraryVersion,
+    targetingView: incomingTargetingView, targetingBrief: incomingTargetingBrief,
+    baseRevision: incomingBaseRevision, baseEditHash: incomingBaseEditHash ?? "" }));
+  const { content, resolvedTheme, librarySkillSections, librarySupportingSections, latestSkillTargets,
+    latestLibraryVersion, targetingView, targetingBrief, baseRevision, baseEditHash } = editBase;
+  const staleEditBase = (incomingBaseEditHash ?? "") !== baseEditHash ||
+    incomingBaseRevision !== baseRevision;
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => { setHydrated(true); }, []);
   const [summary, setSummary] = useState(content.summary);
@@ -413,8 +424,8 @@ export function CvDraftEditor({
           onStatusChange={onSaveStatusChange}
           submitLabel={dirty ? "Save changes · free" : "Save as new revision · free"}
           submitVariant={!finalised && dirty ? "primary" : "secondary"}
-          submitDisabled={!!skillIssue}
-          secondaryActions={<details className="text-12"><summary className="cursor-pointer">More options</summary><div className="mt-2"><RebuildButton disabled={!!skillIssue} /></div></details>}
+          submitDisabled={!!skillIssue || staleEditBase}
+          secondaryActions={<details className="text-12"><summary className="cursor-pointer">More options</summary><div className="mt-2"><RebuildButton disabled={!!skillIssue || staleEditBase} /></div></details>}
         >
           {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
           {theme && (
@@ -436,6 +447,7 @@ export function CvDraftEditor({
           </>}
         </SettingsForm>
       </fieldset>
+      {staleEditBase && <p role="alert" className="mt-2 border border-warn p-3 text-14 text-warn">This CV revision changed in another update. Copy any unsaved wording you need, then reload this page before saving.</p>}
       <p className="mt-2 text-12 text-muted">Saving keeps your wording as a new draft without checking or rebuilding this CV. Check the saved CV when you are ready. Rewriting uses the latest Experience evidence and one CV credit.</p>
       {blocked && (
         <p role="status" className="mt-2 border border-warn p-3 text-14 text-warn">
@@ -569,7 +581,7 @@ export function CvDraftEditor({
               <p role="status" className="text-12 text-muted">{saveableSuggestionIds.length} new {saveableSuggestionIds.length === 1 ? "skill" : "skills"} selected to save{saveableSuggestionIds.length ? " · Unsaved" : ""}.</p>
               <p className="text-12 text-muted">Saves selected skills and your other current CV edits as a new revision. New skills and categories are also saved to Experience.</p>
               <button type="submit" form={formId} className={buttonClass("primary")}
-                disabled={!hydrated || !!blocked || !!skillIssue || saveableSuggestionIds.length === 0 || saveStatus.pending}>
+                disabled={!hydrated || !!blocked || !!skillIssue || staleEditBase || saveableSuggestionIds.length === 0 || saveStatus.pending}>
                 {saveStatus.pending ? "Saving selected skills…" : "Save selected skills to CV"}
               </button>
               {saveStatus.error && <p role="alert" className="text-12 text-danger">Save update: {saveStatus.error}</p>}

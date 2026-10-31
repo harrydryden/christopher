@@ -632,7 +632,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         // The confirmation action discards this mirror when requirement meaning changes.
         // Rank/essential-only changes leave its cited evidence valid, even though the stage key
         // changes for the new writing and scoring weights.
-        const legacyPlan = tailoringPlan;
+        const heldRubric = inputs.brief?.priority.mappedRequirements
+          ? cvEffectiveRubric(baseRubric, inputs.brief.priority.mappedRequirements) : baseRubric;
+        const planMatchesEvidence = !checkpoint.stages?.plan || checkpoint.stages.plan.key ===
+          runner.keyFor(planStage, { rubric: heldRubric, library: fullLibrary });
+        const legacyPlan = planMatchesEvidence ? tailoringPlan : undefined;
         const ownPlan = runner.lookup(planStage, planInputs) ?? (legacyPlan ? validatePlan(legacyPlan, planInputs) : undefined);
         // An improvement rebuilt from the same Library and rubric plans nothing new: its parent's plan stands.
         const inherited = ownPlan ? undefined : await parentPlan();

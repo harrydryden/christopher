@@ -197,8 +197,21 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("link", { name: "Open the priority choices in Write" }).click();
     assert.equal(await page.getByRole("tab", { name: "Write" }).getAttribute("aria-selected"), "true");
     await page.getByRole("heading", { name: "Target this CV" }).waitFor();
+    // Targeting stays a compact table on desktop and phones, with usable touch controls.
+    const evidenceTable = page.getByRole("group", { name: "Evidence from Experience" }).getByRole("table");
+    await evidenceTable.waitFor();
+    await evidenceTable.screenshot({ path: "/tmp/cv-targeting-table-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      "targeting must not overflow a phone viewport");
+    for (const control of await evidenceTable.getByRole("combobox").all()) {
+      const box = await control.boundingBox();
+      assert.ok(box && box.height >= 44, "targeting choices need phone-sized touch targets");
+    }
+    await evidenceTable.screenshot({ path: "/tmp/cv-targeting-table-mobile.png" });
     await page.getByRole("combobox", { name: "Operations Manager · Northwind Health treatment" }).selectOption("summarise");
     await page.getByRole("combobox", { name: "Service Delivery Lead · Calder Logistics treatment" }).selectOption("omit");
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("1");
     await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("2");
     const omittedEssentials = page.getByRole("group", { name: "Check essential requirements" }).getByRole("checkbox");
@@ -524,14 +537,14 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "Evidence",
       "Experience",
     ]);
-    assert.equal(await page.locator("table tbody tr").count(), 2);
+    assert.equal(await page.getByRole("table").locator("tbody tr").count(), 2);
     assert.equal(
       await page.getByText("Your input needed", { exact: true }).count(),
       0,
     );
     assert.equal(
       await page
-        .locator("table tbody tr")
+        .getByRole("table").locator("tbody tr")
         .first()
         .locator("td")
         .last()
@@ -540,7 +553,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     );
     assert.equal(
       await page
-        .locator("table tbody tr")
+        .getByRole("table").locator("tbody tr")
         .last()
         .locator("td")
         .last()
@@ -570,7 +583,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       `All evaluation columns should fit beside the description at desktop width: ${JSON.stringify(tableDimensions)}`,
     );
     assert.equal(
-      await page.locator("table em").first().textContent(),
+      await page.getByRole("table").locator("em").first().textContent(),
       content.summary,
     );
     assert.equal(await page.getByRole("button", { name: "Finalise this CV", exact: true }).isDisabled(), true);
@@ -584,9 +597,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page
       .getByRole("button", { name: "Uncertain 1", exact: true })
       .click();
-    assert.equal(await page.locator("table tbody tr").count(), 1);
+    assert.equal(await page.getByRole("table").locator("tbody tr").count(), 1);
     assert.equal(
-      await page.locator("table tbody tr td").first().textContent(),
+      await page.getByRole("table").locator("tbody tr td").first().textContent(),
       "2",
     );
     await page

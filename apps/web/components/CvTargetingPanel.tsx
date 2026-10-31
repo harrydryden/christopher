@@ -18,14 +18,20 @@ export function CvTargetingControls({ view, value, onChange, disabled = false }:
     <div><h2 id="cv-targeting-title" className="text-18 font-semibold">Target this CV</h2>
       <p className="mt-1 text-14 text-muted">Choose what to feature or omit for this application. Experience and Interests can also be summarised; choose individual skills in Write. Experience stays intact. Save stores your current wording and these choices together; Check and Rewrite remain separate.</p></div>
     <fieldset className="space-y-2" disabled={disabled}><legend className="font-medium">Evidence from Experience</legend>
-      {view.entries.map(entry => <label key={entry.entryId} className="flex flex-wrap items-center justify-between gap-2 border border-line-muted p-2 text-14">
-        <span>{entry.heading}{entry.company ? ` · ${entry.company}` : ""}</span>
-        <select aria-label={`${entry.heading} treatment`} className={selectClass}
-          value={value.entries.find(item => item.entryId === entry.entryId)?.treatment ?? "feature"}
-          onChange={event => onChange(normaliseCvTargetingChoices(view, { ...value, entries: value.entries.map(item => item.entryId === entry.entryId
-            ? { ...item, treatment: event.target.value as CvTargetingChoices["entries"][number]["treatment"] } : item) }))}>
-          <option value="feature">Feature</option>{(entry.kind === "experience" || entry.kind === "interest") && <option value="summarise">Summarise to one sourced bullet</option>}<option value="omit">Omit from this CV</option>
-        </select></label>)}
+      <p className="text-12 text-muted">Summarise keeps one sourced bullet; Omit leaves the entry out of this CV.</p>
+      <table className="w-full table-fixed border border-line-muted text-left text-14">
+        <colgroup><col /><col className="w-40" /></colgroup>
+        <thead className="bg-sunken text-13 text-muted"><tr><th scope="col" className="px-3 py-2 font-medium">Evidence</th><th scope="col" className="px-3 py-2 font-medium">Treatment</th></tr></thead>
+        <tbody>{view.entries.map(entry => <tr key={entry.entryId} className="border-t border-line-muted">
+          <th scope="row" className="break-words px-3 py-2 align-middle font-normal">{entry.heading}{entry.company ? ` · ${entry.company}` : ""}</th>
+          <td className="px-3 py-2 align-middle"><select aria-label={`${entry.heading} treatment`} className={`${selectClass} min-h-11 max-w-full`}
+            value={value.entries.find(item => item.entryId === entry.entryId)?.treatment ?? "feature"}
+            onChange={event => onChange(normaliseCvTargetingChoices(view, { ...value, entries: value.entries.map(item => item.entryId === entry.entryId
+              ? { ...item, treatment: event.target.value as CvTargetingChoices["entries"][number]["treatment"] } : item) }))}>
+            <option value="feature">Feature</option>{(entry.kind === "experience" || entry.kind === "interest") && <option value="summarise">Summarise</option>}<option value="omit">Omit</option>
+          </select></td>
+        </tr>)}</tbody>
+      </table>
     </fieldset>
     <fieldset className="space-y-2" disabled={disabled}><legend className="font-medium">Role priorities</legend>
       <p className="text-12 text-muted">Choose three to five priorities, or all available when fewer than three were identified. Every essential remains in the assessment.</p>

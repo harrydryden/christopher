@@ -487,7 +487,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const splitResponse = await splitPreview;
     assert.equal(splitResponse.status(), 200);
-    assert.deepEqual(splitResponse.request().postDataJSON().sections.at(-1).skillItems, combinedSkills);
+    assert.deepEqual(splitResponse.request().postDataJSON().content.sections.at(-1).skillItems, combinedSkills);
     await page.getByRole("button", { name: "Show preview on this page", exact: true }).click().catch(async error => {
       throw new Error(`${error.message}\nPreview state: ${await page.locator('[aria-label="CV preview"]').innerText()}`);
     });
@@ -505,7 +505,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const skillResponse = await previewWithSkill;
     assert.equal(skillResponse.status(), 200);
-    assert.deepEqual(skillResponse.request().postDataJSON().sections.at(-1).skillItems, tenSkills);
+    assert.deepEqual(skillResponse.request().postDataJSON().content.sections.at(-1).skillItems, tenSkills);
     await page.getByRole("button", { name: "Show preview on this page", exact: true }).click();
     await page.getByRole("button", { name: "Hide preview on this page", exact: true }).click();
     for (let index = 10; index > 1; index--) {
@@ -517,7 +517,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const emptyResponse = await previewWithoutSkill;
     assert.equal(emptyResponse.status(), 200);
-    assert.equal(emptyResponse.request().postDataJSON().sections.length, content.sections.length);
+    assert.equal(emptyResponse.request().postDataJSON().content.sections.length, content.sections.length);
     await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
     await page.getByLabel("Add section from Experience", { exact: true }).selectOption("library-skills");
     assert.equal(await page.getByRole("textbox", { name: "Section heading", exact: true }).inputValue(), "Commercial capabilities");
@@ -526,7 +526,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const libraryResponse = await previewFromLibrary;
     assert.equal(libraryResponse.status(), 200);
-    assert.deepEqual(libraryResponse.request().postDataJSON().sections.at(-1).skillItems, ["Forecasting", "Planning"]);
+    assert.deepEqual(libraryResponse.request().postDataJSON().content.sections.at(-1).skillItems, ["Forecasting", "Planning"]);
     await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
     // The page is server-rendered with the stored summary and refreshes itself every ten seconds.
     // A fill that lands while React is hydrating or re-rendering the controlled textarea loses
@@ -1279,7 +1279,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const legacyResponse = await legacyPreview;
     assert.equal(legacyResponse.status(), 200);
     await page.getByRole("button", { name: "Show preview on this page", exact: true }).click();
-    assert.deepEqual(legacyResponse.request().postDataJSON().sections.at(-1).skillItems, legacyLabels.slice(0, 10));
+    assert.deepEqual(legacyResponse.request().postDataJSON().content.sections.at(-1).skillItems, legacyLabels.slice(0, 10));
 
     // This is a saved proposal produced by the scripted fixture, not a provider call. The browser
     // must make the member's selection explicit; only that label may enter Experience and the CV.
@@ -1314,12 +1314,12 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByText("PRINCE2 Practitioner", { exact: true }).locator("..").getByRole("button", { name: "Remove section" }).click();
     const withoutSupport = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
-    assert.deepEqual((await withoutSupport).request().postDataJSON().sections.map(section => section.kind), ["experience"]);
+    assert.deepEqual((await withoutSupport).request().postDataJSON().content.sections.map(section => section.kind), ["experience"]);
     const trainingChoice = page.getByRole("checkbox", { name: "Training · Lean Six Sigma", exact: true });
     await trainingChoice.check();
     const withTraining = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
-    const editedSuggestionContent = (await withTraining).request().postDataJSON();
+    const editedSuggestionContent = (await withTraining).request().postDataJSON().content;
     assert.ok(editedSuggestionContent.sections.some(section => section.kind === "training" && section.entryId === "training-new"));
     await pool.query(`insert into cv_skill_suggestion_runs
       (id, user_id, draft_id, library_version, input_hash, status, suggestions)

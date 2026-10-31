@@ -3,7 +3,7 @@ import {
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, listCvBuildSteps, schema, startCvBuildStep, type Task } from "@col/db";
+import { confirmCvTargetingPrioritiesForUser, createDb, listCvBuildSteps, schema, startCvBuildStep, type Task } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { AiEngine, promptSetVersion } from "@col/ai";
 import { DEFAULT_CV_THEME } from "@col/core/cv";
@@ -108,6 +108,92 @@ it("pauses after one full-evidence plan and resumes the same credited build afte
   expect(auditEvidence).toContain("entry:one");
   expect(auditEvidence).not.toContain("entry:two");
   expect(auditEvidence).not.toContain("source:profile");
+});
+it("maps carried user wording before the pause and resumes without a second plan or rubric call", async () => {
+  const { draft, deps, task } = await setup();
+  const source = cvTargetingSource(1, library, "Lead a team");
+  const rows = [{ id: "r1", text: "Team leadership", essential: true }];
+  const initial = CvTargetingBriefSchema.parse({ version: 1, source, entries: [],
+    presentation: { maxPages: 2, bodySizePt: 12 },
+    priority: { state: "unprepared", emphasisRequirementIds: [], requirements: rows,
+      acknowledgedEssentialOmissionIds: [] } });
+  await client.db.update(schema.cvDrafts).set({ targetingBrief: initial,
+    buildCheckpoint: { tailoringEnabled: true } }).where(eq(schema.cvDrafts.id, draft.id));
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const planning = vi.spyOn(AiEngine.prototype, "planCvTailoring").mockResolvedValue(plan);
+  const analysing = vi.mocked(AiEngine.prototype.analyseCvJob);
+  const author = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Led a team",
+    summarySources: ["entry:one:row:0"],
+    sections: [{ entryId: "one", bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] });
+  expect(await handleGenerateCv(task, deps)).toMatchObject({ awaitingPriorities: true });
+  expect(planning).toHaveBeenCalledOnce();
+  expect(planning.mock.calls[0]![0].rubric.requirements[0]).toMatchObject({
+    id: "r1", label: "Team leadership", quote: "Lead a team", rank: 1, origin: "role", customised: true,
+  });
+  const [paused] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const pending = CvTargetingBriefSchema.parse(paused!.targetingBrief);
+  expect(pending.priority.requirements).toEqual(rows);
+  expect(pending.priority.mappedRequirements).toEqual(rows);
+  const confirmed = CvTargetingBriefSchema.parse({ ...pending, priority: { ...pending.priority,
+    state: "confirmed", emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [] } });
+  await client.db.update(schema.cvDrafts).set({ status: "queued", targetingBrief: confirmed }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  const [ready] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(ready?.status, ready?.error ?? "").toBe("ready");
+  expect(ready?.assessment?.rubric.requirements[0]).toMatchObject({
+    label: "Team leadership", quote: "Lead a team", rank: 1, origin: "role", customised: true,
+  });
+  expect(planning).toHaveBeenCalledOnce();
+  expect(analysing).toHaveBeenCalledOnce();
+  expect(author).toHaveBeenCalledOnce();
+});
+it("remaps edited meaning once, pauses for affected omitted essentials, then resumes without a third plan", async () => {
+  const { draft, deps, task } = await setup();
+  const sourceLibrary = { ...library, entries: [...library.entries,
+    { id: "two", kind: "experience" as const, heading: "Second role", details: "Managed testing",
+      confirmedResponsibilities: ["Managed testing"] }] };
+  const source = cvTargetingSource(1, sourceLibrary, "Lead a team");
+  const initial = CvTargetingBriefSchema.parse({ version: 1, source, entries: [],
+    presentation: { maxPages: 2, bodySizePt: 12 },
+    priority: { state: "unprepared", emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [] } });
+  await client.db.update(schema.cvDrafts).set({ targetingBrief: initial, librarySnapshot: sourceLibrary,
+    buildCheckpoint: { tailoringEnabled: true } }).where(eq(schema.cvDrafts.id, draft.id));
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const planning = vi.spyOn(AiEngine.prototype, "planCvTailoring").mockResolvedValue(plan);
+  const author = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Managed testing",
+    summarySources: ["entry:two:row:0"], sections: [
+      { entryId: "two", bullets: ["Managed testing"], bulletSources: [["entry:two:row:0"]] }], gaps: [] });
+  expect(await handleGenerateCv(task, deps)).toMatchObject({ awaitingPriorities: true });
+  const [first] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const firstBrief = CvTargetingBriefSchema.parse(first!.targetingBrief);
+  const editedRows = [{ id: "r1", text: "Team leadership", essential: true }];
+  const choices = { entries: [{ entryId: "one", treatment: "omit" as const }],
+    presentation: { maxPages: 2 as const, bodySizePt: 12 as const },
+    emphasisRequirementIds: ["r1"], requirements: editedRows, acknowledgedEssentialOmissionIds: [] as string[] };
+  const firstRequest = "11111111-1111-4111-8111-111111111111";
+  await confirmCvTargetingPrioritiesForUser(client.db, userId, draft.id, {
+    expectedRevision: draft.revision, expectedSource: source,
+    expectedRubricKey: firstBrief.priority.rubricKey!, requestKey: firstRequest, choices,
+  });
+  expect(await handleGenerateCv(task, deps)).toMatchObject({ awaitingPriorities: true });
+  const [second] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const secondBrief = CvTargetingBriefSchema.parse(second!.targetingBrief);
+  expect(secondBrief.priority.mappedRequirements).toEqual(editedRows);
+  expect(secondBrief.priority.requirements).toEqual(editedRows);
+  expect(planning).toHaveBeenCalledTimes(2);
+  expect(author).not.toHaveBeenCalled();
+  await confirmCvTargetingPrioritiesForUser(client.db, userId, draft.id, {
+    expectedRevision: draft.revision, expectedSource: source,
+    expectedRubricKey: secondBrief.priority.rubricKey!, requestKey: "22222222-2222-4222-8222-222222222222",
+    choices: { ...choices, acknowledgedEssentialOmissionIds: ["r1"] },
+  });
+  await handleGenerateCv(task, deps);
+  const [ready] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(ready?.status, ready?.error ?? "").toBe("ready");
+  expect(planning).toHaveBeenCalledTimes(2);
+  expect(author).toHaveBeenCalledOnce();
 });
 it("shows missing credentials as a recoverable failed draft", async () => {
   const { task, deps, draft } = await setup(); deps.env.anthropicApiKey = undefined;

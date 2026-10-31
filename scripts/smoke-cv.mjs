@@ -211,7 +211,35 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await evidenceTable.screenshot({ path: "/tmp/cv-targeting-table-mobile.png" });
     await page.getByRole("combobox", { name: "Operations Manager · Northwind Health treatment" }).selectOption("summarise");
     await page.getByRole("combobox", { name: "Service Delivery Lead · Calder Logistics treatment" }).selectOption("omit");
+    // Ranked requirements are editable on a phone and persist as an overlay, preserving the advert.
+    const priorityTable = page.getByRole("group", { name: "Role priorities", exact: true }).getByRole("table");
+    const secondRequirement = await priorityTable.getByRole("textbox", { name: "Requirement 2 text", exact: true }).inputValue();
+    await priorityTable.getByRole("combobox", { name: "Requirement 2 rank", exact: true }).selectOption("1");
+    assert.equal(await priorityTable.getByRole("textbox", { name: "Requirement 1 text", exact: true }).inputValue(), secondRequirement);
+    await priorityTable.getByRole("textbox", { name: "Requirement 1 text", exact: true }).fill("Prioritise operational reporting");
+    await priorityTable.getByRole("combobox", { name: "Requirement 1 essential", exact: true }).selectOption("no");
+    const originalRequirementCount = await priorityTable.getByRole("textbox").count();
+    await page.getByRole("button", { name: "Add requirement", exact: true }).click();
+    await priorityTable.getByRole("textbox", { name: `Requirement ${originalRequirementCount + 1} text`, exact: true }).fill("Lead weekly operational performance reviews");
+    await priorityTable.getByRole("combobox", { name: `Requirement ${originalRequirementCount + 1} essential`, exact: true }).selectOption("yes");
+    await priorityTable.getByRole("button", { name: `Remove requirement ${originalRequirementCount}`, exact: true }).click();
+    const expectedRequirementTexts = await priorityTable.getByRole("textbox").evaluateAll(nodes => nodes.map(node => node.value));
+    assert.equal(expectedRequirementTexts.length, originalRequirementCount);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "priority table must fit a phone");
+    await page.waitForFunction(() => [...document.querySelectorAll('textarea[aria-label^="Requirement "]')]
+      .every(field => field.scrollHeight <= field.clientHeight + 1));
+    await priorityTable.screenshot({ path: "/tmp/cv-priorities-table-mobile.png" });
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await priorityTable.screenshot({ path: "/tmp/cv-priorities-table-desktop.png" });
+    // Hidden panels stay mounted: resize in Review, then reveal Write without losing full text.
+    await page.getByRole("tab", { name: "Review", exact: true }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("tab", { name: "Write", exact: true }).click();
+    await priorityTable.waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('textarea[aria-label^="Requirement "]')]
+      .every(field => field.scrollHeight <= field.clientHeight + 1));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const originalRubric = (await pool.query("select targeting_brief->'priority'->'rubric' as rubric from cv_drafts where id = $1", [targetedDraftId])).rows[0].rubric;
     await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("1");
     await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("2");
     const omittedEssentials = page.getByRole("group", { name: "Check essential requirements" }).getByRole("checkbox");
@@ -227,6 +255,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(targetedConfirmed.targeting_brief.entries.find(item => item.entryId === "ev-manager").treatment, "summarise");
     assert.equal(targetedConfirmed.targeting_brief.entries.find(item => item.entryId === "ev-calder").treatment, "omit");
     assert.ok(targetedConfirmed.targeting_brief.priority.emphasisRequirementIds.length >= 3);
+    assert.deepEqual(targetedConfirmed.targeting_brief.priority.requirements.map(row => row.text), expectedRequirementTexts);
+    assert.equal(targetedConfirmed.targeting_brief.priority.requirements[0].essential, false);
+    assert.equal(targetedConfirmed.targeting_brief.priority.requirements.at(-1).essential, true);
+    assert.match(targetedConfirmed.targeting_brief.priority.requirements.at(-1).id, /^u:/);
+    assert.deepEqual(targetedConfirmed.targeting_brief.priority.rubric, originalRubric);
     const queuedContinuations = (await pool.query("select count(*)::int as count from tasks where type = 'generate_cv' and status = 'queued' and payload->>'draftId' = $1", [targetedDraftId])).rows[0].count;
     assert.equal(queuedContinuations, 1);
     await page.goto(`${baseUrl}/cv/${evidencePausedId}`);
@@ -454,7 +487,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const splitResponse = await splitPreview;
     assert.equal(splitResponse.status(), 200);
-    assert.deepEqual(splitResponse.request().postDataJSON().sections.at(-1).skillItems, combinedSkills);
+    assert.deepEqual(splitResponse.request().postDataJSON().content.sections.at(-1).skillItems, combinedSkills);
     await page.getByRole("button", { name: "Show preview on this page", exact: true }).click().catch(async error => {
       throw new Error(`${error.message}\nPreview state: ${await page.locator('[aria-label="CV preview"]').innerText()}`);
     });
@@ -472,7 +505,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const skillResponse = await previewWithSkill;
     assert.equal(skillResponse.status(), 200);
-    assert.deepEqual(skillResponse.request().postDataJSON().sections.at(-1).skillItems, tenSkills);
+    assert.deepEqual(skillResponse.request().postDataJSON().content.sections.at(-1).skillItems, tenSkills);
     await page.getByRole("button", { name: "Show preview on this page", exact: true }).click();
     await page.getByRole("button", { name: "Hide preview on this page", exact: true }).click();
     for (let index = 10; index > 1; index--) {
@@ -484,7 +517,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const emptyResponse = await previewWithoutSkill;
     assert.equal(emptyResponse.status(), 200);
-    assert.equal(emptyResponse.request().postDataJSON().sections.length, content.sections.length);
+    assert.equal(emptyResponse.request().postDataJSON().content.sections.length, content.sections.length);
     await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
     await page.getByLabel("Add section from Experience", { exact: true }).selectOption("library-skills");
     assert.equal(await page.getByRole("textbox", { name: "Section heading", exact: true }).inputValue(), "Commercial capabilities");
@@ -493,7 +526,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const libraryResponse = await previewFromLibrary;
     assert.equal(libraryResponse.status(), 200);
-    assert.deepEqual(libraryResponse.request().postDataJSON().sections.at(-1).skillItems, ["Forecasting", "Planning"]);
+    assert.deepEqual(libraryResponse.request().postDataJSON().content.sections.at(-1).skillItems, ["Forecasting", "Planning"]);
     await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
     // The page is server-rendered with the stored summary and refreshes itself every ten seconds.
     // A fill that lands while React is hydrating or re-rendering the controlled textarea loses
@@ -1246,7 +1279,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const legacyResponse = await legacyPreview;
     assert.equal(legacyResponse.status(), 200);
     await page.getByRole("button", { name: "Show preview on this page", exact: true }).click();
-    assert.deepEqual(legacyResponse.request().postDataJSON().sections.at(-1).skillItems, legacyLabels.slice(0, 10));
+    assert.deepEqual(legacyResponse.request().postDataJSON().content.sections.at(-1).skillItems, legacyLabels.slice(0, 10));
 
     // This is a saved proposal produced by the scripted fixture, not a provider call. The browser
     // must make the member's selection explicit; only that label may enter Experience and the CV.
@@ -1281,12 +1314,12 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByText("PRINCE2 Practitioner", { exact: true }).locator("..").getByRole("button", { name: "Remove section" }).click();
     const withoutSupport = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
-    assert.deepEqual((await withoutSupport).request().postDataJSON().sections.map(section => section.kind), ["experience"]);
+    assert.deepEqual((await withoutSupport).request().postDataJSON().content.sections.map(section => section.kind), ["experience"]);
     const trainingChoice = page.getByRole("checkbox", { name: "Training · Lean Six Sigma", exact: true });
     await trainingChoice.check();
     const withTraining = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
-    const editedSuggestionContent = (await withTraining).request().postDataJSON();
+    const editedSuggestionContent = (await withTraining).request().postDataJSON().content;
     assert.ok(editedSuggestionContent.sections.some(section => section.kind === "training" && section.entryId === "training-new"));
     await pool.query(`insert into cv_skill_suggestion_runs
       (id, user_id, draft_id, library_version, input_hash, status, suggestions)

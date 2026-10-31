@@ -19,6 +19,7 @@ export type CvPdfLayoutReport = {
   /** Exact claim IDs used by the factual audit; a claim can occupy more than one page. */
   claimPages: { claimId: string; startPage: number; endPage: number }[];
 };
+export type CvEmploymentDisplay = ReadonlyMap<string, { heading: string; industry: string | null }>;
 
 const decodeFont = (base64: string) => Buffer.from(base64.replace(/\s+/g, ""), "base64");
 let liberationSans: { regular: Buffer; bold: Buffer } | undefined;
@@ -32,8 +33,8 @@ function registerCvFont(doc: PDFKit.PDFDocument, font: CvFont): { regular: strin
 }
 
 /** Server-side, selectable-text A4 PDF held to the content's own page limit. No browser, remote fonts or model-authored HTML. */
-export async function renderCvPdf(content: CvContent): Promise<Buffer> {
-  const result = await renderCvPdfWithReport(content);
+export async function renderCvPdf(content: CvContent, employmentDisplay?: CvEmploymentDisplay): Promise<Buffer> {
+  const result = await renderCvPdfWithReport(content, employmentDisplay);
   assertCvPageLimit(result.pageCount, result.maxPages);
   return result.pdf;
 }
@@ -41,6 +42,7 @@ export async function renderCvPdf(content: CvContent): Promise<Buffer> {
 /** Renders every page so a preview can show an overrun; callers compare pageCount with maxPages. */
 export async function renderCvPdfWithReport(
   content: CvContent,
+  employmentDisplay?: CvEmploymentDisplay,
 ): Promise<{ pdf: Buffer; pageCount: number; maxPages: number; layout: CvPdfLayoutReport }> {
   content = CvContentSchema.parse(content);
   const doc = new PDFDocument({
@@ -106,16 +108,18 @@ export async function renderCvPdfWithReport(
     }
   };
   const contact = clean(content.contact).replace(/\s+/g, " ").trim();
-  const drawContact = (colour: string) => {
-    doc.font(face.regular).fontSize(9).fillColor(colour);
+  const drawContact = (colour: string, left: number, top: number, availableWidth: number) => {
+    doc.font(face.regular).fontSize(8.5).fillColor(colour);
     const links = [
       ...(content.linkedinUrl ? [{ label: "LinkedIn", url: content.linkedinUrl }] : []),
       ...(content.websiteUrl ? [{ label: "Website", url: content.websiteUrl }] : []),
     ];
-    if (contact) doc.text(contact + (links.length ? " · " : ""), { width, lineGap: 2.5, continued: links.length > 0 });
+    doc.x = left;
+    doc.y = top;
+    if (contact) doc.text(contact, { width: availableWidth, lineGap: 2.5, continued: links.length > 0 });
     links.forEach((link, index) => {
-      doc.text(link.label, { link: link.url, underline: true, width, lineGap: 2.5, continued: index < links.length - 1 });
-      if (index < links.length - 1) doc.text(" · ", { link: null, underline: false, continued: true });
+      doc.text(`${contact || index ? " · " : ""}${link.label}`, { link: link.url, underline: true,
+        width: availableWidth, lineGap: 2.5, continued: index < links.length - 1 });
     });
   };
   {
@@ -125,17 +129,20 @@ export async function renderCvPdfWithReport(
       width,
       lineGap: 2.5,
     });
-    doc.font(face.regular).fontSize(9);
+    const nameWidth = doc.widthOfString(clean(content.name));
+    doc.font(face.regular).fontSize(8.5);
     const contactText = [contact, content.linkedinUrl ? "LinkedIn" : "", content.websiteUrl ? "Website" : ""]
       .filter(Boolean)
       .join(" · ");
-    const contactHeight = contactText
-      ? doc.heightOfString(contactText, { width, lineGap: 2.5 })
-      : 0;
+    const inlineContact = !!contactText && nameWidth + 16 + 150 <= width;
+    const contactColumnWidth = inlineContact ? width - nameWidth - 16 : width;
+    const contactHeight = contactText ? doc.heightOfString(contactText, { width: contactColumnWidth, lineGap: 2.5 }) : 0;
     const nameTop = targeted ? 18 : 34;
-    const contactTop = nameTop + nameHeight + (targeted ? 5 : 14);
-    const profileTop = contactTop + contactHeight + (targeted ? 7 : 20);
-    const profileWidth = theme.introPanel ? targeted ? width - 32 : width - 110 : width;
+    const contactTop = inlineContact ? nameTop + Math.max(0, nameHeight - 17)
+      : nameTop + nameHeight + (targeted ? 5 : 10);
+    const profileTop = inlineContact ? Math.max(nameTop + nameHeight, contactTop + contactHeight) + (targeted ? 8 : 15)
+      : contactTop + contactHeight + (targeted ? 8 : 15);
+    const profileWidth = theme.introPanel ? width - 32 : width;
     doc.font(face.regular).fontSize(bodySize);
     const summaryHeight = doc.heightOfString(clean(content.summary), {
       width: profileWidth,
@@ -143,8 +150,8 @@ export async function renderCvPdfWithReport(
     });
     const singleSummaryLineHeight = doc.heightOfString("X", { width: profileWidth, lineGap: 2.5 });
     layoutReport.summaryLines = Math.max(1, Math.round(summaryHeight / singleSummaryLineHeight));
-    const profileHeight = Math.max(20, summaryHeight) + (targeted ? 34 : 28);
-    const headerBottom = profileTop + profileHeight + (targeted ? 8 : 22);
+    const profileHeight = Math.max(20, summaryHeight) + (targeted ? 20 : 28);
+    const headerBottom = profileTop + profileHeight + (targeted ? 8 : 16);
     if (headerBottom > doc.page.height - 55)
       throw new CvLayoutError(
         "The name, contact details and profile exceed one page. Shorten the profile before rendering.",
@@ -156,45 +163,29 @@ export async function renderCvPdfWithReport(
       .fontSize(22)
       .fillColor(headerInk)
       .text(clean(content.name), 44, nameTop, { width, lineGap: 2.5 });
-    doc.x = 44;
-    doc.y = contactTop;
-    drawContact(headerInk);
+    if (contactText) drawContact(headerInk, inlineContact ? 44 + nameWidth + 16 : 44, contactTop,
+      contactColumnWidth);
     if (theme.introPanel && targeted) {
       doc.roundedRect(44, profileTop, width, profileHeight, 12).fill(theme.surface);
       const panelInk = cvForeground(theme.surface);
-      doc.font(face.bold).fontSize(10).fillColor(panelInk)
-        .text("EXECUTIVE SUMMARY", 60, profileTop + 10, { width: width - 32 });
       doc.font(face.regular).fontSize(bodySize).fillColor(panelInk)
-        .text(clean(content.summary), 60, profileTop + 28, { width: width - 32, lineGap: 2.5 });
+        .text(clean(content.summary), 60, profileTop + 10, { width: width - 32, lineGap: 2.5 });
     } else if (theme.introPanel) {
       doc
         .roundedRect(44, profileTop, width, profileHeight, 12)
         .fill(theme.surface);
       const panelInk = cvForeground(theme.surface);
       doc
-        .font(face.bold)
-        .fontSize(10)
-        .fillColor(panelInk)
-        .text("Profile", 60, profileTop + 14, { width: 62 });
-      doc
-        .moveTo(130, profileTop + 12)
-        .lineTo(130, profileTop + profileHeight - 12)
-        .lineWidth(0.5)
-        .strokeColor(panelInk)
-        .stroke();
-      doc
         .font(face.regular)
         .fontSize(10)
         .fillColor(panelInk)
-        .text(clean(content.summary), 144, profileTop + 14, {
+        .text(clean(content.summary), 60, profileTop + 14, {
           width: profileWidth,
           lineGap: 2.5,
         });
     } else if (targeted) {
-      doc.font(face.bold).fontSize(10).fillColor(headerInk)
-        .text("EXECUTIVE SUMMARY", 44, profileTop + 10, { width });
       doc.font(face.regular).fontSize(bodySize).fillColor(headerInk)
-        .text(clean(content.summary), 44, profileTop + 28, { width, lineGap: 2.5 });
+        .text(clean(content.summary), 44, profileTop + 10, { width, lineGap: 2.5 });
     } else {
       doc
         .font(face.regular)
@@ -222,25 +213,31 @@ export async function renderCvPdfWithReport(
   };
   const measureSection = (section: CvContent["sections"][number]) => {
     // Qualifications keep their own heading, even if the first detail repeats its name.
-    const sectionHeading = section.kind === "skill" ? clean(section.heading) : cvSectionHeading(section);
+    const display = section.kind === "experience" ? employmentDisplay?.get(section.entryId) : undefined;
+    const sectionHeading = section.kind === "skill" ? clean(section.heading)
+      : section.kind === "experience" ? clean(display?.heading ?? section.heading) : cvSectionHeading(section);
     const showHeading = sectionHeading !== null;
+    const industryLabels = section.kind === "experience"
+      ? [clean(display ? display.industry ?? "Industry unspecified"
+        : section.industryDescriptions?.find(item => clean(item)) ?? "Industry unspecified")]
+      : section.industryDescriptions ?? [];
+    const industryRows = measurePillRows(doc, industryLabels,
+      section.kind === "experience" ? Math.min(160, width * 0.34) : width,
+      PILL_STYLES.industry, face.regular);
+    const rolePillWidth = section.kind === "experience" ? industryRows[0]!.pills[0]!.width : 0;
+    const roleHeadingWidth = width - rolePillWidth - PILL_STYLES.industry.gapX - 4;
     doc.font(face.bold).fontSize(section.kind === "skill" ? 9 : sectionHeadingSize);
     const headerHeight = showHeading
-      ? doc.heightOfString(sectionHeading, { width, lineGap: 2.5 }) + 4
+      ? section.kind === "experience"
+        ? Math.max(industryRows[0]!.height, doc.heightOfString(sectionHeading, { width: roleHeadingWidth, lineGap: 2.5 })) + 6
+        : doc.heightOfString(sectionHeading, { width, lineGap: 2.5 }) + 4
       : 0;
     const bulletHeights = (section.skillItems ?? section.bullets).map((bullet, index) => {
       const signpost = section.bulletSignposts?.[index];
       doc.font(signpost ? face.bold : face.regular).fontSize(bodySize);
       return doc.heightOfString(signpost ? bulletText(section, index) : clean(bullet), { width: width - 12, lineGap: 2.5 });
     });
-    const industryRows = measurePillRows(
-      doc,
-      section.industryDescriptions ?? [],
-      width,
-      PILL_STYLES.industry,
-      face.regular,
-    );
-    const industryHeight = industryRows.length
+    const industryHeight = section.kind !== "experience" && industryRows.length
       ? industryRows.reduce((sum, row) => sum + row.height, 0) +
         (industryRows.length - 1) * PILL_STYLES.industry.gapY +
         6
@@ -279,7 +276,10 @@ export async function renderCvPdfWithReport(
       section,
       sectionHeading,
       showHeading,
+      headerHeight,
       industryRows,
+      rolePillWidth,
+      roleHeadingWidth,
       skillRows,
       minimumHeight,
       experienceStartHeight: section.kind === "experience" ? experienceStartHeight(Math.min(2, bulletHeights.length)) : 0,
@@ -319,7 +319,10 @@ export async function renderCvPdfWithReport(
         section,
         sectionHeading,
         showHeading,
+        headerHeight,
         industryRows,
+        rolePillWidth,
+        roleHeadingWidth,
         skillRows,
         minimumHeight,
         wholeHeight,
@@ -379,11 +382,19 @@ export async function renderCvPdfWithReport(
         layoutReport.sectionPages.push({ entryId: section.entryId, startPage, endPage: pageNumber() });
         continue;
       }
-      if (showHeading && sectionHeading) {
+      if (section.kind === "experience" && sectionHeading) {
+        const top = doc.y;
+        drawPillRow(doc, industryRows[0]!, 44, top, theme.pill, PILL_STYLES.industry, face.regular);
+        doc.font(face.bold).fontSize(sectionHeadingSize).fillColor(ink)
+          .text(sectionHeading, 44 + rolePillWidth + PILL_STYLES.industry.gapX + 4, top,
+            { width: roleHeadingWidth, lineGap: 2.5 });
+        doc.x = 44;
+        doc.y = top + headerHeight;
+      } else if (showHeading && sectionHeading) {
         text(sectionHeading, true, sectionHeadingSize);
         doc.moveDown(0.25);
       }
-      if (industryRows.length) {
+      if (section.kind !== "experience" && industryRows.length) {
         let top = doc.y;
         for (const row of industryRows) {
           drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.industry, face.regular);
@@ -401,8 +412,10 @@ export async function renderCvPdfWithReport(
           });
           if (doc.y + height + 5 > doc.page.height - 55) {
             doc.addPage();
-            text(`${sectionHeading ?? "Skills"} (continued)`, true);
-            doc.moveDown(0.3);
+            if (section.kind !== "experience") {
+              text(`${sectionHeading ?? "Skills"} (continued)`, true);
+              doc.moveDown(0.3);
+            }
           } else room(height + 5);
           doc.font(face.regular).fontSize(bodySize).fillColor(ink);
           const claimStartPage = pageNumber();

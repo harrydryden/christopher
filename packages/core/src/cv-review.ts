@@ -25,6 +25,7 @@ import type { CvTailoringPlan } from "./cv-tailoring";
 export { mentionsDemographicAttribute } from "./cv-demographics";
 import { mentionsDemographicAttribute } from "./cv-demographics";
 import { normaliseText } from "./normalize";
+import { validateCvEffectiveRubric, type CvPriorityChoice } from "./cv-targeting";
 
 function anchored(value: string, full: string) {
   return normaliseText(full).includes(normaliseText(value));
@@ -254,9 +255,14 @@ export function createCvAssessment(input: {
    * (`cvLibraryVerdicts`), replacing the model's; builds without one keep the audit's own.
    */
   plan?: CvTailoringPlan;
+  /** Trusted, account-owned per-CV ranking; never accepted from the model's rubric call. */
+  priorityOverlay?: { sourceRubric: CvRubric; requirements: CvPriorityChoice[] };
 }): CvAssessment {
   const library = groupCvLibrary(input.library);
-  const rubric = validateCvRubric(input.description, input.rubric);
+  const rubric = input.priorityOverlay
+    ? validateCvEffectiveRubric(validateCvRubric(input.description, input.priorityOverlay.sourceRubric),
+      input.priorityOverlay.requirements, input.rubric)
+    : validateCvRubric(input.description, input.rubric);
   const review = validateCvReview(rubric, input.content, library, input.review, input.plan);
   const total = rubric.requirements.reduce(
     (sum, item) => sum + cvRequirementWeight(item),

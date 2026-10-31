@@ -1,11 +1,11 @@
 {
   "kind": "cv-replay",
-  "at": "2026-10-30T17:56:11.443Z",
-  "draftId": "2179ffaa-d017-43a6-a7c3-467bf93afd71",
-  "promptSetVersion": "951386df60b9",
+  "at": "2026-10-31T15:32:30.167Z",
+  "draftId": "403b644d-1164-4494-917e-5d038681908c",
+  "promptSetVersion": "31014dbb8d9a",
   "unverified": false,
   "source": "recording",
-  "recording": "/tmp/col-cv-targeted-eval-final-1030/cv-live-provider-recording.jsonl",
+  "recording": "/tmp/col-cv-ranked-evaluation-final-1031/cv-live-provider-recording.jsonl",
   "routes": {
     "cv.rubric": {
       "model": "cvModel",
@@ -42,29 +42,29 @@
   "outcome": "published",
   "error": null,
   "misses": [],
-  "costUsd": 0.72988,
+  "costUsd": 0.930763,
   "calls": 4,
   "byStage": {
     "author": {
       "calls": 2,
-      "costUsd": 0.42126
+      "costUsd": 0.586417
     },
     "review": {
       "calls": 2,
-      "costUsd": 0.30862
+      "costUsd": 0.344346
     }
   },
-  "wallMs": 103,
+  "wallMs": 124,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",
-    "score": 85,
-    "availableEvidenceScore": 80,
+    "score": 93,
+    "availableEvidenceScore": 85,
     "pageCount": 1,
     "essentials": {
-      "r4": 0.5,
+      "u:00000000-0000-4000-8000-000000000031": 1,
       "r5": 1,
-      "r7": 1
+      "r4": 1
     }
   },
   "grade": {
@@ -76,12 +76,12 @@
       "noEssentialRegressed": true
     },
     "regressions": [],
-    "score": 85,
-    "availableEvidenceScore": 80,
+    "score": 93,
+    "availableEvidenceScore": 85,
     "pageCount": 1,
     "maxPages": 2,
     "diagnostics": {
-      "coverageScore": 85,
+      "coverageScore": 93,
       "factualSupport": {
         "score": 100,
         "supported": 9,
@@ -90,16 +90,16 @@
         "uncertain": 0
       },
       "priorityCoverage": {
-        "score": 79,
-        "earnedWeight": 5.5,
-        "availableWeight": 7,
+        "score": 90,
+        "earnedWeight": 8.689655172413794,
+        "availableWeight": 9.655172413793103,
         "basis": "stated_priorities",
-        "demonstratedEssential": 2,
+        "demonstratedEssential": 3,
         "totalEssential": 3
       },
       "evidencedOpportunityGap": {
         "count": 1,
-        "weightedPoints": 0.5,
+        "weightedPoints": 0.9655172413793103,
         "essential": 0,
         "requirementIds": [
           "r6"
@@ -127,7 +127,7 @@
           "kind": "heuristic_editorial_signal",
           "score": 0,
           "label": "Review",
-          "note": "The assessment anchors 0 of 3 supported priorities in the profile; review its emphasis."
+          "note": "The assessment anchors 0 of 3 supported priorities in the Executive Summary; review its emphasis."
         }
       }
     }

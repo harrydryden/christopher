@@ -45,6 +45,7 @@ it("saves unsaved wording, a treatment change and an optional signpost through o
     evidenceHash: "a".repeat(64), jobDescriptionHash: "b".repeat(64) }, rubricKey: "c".repeat(64),
     entries: [{ entryId: "e-1", kind: "experience", heading: "Analyst, Engines Ltd", treatment: "feature" }],
     priorities: Array.from({ length: 3 }, (_, index) => ({ id: `r-${index}`, label: `Requirement ${index}`,
+      text: `Requirement ${index}`, essential: false, rank: index + 1, origin: "role", customised: false,
       quote: "The role requires analysis", importance: "desirable", category: "experience", selected: true,
       evidenceEntryIds: ["e-1"] })), essentialOmissionIds: [], acknowledgedEssentialOmissionIds: [],
     summaryNeedsReview: false, presentation: { maxPages: 2, bodySizePt: 12 } } as CvTargetingView;
@@ -140,6 +141,7 @@ it("keeps mounted targeting controls and original hash when the same-ID brief ch
     rubricKey: "c".repeat(64), entries: [{ entryId: "e-1", kind: "experience",
       heading: "Analyst, Engines Ltd", treatment: "feature" }],
     priorities: Array.from({ length: 3 }, (_, index) => ({ id: `r-${index}`, label: `Requirement ${index}`,
+      text: `Requirement ${index}`, essential: false, rank: index + 1, origin: "role", customised: false,
       quote: "Analysis", importance: "responsibility", category: "experience", selected: true,
       evidenceEntryIds: ["e-1"] })), essentialOmissionIds: [], acknowledgedEssentialOmissionIds: [],
     summaryNeedsReview: false, presentation: { maxPages: 2, bodySizePt: 12 } } as CvTargetingView;

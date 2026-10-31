@@ -12,6 +12,13 @@ import { EVIDENCE_MARK_RUBRICS } from "@col/core/evidence-rubric-text";
 import { A12_REVIEW_LIBRARY, evidenceMarksBlock } from "./prompts";
 
 describe("the prompt registry", () => {
+  it("holds both writing routes to role-specific dates and eligible company context", () => {
+    for (const id of ["cv.author", "cv.improvement"] as const) {
+      expect(PROMPTS[id].system).toContain("never extend the tenure of a newer title across an earlier role");
+      expect(PROMPTS[id].system).toContain("eligible supplied evidence or employer context");
+      expect(PROMPTS[id].system).toContain("Do not infer such a description from an omitted profile");
+    }
+  });
   it("names every entry by its own key, with a short version hash of its prompt", () => {
     for (const id of PROMPT_IDS) {
       expect(PROMPTS[id].id).toBe(id);

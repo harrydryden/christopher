@@ -51,6 +51,18 @@ function fixture(): CvAssessment {
   });
 }
 describe("unified CV evaluation", () => {
+  it("keeps customised role wording distinct from its advert excerpt and never attributes a user row to the company", () => {
+    const assessment = fixture();
+    const role = assessment.rubric.requirements[0]!;
+    Object.assign(role, { label: "Lead a larger team", origin: "role", customised: true, rank: 1 });
+    const roleRow = cvEvaluationRows(assessment, content)[0]!;
+    expect(roleRow).toMatchObject({ requirement: "Lead a larger team", origin: "role", customised: true,
+      companyText: role.quote });
+    Object.assign(role, { origin: "user", customised: false, quote: "Lead a larger team" });
+    const userRow = cvEvaluationRows(assessment, content)[0]!;
+    expect(userRow).toMatchObject({ requirement: "Lead a larger team", origin: "user" });
+    expect(userRow.companyText).toBeUndefined();
+  });
   it.each([
     ["demonstrated", "demonstrated", "None", "Strong", "Strong"],
     ["partial", "partial", "Gap", "Good", "Good"],

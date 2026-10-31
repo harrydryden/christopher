@@ -2,6 +2,7 @@ import Link from "next/link";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { libraryImports, cvTailoringPlans } from "@col/db";
 import { CvContentSchema, CvLibrarySchema } from "@col/core/cv";
+import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import { StoredLibraryProposalSchema } from "@col/core/library-import";
 import { CvTailoringPlanSchema, cvTailoringEvidence, validateCvTailoringPlan } from "@col/core/cv-tailoring";
 import { renderCvPdfWithReport } from "@col/core/cv-pdf";
@@ -35,7 +36,7 @@ export default async function CvPreparationPage({ params, searchParams }: {
   const finalPdfAvailable = draft.finalisedAt ? await hasStoredFinalisedCvPdf(user.id, draft.id) : false;
   const [rendered, imports, storedPlan] = await Promise.all([
     content && !draft.finalisedAt && !renderRefusal
-      ? renderCvPdfWithReport(content).then(result => ({ layout: result.layout, pageCount: result.pageCount })).catch(() => null)
+      ? renderCvPdfWithReport(content, cvEmploymentDisplay(content, library)).then(result => ({ layout: result.layout, pageCount: result.pageCount })).catch(() => null)
       : Promise.resolve(null),
     db().select({ id: libraryImports.id, filename: libraryImports.filename, processedAt: libraryImports.processedAt,
       hasContent: sql<boolean>`${libraryImports.content} is not null` })

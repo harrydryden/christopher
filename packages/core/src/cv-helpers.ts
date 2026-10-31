@@ -36,9 +36,14 @@ const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 function careerDateLabel(value: string): string {
   return /^\d{4}-\d{2}$/.test(value) ? `${months[Number(value.slice(5)) - 1]} ${value.slice(0, 4)}` : value;
 }
+const employmentDates = (job: Employment) =>
+  [careerDateLabel(job.startDate), job.current ? "Present" : careerDateLabel(job.endDate)].filter(Boolean).join(" – ");
 export function employmentHeading(job: Employment): string {
-  const dates = [careerDateLabel(job.startDate), job.current ? "Present" : careerDateLabel(job.endDate)].filter(Boolean).join(" – ");
-  return [job.jobTitle, job.company, dates].filter(Boolean).join(" · ");
+  return [job.jobTitle, job.company, employmentDates(job)].filter(Boolean).join(" · ");
+}
+/** PDF display only; the saved canonical heading remains title, company, dates. */
+export function employmentCvHeading(job: Employment): string {
+  return [job.company, job.jobTitle, employmentDates(job)].filter(Boolean).join(" · ");
 }
 
 /**

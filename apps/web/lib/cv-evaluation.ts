@@ -23,6 +23,8 @@ export type CvEvaluationRow = {
   requirement: string;
   importance?: string;
   category?: "experience" | "skills" | "education" | "delivery" | "logistics";
+  origin?: "role" | "user";
+  customised?: boolean;
   currentText: string[];
   change: CvChange;
   suggestion: string;
@@ -178,6 +180,8 @@ export function cvEvaluationRows(
           requirement: requirement.label,
           importance: requirement.importance,
           category: requirement.category,
+          origin: requirement.origin,
+          customised: requirement.customised,
           currentText: [],
           change: "Uncertain",
           suggestion: "Reassess this revision to review this requirement.",
@@ -185,7 +189,7 @@ export function cvEvaluationRows(
           evidence: "None",
           experience: "Weak",
           reason: "No requirement assessment is available.",
-          companyText: requirement.quote,
+          companyText: requirement.origin === "user" ? undefined : requirement.quote,
           sources: [],
         };
       const flags = unique(match.cvEvidence.map((ref) => ref.id)).flatMap(
@@ -220,6 +224,8 @@ export function cvEvaluationRows(
         requirement: requirement.label,
         importance: requirement.importance,
         category: requirement.category,
+        origin: requirement.origin,
+        customised: requirement.customised,
         currentText: unique(match.cvEvidence.map((ref) => ref.quote)),
         change,
         suggestion: flags.length
@@ -250,7 +256,7 @@ export function cvEvaluationRows(
                 ? "Good"
                 : "None",
         reason: match.reason,
-        companyText: requirement.quote,
+        companyText: requirement.origin === "user" ? undefined : requirement.quote,
         sources: unique(match.libraryEvidence.map((ref) => ref.quote)),
       };
     },

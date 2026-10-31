@@ -3,6 +3,8 @@ import { createDb, schema, type Db } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { CvContentSchema, CvLibrarySchema } from "@col/core/cv";
 import { cvUserSkillProposals } from "@col/core/cv-pending-skills";
+import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
+import { cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
@@ -91,6 +93,38 @@ it("keeps a checkpoint-only role rubric through acceptance after parent retentio
   expect(await assessCvDraft(child!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
   expect(task?.payload).toMatchObject({ draftId: child!.id, mode: "assess" });
+});
+
+it("carries ranked choices and the original role rubric through a skill acceptance", async () => {
+  const sourceRubric = rubricFixture("Lead a team");
+  const userRequirementId = `u:${crypto.randomUUID()}`;
+  const requirements = [
+    { id: "r1", text: "Lead an operations team", essential: true },
+    { id: userRequirementId, text: "Improve partner delivery", essential: false },
+  ];
+  const targetingBrief = CvTargetingBriefSchema.parse({ version: 1,
+    source: cvTargetingSource(1, library, "Lead a team"),
+    entries: library.entries.map(entry => ({ entryId: entry.id, treatment: "feature" })),
+    presentation: { maxPages: 2, bodySizePt: 12 },
+    priority: { state: "confirmed", rubric: sourceRubric, rubricKey: "a".repeat(64),
+      requirements, emphasisRequirementIds: requirements.map(item => item.id),
+      acknowledgedEssentialOmissionIds: [] },
+  });
+  const source = await draft();
+  await database.update(schema.cvDrafts).set({ targetingBrief })
+    .where(eq(schema.cvDrafts.id, source.id));
+  const proposal = cvUserSkillProposals(library, content)[0]!;
+  const result = await decideCvPendingSkill(source.id, proposal.id, { decision: "accept",
+    evidence: { kind: "link_existing", evidenceEntryId: "entry:role:row:0" },
+    confirmFactual: true, expectedRevision: 1, requestKey: crypto.randomUUID() });
+  expect(result.ok).toBe(true);
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, source.id));
+  expect(child?.targetingBrief?.priority).toMatchObject({ state: "unprepared", requirements,
+    rubric: sourceRubric, emphasisRequirementIds: requirements.map(item => item.id) });
+  expect(child?.targetingBrief?.source.libraryVersion).toBe(2);
+  expect(child?.buildCheckpoint).toEqual({ sourceRubric });
+  expect(child?.assessment).toBeNull();
+  expect(child?.semanticAuditCache).toBeNull();
 });
 
 it("adds a short, explicitly confirmed Experience example with the skill", async () => {

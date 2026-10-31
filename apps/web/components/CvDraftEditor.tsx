@@ -393,7 +393,7 @@ export function CvDraftEditor({
         const response = await fetch("/api/cv/preview", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(parsed.data),
+          body: JSON.stringify({ draftId: id, content: parsed.data }),
           signal: request.signal,
         });
         if (!response.ok) throw new Error(await response.text());

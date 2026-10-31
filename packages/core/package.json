@@ -44,6 +44,10 @@
       "types": "./src/cv-helpers.ts",
       "default": "./src/cv-helpers.ts"
     },
+    "./cv-employment-display": {
+      "types": "./src/cv-employment-display.ts",
+      "default": "./src/cv-employment-display.ts"
+    },
     "./cv-theme-values": {
       "types": "./src/cv-theme-values.ts",
       "default": "./src/cv-theme-values.ts"

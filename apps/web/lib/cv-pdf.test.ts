@@ -61,12 +61,12 @@ it("keeps each qualification heading above its own detail", async () => {
   expect(labels.indexOf("BSc Economics · Example University")).toBeLessThan(labels.indexOf("BSc Economics, Example University. Distinction."));
   expect(labels.indexOf("Project qualification")).toBeLessThan(labels.indexOf("Completed practical training."));
 });
-it("labels continued jobs even when the saved draft has no theme", async () => {
+it("does not repeat a job heading when its bullets continue on another page", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const { pageCount } = await renderCvPdfWithReport({ ...fixture, sections: [{ entryId: "job", kind: "experience", heading: "Director · Example", bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) }] });
   expect(pageCount).toBeGreaterThan(1);
   expect(draw.mock.calls.some(
-      (call) => call[0] === "Director · Example (continued)")).toBe(true);
+      (call) => call[0] === "Director · Example (continued)")).toBe(false);
 });
 it("groups present education and skills in that order and retains legacy pills", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
@@ -107,7 +107,7 @@ it("omits the supporting group when a CV has only work experience", async () => 
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   await renderCvPdf({ ...fixture, sections: [{ entryId: "job", kind: "experience", heading: "Director · Example", bullets: ["Led operations."] }] });
   const labels = draw.mock.calls.map(call => call[0]);
-  expect(labels).toContain("WORK EXPERIENCE");
+  expect(labels).toContain("EXPERIENCE");
   expect(labels).not.toContain("EDUCATION");
   expect(labels).not.toContain("TRAINING");
   expect(labels).not.toContain("SKILLS");
@@ -327,7 +327,7 @@ it("embeds Liberation Sans for the Arial font and keeps the built-in face for Co
   const long = { ...fixture, sections: [{ entryId: "job", kind: "experience" as const, heading: "Director · Example", bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) }] };
   expect((await renderCvPdfWithReport({ ...long, theme: { ...DEFAULT_CV_THEME, font: "Arial" } })).pageCount).toBe((await renderCvPdfWithReport(long)).pageCount);
 });
-it("renders company industries as separate callout pills even when skill pills are disabled", async () => {
+it("renders exactly one stored industry pill before a role heading even when skill pills are disabled", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
   await renderCvPdf({
@@ -343,13 +343,23 @@ it("renders company industries as separate callout pills even when skill pills a
       },
     ],
   });
-  expect(rounded).toHaveBeenCalledTimes(2);
-  expect(draw.mock.calls.map((call) => call[0])).toEqual(
-    expect.arrayContaining(["Healthcare", "Software & SaaS"]),
-  );
-  expect(draw.mock.calls.map((call) => call[0])).not.toContain(
-    "Healthcare · Software & SaaS",
-  );
+  expect(rounded).toHaveBeenCalledTimes(1);
+  const labels = draw.mock.calls.map(call => call[0]);
+  expect(labels).toContain("Healthcare");
+  expect(labels).not.toContain("Software & SaaS");
+  expect(labels.indexOf("Healthcare")).toBeLessThan(labels.indexOf("Director · Example"));
+});
+
+it("uses trusted company-first display metadata and an honest missing-industry pill", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  await renderCvPdfWithReport({ ...fixture, sections: [
+    { entryId: "job", kind: "experience", heading: "Director · Example · 2020–2025", bullets: ["Led a team."] },
+  ] }, new Map([["job", { heading: "Example · Director · 2020–2025", industry: null }]]));
+  const labels = draw.mock.calls.map(call => call[0]);
+  expect(labels).toContain("Industry unspecified");
+  expect(labels).toContain("Example · Director · 2020-2025");
+  expect(labels).not.toContain("Director · Example · 2020-2025");
+  expect(labels.indexOf("Industry unspecified")).toBeLessThan(labels.indexOf("Example · Director · 2020-2025"));
 });
 
 it("centres wrapped skill and industry text inside its pill bounds", async () => {
@@ -431,7 +441,23 @@ it("renders both profile and website links as separate PDF annotations", async (
   expect(raw).toContain(`/URI (${websiteUrl})`);
 });
 
-it("keeps legacy profile layout and measures the targeted Executive Summary in the same render", async () => {
+it("wraps a longer contact line beside a short name without moving it below", async () => {
+  const contact = "alex.morgan@example.test · +441234567890 · Greater London, United Kingdom · Open to UK and European roles";
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const measure = vi.spyOn(PDFDocument.prototype, "heightOfString");
+  await renderCvPdfWithReport({ ...fixture, name: "Alex Morgan", contact,
+    linkedinUrl: "https://www.linkedin.com/in/alex-morgan-example" });
+  const contactDraw = draw.mock.calls.find(call => call[0] === contact);
+  const contactWidth = (contactDraw?.[1] as { width?: number } | undefined)?.width;
+  expect(contactWidth).toBeGreaterThan(150);
+  expect(contactWidth).toBeLessThan(400);
+  const measured = measure.mock.calls.findIndex(call => call[0] === `${contact} · LinkedIn`
+    && (call[1] as { width?: number } | undefined)?.width === contactWidth);
+  expect(measured).toBeGreaterThanOrEqual(0);
+  expect(measure.mock.results[measured]?.value).toBeGreaterThan(18);
+});
+
+it("omits visible summary labels in both layouts while measuring the targeted summary", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const legacy = await renderCvPdfWithReport(fixture);
   expect(legacy.pageCount).toBe(1);
@@ -441,7 +467,7 @@ it("keeps legacy profile layout and measures the targeted Executive Summary in t
   expect(legacy.layout.claimPages.map(claim => claim.claimId)).toEqual([
     "section:degree:0", "section:extra:0", "section:skill:0",
   ]);
-  expect(draw.mock.calls.some(call => call[0] === "Profile")).toBe(true);
+  expect(draw.mock.calls.some(call => call[0] === "Profile")).toBe(false);
   expect(draw.mock.calls.some(call => call[0] === "EXECUTIVE SUMMARY")).toBe(false);
 
   draw.mockClear();
@@ -449,7 +475,7 @@ it("keeps legacy profile layout and measures the targeted Executive Summary in t
     summary: "Operations leader with documented delivery and service experience. ".repeat(3).trim() });
   expect(targeted.layout.summaryLines).toBeGreaterThanOrEqual(2);
   expect(targeted.layout.firstPageEntryIds).toContain("degree");
-  expect(draw.mock.calls.some(call => call[0] === "EXECUTIVE SUMMARY")).toBe(true);
+  expect(draw.mock.calls.some(call => call[0] === "EXECUTIVE SUMMARY")).toBe(false);
   expect(draw.mock.calls.some(call => call[0] === "Profile")).toBe(false);
 });
 
@@ -487,13 +513,13 @@ it.each(["Course of Life", "Arial"] as const)("flows an experience across pages 
   expect(pageFor("Manager · Second company")).toBe(pageFor(first[0]!));
   expect(pageFor(second[0]!)).toBe(pageFor("Manager · Second company"));
   expect(pageFor(second.at(-1)!)).toBeGreaterThan(pageFor(second[0]!));
-  expect(draw.mock.calls.some(call => call[0] === "Manager · Second company (continued)")).toBe(true);
+  expect(draw.mock.calls.some(call => call[0] === "Manager · Second company (continued)")).toBe(false);
   for (const bullet of [...first, ...second]) expect(draw.mock.calls.filter(call => call[0] === bullet.trim())).toHaveLength(1);
 });
 it("keeps an experience intact when only a small gap remains", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const pages = vi.spyOn(PDFDocument.prototype, "addPage");
-  const first = Array.from({length:6}, (_, i) => `First achievement ${i + 1}: ${"Led planning, reporting and delivery across regional teams. ".repeat(8)}`);
+  const first = Array.from({length:6}, (_, i) => `First achievement ${i + 1}: ${"Led planning, reporting and delivery across regional teams. ".repeat(9).trim()} Additional results were documented.`);
   const second = Array.from({length:3}, (_, i) => `Second achievement ${i + 1}: ${"Built operating plans and improved customer services. ".repeat(4)}`);
   await renderCvPdfWithReport({...fixture, sections:[
     {entryId:"first", kind:"experience", heading:"Director · First company", bullets:first},

@@ -1,5 +1,8 @@
-import { CvContentSchema } from "@col/core/cv";
+import { CvContentSchema, CvLibrarySchema } from "@col/core/cv";
+import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import { routeUser } from "@/lib/route-auth";
+import { getOwnCvDraftForPdf } from "@/lib/queries/cv";
+import { zUuid } from "@/lib/validation";
 import { readCapped } from "@/lib/route-request";
 import { renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 import { refuseCvRender } from "@/lib/cv-render-limit";
@@ -20,12 +23,19 @@ export async function POST(request: Request) {
   let payload: unknown;
   try { payload = JSON.parse(body.bytes.toString("utf8")); }
   catch { return new Response("Invalid CV content.", { status: 400 }); }
-  const parsed = CvContentSchema.safeParse(payload);
+  const wrapped = payload && typeof payload === "object" && "draftId" in payload && "content" in payload
+    ? payload as { draftId: unknown; content: unknown } : null;
+  if (wrapped && (typeof wrapped.draftId !== "string" || !zUuid().safeParse(wrapped.draftId).success))
+    return new Response("Invalid CV draft.", { status: 400 });
+  const parsed = CvContentSchema.safeParse(wrapped ? wrapped.content : payload);
   if (!parsed.success) return new Response(parsed.error.issues.map(issue => issue.message).join(" "), { status: 400 });
   const refused = await refuseCvRender(auth.user.id);
   if (refused) return refused;
+  const draft = wrapped ? await getOwnCvDraftForPdf(auth.user.id, wrapped.draftId as string) : null;
+  if (wrapped && !draft) return new Response("CV draft not found.", { status: 404 });
   let result;
-  try { result = await renderCvPdfWithReport(parsed.data); }
+  try { result = await renderCvPdfWithReport(parsed.data, draft
+    ? cvEmploymentDisplay(parsed.data, CvLibrarySchema.parse(draft.librarySnapshot)) : undefined); }
   catch (error) {
     if (error instanceof CvLayoutError) return new Response(error.message, { status: 422 });
     throw error;

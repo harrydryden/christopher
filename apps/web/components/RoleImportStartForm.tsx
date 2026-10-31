@@ -29,6 +29,5 @@ export function RoleImportStartForm() {
         <Input id="role-import-file" name="file" type="file" accept="application/pdf,.pdf" required={kind === "pdf"} disabled={kind !== "pdf"} />
       </Field>
     </div>
-    <p className="text-13 text-muted">We’ll extract the role details for you to check. No CV work starts until you save the role and choose Build CV.</p>
   </SettingsForm>;
 }

@@ -1,0 +1,735 @@
+{
+  "kind": "cv-skill-suggestions-live-probe",
+  "at": "2026-10-31T15:32:56.673Z",
+  "promptSetVersion": "31014dbb8d9a",
+  "syntheticCandidate": true,
+  "source": "provider",
+  "model": "claude-fable-5-1",
+  "outcome": "ready",
+  "verifiedCalls": [
+    {
+      "promptId": "cv.skill_suggestions",
+      "costUsd": 0.093148
+    },
+    {
+      "promptId": "cv.skill_verify",
+      "costUsd": 0.08834
+    }
+  ],
+  "cvQualification": "passed",
+  "selectedOnlyPersistence": "covered by isolated integration tests; this paid probe makes no Library or CV change",
+  "suggestionCount": 10,
+  "categoryCount": 6,
+  "suggestions": [
+    {
+      "category": "Leadership",
+      "label": "Team leadership",
+      "sourceId": "entry:ev-head:row:1",
+      "evidenceQuote": "Lead four operations managers and a shared scheduling team of eighteen",
+      "roleQuote": "lead a team of four operations managers"
+    },
+    {
+      "category": "Operations",
+      "label": "Operational planning",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "Own the operational plan for eleven community clinics",
+      "roleQuote": "You will own the operational plan for the portfolio"
+    },
+    {
+      "category": "Finance",
+      "label": "Budget management",
+      "sourceId": "entry:ev-head:row:3",
+      "evidenceQuote": "Partner with finance on the annual budget and on monthly variance across a £14m cost base.",
+      "roleQuote": "partner with finance to build the annual budget and to track monthly variance"
+    },
+    {
+      "category": "Systems and tools",
+      "label": "SQL",
+      "sourceId": "entry:ev-manager:row:1",
+      "evidenceQuote": "Built the first operational reporting pack in SQL and Power BI",
+      "roleQuote": "build and interpret reporting in SQL or a comparable analytics tool"
+    },
+    {
+      "category": "Supplier management",
+      "label": "Supplier performance",
+      "sourceId": "entry:ev-head:row:4",
+      "evidenceQuote": "Introduced a supplier scorecard covering the eight largest contracts, with quarterly reviews against agreed service levels.",
+      "roleQuote": "supplier performance"
+    },
+    {
+      "category": "Reporting",
+      "label": "Performance reporting",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "reporting delivery, cost and quality to the executive team every month",
+      "roleQuote": "report performance to the executive team each month"
+    },
+    {
+      "category": "Operations",
+      "label": "Multi-site operations",
+      "sourceId": "entry:ev-head:row:0",
+      "evidenceQuote": "Own the operational plan for eleven community clinics, reporting delivery, cost and quality",
+      "roleQuote": "own service delivery for a portfolio of twelve sites"
+    },
+    {
+      "category": "Systems and tools",
+      "label": "Power BI",
+      "sourceId": "entry:ev-manager:row:1",
+      "evidenceQuote": "Built the first operational reporting pack in SQL and Power BI",
+      "roleQuote": "SQL or a comparable analytics tool"
+    },
+    {
+      "category": "Operations",
+      "label": "Rostering",
+      "sourceId": "entry:ev-head:row:2",
+      "evidenceQuote": "Rebuilt rostering around a single demand model, which cut agency spend by 22% in the first year.",
+      "roleQuote": "continuous improvement work across scheduling, rostering and supplier performance"
+    },
+    {
+      "category": "Operations",
+      "label": "Continuous improvement",
+      "sourceId": "entry:ev-head:row:2",
+      "evidenceQuote": "Rebuilt rostering around a single demand model, which cut agency spend by 22%",
+      "roleQuote": "lead continuous improvement work across scheduling, rostering and supplier performance"
+    }
+  ],
+  "transport": {
+    "totalUpperBoundUsd": 4.094702999999998,
+    "upperBoundsUsd": {
+      "fixture": 0,
+      "cv": 3.083895,
+      "skills": 0.5027719999999999
+    },
+    "attempts": {
+      "fixture": 0,
+      "cv": 15,
+      "skills": 6
+    },
+    "events": [
+      {
+        "phase": "cv",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.27108,
+        "complete": true,
+        "usage": {
+          "input_tokens": 324,
+          "output_tokens": 3258,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 5898,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 5898,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.239865
+      },
+      {
+        "phase": "cv",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.4322,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1747,
+          "output_tokens": 3249,
+          "cache_read_input_tokens": 5898,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.181394
+      },
+      {
+        "phase": "cv",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.83868,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1327,
+          "output_tokens": 2533,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4364,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4364,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.19447
+      },
+      {
+        "phase": "cv",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.79048,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1046,
+          "output_tokens": 1939,
+          "cache_read_input_tokens": 4364,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.108501
+      },
+      {
+        "phase": "skills",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.36356,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1316,
+          "output_tokens": 1136,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1083,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1083,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.083498
+      },
+      {
+        "phase": "skills",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.48816,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1955,
+          "output_tokens": 939,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 676,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 676,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.07495
+      },
+      {
+        "phase": "cv",
+        "attempt": 5,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.81368,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1327,
+          "output_tokens": 3006,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4160,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4160,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 5,
+        "kind": "settled",
+        "costUsd": 0.21557
+      },
+      {
+        "phase": "cv",
+        "attempt": 6,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.76548,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1046,
+          "output_tokens": 1631,
+          "cache_read_input_tokens": 4160,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 6,
+        "kind": "settled",
+        "costUsd": 0.09305
+      },
+      {
+        "phase": "skills",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.36356,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1316,
+          "output_tokens": 1165,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1083,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1083,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.084947
+      },
+      {
+        "phase": "skills",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.48552,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1929,
+          "output_tokens": 1003,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 676,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 676,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.07789
+      },
+      {
+        "phase": "preparation",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.73856,
+        "complete": true,
+        "usage": {
+          "input_tokens": 285,
+          "output_tokens": 801,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1126,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1126,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.056975
+      },
+      {
+        "phase": "preparation",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.32624,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2604,
+          "output_tokens": 2671,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 2357,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 2357,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.189053
+      },
+      {
+        "phase": "preparation",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.73856,
+        "complete": true,
+        "usage": {
+          "input_tokens": 285,
+          "output_tokens": 820,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1126,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1126,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.057925
+      },
+      {
+        "phase": "preparation",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.3802,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2772,
+          "output_tokens": 2876,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 2605,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 2605,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.204083
+      },
+      {
+        "phase": "cv",
+        "attempt": 7,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.31876,
+        "complete": true,
+        "usage": {
+          "input_tokens": 330,
+          "output_tokens": 5351,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 6289,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 6289,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 7,
+        "kind": "settled",
+        "costUsd": 0.349463
+      },
+      {
+        "phase": "cv",
+        "attempt": 8,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.85012,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1380,
+          "output_tokens": 2785,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4436,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4436,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 8,
+        "kind": "settled",
+        "costUsd": 0.2085
+      },
+      {
+        "phase": "cv",
+        "attempt": 9,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.8162,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1147,
+          "output_tokens": 2012,
+          "cache_read_input_tokens": 4436,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 9,
+        "kind": "settled",
+        "costUsd": 0.113179
+      },
+      {
+        "phase": "cv",
+        "attempt": 10,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.32912,
+        "complete": true,
+        "usage": {
+          "input_tokens": 412,
+          "output_tokens": 3829,
+          "cache_read_input_tokens": 6289,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 10,
+        "kind": "settled",
+        "costUsd": 0.197142
+      },
+      {
+        "phase": "cv",
+        "attempt": 11,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.94036,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2120,
+          "output_tokens": 4409,
+          "cache_read_input_tokens": 3693,
+          "cache_creation_input_tokens": 754,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 754,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 11,
+        "kind": "settled",
+        "costUsd": 0.251998
+      },
+      {
+        "phase": "cv",
+        "attempt": 12,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.33444,
+        "complete": true,
+        "usage": {
+          "input_tokens": 330,
+          "output_tokens": 5515,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 6395,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 6395,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 12,
+        "kind": "settled",
+        "costUsd": 0.358988
+      },
+      {
+        "phase": "cv",
+        "attempt": 13,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.50528,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1858,
+          "output_tokens": 4145,
+          "cache_read_input_tokens": 6395,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 13,
+        "kind": "settled",
+        "costUsd": 0.227429
+      },
+      {
+        "phase": "cv",
+        "attempt": 14,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.843,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1361,
+          "output_tokens": 3058,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4417,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4417,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 14,
+        "kind": "settled",
+        "costUsd": 0.221722
+      },
+      {
+        "phase": "cv",
+        "attempt": 15,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.81264,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1147,
+          "output_tokens": 2201,
+          "cache_read_input_tokens": 4417,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 15,
+        "kind": "settled",
+        "costUsd": 0.122624
+      },
+      {
+        "phase": "skills",
+        "attempt": 5,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.36356,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1316,
+          "output_tokens": 1329,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1083,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1083,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 5,
+        "kind": "settled",
+        "costUsd": 0.093147
+      },
+      {
+        "phase": "skills",
+        "attempt": 6,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.50432,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2104,
+          "output_tokens": 1177,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 676,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 676,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 6,
+        "kind": "settled",
+        "costUsd": 0.08834
+      }
+    ]
+  }
+}

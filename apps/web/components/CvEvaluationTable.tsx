@@ -123,6 +123,8 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                   </td>
                   <th scope="row" className="break-words px-2 py-4 font-medium">
                     {row.requirement}
+                    {row.origin === "user" && <span className="mt-1 block text-12 font-normal text-muted">Added by you for this CV</span>}
+                    {row.origin === "role" && row.customised && <span className="mt-1 block text-12 font-normal text-muted">Edited for this CV</span>}
                     {row.importance && (
                       <span className="mt-2 block text-12 font-normal capitalize text-muted">
                         {row.importance}
@@ -183,7 +185,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                       )}
                       {row.companyText && (
                         <p className="text-12 text-muted">
-                          <strong>Company requirement:</strong>{" "}
+                          <strong>{row.origin === "role" ? "Original advert excerpt:" : "Company requirement:"}</strong>{" "}
                           {row.companyText}
                         </p>
                       )}

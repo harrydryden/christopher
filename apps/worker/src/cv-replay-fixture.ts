@@ -8,7 +8,8 @@
 import { createUser, enqueueTask, schema, confirmCvTargetingPrioritiesForUser, type Db } from "@col/db";
 import { dedupeKeyFor } from "@col/core";
 import { CvLibrarySchema } from "@col/core/cv";
-import { CvTargetingBriefSchema, cvEssentialOmissionIds, cvRecommendedPriorityIds, projectCvWritingLibrary } from "@col/core/cv-targeting";
+import type { CvRubric } from "@col/core/cv-assessment";
+import { CvTargetingBriefSchema, cvEffectiveRubric, cvMappedEssentialOmissionIds, cvEssentialOmissionIds, cvRecommendedPriorityIds, projectCvWritingLibrary } from "@col/core/cv-targeting";
 import { cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { CvTailoringPlanSchema } from "@col/core/cv-tailoring";
 import { randomUUID } from "node:crypto";
@@ -20,6 +21,17 @@ import { handleGenerateCv } from "./handlers/cv";
 import { onAbandon } from "./handlers/abandon";
 
 export const REPLAY_FIXTURE_MODEL = "claude-fable-5-1";
+
+/** A reproducible set of user edits, used by scripted and live preparation probes. */
+export function rankedReplayFixtureRequirements(rubric: CvRubric) {
+  return [
+    { id: "u:00000000-0000-4000-8000-000000000031", text: "Lead weekly operational performance reviews", essential: true },
+    ...rubric.requirements.slice().reverse().slice(0, -1).map((row, index) => ({
+      id: row.id, text: index === 0 ? "Lead multi-site service delivery" : row.label,
+      essential: index === 0 ? false : row.importance === "essential",
+    })),
+  ];
+}
 
 export const REPLAY_FIXTURE_DESCRIPTION = [
   "Head of Operations — Meridian Care Group",
@@ -77,7 +89,7 @@ export const REPLAY_FIXTURE_LIBRARY = {
  * real queue and handler against `client`. Throws when it does not publish.
  */
 export async function publishReplayFixture(deps: WorkerDeps, client: AiClientLike,
-  email = "cv-replay-fixture@example.invalid", options: { targeted?: boolean } = {}) {
+  email = "cv-replay-fixture@example.invalid", options: { targeted?: boolean; ranked?: boolean } = {}) {
   const [existing] = await deps.db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1);
   const user = existing ?? (await createUser(deps.db, { email, name: "Replay fixture", role: "member", emailVerified: true })).user;
   const draft = await seedReplayFixtureDraft(deps.db, user.id, options);
@@ -99,14 +111,36 @@ export async function publishReplayFixture(deps: WorkerDeps, client: AiClientLik
         treatment: row.entryId === "ev-manager" ? "summarise" as const
           : row.entryId === "ev-calder" ? "omit" as const : "feature" as const }));
       const writing = projectCvWritingLibrary(library, { ...brief, entries });
+      // Exercise real user edits without changing the source advert or inventing candidate evidence.
+      const requirements = options.ranked ? rankedReplayFixtureRequirements(brief.priority.rubric) : undefined;
       await confirmCvTargetingPrioritiesForUser(deps.db, user.id, draft.id, {
         expectedRevision: paused.revision, expectedSource: brief.source, expectedRubricKey: brief.priority.rubricKey,
         requestKey: randomUUID(), choices: { entries, presentation: { maxPages: 2, bodySizePt: 12 },
-          emphasisRequirementIds: cvRecommendedPriorityIds(brief.priority.rubric),
-          acknowledgedEssentialOmissionIds: cvEssentialOmissionIds(plan, brief.priority.rubric, writing) },
+          emphasisRequirementIds: requirements ? requirements.slice(0, 5).map(row => row.id) : cvRecommendedPriorityIds(brief.priority.rubric),
+          ...(requirements ? { requirements } : {}),
+          acknowledgedEssentialOmissionIds: requirements
+            ? cvMappedEssentialOmissionIds(plan, brief.priority.rubric, cvEffectiveRubric(brief.priority.rubric, requirements), writing)
+            : cvEssentialOmissionIds(plan, brief.priority.rubric, writing) },
       });
       await new TaskQueue(deps, { generate_cv: handleGenerateCv }, { concurrency: 1,
         workerId: "cv-replay-fixture-resumed", onAbandon }).drain();
+      if (options.ranked) {
+        const [remapped] = await deps.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+        if (remapped?.status === "awaiting_priorities" && remapped.targetingBrief && remapped.buildCheckpoint?.tailoringPlan) {
+          const current = CvTargetingBriefSchema.parse(remapped.targetingBrief);
+          const effective = cvEffectiveRubric(current.priority.rubric!, current.priority.requirements);
+          await confirmCvTargetingPrioritiesForUser(deps.db, user.id, draft.id, {
+            expectedRevision: remapped.revision, expectedSource: current.source, expectedRubricKey: current.priority.rubricKey!,
+            requestKey: randomUUID(), choices: { entries: current.entries, presentation: current.presentation,
+              requirements: current.priority.requirements, emphasisRequirementIds: current.priority.emphasisRequirementIds,
+              acknowledgedEssentialOmissionIds: cvEssentialOmissionIds(remapped.buildCheckpoint.tailoringPlan, effective,
+                projectCvWritingLibrary(library, current)) },
+          });
+          // Only one extra confirmation is allowed: another pause is a continuation regression.
+          await new TaskQueue(deps, { generate_cv: handleGenerateCv }, { concurrency: 1,
+            workerId: "cv-replay-fixture-ranked-resumed", onAbandon }).drain();
+        }
+      }
     }
   } finally {
     deps.aiClient = previous.client;

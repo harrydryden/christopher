@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { CvContentSchema, DEFAULT_CV_THEME, type CvLibrary } from "./cv";
-import { CvTargetingBriefSchema, cvEssentialOmissionIds, cvEligibleSkillLibrary, cvSkillSourcePolicy,
-  cvTargetedSummaryFinalisationIssue, projectCvTargetedContent,
-  projectCvWritingLibrary, projectCvWritingPlan, validateCvTargetingEntries } from "./cv-targeting";
-import type { CvRubric } from "./cv-assessment";
+import { CvTargetingBriefSchema, cvEssentialOmissionIds, cvMappedEssentialOmissionIds, cvEligibleSkillLibrary, cvSkillSourcePolicy,
+  cvTargetedSummaryFinalisationIssue, cvEffectiveRubric, validateCvEffectiveRubric, projectCvTargetedContent,
+  projectCvWritingLibrary, projectCvWritingPlan, validateCvTargetingEntries, cvRankedPriorityChoices,
+  cvRecommendedPriorityOrder, cvRecommendedPriorityIds, cvPriorityMappingIdentity } from "./cv-targeting";
+import { cvRequirementWeight, type CvRubric } from "./cv-assessment";
 import type { CvTailoringPlan } from "./cv-tailoring";
-import { createCvWritingBudget } from "./cv-budget";
+import { createCvWritingBudget, cvRelevanceTerms } from "./cv-budget";
 import { cvSkillEvidenceRows, cvSkillSuggestionInputHash } from "./cv-skill-suggestions";
 import { cvSkillDraftContext } from "./cv-skill-draft-context";
 
@@ -25,6 +26,90 @@ const content = CvContentSchema.parse({ name: "Test", contact: "test@example.com
   ], gaps: [] });
 
 describe("CV targeting", () => {
+  it("keeps role quotations and user provenance through a ranked rubric JSON round-trip", () => {
+    const rows = [
+      { id: "u:00000000-0000-4000-8000-000000000001", text: "Regional delivery", essential: true },
+      { id: "r1", text: "Lead programmes", essential: false },
+    ];
+    const effective = cvEffectiveRubric(rubric, rows);
+    expect(effective.requirements.map(item => [item.id, item.rank, item.origin])).toEqual([
+      [rows[0]!.id, 1, "user"], ["r1", 2, "role"],
+    ]);
+    expect(effective.requirements[0]).toMatchObject({ label: "Regional delivery", quote: "Regional delivery", customised: true });
+    expect(effective.requirements[1]).toMatchObject({ label: "Lead programmes", quote: "Own delivery", customised: true });
+    expect(validateCvEffectiveRubric(rubric, rows, JSON.parse(JSON.stringify(effective)))).toEqual(effective);
+    expect(() => validateCvEffectiveRubric(rubric, rows, { ...effective,
+      requirements: effective.requirements.map(item => item.id === "r1" ? { ...item, quote: "Invented employer quote" } : item) }))
+      .toThrow(/original role rubric/);
+    expect(cvRequirementWeight(effective.requirements[0]!)).toBeGreaterThan(cvRequirementWeight({ ...effective.requirements[0]!, rank: 2 }));
+    expect(cvRequirementWeight(rubric.requirements[0]!)).toBe(2);
+    const terms = cvRelevanceTerms(effective.requirements);
+    expect(terms.get("programmes")).toBeGreaterThan(0);
+    expect(terms.has("own")).toBe(false);
+    expect(terms.has("regional")).toBe(true);
+  });
+  it("reuses an evidence map for rank and essential edits, but not changed criterion meaning", () => {
+    const mapped = cvEffectiveRubric(rubric, [{ id: "r1", text: "Own delivery", essential: false }]);
+    const plan: CvTailoringPlan = { requirements: [{ requirementId: "r1", status: "demonstrated",
+      evidence: [{ sourceId: "entry:one:row:0", quote: "Led delivery" }], reason: "Direct evidence" }], gapQuestions: [] };
+    const writing = { name: "Test", contact: "", profile: "", entries: [] } as CvLibrary;
+    const promoted = cvEffectiveRubric(rubric, [{ id: "r1", text: "Own delivery", essential: true }]);
+    expect(cvMappedEssentialOmissionIds(plan, mapped, promoted, writing)).toEqual(["r1"]);
+    const reranked = cvEffectiveRubric(rubric, [{ id: "r1", text: "Own delivery", essential: false }]);
+    expect(cvMappedEssentialOmissionIds(plan, mapped, reranked, writing)).toEqual([]);
+    const reworded = cvEffectiveRubric(rubric, [{ id: "r1", text: "Lead programmes", essential: true }]);
+    expect(cvMappedEssentialOmissionIds(plan, mapped, reworded, writing)).toEqual([]);
+  });
+  it("validates bounded, attributed user criteria before they can become an effective rubric", () => {
+    const userId = "u:00000000-0000-4000-8000-000000000001";
+    const original = { id: "r1", text: "Own delivery", essential: true };
+    const valid = { id: userId, text: "Lead colleagues", essential: false };
+    expect(cvRankedPriorityChoices(rubric, [original, valid])).toHaveLength(2);
+    expect(() => cvRankedPriorityChoices(rubric, [original, original])).toThrow();
+    expect(() => cvRankedPriorityChoices(rubric, [{ ...original, text: "  " }])).toThrow();
+    expect(() => cvRankedPriorityChoices(rubric, [{ ...original, id: "foreign-role" }])).toThrow(/stable identifier/);
+    expect(() => cvRankedPriorityChoices(rubric, [{ ...valid, id: "u:invented" }])).toThrow(/stable identifier/);
+    expect(() => cvRankedPriorityChoices(rubric, [{ ...valid, text: "Gender only" }])).toThrow(/Demographic/);
+    expect(() => cvRankedPriorityChoices(rubric, Array.from({ length: 31 }, (_, i) => ({
+      id: `u:00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      text: `Criterion ${i}`, essential: false })))).toThrow();
+  });
+  it("lets explicit rank govern scoring and allocation independently of essential status", () => {
+    const sourceRubric: CvRubric = { requirements: [rubric.requirements[0]!,
+      { id: "r2", label: "People leadership", quote: "People leadership", importance: "desirable", category: "delivery" }], caveats: [] };
+    const first = cvEffectiveRubric(sourceRubric, [
+      { id: "r2", text: "People leadership", essential: false },
+      { id: "r1", text: "Own delivery", essential: true },
+    ]);
+    const reversed = cvEffectiveRubric(sourceRubric, [
+      { id: "r1", text: "Own delivery", essential: true },
+      { id: "r2", text: "People leadership", essential: false },
+    ]);
+    expect(cvRequirementWeight(first.requirements[0]!)).toBeGreaterThan(cvRequirementWeight(first.requirements[1]!));
+    expect(cvRequirementWeight(reversed.requirements[0]!)).toBeGreaterThan(cvRequirementWeight(reversed.requirements[1]!));
+    const terms = cvRelevanceTerms(first.requirements);
+    expect(terms.get("people") ?? 0).toBeGreaterThan(terms.get("own") ?? 0);
+    const reversedTerms = cvRelevanceTerms(reversed.requirements);
+    expect(reversedTerms.get("own") ?? 0).toBeGreaterThan(reversedTerms.get("people") ?? 0);
+    const rows = [{ id: "r1", text: "Own delivery", essential: true },
+      { id: "r2", text: "People leadership", essential: false }];
+    expect(cvPriorityMappingIdentity(rows)).toBe(cvPriorityMappingIdentity([
+      { ...rows[1]!, essential: true }, { ...rows[0]!, essential: false },
+    ]));
+    expect(cvPriorityMappingIdentity(rows)).not.toBe(cvPriorityMappingIdentity([
+      rows[0]!, { ...rows[1]!, text: "Regional strategy" },
+    ]));
+  });
+  it("orders all initial role criteria by the existing recommendation score with stable ties", () => {
+    const initial: CvRubric = { requirements: [
+      { id: "logistics", label: "Travel", quote: "Travel", importance: "essential", category: "logistics" },
+      { id: "delivery-a", label: "Deliver", quote: "Deliver", importance: "desirable", category: "delivery" },
+      { id: "essential-a", label: "Lead", quote: "Lead", importance: "essential", category: "delivery" },
+      { id: "delivery-b", label: "Improve", quote: "Improve", importance: "desirable", category: "delivery" },
+    ], caveats: [] };
+    expect(cvRecommendedPriorityOrder(initial)).toEqual(["essential-a", "delivery-a", "delivery-b", "logistics"]);
+    expect(cvRecommendedPriorityIds(initial)).toEqual(cvRecommendedPriorityOrder(initial));
+  });
   it("restores all manual wording after Feature → Summarise → Feature and keeps first-bullet edits", () => {
     const summarised = projectCvTargetedContent(content, brief([{ entryId: "one", treatment: "summarise" }]));
     expect(summarised.content.sections[0]?.bullets).toEqual(["Led delivery"]);

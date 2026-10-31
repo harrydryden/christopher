@@ -22,7 +22,7 @@ import {
   type CvRubric,
 } from "@col/core/cv-assessment";
 import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "@col/core/cv-tailoring";
-import { CvTargetingBriefSchema, cvSkillSourcePolicy, projectCvWritingLibrary, projectCvWritingPlan } from "@col/core/cv-targeting";
+import { CvTargetingBriefSchema, cvEffectiveRubric, cvEssentialOmissionIds, cvPriorityMappingIdentity, cvRankedPriorityChoices, cvSkillSourcePolicy, projectCvWritingLibrary, projectCvWritingPlan } from "@col/core/cv-targeting";
 import { cvTargetingRubricKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { separateCvModelSkillProposals, type CvPendingSkillProposal } from "@col/core/cv-pending-skills";
 import { cvSemanticAuditIdentity } from "@col/core/cv-semantic-audit";
@@ -332,7 +332,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       // This build's own rubric first, then the task's, then the parent's for the same description:
       // a direct edit whose checkpoint the interface stripped still takes its parent's rubric
       // before it pays for a new one.
-      const reused = read.discarded && draft.targetingBrief ? undefined
+      const briefSourceRubric = draft.targetingBrief
+        ? CvTargetingBriefSchema.parse(draft.targetingBrief).priority.rubric : undefined;
+      const trustedBriefRubric = briefSourceRubric
+        ? validateCvRubric(draft.jobDescription, briefSourceRubric) : undefined;
+      const reused = trustedBriefRubric
+        ? reusedCvRubric({ ...draft, buildCheckpoint: { ...checkpoint, rubric: trustedBriefRubric } }, parent, trustedBriefRubric)
+        : read.discarded && draft.targetingBrief ? undefined
         : reusedCvRubric({ ...draft, buildCheckpoint: checkpoint }, parent, sourceRubric);
       const inputs = await journal.run("load_inputs", {
         libraryVersion: draft.libraryVersion,
@@ -560,11 +566,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         // these two to say a retry will not pay for it again.
         mirror: value => ({ rubric: value, rubricAt: deps.now().toISOString(), attempt }),
       };
-      const rubric: CvRubric = reused
+      const baseRubric: CvRubric = reused
         ? await journal.run("rubric", { reused: reused.reused },
             async () => validateCvRubric(draft.jobDescription, reused.rubric), { status: "skipped" })
         : (await runner.run(rubricStage, { description: draft.jobDescription })).value;
-      if (reused) await runner.save(rubricStage, { description: draft.jobDescription }, rubric);
+      if (reused) await runner.save(rubricStage, { description: draft.jobDescription }, baseRubric);
+      const rubric: CvRubric = inputs.brief?.priority.requirements
+        ? cvEffectiveRubric(baseRubric, inputs.brief.priority.requirements) : baseRubric;
 
       // ---- The evidence plan and the optional questions ---------------------------------------
       /** A saved plan is candidate data only: its rubric and evidence are checked before reuse. */
@@ -591,7 +599,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         }
         return undefined;
       };
-      let tailoringPlan: CvTailoringPlan | undefined = checkpoint.tailoringPlan;
+      const intendedMapping = inputs.brief?.priority.requirements
+        ? cvRankedPriorityChoices(baseRubric, inputs.brief.priority.requirements)
+        : cvRankedPriorityChoices(baseRubric);
+      const heldMapping = inputs.brief?.priority.mappedRequirements ?? cvRankedPriorityChoices(baseRubric);
+      const heldPlanMatches = !inputs.brief || cvPriorityMappingIdentity(heldMapping) === cvPriorityMappingIdentity(intendedMapping);
+      let tailoringPlan: CvTailoringPlan | undefined = heldPlanMatches ? checkpoint.tailoringPlan : undefined;
       if (checkpoint.tailoringEnabled && !inputs.reusedContent) {
         const planStage: CvStage<{ rubric: CvRubric; library: typeof library }, CvTailoringPlan> = {
           name: "plan", admission: "plan", motion: "plan_evidence",
@@ -615,7 +628,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         const planInputs = { rubric, library: fullLibrary };
         // A version 1 checkpoint carries its plan without a key; it was validated against this
         // rubric and library when it was made, and is checked again here.
-        const legacyPlan = !checkpoint.stages?.plan && tailoringPlan ? tailoringPlan : undefined;
+        // The confirmation action discards this mirror when requirement meaning changes.
+        // Rank/essential-only changes leave its cited evidence valid, even though the stage key
+        // changes for the new writing and scoring weights.
+        const legacyPlan = tailoringPlan;
         const ownPlan = runner.lookup(planStage, planInputs) ?? (legacyPlan ? validatePlan(legacyPlan, planInputs) : undefined);
         // An improvement rebuilt from the same Library and rubric plans nothing new: its parent's plan stands.
         const inherited = ownPlan ? undefined : await parentPlan();
@@ -627,15 +643,31 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         } else {
           tailoringPlan = (await runner.run(planStage, planInputs)).value;
         }
+        if (inputs.brief) await save({ targetingBrief: CvTargetingBriefSchema.parse({ ...inputs.brief,
+          priority: { ...inputs.brief.priority, mappedRequirements: intendedMapping } }) });
         // The factual mapping is produced once from the complete, confirmed source snapshot.
         // It is durable before the user chooses emphasis or omissions; continuation projects that
         // same mapping onto the eligible writing view without a second planner call.
         if (inputs.brief) {
-          const rubricKey = cvTargetingRubricKey(inputs.brief.source, rubric, draft.model, prompts);
+          const rubricKey = cvTargetingRubricKey(inputs.brief.source, baseRubric, draft.model, prompts);
           if (inputs.brief.priority.state !== "confirmed" || inputs.brief.priority.rubricKey !== rubricKey) {
             const pending = CvTargetingBriefSchema.parse({ ...inputs.brief, priority: {
-              state: "awaiting_priorities", rubric, rubricKey,
+              state: "awaiting_priorities", rubric: baseRubric, rubricKey,
               emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [],
+              mappedRequirements: intendedMapping,
+              ...(inputs.brief.priority.requirements ? {
+                requirements: cvRankedPriorityChoices(baseRubric, inputs.brief.priority.requirements),
+              } : {}),
+            } });
+            await save({ status: "awaiting_priorities", targetingBrief: pending,
+              buildStage: null, error: null, failure: null, buildCheckpoint: checkpoint });
+            return { draftId, awaitingPriorities: true };
+          }
+          const omitted = cvEssentialOmissionIds(tailoringPlan, rubric, library);
+          if (omitted.some(id => !inputs.brief!.priority.acknowledgedEssentialOmissionIds.includes(id))) {
+            const pending = CvTargetingBriefSchema.parse({ ...inputs.brief, priority: {
+              ...inputs.brief.priority, state: "awaiting_priorities", confirmationKey: undefined,
+              mappedRequirements: intendedMapping,
             } });
             await save({ status: "awaiting_priorities", targetingBrief: pending,
               buildStage: null, error: null, failure: null, buildCheckpoint: checkpoint });
@@ -843,7 +875,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           try {
             const reused = createCvAssessment({ content: candidate, description: draft.jobDescription,
               library: fullLibrary, rubric, review: priorReview.data, model: draft.model, pageCount,
-              now: deps.now(), ...(fullTailoringPlan ? { plan: fullTailoringPlan } : {}) });
+              now: deps.now(), ...(fullTailoringPlan ? { plan: fullTailoringPlan } : {}),
+              ...(inputs.brief?.priority.requirements ? { priorityOverlay: { sourceRubric: baseRubric, requirements: inputs.brief.priority.requirements } } : {}) });
             semanticAuditCache = { identity: semanticIdentity!, review: priorReview.data };
             await journal.record("assemble", { pageCount, reused: true }, "skipped");
             return reused;
@@ -1014,6 +1047,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               pageCount,
               now: deps.now(),
               ...(fullTailoringPlan ? { plan: fullTailoringPlan } : {}),
+              ...(inputs.brief?.priority.requirements ? { priorityOverlay: { sourceRubric: baseRubric, requirements: inputs.brief.priority.requirements } } : {}),
             });
           } catch (error) {
             // Every quote is checked against its source here; an assessment that cited something

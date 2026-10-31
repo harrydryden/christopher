@@ -153,6 +153,8 @@ export async function decideCvPendingSkill(draftId: string, proposalId: string,
       const nextBrief = brief ? CvTargetingBriefSchema.parse({ ...brief,
         source: cvTargetingSource(newVersion, newSnapshot, draft.jobDescription),
         priority: { state: "unprepared", emphasisRequirementIds: brief.priority.emphasisRequirementIds,
+          ...(brief.priority.rubric ? { rubric: brief.priority.rubric } : {}),
+          ...(brief.priority.requirements ? { requirements: brief.priority.requirements } : {}),
           acknowledgedEssentialOmissionIds: [] } }) : null;
       const revision = await nextCvRevision(tx, draft, { spare: draftId });
       const { id: _id, createdAt: _created, assessment: _assessment, finalisedAt: _finalised,

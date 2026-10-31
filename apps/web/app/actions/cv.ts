@@ -14,7 +14,8 @@ import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvW
   cvHighlightedSkillRows, cvSkillEvidenceRows, cvSkillSuggestionInputHash,
   type AppSettings, type CvContent, type CvWritingPreferences } from "@col/core";
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@col/core/cv-gap-quiz";
-import { CvTargetingBriefSchema, CvTargetingChoicesSchema, cvEssentialOmissionIds, validateCvTargetingEntries,
+import { CvTargetingBriefSchema, CvTargetingChoicesSchema, cvMappedEssentialOmissionIds,
+  cvRankedPriorityChoices, cvEffectiveRubric, cvPriorityMappingIdentity, validateCvTargetingEntries,
   projectCvTargetedContent, projectCvWritingLibrary, cvEligibleSkillLibrary, cvSkillSourcePolicy,
   cvTargetedSummaryFinalisationIssue } from "@col/core/cv-targeting";
 import { cvTargetingAdoptionKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
@@ -690,10 +691,16 @@ export async function saveCvDraft(
     const targetingChoices = form.has("targetingChoices")
       ? CvTargetingChoicesSchema.parse(JSON.parse(String(form.get("targetingChoices")))) : null;
     const storedTargeting = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+    const storedRequirements = storedTargeting ? displayedPriorityRows(storedTargeting) : null;
+    const submittedRequirements = targetingChoices?.requirements && storedTargeting?.priority.rubric
+      ? cvRankedPriorityChoices(storedTargeting.priority.rubric, targetingChoices.requirements) : null;
     const changedTargetingChoices = targetingChoices && storedTargeting
       && JSON.stringify(targetingChoices.entries) === JSON.stringify(storedTargeting.entries)
       && JSON.stringify(targetingChoices.presentation) === JSON.stringify(storedTargeting.presentation)
-      && JSON.stringify(targetingChoices.emphasisRequirementIds) === JSON.stringify(storedTargeting.priority.emphasisRequirementIds)
+      && JSON.stringify(submittedRequirements ?? storedRequirements) === JSON.stringify(storedRequirements)
+      && (submittedRequirements
+        ? JSON.stringify(targetingChoices.emphasisRequirementIds) === JSON.stringify(submittedRequirements.slice(0, 5).map(row => row.id))
+        : JSON.stringify(targetingChoices.emphasisRequirementIds) === JSON.stringify(storedTargeting.priority.emphasisRequirementIds))
       && JSON.stringify(targetingChoices.acknowledgedEssentialOmissionIds) === JSON.stringify(storedTargeting.priority.acknowledgedEssentialOmissionIds)
       ? null : targetingChoices;
     const targetingExpectedSource = changedTargetingChoices
@@ -755,7 +762,11 @@ export async function saveCvDraft(
         .limit(1);
       if (building) throw new UserFacingError("This CV is already being rebuilt.");
       let nextBrief = source.targetingBrief ? CvTargetingBriefSchema.parse(source.targetingBrief) : null;
+      let changedPriorityMapping = false;
+      let changedPriorityChoices = false;
+      let changedEntryChoices = false;
       if (changedTargetingChoices) {
+        changedEntryChoices = JSON.stringify(changedTargetingChoices.entries) !== JSON.stringify(nextBrief?.entries);
         const fullLibrary = CvLibrarySchema.parse(source.librarySnapshot);
         const sourceIdentity = cvTargetingSource(source.libraryVersion, fullLibrary, source.jobDescription);
         if (JSON.stringify(sourceIdentity) !== JSON.stringify(targetingExpectedSource)
@@ -765,8 +776,24 @@ export async function saveCvDraft(
           throw new UserFacingError("A selected Experience entry changed. Reload this CV.");
         try { validateCvTargetingEntries(fullLibrary, changedTargetingChoices.entries); }
         catch (error) { throw new UserFacingError((error as Error).message); }
-        const rubric = source.assessment?.rubric ?? nextBrief?.priority.rubric ?? source.buildCheckpoint?.sourceRubric;
+        const rubric = nextBrief
+          ? nextBrief.priority.rubric ?? source.buildCheckpoint?.sourceRubric
+          : source.buildCheckpoint?.sourceRubric ?? source.assessment?.rubric;
         if (!rubric) throw new UserFacingError("Check this CV before changing its role priorities.");
+        const previousRequirements = nextBrief ? displayedPriorityRows(nextBrief) ?? cvRankedPriorityChoices(rubric)
+          : cvRankedPriorityChoices(rubric);
+        const requirements = cvRankedPriorityChoices(rubric, changedTargetingChoices.requirements ?? previousRequirements);
+        const proposedEmphasis = requirements.slice(0, 5).map(row => row.id);
+        if (changedTargetingChoices.requirements
+          && JSON.stringify(proposedEmphasis) !== JSON.stringify(changedTargetingChoices.emphasisRequirementIds))
+          throw new UserFacingError("The ranked priorities changed. Reload this CV before saving.");
+        changedPriorityChoices = JSON.stringify(requirements) !== JSON.stringify(previousRequirements);
+        const emphasis = changedPriorityChoices ? proposedEmphasis
+          : nextBrief?.priority.emphasisRequirementIds ?? changedTargetingChoices.emphasisRequirementIds;
+        const mappedRequirements = nextBrief?.priority.mappedRequirements;
+        const mappedRubric = mappedRequirements ? cvEffectiveRubric(rubric, mappedRequirements) : rubric;
+        changedPriorityMapping = cvPriorityMappingIdentity(requirements)
+          !== cvPriorityMappingIdentity(mappedRequirements ?? cvRankedPriorityChoices(rubric));
         const rubricKey = nextBrief?.priority.rubricKey ?? cvTargetingAdoptionKey(sourceIdentity, rubric, source.model,
           source.assessment?.version ?? "stored-rubric");
         if (rubricKey !== targetingExpectedRubricKey)
@@ -774,19 +801,24 @@ export async function saveCvDraft(
         const [storedPlan] = await tx.select({ plan: cvTailoringPlans.plan }).from(cvTailoringPlans)
           .where(and(eq(cvTailoringPlans.draftId, id), eq(cvTailoringPlans.userId, user.id))).limit(1);
         const fullPlan = storedPlan?.plan ?? source.buildCheckpoint?.tailoringPlan;
-        if (!fullPlan) throw new UserFacingError("Check this CV to map its role evidence before changing sections.");
-        const validatedPlan = validateCvTailoringPlan(CvTailoringPlanSchema.parse(fullPlan), rubric,
-          cvTailoringEvidence(fullLibrary), fullLibrary);
-        const omitted = cvEssentialOmissionIds(validatedPlan, rubric, projectCvWritingLibrary(fullLibrary,
+        const proposedRubric = changedTargetingChoices.requirements ? cvEffectiveRubric(rubric, requirements) : mappedRubric;
+        const validatedPlan = fullPlan ? validateCvTailoringPlan(CvTailoringPlanSchema.parse(fullPlan), mappedRubric,
+          cvTailoringEvidence(fullLibrary), fullLibrary) : null;
+        // A saved priority edit may have invalidated the old map. A further free edit remains
+        // possible; only a fresh Check can establish evidence for its new criterion wording.
+        const omitted = validatedPlan ? cvMappedEssentialOmissionIds(validatedPlan, mappedRubric, proposedRubric, projectCvWritingLibrary(fullLibrary,
           CvTargetingBriefSchema.parse({ version: 1, source: sourceIdentity, entries: changedTargetingChoices.entries,
             presentation: changedTargetingChoices.presentation,
             priority: { state: "awaiting_priorities", rubric, rubricKey,
-              emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [] } })));
+              emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [] } }))) : [];
         if (omitted.some(requirementId => !changedTargetingChoices.acknowledgedEssentialOmissionIds.includes(requirementId))
           || changedTargetingChoices.acknowledgedEssentialOmissionIds.some(requirementId => !omitted.includes(requirementId)))
           throw new UserFacingError("Review the exact essential requirements affected by omitted evidence, then acknowledge them.");
         const priority = { state: "confirmed" as const, rubric, rubricKey,
-          emphasisRequirementIds: changedTargetingChoices.emphasisRequirementIds,
+          emphasisRequirementIds: emphasis,
+          ...(changedPriorityChoices ? { requirements }
+            : nextBrief?.priority.requirements ? { requirements: nextBrief.priority.requirements } : {}),
+          mappedRequirements: mappedRequirements ?? cvRankedPriorityChoices(rubric),
           acknowledgedEssentialOmissionIds: changedTargetingChoices.acknowledgedEssentialOmissionIds };
         const prepared = CvTargetingBriefSchema.parse({ version: 1, source: sourceIdentity,
           entries: changedTargetingChoices.entries, presentation: changedTargetingChoices.presentation, priority });
@@ -854,6 +886,7 @@ export async function saveCvDraft(
               ...(rubricCheckpoint ?? {}),
             },
             reviewDecision: null,
+            semanticAuditCache: null,
             targetingBrief: nextBrief,
           })
           .returning();
@@ -885,7 +918,8 @@ export async function saveCvDraft(
       }
       const revision = await nextCvRevision(tx, source, { spare: id });
       if (form.get("rememberWording") === "on") await rememberWording(tx, user.id, source.content!, content);
-      const assessment = source.assessment && cvAssessmentCurrent(source.assessment, content, source.jobDescription, directSnapshot)
+      const assessment = !changedPriorityChoices && !changedEntryChoices && source.assessment
+        && cvAssessmentCurrent(source.assessment, content, source.jobDescription, directSnapshot)
         ? source.assessment : null;
       const [saved] = await tx
         .insert(cvDrafts)
@@ -904,12 +938,13 @@ export async function saveCvDraft(
           buildCheckpoint: rubricCheckpoint,
           assessment,
           reviewDecision: assessment && cvReviewDecisionCurrent(source.reviewDecision, assessment) ? source.reviewDecision : null,
+          semanticAuditCache: changedPriorityChoices || changedEntryChoices ? null : source.semanticAuditCache,
           targetingBrief: nextBrief,
         })
         .returning();
       // The planner's evidence can be reused across quick edits of the same snapshot. Changes
       // that accept skills or choose fresh supporting evidence deliberately do not carry it.
-      if (!skillLibrary && !addedSupportIds.length) {
+      if (!skillLibrary && !addedSupportIds.length && !changedPriorityMapping && !changedEntryChoices) {
         const [plan] = await tx.select({ plan: cvTailoringPlans.plan }).from(cvTailoringPlans)
           .where(and(eq(cvTailoringPlans.draftId, id), eq(cvTailoringPlans.userId, user.id))).limit(1);
         if (plan) await tx.insert(cvTailoringPlans).values({ draftId: saved!.id, userId: user.id, plan: plan.plan });
@@ -928,6 +963,18 @@ export async function saveCvDraft(
 }
 
 /** Evidence revisions keep valid treatment choices but require a fresh, exact role mapping. */
+/** Match the order shown to a legacy CV before treating a page-only edit as a new ranking. */
+function displayedPriorityRows(brief: ReturnType<typeof CvTargetingBriefSchema.parse>) {
+  const rubric = brief.priority.rubric;
+  if (!rubric) return null;
+  const rows = cvRankedPriorityChoices(rubric, brief.priority.requirements);
+  if (brief.priority.requirements || brief.priority.state !== "confirmed") return rows;
+  const byId = new Map(rows.map(row => [row.id, row]));
+  const order = [...brief.priority.emphasisRequirementIds,
+    ...rows.map(row => row.id).filter(id => !brief.priority.emphasisRequirementIds.includes(id))];
+  return order.map(id => byId.get(id)!);
+}
+
 function rebaseTargetingBrief(brief: ReturnType<typeof CvTargetingBriefSchema.parse> | null,
   version: number, snapshot: ReturnType<typeof CvLibrarySchema.parse>, description: string) {
   if (!brief) return null;
@@ -938,6 +985,7 @@ function rebaseTargetingBrief(brief: ReturnType<typeof CvTargetingBriefSchema.pa
   return CvTargetingBriefSchema.parse({ ...brief, source,
     entries: brief.entries.filter(row => snapshot.entries.some(entry => entry.id === row.entryId)),
     priority: { state: "unprepared", emphasisRequirementIds: brief.priority.emphasisRequirementIds,
+      ...(brief.priority.requirements ? { requirements: brief.priority.requirements } : {}),
       acknowledgedEssentialOmissionIds: [] },
   });
 }

@@ -1,0 +1,762 @@
+{
+  "kind": "cv-preparation-live-probe",
+  "at": "2026-10-31T15:20:22.948Z",
+  "source": "provider",
+  "syntheticCandidate": true,
+  "promptSetVersion": "8843adc485a0",
+  "model": "claude-fable-5-1",
+  "outcome": "passed",
+  "sourceRubric": {
+    "requirements": [
+      {
+        "id": "r1",
+        "label": "Own service delivery across a portfolio of twelve sites",
+        "quote": "own service delivery for a portfolio of twelve sites",
+        "importance": "responsibility",
+        "category": "delivery"
+      },
+      {
+        "id": "r2",
+        "label": "Lead a team of four operations managers",
+        "quote": "lead a team of four operations managers",
+        "importance": "responsibility",
+        "category": "experience"
+      },
+      {
+        "id": "r3",
+        "label": "Own the portfolio operational plan and report performance monthly to the executive team",
+        "quote": "You will own the operational plan for the portfolio and report performance to the executive team each month.",
+        "importance": "responsibility",
+        "category": "delivery"
+      },
+      {
+        "id": "r4",
+        "label": "Lead continuous improvement across scheduling, rostering and supplier performance",
+        "quote": "You will lead continuous improvement work across scheduling, rostering and supplier performance.",
+        "importance": "responsibility",
+        "category": "delivery"
+      },
+      {
+        "id": "r5",
+        "label": "Partner with finance to build the annual budget and track monthly variance",
+        "quote": "You will partner with finance to build the annual budget and to track monthly variance.",
+        "importance": "responsibility",
+        "category": "delivery"
+      },
+      {
+        "id": "r6",
+        "label": "At least five years of experience leading operations in a regulated environment",
+        "quote": "Candidates must have at least five years of experience leading operations in a regulated environment.",
+        "importance": "essential",
+        "category": "experience"
+      },
+      {
+        "id": "r7",
+        "label": "Ability to build and interpret reporting in SQL or a comparable analytics tool",
+        "quote": "You must be able to build and interpret reporting in SQL or a comparable analytics tool.",
+        "importance": "essential",
+        "category": "skills"
+      },
+      {
+        "id": "r8",
+        "label": "Experience of supplier negotiation",
+        "quote": "Experience of supplier negotiation is preferred.",
+        "importance": "desirable",
+        "category": "experience"
+      },
+      {
+        "id": "r9",
+        "label": "Degree or equivalent professional qualification",
+        "quote": "A degree or equivalent professional qualification is required.",
+        "importance": "essential",
+        "category": "education"
+      }
+    ],
+    "caveats": [
+      "The description does not specify which regulated environment or sector is meant by 'regulated environment', so this should be interpreted broadly.",
+      "No degree subject or specific professional qualification is named; any degree or equivalent professional qualification should satisfy r9.",
+      "No location, working pattern, travel or right-to-work logistics are stated; the twelve-site portfolio implies site visits but this is not explicit.",
+      "Benefits (salary, pension, holiday) were excluded from the rubric as they are not requirements."
+    ]
+  },
+  "userRequirements": [
+    {
+      "id": "u:00000000-0000-4000-8000-000000000031",
+      "text": "Lead weekly operational performance reviews",
+      "essential": true
+    },
+    {
+      "id": "r9",
+      "text": "Lead multi-site service delivery",
+      "essential": false
+    },
+    {
+      "id": "r8",
+      "text": "Experience of supplier negotiation",
+      "essential": false
+    },
+    {
+      "id": "r7",
+      "text": "Ability to build and interpret reporting in SQL or a comparable analytics tool",
+      "essential": true
+    },
+    {
+      "id": "r6",
+      "text": "At least five years of experience leading operations in a regulated environment",
+      "essential": true
+    },
+    {
+      "id": "r5",
+      "text": "Partner with finance to build the annual budget and track monthly variance",
+      "essential": false
+    },
+    {
+      "id": "r4",
+      "text": "Lead continuous improvement across scheduling, rostering and supplier performance",
+      "essential": false
+    },
+    {
+      "id": "r3",
+      "text": "Own the portfolio operational plan and report performance monthly to the executive team",
+      "essential": false
+    },
+    {
+      "id": "r2",
+      "text": "Lead a team of four operations managers",
+      "essential": false
+    }
+  ],
+  "rubric": {
+    "requirements": [
+      {
+        "id": "u:00000000-0000-4000-8000-000000000031",
+        "label": "Lead weekly operational performance reviews",
+        "quote": "Lead weekly operational performance reviews",
+        "importance": "essential",
+        "category": "delivery",
+        "origin": "user",
+        "customised": true,
+        "rank": 1
+      },
+      {
+        "id": "r9",
+        "label": "Lead multi-site service delivery",
+        "quote": "A degree or equivalent professional qualification is required.",
+        "importance": "desirable",
+        "category": "education",
+        "origin": "role",
+        "customised": true,
+        "rank": 2
+      },
+      {
+        "id": "r8",
+        "label": "Experience of supplier negotiation",
+        "quote": "Experience of supplier negotiation is preferred.",
+        "importance": "desirable",
+        "category": "experience",
+        "origin": "role",
+        "customised": false,
+        "rank": 3
+      },
+      {
+        "id": "r7",
+        "label": "Ability to build and interpret reporting in SQL or a comparable analytics tool",
+        "quote": "You must be able to build and interpret reporting in SQL or a comparable analytics tool.",
+        "importance": "essential",
+        "category": "skills",
+        "origin": "role",
+        "customised": false,
+        "rank": 4
+      },
+      {
+        "id": "r6",
+        "label": "At least five years of experience leading operations in a regulated environment",
+        "quote": "Candidates must have at least five years of experience leading operations in a regulated environment.",
+        "importance": "essential",
+        "category": "experience",
+        "origin": "role",
+        "customised": false,
+        "rank": 5
+      },
+      {
+        "id": "r5",
+        "label": "Partner with finance to build the annual budget and track monthly variance",
+        "quote": "You will partner with finance to build the annual budget and to track monthly variance.",
+        "importance": "responsibility",
+        "category": "delivery",
+        "origin": "role",
+        "customised": false,
+        "rank": 6
+      },
+      {
+        "id": "r4",
+        "label": "Lead continuous improvement across scheduling, rostering and supplier performance",
+        "quote": "You will lead continuous improvement work across scheduling, rostering and supplier performance.",
+        "importance": "responsibility",
+        "category": "delivery",
+        "origin": "role",
+        "customised": false,
+        "rank": 7
+      },
+      {
+        "id": "r3",
+        "label": "Own the portfolio operational plan and report performance monthly to the executive team",
+        "quote": "You will own the operational plan for the portfolio and report performance to the executive team each month.",
+        "importance": "responsibility",
+        "category": "delivery",
+        "origin": "role",
+        "customised": false,
+        "rank": 8
+      },
+      {
+        "id": "r2",
+        "label": "Lead a team of four operations managers",
+        "quote": "lead a team of four operations managers",
+        "importance": "responsibility",
+        "category": "experience",
+        "origin": "role",
+        "customised": false,
+        "rank": 9
+      }
+    ],
+    "caveats": [
+      "The description does not specify which regulated environment or sector is meant by 'regulated environment', so this should be interpreted broadly.",
+      "No degree subject or specific professional qualification is named; any degree or equivalent professional qualification should satisfy r9.",
+      "No location, working pattern, travel or right-to-work logistics are stated; the twelve-site portfolio implies site visits but this is not explicit.",
+      "Benefits (salary, pension, holiday) were excluded from the rubric as they are not requirements."
+    ]
+  },
+  "plan": {
+    "requirements": [
+      {
+        "requirementId": "u:00000000-0000-4000-8000-000000000031",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-head:row:1",
+            "quote": "running a weekly performance review against published measures"
+          }
+        ],
+        "reason": "Current role explicitly runs a weekly performance review against published measures for the operations team."
+      },
+      {
+        "requirementId": "r9",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-head:row:0",
+            "quote": "Own the operational plan for eleven community clinics"
+          },
+          {
+            "sourceId": "entry:ev-manager:row:0",
+            "quote": "Ran day-to-day operations for four clinics"
+          },
+          {
+            "sourceId": "entry:ev-calder:row:0",
+            "quote": "Led a service desk of nine covering two distribution centres and a national customer base"
+          },
+          {
+            "sourceId": "source:profile",
+            "quote": "accountable for multi-site service delivery"
+          }
+        ],
+        "reason": "Multi-site service delivery led across eleven clinics, four clinics and two distribution centres in three roles."
+      },
+      {
+        "requirementId": "r8",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-calder:row:2",
+            "quote": "Negotiated supplier renewals for courier and warehousing contracts worth £2m a year"
+          },
+          {
+            "sourceId": "entry:ev-skills:skill:4",
+            "quote": "Vendor management"
+          }
+        ],
+        "reason": "Explicitly negotiated supplier renewals for £2m/year courier and warehousing contracts."
+      },
+      {
+        "requirementId": "r7",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-manager:row:1",
+            "quote": "Built the first operational reporting pack in SQL and Power BI, replacing a manual month-end spreadsheet"
+          },
+          {
+            "sourceId": "entry:ev-skills:skill:0",
+            "quote": "SQL"
+          },
+          {
+            "sourceId": "entry:ev-skills:skill:1",
+            "quote": "Power BI"
+          }
+        ],
+        "reason": "Built an operational reporting pack in SQL and Power BI, with both tools listed as used day to day."
+      },
+      {
+        "requirementId": "r6",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "source:profile",
+            "quote": "twelve years across regulated healthcare and logistics"
+          },
+          {
+            "sourceId": "entry:ev-manager:row:0",
+            "quote": "Ran day-to-day operations for four clinics, owning the rota, the patient flow and the site budget"
+          },
+          {
+            "sourceId": "entry:ev-head:row:1",
+            "quote": "Lead four operations managers and a shared scheduling team of eighteen"
+          }
+        ],
+        "reason": "Operations Manager then Head of Operations in regulated healthcare from Jan 2018 to present exceeds five years leading operations."
+      },
+      {
+        "requirementId": "r5",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-head:row:3",
+            "quote": "Partner with finance on the annual budget and on monthly variance across a £14m cost base"
+          }
+        ],
+        "reason": "Currently partners with finance on the annual budget and monthly variance over a £14m cost base."
+      },
+      {
+        "requirementId": "r4",
+        "status": "partial",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-head:row:2",
+            "quote": "Rebuilt rostering around a single demand model, which cut agency spend by 22% in the first year"
+          },
+          {
+            "sourceId": "entry:ev-head:row:4",
+            "quote": "Introduced a supplier scorecard covering the eight largest contracts, with quarterly reviews against agreed service levels"
+          },
+          {
+            "sourceId": "entry:ev-skills:skill:3",
+            "quote": "Process mapping"
+          }
+        ],
+        "reason": "Rostering rebuild and supplier scorecard show improvement work; scheduling-specific improvement is not explicitly evidenced."
+      },
+      {
+        "requirementId": "r3",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-head:row:0",
+            "quote": "Own the operational plan for eleven community clinics, reporting delivery, cost and quality to the executive team every month"
+          }
+        ],
+        "reason": "Owns the operational plan for eleven clinics and reports to the executive team monthly."
+      },
+      {
+        "requirementId": "r2",
+        "status": "demonstrated",
+        "evidence": [
+          {
+            "sourceId": "entry:ev-head:row:1",
+            "quote": "Lead four operations managers"
+          }
+        ],
+        "reason": "Current role explicitly leads four operations managers."
+      }
+    ],
+    "gapQuestions": []
+  },
+  "recommendedEmphasis": [
+    "u:00000000-0000-4000-8000-000000000031",
+    "r7",
+    "r6",
+    "r9",
+    "r8"
+  ],
+  "essentialOmissions": [],
+  "validation": {
+    "exactJobQuotes": true,
+    "completeRequirementMapping": true,
+    "exactEvidenceQuotes": true
+  },
+  "calls": 2,
+  "costUsd": 0.26200799999999996,
+  "timing": {
+    "rubricMs": 9054,
+    "planningMs": 30415,
+    "totalMs": 39471,
+    "scope": "One local live-provider sample; not a hosted before/after benchmark."
+  },
+  "recordingSha256": "212add1f336fb503672984edb8f8313c534a51e2469a8b5529a965eb15197c73",
+  "transport": {
+    "totalUpperBoundUsd": 1.8621709999999996,
+    "upperBoundsUsd": {
+      "fixture": 0,
+      "cv": 1.0328500000000003,
+      "skills": 0.321285,
+      "preparation": 0.5080359999999999
+    },
+    "attempts": {
+      "fixture": 0,
+      "cv": 6,
+      "skills": 4,
+      "preparation": 4
+    },
+    "events": [
+      {
+        "phase": "cv",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.27108,
+        "complete": true,
+        "usage": {
+          "input_tokens": 324,
+          "output_tokens": 3258,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 5898,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 5898,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.239865
+      },
+      {
+        "phase": "cv",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 2.4322,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1747,
+          "output_tokens": 3249,
+          "cache_read_input_tokens": 5898,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.181394
+      },
+      {
+        "phase": "cv",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.83868,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1327,
+          "output_tokens": 2533,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4364,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4364,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.19447
+      },
+      {
+        "phase": "cv",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.79048,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1046,
+          "output_tokens": 1939,
+          "cache_read_input_tokens": 4364,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.108501
+      },
+      {
+        "phase": "skills",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.36356,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1316,
+          "output_tokens": 1136,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1083,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1083,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.083498
+      },
+      {
+        "phase": "skills",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.48816,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1955,
+          "output_tokens": 939,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 676,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 676,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.07495
+      },
+      {
+        "phase": "cv",
+        "attempt": 5,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.81368,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1327,
+          "output_tokens": 3006,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4160,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 4160,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 5,
+        "kind": "settled",
+        "costUsd": 0.21557
+      },
+      {
+        "phase": "cv",
+        "attempt": 6,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.76548,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1046,
+          "output_tokens": 1631,
+          "cache_read_input_tokens": 4160,
+          "cache_creation_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "cv",
+        "attempt": 6,
+        "kind": "settled",
+        "costUsd": 0.09305
+      },
+      {
+        "phase": "skills",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.36356,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1316,
+          "output_tokens": 1165,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1083,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1083,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.084947
+      },
+      {
+        "phase": "skills",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.48552,
+        "complete": true,
+        "usage": {
+          "input_tokens": 1929,
+          "output_tokens": 1003,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 676,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 676,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "skills",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.07789
+      },
+      {
+        "phase": "preparation",
+        "attempt": 1,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.73856,
+        "complete": true,
+        "usage": {
+          "input_tokens": 285,
+          "output_tokens": 801,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1126,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1126,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 1,
+        "kind": "settled",
+        "costUsd": 0.056975
+      },
+      {
+        "phase": "preparation",
+        "attempt": 2,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.32624,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2604,
+          "output_tokens": 2671,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 2357,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 2357,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 2,
+        "kind": "settled",
+        "costUsd": 0.189053
+      },
+      {
+        "phase": "preparation",
+        "attempt": 3,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 0.73856,
+        "complete": true,
+        "usage": {
+          "input_tokens": 285,
+          "output_tokens": 820,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 1126,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 1126,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 3,
+        "kind": "settled",
+        "costUsd": 0.057925
+      },
+      {
+        "phase": "preparation",
+        "attempt": 4,
+        "kind": "response",
+        "status": 200,
+        "upperBoundUsd": 1.3802,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2772,
+          "output_tokens": 2876,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 2605,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 2605,
+            "ephemeral_1h_input_tokens": 0
+          }
+        },
+        "stopReason": "end_turn"
+      },
+      {
+        "phase": "preparation",
+        "attempt": 4,
+        "kind": "settled",
+        "costUsd": 0.204083
+      }
+    ]
+  }
+}

@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CvTargetingChoices, CvTargetingView } from "@col/core/cv-targeting";
 import { confirmCvTargetingPriorities, reviseFailedCvTargeting } from "@/app/actions/cv-targeting";
-import { selectClass } from "@/components/Field";
+import { selectClass, Textarea } from "@/components/Field";
 import { affectedCvTargetingEssentials, cvTargetingChoiceIssue, initialCvTargetingChoices,
-  normaliseCvTargetingChoices } from "@/lib/cv-targeting-choices";
+  moveCvTargetingRequirement, normaliseCvTargetingChoices, withCvTargetingRequirements } from "@/lib/cv-targeting-choices";
 export { cvTargetingChoiceIssue, initialCvTargetingChoices, normaliseCvTargetingChoices } from "@/lib/cv-targeting-choices";
 
 /** Browser-safe controls. Labels and rubric come from an account-scoped server view. */
@@ -14,6 +14,43 @@ export function CvTargetingControls({ view, value, onChange, disabled = false }:
   view: CvTargetingView; value: CvTargetingChoices; onChange: (next: CvTargetingChoices) => void; disabled?: boolean;
 }) {
   const essentials = affectedCvTargetingEssentials(view, value);
+  const requirements = value.requirements ?? initialCvTargetingChoices(view).requirements ?? [];
+  const requirementTable = useRef<HTMLTableElement>(null);
+  const lastVisibleWidth = useRef(0);
+  const newRequirementToFocus = useRef<string | null>(null);
+  const fitRequirementTextareas = useCallback(() => {
+    if (!requirementTable.current?.getBoundingClientRect().width) return;
+    const fields = [...(requirementTable.current?.querySelectorAll<HTMLTextAreaElement>("textarea[data-requirement-id]") ?? [])];
+    fields.forEach(field => { field.style.height = "auto"; });
+    const heights = fields.map(field => Math.max(44, field.scrollHeight + field.offsetHeight - field.clientHeight));
+    fields.forEach((field, index) => { field.style.height = `${heights[index]}px`; });
+  }, []);
+  useLayoutEffect(fitRequirementTextareas, [fitRequirementTextareas, requirements]);
+  useEffect(() => {
+    window.addEventListener("resize", fitRequirementTextareas);
+    return () => window.removeEventListener("resize", fitRequirementTextareas);
+  }, [fitRequirementTextareas]);
+  useEffect(() => {
+    const table = requirementTable.current;
+    if (!table || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width === lastVisibleWidth.current) return;
+      lastVisibleWidth.current = width;
+      if (width > 0) fitRequirementTextareas();
+    });
+    observer.observe(table);
+    return () => observer.disconnect();
+  }, [fitRequirementTextareas]);
+  useEffect(() => {
+    const id = newRequirementToFocus.current;
+    if (!id) return;
+    const field = requirementTable.current?.querySelector<HTMLTextAreaElement>(`textarea[data-requirement-id="${id}"]`);
+    if (field) { field.focus(); newRequirementToFocus.current = null; }
+  }, [requirements]);
+  const sourcePriorities = new Map(view.priorities.map(item => [item.id, item]));
+  const changeRequirements = (next: typeof requirements) => onChange(normaliseCvTargetingChoices(view,
+    withCvTargetingRequirements(value, next)));
   return <section className="space-y-4 border-2 border-line bg-raised p-4" aria-labelledby="cv-targeting-title">
     <div><h2 id="cv-targeting-title" className="text-18 font-semibold">Target this CV</h2>
       <p className="mt-1 text-14 text-muted">Choose what to feature or omit for this application. Experience and Interests can also be summarised; choose individual skills in Write. Experience stays intact. Save stores your current wording and these choices together; Check and Rewrite remain separate.</p></div>
@@ -34,12 +71,53 @@ export function CvTargetingControls({ view, value, onChange, disabled = false }:
       </table>
     </fieldset>
     <fieldset className="space-y-2" disabled={disabled}><legend className="font-medium">Role priorities</legend>
-      <p className="text-12 text-muted">Choose three to five priorities, or all available when fewer than three were identified. Every essential remains in the assessment.</p>
-      {view.priorities.map(item => <label key={item.id} className="flex gap-2 text-14"><input type="checkbox"
-        checked={value.emphasisRequirementIds.includes(item.id)}
-        onChange={event => onChange({ ...value, emphasisRequirementIds: event.target.checked
-          ? [...value.emphasisRequirementIds, item.id] : value.emphasisRequirementIds.filter(id => id !== item.id) })} />
-        <span>{item.label}{item.importance === "essential" ? " · essential" : ""}</span></label>)}
+      <p className="text-12 text-muted">1 is highest. Rank guides emphasis; Essential requests must-have coverage where evidence supports it. Missing evidence is reported, never invented. Your edits apply to this CV.</p>
+      <table ref={requirementTable} className="w-full table-fixed border border-line-muted text-left text-14">
+        <thead className="bg-sunken text-13 text-muted"><tr>
+          <th scope="col" className="w-16 px-2 py-2 font-medium">Rank</th>
+          <th scope="col" className="px-2 py-2 font-medium">Requirement</th>
+          <th scope="col" className="hidden w-32 px-2 py-2 font-medium md:table-cell">Essential</th>
+          <th scope="col" className="hidden w-28 px-2 py-2 font-medium md:table-cell">Action</th>
+        </tr></thead>
+        <tbody>{requirements.map((row, index) => {
+          const source = sourcePriorities.get(row.id);
+          const origin = source?.origin ?? (row.id.startsWith("u:") ? "user" : "role");
+          const customised = source?.customised || (source && (row.text !== source.text || row.essential !== source.essential));
+          const essentialControl = <select aria-label={`Requirement ${index + 1} essential`} className={`${selectClass} min-h-11`}
+            value={row.essential ? "yes" : "no"}
+            onChange={event => changeRequirements(requirements.map(item => item.id === row.id
+              ? { ...item, essential: event.target.value === "yes" } : item))}>
+            <option value="yes">Yes</option><option value="no">No</option>
+          </select>;
+          const removeControl = <button type="button" className="min-h-11 border-2 border-line-muted px-2 text-13 underline disabled:opacity-50"
+            aria-label={`Remove requirement ${index + 1}`} disabled={requirements.length === 1}
+            onClick={() => changeRequirements(requirements.filter(item => item.id !== row.id))}>Remove</button>;
+          return <tr key={row.id} className="border-t border-line-muted">
+            <th scope="row" className="px-2 py-2 align-top font-normal"><select aria-label={`Requirement ${index + 1} rank`}
+              className="min-h-11 w-full border-2 border-line-muted bg-bg text-center text-14 text-fg focus:border-line focus:outline-none" value={index + 1}
+              onChange={event => changeRequirements(moveCvTargetingRequirement(requirements, row.id, Number(event.target.value)))}>
+              {requirements.map((_, rank) => <option key={rank} value={rank + 1}>{rank + 1}</option>)}
+            </select></th>
+            <td className="min-w-0 px-2 py-2 align-top"><Textarea aria-label={`Requirement ${index + 1} text`} rows={1}
+              data-requirement-id={row.id} maxLength={250}
+              className="min-h-11" value={row.text}
+              onChange={event => changeRequirements(requirements.map(item => item.id === row.id
+                ? { ...item, text: event.target.value } : item))} />
+              {(origin === "user" || customised) && <p className="mt-1 text-12 text-muted">{origin === "user" ? "Added by you" : "Edited for this CV"}</p>}
+              <div className="mt-2 flex flex-wrap items-center gap-2 md:hidden"><label className="min-w-20 flex-1 text-13">Essential{essentialControl}</label>{removeControl}</div>
+            </td>
+            <td className="hidden px-2 py-2 align-top md:table-cell">{essentialControl}</td>
+            <td className="hidden px-2 py-2 align-top md:table-cell">{removeControl}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+      <div className="flex flex-wrap items-center gap-3"><button type="button"
+        className="min-h-11 border-2 border-line-muted px-3 text-13 font-medium disabled:opacity-50"
+        disabled={requirements.length >= 30}
+        onClick={() => { const id = `u:${crypto.randomUUID()}`; newRequirementToFocus.current = id;
+          changeRequirements([...requirements, { id, text: "", essential: false }]); }}>
+        Add requirement
+      </button><p className="text-12 text-muted">{requirements.length}/30 requirements · keep at least one</p></div>
     </fieldset>
     {essentials.length > 0 && <fieldset className="space-y-2 border border-warning p-3" disabled={disabled}>
       <legend className="font-medium">Check essential requirements</legend>

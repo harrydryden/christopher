@@ -211,7 +211,35 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await evidenceTable.screenshot({ path: "/tmp/cv-targeting-table-mobile.png" });
     await page.getByRole("combobox", { name: "Operations Manager · Northwind Health treatment" }).selectOption("summarise");
     await page.getByRole("combobox", { name: "Service Delivery Lead · Calder Logistics treatment" }).selectOption("omit");
+    // Ranked requirements are editable on a phone and persist as an overlay, preserving the advert.
+    const priorityTable = page.getByRole("group", { name: "Role priorities", exact: true }).getByRole("table");
+    const secondRequirement = await priorityTable.getByRole("textbox", { name: "Requirement 2 text", exact: true }).inputValue();
+    await priorityTable.getByRole("combobox", { name: "Requirement 2 rank", exact: true }).selectOption("1");
+    assert.equal(await priorityTable.getByRole("textbox", { name: "Requirement 1 text", exact: true }).inputValue(), secondRequirement);
+    await priorityTable.getByRole("textbox", { name: "Requirement 1 text", exact: true }).fill("Prioritise operational reporting");
+    await priorityTable.getByRole("combobox", { name: "Requirement 1 essential", exact: true }).selectOption("no");
+    const originalRequirementCount = await priorityTable.getByRole("textbox").count();
+    await page.getByRole("button", { name: "Add requirement", exact: true }).click();
+    await priorityTable.getByRole("textbox", { name: `Requirement ${originalRequirementCount + 1} text`, exact: true }).fill("Lead weekly operational performance reviews");
+    await priorityTable.getByRole("combobox", { name: `Requirement ${originalRequirementCount + 1} essential`, exact: true }).selectOption("yes");
+    await priorityTable.getByRole("button", { name: `Remove requirement ${originalRequirementCount}`, exact: true }).click();
+    const expectedRequirementTexts = await priorityTable.getByRole("textbox").evaluateAll(nodes => nodes.map(node => node.value));
+    assert.equal(expectedRequirementTexts.length, originalRequirementCount);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "priority table must fit a phone");
+    await page.waitForFunction(() => [...document.querySelectorAll('textarea[aria-label^="Requirement "]')]
+      .every(field => field.scrollHeight <= field.clientHeight + 1));
+    await priorityTable.screenshot({ path: "/tmp/cv-priorities-table-mobile.png" });
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await priorityTable.screenshot({ path: "/tmp/cv-priorities-table-desktop.png" });
+    // Hidden panels stay mounted: resize in Review, then reveal Write without losing full text.
+    await page.getByRole("tab", { name: "Review", exact: true }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("tab", { name: "Write", exact: true }).click();
+    await priorityTable.waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('textarea[aria-label^="Requirement "]')]
+      .every(field => field.scrollHeight <= field.clientHeight + 1));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const originalRubric = (await pool.query("select targeting_brief->'priority'->'rubric' as rubric from cv_drafts where id = $1", [targetedDraftId])).rows[0].rubric;
     await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("1");
     await page.getByRole("combobox", { name: "Maximum pages" }).selectOption("2");
     const omittedEssentials = page.getByRole("group", { name: "Check essential requirements" }).getByRole("checkbox");
@@ -227,6 +255,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(targetedConfirmed.targeting_brief.entries.find(item => item.entryId === "ev-manager").treatment, "summarise");
     assert.equal(targetedConfirmed.targeting_brief.entries.find(item => item.entryId === "ev-calder").treatment, "omit");
     assert.ok(targetedConfirmed.targeting_brief.priority.emphasisRequirementIds.length >= 3);
+    assert.deepEqual(targetedConfirmed.targeting_brief.priority.requirements.map(row => row.text), expectedRequirementTexts);
+    assert.equal(targetedConfirmed.targeting_brief.priority.requirements[0].essential, false);
+    assert.equal(targetedConfirmed.targeting_brief.priority.requirements.at(-1).essential, true);
+    assert.match(targetedConfirmed.targeting_brief.priority.requirements.at(-1).id, /^u:/);
+    assert.deepEqual(targetedConfirmed.targeting_brief.priority.rubric, originalRubric);
     const queuedContinuations = (await pool.query("select count(*)::int as count from tasks where type = 'generate_cv' and status = 'queued' and payload->>'draftId' = $1", [targetedDraftId])).rows[0].count;
     assert.equal(queuedContinuations, 1);
     await page.goto(`${baseUrl}/cv/${evidencePausedId}`);

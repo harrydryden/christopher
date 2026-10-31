@@ -23,4 +23,15 @@ describe("revision rubric carry", () => {
     expect(cvRevisionRubricCheckpoint({ jobDescription: role,
       buildCheckpoint: { sourceRubric: { requirements: "invalid" } } }, role)).toBeNull();
   });
+
+  it("carries the immutable role rubric instead of a ranked member-edited assessment", () => {
+    const edited = { ...assessed, requirements: assessed.requirements.map((item, index) =>
+      index === 0 ? { ...item, label: "My revised requirement", origin: "role" as const, customised: true, rank: 1 } : item) };
+    const source = { jobDescription: role, assessment: { rubric: edited }, targetingBrief: { priority: {
+      rubric: assessed, requirements: [{ id: assessed.requirements[0]!.id, text: "My revised requirement", essential: true }],
+    } } };
+    expect(cvRevisionRubricCheckpoint(source, role)).toEqual({ sourceRubric: assessed });
+    expect(cvRevisionRubricCheckpoint({ ...source, targetingBrief: { priority: { requirements: source.targetingBrief.priority.requirements } } }, role))
+      .toBeNull();
+  });
 });

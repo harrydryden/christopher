@@ -23,22 +23,27 @@ export type CvSemanticTarget = { plan: CvTailoringPlan; rubric: CvRubric;
   emphasisRequirementIds?: ReadonlySet<string> };
 /** One weighting rule for allocation and every later pruning choice. */
 export function cvSemanticRequirementWeights(semantic: CvSemanticTarget): Map<string, number> {
+  const byId = new Map(semantic.rubric.requirements.map(item => [item.id, item]));
   return new Map([...cvTailoringRequirementWeights(semantic.plan, semantic.rubric)]
-    .map(([id, weight]) => [id, weight * (semantic.emphasisRequirementIds?.has(id) ? 2 : 1)]));
+    .map(([id, weight]) => [id, weight * (!byId.get(id) || "rank" in byId.get(id)! ? 1 : semantic.emphasisRequirementIds?.has(id) ? 2 : 1)]));
 }
 const stop = new Set('a an of to in on at as is it be by or we with from that this your have will role team work company experience skills across their into and the for are our you'.split(' '));
 const relevantWords = (text: string) => [...new Set(text.toLowerCase().match(/[a-z][a-z0-9+#&-]*/g) ?? [])].filter(word => !stop.has(word));
 
 /**
  * The rubric's words, each weighted as the assessment weights the requirement it comes from, so
- * that under space pressure the fitter keeps what the score rewards most: a bullet covering an
- * essential requirement outranks a longer one covering a mere responsibility.
+ * that under space pressure the fitter keeps what the score rewards most. Legacy rubrics weight
+ * importance; a ranked per-CV rubric follows the person's explicit order instead.
  */
 export function cvRelevanceTerms(requirements: CvRubric["requirements"], emphasisRequirementIds?: ReadonlySet<string>): Map<string, number> {
   const terms = new Map<string, number>();
   for (const requirement of requirements) {
-    const weight = cvRequirementWeight(requirement) * (emphasisRequirementIds?.has(requirement.id) ? 2 : 1);
-    for (const word of relevantWords(`${requirement.label} ${requirement.quote}`)) terms.set(word, Math.max(terms.get(word) ?? 0, weight));
+    const weight = cvRequirementWeight(requirement) * ("rank" in requirement ? 1 : emphasisRequirementIds?.has(requirement.id) ? 2 : 1);
+    // An edited label is the person's criterion. The original advert quote remains traceability,
+    // not a second relevance signal that could undo their changed focus.
+    const criterion = requirement.customised || requirement.origin === "user"
+      ? requirement.label : `${requirement.label} ${requirement.quote}`;
+    for (const word of relevantWords(criterion)) terms.set(word, Math.max(terms.get(word) ?? 0, weight));
   }
   return terms;
 }

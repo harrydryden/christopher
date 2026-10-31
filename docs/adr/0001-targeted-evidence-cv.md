@@ -27,6 +27,8 @@ A draft-owned brief records entry treatments, confirmed role priorities, present
 
 ### 2. Confirm emphasis before new wording is written
 
+The fixed three-to-five selection and immutable requirement-importance policy in this section is superseded by [ADR 0002](0002-ranked-cv-requirements.md). Explicit ranked, editable requirements retain original-job provenance and factual safeguards; this section records the earlier decision.
+
 After the existing role-requirements extraction and full-evidence mapping, a new targeted build offers the person three to five emphasis priorities from the fixed rubric. Fewer are valid when fewer usable priorities exist. Recommended picks are preselected, but confirmation is explicit. Every essential requirement remains visible and remains in assessment, including when there are more than five essentials. The existing mapping stage runs once or reuses its valid result; it identifies which essential evidence would actually be lost, rather than warning about every essential whenever an unrelated entry is omitted.
 
 This is a durable, resumable preparation state after full-evidence planning and before writing. Waiting for the person releases the worker slot and short-lived spending admission; it does not repeatedly enqueue work. Confirmation is account-owned, idempotent and fenced to the exact role description and server-derived rubric/model/prompt identity. Reusing a request key with different choices is rejected. Changed role text requires new confirmation. Existing ready CVs can adopt a brief using their current rubric and validated mapping; ordinary legacy edits are not forced through a new build. Confirmation and later targeting edits share the same omission-warning and acknowledgement validation.

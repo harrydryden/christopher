@@ -117,6 +117,7 @@ export function CvAssessmentPanel({
     (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;
   const quality = content ? diagnoseCvQuality(assessment, content) : null;
+  const rankedRequirements = assessment.rubric.requirements.some(requirement => requirement.rank !== undefined);
   const nextActions = content ? cvReviewActions(assessment, content) : [];
   return (
     <section
@@ -135,6 +136,7 @@ export function CvAssessmentPanel({
         </div>
       </div>
       <p className="text-14 text-muted">
+        {rankedRequirements && <>Coverage of your chosen requirements · </>}
         Match <strong>{assessment.score}/100</strong>{" · "}Experience evidence:{" "}
         <strong>{assessment.availableEvidenceScore}/100</strong>
         {" · "}
@@ -170,7 +172,7 @@ export function CvAssessmentPanel({
             <div className="bg-raised p-3">
               <dt className="ds-label">Priority coverage</dt>
               <dd className="mt-1 text-16 font-semibold">{quality.priorityCoverage.score === null ? "Not assessed" : `${quality.priorityCoverage.score}/100`}</dd>
-              <dd className="text-12 text-muted">{quality.priorityCoverage.basis === "responsibilities_fallback" ? "Responsibility coverage; no essential or desirable priorities were stated" : "Capability evidence, weighted by role priority"}</dd>
+              <dd className="text-12 text-muted">{quality.priorityCoverage.basis === "responsibilities_fallback" ? "Responsibility coverage; no essential or desirable priorities were stated" : rankedRequirements ? "Capability evidence, weighted by your ranked requirements" : "Capability evidence, weighted by role priority"}</dd>
             </div>
             <div className="bg-raised p-3">
               <dt className="ds-label">Evidence ready to use</dt>

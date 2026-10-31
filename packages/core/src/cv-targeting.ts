@@ -5,14 +5,25 @@ import { resolveCvTheme } from "./cv-theme";
 import { cvEntryTreatment, cvTargetingSummaryNeedsReview, projectCvTargetedSections } from "./cv-targeting-projection";
 export { cvEntryTreatment, cvTargetingSummaryNeedsReview } from "./cv-targeting-projection";
 import { cvTailoringEvidence, validateCvTailoringPlan, type CvTailoringPlan } from "./cv-tailoring";
+import { mentionsDemographicAttribute } from "./cv-demographics";
 
 export const CvEntryTreatmentSchema = z.enum(["feature", "summarise", "omit"]);
 export type CvEntryTreatment = z.infer<typeof CvEntryTreatmentSchema>;
+/** Ordered per-CV choices. The source rubric and its employer quotes stay immutable. */
+export const CvPriorityChoiceSchema = z.object({
+  id: z.string().min(1).max(40),
+  text: z.string().trim().min(1).max(250),
+  essential: z.boolean(),
+});
+export type CvPriorityChoice = z.infer<typeof CvPriorityChoiceSchema>;
+const CvPriorityChoicesSchema = z.array(CvPriorityChoiceSchema).min(1).max(30)
+  .refine(rows => new Set(rows.map(row => row.id)).size === rows.length, "Choose each priority once.");
 export const CvTargetingChoicesSchema = z.object({
   entries: z.array(z.object({ entryId: z.string().min(1).max(100), treatment: CvEntryTreatmentSchema }))
     .max(100).refine(rows => new Set(rows.map(row => row.entryId)).size === rows.length, "Choose each entry once."),
   presentation: z.object({ maxPages: z.number().int().min(1).max(5), bodySizePt: z.union([z.literal(11), z.literal(12)]) }),
   emphasisRequirementIds: z.array(z.string().min(1).max(40)).max(5),
+  requirements: CvPriorityChoicesSchema.optional(),
   acknowledgedEssentialOmissionIds: z.array(z.string().min(1).max(40)).max(30),
 });
 export type CvTargetingChoices = z.infer<typeof CvTargetingChoicesSchema>;
@@ -38,18 +49,28 @@ export const CvTargetingBriefSchema = z.object({
     rubric: CvRubricSchema.optional(),
     rubricKey: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     emphasisRequirementIds: z.array(z.string().min(1).max(40)).max(5),
+    requirements: CvPriorityChoicesSchema.optional(),
+    /** Exact criterion wording whose evidence plan is currently held; absent on legacy briefs. */
+    mappedRequirements: CvPriorityChoicesSchema.optional(),
     acknowledgedEssentialOmissionIds: z.array(z.string().min(1).max(40)).max(30),
     confirmationKey: z.string().uuid().optional(),
   }).superRefine((priority, ctx) => {
     if (priority.state !== "unprepared" && (!priority.rubric || !priority.rubricKey))
       ctx.addIssue({ code: "custom", message: "Prepared priorities require their exact role rubric." });
     if (priority.state === "confirmed") {
-      const ids = new Set(priority.rubric?.requirements.map(item => item.id));
+      const ids = new Set((priority.requirements ?? priority.rubric?.requirements ?? []).map(item => item.id));
       const max = Math.min(5, priority.rubric?.requirements.length ?? 0);
-      if (priority.emphasisRequirementIds.length < Math.min(3, max) || priority.emphasisRequirementIds.length > max
+      if (priority.requirements && priority.emphasisRequirementIds.join("\u0000") !== priority.requirements.slice(0, 5).map(item => item.id).join("\u0000"))
+        ctx.addIssue({ code: "custom", message: "The first five ranked priorities must match the writing focus." });
+      else if (!priority.requirements && (priority.emphasisRequirementIds.length < Math.min(3, max) || priority.emphasisRequirementIds.length > max
         || new Set(priority.emphasisRequirementIds).size !== priority.emphasisRequirementIds.length
-        || priority.emphasisRequirementIds.some(id => !ids.has(id)))
+        || priority.emphasisRequirementIds.some(id => !ids.has(id))))
         ctx.addIssue({ code: "custom", message: "Confirm three to five current role priorities, or all available priorities if fewer." });
+      if (priority.requirements && priority.rubric) try {
+        cvRankedPriorityChoices(priority.rubric, priority.requirements);
+      } catch (error) {
+        ctx.addIssue({ code: "custom", message: (error as Error).message });
+      }
     }
   }),
   /** Unprojected, attributed wording for Feature restoration on this CV only. */
@@ -66,7 +87,8 @@ export type CvTargetingView = {
   rubricKey?: string;
   entries: Array<{ entryId: string; kind: CvLibrary["entries"][number]["kind"];
     heading: string; company?: string; treatment: CvEntryTreatment }>;
-  priorities: Array<CvRubric["requirements"][number] & { selected: boolean; evidenceEntryIds: string[];
+  priorities: Array<CvRubric["requirements"][number] & { text: string; essential: boolean; rank: number;
+    origin: "role" | "user"; customised: boolean; selected: boolean; evidenceEntryIds: string[];
     hasProfileEvidence?: boolean }>;
   essentialOmissionIds: string[];
   acknowledgedEssentialOmissionIds: string[];
@@ -74,13 +96,70 @@ export type CvTargetingView = {
   presentation: CvTargetingBriefV1["presentation"];
 };
 
+const comparablePriority = (value: string) => value.trim().replace(/\s+/g, " ").normalize("NFKC").toLocaleLowerCase("en-GB");
+
+/** Accept user-authored priorities only through a brief tied to the validated source rubric. */
+export function cvRankedPriorityChoices(source: CvRubric, proposed?: readonly CvPriorityChoice[]): CvPriorityChoice[] {
+  const rows = proposed ?? source.requirements.map(item => ({ id: item.id, text: item.label,
+    essential: item.importance === "essential" }));
+  const parsed = CvPriorityChoicesSchema.parse(rows);
+  const originals = new Set(source.requirements.map(item => item.id));
+  const texts = new Set<string>();
+  for (const row of parsed) {
+    if (!originals.has(row.id) && !/^u:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id))
+      throw new Error("A newly added priority needs its own stable identifier.");
+    if (mentionsDemographicAttribute(row.text)) throw new Error("Demographic attributes cannot be CV priorities.");
+    const key = comparablePriority(row.text);
+    if (texts.has(key)) throw new Error("Each CV priority needs distinct wording.");
+    texts.add(key);
+  }
+  return parsed;
+}
+
+/** Rank and essential status alter weighting, but not what an evidence citation proves. */
+export function cvPriorityMappingIdentity(rows: readonly CvPriorityChoice[]): string {
+  return JSON.stringify(rows.map(row => [row.id, comparablePriority(row.text)])
+    .sort((a, b) => a[0]!.localeCompare(b[0]!)));
+}
+
+export const CvEffectiveRubricSchema = CvRubricSchema.extend({
+  requirements: z.array(CvRubricSchema.shape.requirements.element.extend({
+    origin: z.enum(["role", "user"]), customised: z.boolean(), rank: z.number().int().min(1).max(30),
+  })).min(1).max(30),
+});
+export type CvEffectiveRubric = z.infer<typeof CvEffectiveRubricSchema>;
+
+/** Preserve the employer's quote for source rows; a new row is visibly user-supplied. */
+export function cvEffectiveRubric(source: CvRubric, proposed?: readonly CvPriorityChoice[]): CvEffectiveRubric {
+  const originals = new Map(source.requirements.map(item => [item.id, item]));
+  return CvEffectiveRubricSchema.parse({ caveats: source.caveats, requirements: cvRankedPriorityChoices(source, proposed).map((row, index) => {
+    const original = originals.get(row.id);
+    return original ? { ...original, label: row.text, importance: row.essential ? "essential" as const :
+      original.importance === "essential" ? "desirable" as const : original.importance,
+      origin: "role" as const, customised: row.text !== original.label || row.essential !== (original.importance === "essential"), rank: index + 1 }
+      : { id: row.id, label: row.text, quote: row.text, importance: row.essential ? "essential" as const : "desirable" as const,
+        category: "delivery" as const, origin: "user" as const, customised: true, rank: index + 1 };
+  }) });
+}
+
+/** The effective rubric is not provider output: require an exact derivation from trusted choices. */
+export function validateCvEffectiveRubric(source: CvRubric, choices: readonly CvPriorityChoice[], value: unknown): CvEffectiveRubric {
+  const parsed = CvEffectiveRubricSchema.parse(value);
+  const expected = cvEffectiveRubric(source, choices);
+  if (JSON.stringify(parsed) !== JSON.stringify(expected))
+    throw new Error("The CV priorities no longer match their original role rubric.");
+  return parsed;
+}
+
 /** Recommendation only; every essential remains visible and scored regardless of selection. */
-export function cvRecommendedPriorityIds(rubric: CvRubric): string[] {
+export function cvRecommendedPriorityOrder(rubric: CvRubric): string[] {
   const weight = (item: CvRubric["requirements"][number]) =>
     (item.importance === "essential" ? 4 : item.importance === "desirable" ? 2 : 0)
       + (item.category === "logistics" ? -3 : 0);
-  return [...rubric.requirements].sort((a, b) => weight(b) - weight(a))
-    .slice(0, Math.min(5, rubric.requirements.length)).map(item => item.id);
+  return [...rubric.requirements].sort((a, b) => weight(b) - weight(a)).map(item => item.id);
+}
+export function cvRecommendedPriorityIds(rubric: CvRubric): string[] {
+  return cvRecommendedPriorityOrder(rubric).slice(0, Math.min(5, rubric.requirements.length));
 }
 
 export function validateCvTargetingEntries(library: CvLibrary,
@@ -159,6 +238,17 @@ export function cvEssentialOmissionIds(fullPlan: CvTailoringPlan, rubric: CvRubr
   const allowed = new Set(cvTailoringEvidence(library).map(row => row.id));
   return fullPlan.requirements.filter(row => essentials.has(row.requirementId) && row.evidence.length > 0
     && !row.evidence.some(ref => allowed.has(ref.sourceId))).map(row => row.requirementId);
+}
+
+/** Before a remap, only unchanged criterion meanings may inherit the old evidence map. */
+export function cvMappedEssentialOmissionIds(fullPlan: CvTailoringPlan, mappedRubric: CvRubric,
+  proposedRubric: CvRubric, writingLibrary: CvLibrary): string[] {
+  const oldById = new Map(mappedRubric.requirements.map(item => [item.id, item]));
+  const unchanged = new Set(proposedRubric.requirements.filter(item =>
+    oldById.get(item.id)?.label === item.label).map(item => item.id));
+  return cvEssentialOmissionIds({ ...fullPlan,
+    requirements: fullPlan.requirements.filter(item => unchanged.has(item.requirementId)) },
+    proposedRubric, writingLibrary);
 }
 
 /** Immediate, model-free projection of the person's existing wording for a saved CV revision. */

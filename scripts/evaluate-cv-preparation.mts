@@ -8,10 +8,11 @@ import { CvLibrarySchema } from "../packages/core/src/cv";
 import { validateCvRubric } from "../packages/core/src/cv-review";
 import { cvTailoringEvidence, validateCvTailoringPlan } from "../packages/core/src/cv-tailoring";
 import { cvEssentialOmissionIds, cvRecommendedPriorityIds, projectCvWritingLibrary,
-  CvTargetingBriefSchema } from "../packages/core/src/cv-targeting";
+  CvTargetingBriefSchema, cvEffectiveRubric } from "../packages/core/src/cv-targeting";
 import { cvTargetingSource } from "../packages/core/src/cv-targeting-identity";
 import { REPLAY_FIXTURE_DESCRIPTION, REPLAY_FIXTURE_LIBRARY, REPLAY_FIXTURE_MODEL }
   from "../apps/worker/src/cv-replay-fixture";
+import { rankedReplayFixtureRequirements } from "../apps/worker/src/cv-replay-fixture";
 import { installLiveEvaluationGuard } from "./live-evaluation-guard.mjs";
 
 // Read only the provider credential needed by this probe; never connect to a database.
@@ -46,7 +47,9 @@ try {
   const rubricStart = performance.now();
   const proposedRubric = await ai.analyseCvJob(REPLAY_FIXTURE_DESCRIPTION, { stage: "rubric" });
   if (!proposedRubric) throw new Error("No validated role rubric.");
-  const rubric = validateCvRubric(REPLAY_FIXTURE_DESCRIPTION, proposedRubric);
+  const sourceRubric = validateCvRubric(REPLAY_FIXTURE_DESCRIPTION, proposedRubric);
+  const requirements = process.env.CV_EVAL_RANKED_FIXTURE === "1" ? rankedReplayFixtureRequirements(sourceRubric) : undefined;
+  const rubric = requirements ? cvEffectiveRubric(sourceRubric, requirements) : sourceRubric;
   const rubricMs = performance.now() - rubricStart;
   const planStart = performance.now();
   const proposedPlan = await ai.planCvTailoring({ rubric, library }, { stage: "planning" });
@@ -61,7 +64,7 @@ try {
     priority: { state: "unprepared", emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [] } });
   const report = { kind: "cv-preparation-live-probe", at: new Date().toISOString(),
     source: "provider", syntheticCandidate: true, promptSetVersion: promptSetVersion(), model,
-    outcome: "passed", rubric, plan, recommendedEmphasis: cvRecommendedPriorityIds(rubric),
+    outcome: "passed", sourceRubric, ...(requirements ? { userRequirements: requirements } : {}), rubric, plan, recommendedEmphasis: cvRecommendedPriorityIds(rubric),
     essentialOmissions: cvEssentialOmissionIds(plan, rubric, projectCvWritingLibrary(library, brief)),
     validation: { exactJobQuotes: true, completeRequirementMapping: true, exactEvidenceQuotes: true },
     calls: usage.length, costUsd: usage.reduce((sum, record) => sum + record.costUsd, 0),

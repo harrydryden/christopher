@@ -3,7 +3,8 @@ import { CvLibrarySchema } from "@col/core/cv";
 import { CvTargetingBriefSchema, CvTargetingChoicesSchema, cvEssentialOmissionIds,
   projectCvTargetedContent,
   type CvTargetingChoices,
-  projectCvWritingLibrary, validateCvTargetingEntries } from "@col/core/cv-targeting";
+  projectCvWritingLibrary, validateCvTargetingEntries, cvRankedPriorityChoices, cvEffectiveRubric,
+  cvMappedEssentialOmissionIds, cvPriorityMappingIdentity } from "@col/core/cv-targeting";
 import { cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { CvTailoringPlanSchema, cvTailoringEvidence, validateCvTailoringPlan } from "@col/core/cv-tailoring";
 import type { Db } from "./client";
@@ -37,6 +38,14 @@ export async function confirmCvTargetingPrioritiesForUser(db: Db, userId: string
       .where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, userId))).limit(1).for("update");
     if (!draft?.targetingBrief) throw new CvTargetingConfirmationError("This CV could not be found. Reload it.");
     const brief = CvTargetingBriefSchema.parse(draft.targetingBrief);
+    const sourceRubric = brief.priority.rubric;
+    if (!sourceRubric) throw new CvTargetingConfirmationError("The original role priorities are unavailable. Reload this CV.");
+    let requirements: ReturnType<typeof cvRankedPriorityChoices> | undefined;
+    try { requirements = data.choices.requirements ? cvRankedPriorityChoices(sourceRubric, data.choices.requirements) : undefined; }
+    catch (error) { throw new CvTargetingConfirmationError((error as Error).message); }
+    const emphasis = requirements ? requirements.slice(0, 5).map(item => item.id) : data.choices.emphasisRequirementIds;
+    if (requirements && !same(emphasis, data.choices.emphasisRequirementIds))
+      throw new CvTargetingConfirmationError("The ranked priorities changed. Reload this CV before confirming.");
     if (draft.revision !== data.expectedRevision || !same(brief.source, data.expectedSource)
       || !same(brief.source, cvTargetingSource(draft.libraryVersion, CvLibrarySchema.parse(draft.librarySnapshot), draft.jobDescription))
       || brief.priority.rubricKey !== data.expectedRubricKey)
@@ -44,6 +53,7 @@ export async function confirmCvTargetingPrioritiesForUser(db: Db, userId: string
     if (brief.priority.state === "confirmed" && brief.priority.confirmationKey === data.requestKey) {
       if (!same(brief.entries, data.choices.entries) || !same(brief.presentation, data.choices.presentation)
         || !same(brief.priority.emphasisRequirementIds, data.choices.emphasisRequirementIds)
+        || !same(brief.priority.requirements ?? null, requirements ?? null)
         || !same(brief.priority.acknowledgedEssentialOmissionIds, data.choices.acknowledgedEssentialOmissionIds))
         throw new CvTargetingConfirmationError("This confirmation was already used for different choices. Reload this CV.");
       if (draft.status === "failed")
@@ -59,14 +69,19 @@ export async function confirmCvTargetingPrioritiesForUser(db: Db, userId: string
       throw new CvTargetingConfirmationError("Experience changed. Reload the CV before choosing sections.");
     try { validateCvTargetingEntries(library, data.choices.entries); }
     catch (error) { throw new CvTargetingConfirmationError((error as Error).message); }
+    const previousRequirements = cvRankedPriorityChoices(sourceRubric, brief.priority.requirements);
+    const nextRequirements = requirements ?? previousRequirements;
+    const mappedRequirements = brief.priority.mappedRequirements;
+    const mappedRubric = mappedRequirements ? cvEffectiveRubric(sourceRubric, mappedRequirements) : sourceRubric;
     const fullPlan = draft.buildCheckpoint?.tailoringPlan
       ? CvTailoringPlanSchema.parse(draft.buildCheckpoint.tailoringPlan) : null;
     if (!brief.priority.rubric || !brief.priority.rubricKey || !fullPlan)
       throw new CvTargetingConfirmationError("The role's priorities and evidence map are not ready. Reload this CV.");
     if (!projectCvWritingLibrary(library, { ...brief, entries: data.choices.entries }).entries.length)
       throw new CvTargetingConfirmationError("Keep at least one Experience or qualification section in this CV.");
-    validateCvTailoringPlan(fullPlan, brief.priority.rubric, cvTailoringEvidence(library), library);
-    const omitted = cvEssentialOmissionIds(fullPlan, brief.priority.rubric,
+    validateCvTailoringPlan(fullPlan, mappedRubric, cvTailoringEvidence(library), library);
+    const proposedRubric = requirements ? cvEffectiveRubric(sourceRubric, requirements) : mappedRubric;
+    const omitted = cvMappedEssentialOmissionIds(fullPlan, mappedRubric, proposedRubric,
       projectCvWritingLibrary(library, { ...brief, entries: data.choices.entries }));
     const acknowledgements = new Set(data.choices.acknowledgedEssentialOmissionIds);
     if (omitted.some(id => !acknowledgements.has(id)))
@@ -74,7 +89,8 @@ export async function confirmCvTargetingPrioritiesForUser(db: Db, userId: string
     if (data.choices.acknowledgedEssentialOmissionIds.some(id => !omitted.includes(id)))
       throw new CvTargetingConfirmationError("The essential requirements changed. Reload this CV.");
     const priority = { state: "confirmed" as const, rubric: brief.priority.rubric, rubricKey: brief.priority.rubricKey,
-      emphasisRequirementIds: data.choices.emphasisRequirementIds,
+      emphasisRequirementIds: emphasis, ...(requirements ? { requirements } : {}),
+      mappedRequirements: mappedRequirements ?? cvRankedPriorityChoices(sourceRubric),
       acknowledgedEssentialOmissionIds: data.choices.acknowledgedEssentialOmissionIds,
       confirmationKey: data.requestKey };
     CvTargetingBriefSchema.shape.priority.parse(priority);
@@ -87,17 +103,23 @@ export async function confirmCvTargetingPrioritiesForUser(db: Db, userId: string
     }
     if (projected) next = CvTargetingBriefSchema.parse({ ...next, manualSections: projected.manualSections });
     await options.beforeQueue?.(tx, draft);
+    const changedRanking = !!requirements && cvPriorityMappingIdentity(nextRequirements)
+      !== cvPriorityMappingIdentity(mappedRequirements ?? cvRankedPriorityChoices(sourceRubric));
+    const buildCheckpoint = changedRanking && draft.buildCheckpoint ? { ...draft.buildCheckpoint,
+      tailoringPlan: undefined,
+      stages: Object.fromEntries(Object.entries(draft.buildCheckpoint.stages ?? {}).filter(([name]) => name !== "plan")),
+    } : draft.buildCheckpoint;
     await tx.update(cvDrafts).set({ targetingBrief: next, status: "queued", buildStage: null, progressAt: null,
       error: null, failure: null,
       ...(projected ? { content: projected.content, assessment: null, reviewDecision: null,
         buildCheckpoint: {
-          v: draft.buildCheckpoint?.v, promptSetVersion: draft.buildCheckpoint?.promptSetVersion, stages: {},
-          tailoringEnabled: draft.buildCheckpoint?.tailoringEnabled,
-          tailoringPlan: draft.buildCheckpoint?.tailoringPlan,
-          quizCompleted: draft.buildCheckpoint?.quizCompleted,
-          rubric: draft.buildCheckpoint?.rubric, rubricAt: draft.buildCheckpoint?.rubricAt,
-          mode: "assess" as const, sourceRubric: draft.buildCheckpoint?.sourceRubric,
-        } } : {}) })
+          v: buildCheckpoint?.v, promptSetVersion: buildCheckpoint?.promptSetVersion, stages: {},
+          tailoringEnabled: buildCheckpoint?.tailoringEnabled,
+          tailoringPlan: buildCheckpoint?.tailoringPlan,
+          quizCompleted: buildCheckpoint?.quizCompleted,
+          rubric: buildCheckpoint?.rubric, rubricAt: buildCheckpoint?.rubricAt,
+          mode: "assess" as const, sourceRubric: buildCheckpoint?.sourceRubric,
+        } } : { buildCheckpoint }) })
       .where(eq(cvDrafts.id, draftId));
     await enqueueTask(tx, "generate_cv", { draftId, userId, ...(projected ? { mode: "assess" as const } : {}) },
       { dedupeKey: recovering ? `generate_cv:${draftId}:targeting-retry:${data.requestKey}`

@@ -30,6 +30,9 @@ const key = process.env.ANTHROPIC_API_KEY;
 const maxUsd = Number(process.env.CV_EVAL_MAX_USD);
 const dbUrl = process.env.DATABASE_URL;
 const targeted = process.env.CV_EVAL_TARGETED_FIXTURE === "1";
+const ranked = process.env.CV_EVAL_RANKED_FIXTURE === "1";
+if (process.env.CV_EVAL_RANKED_FIXTURE && (!ranked || !targeted))
+  throw new Error("Ranked qualification requires both ranked and targeted fixture modes.");
 if (process.env.CV_EVAL_TARGETED_FIXTURE && !targeted)
   throw new Error("CV_EVAL_TARGETED_FIXTURE must be 1 when set.");
 if (model !== "claude-fable-5-1" || !key || maxUsd !== 10 || !dbUrl)
@@ -52,7 +55,8 @@ if (targeted !== (localDatabaseName === "col_cv_targeted_eval_1030"))
   throw new Error("Targeted evaluation needs its dedicated local database and explicit mode together.");
 const prior = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, "utf8")) : undefined;
 const guard = installLiveEvaluationGuard({ model, maxUsd, phases: {
-  fixture: { maxUsd: 0, maxRequests: 0 }, cv: { maxUsd: 9, maxRequests: 7 }, skills: { maxUsd: 2, maxRequests: 4 },
+  // Ranked qualification extends the same ledger to a new scenario, retaining its cumulative $10 cap.
+  fixture: { maxUsd: 0, maxRequests: 0 }, cv: { maxUsd: 9, maxRequests: ranked ? 21 : 7 }, skills: { maxUsd: 2, maxRequests: ranked ? 8 : 4 },
 }, prior, onDebit: snapshot => writeFileSync(ledgerPath, JSON.stringify(snapshot, null, 2) + "\n") });
 guard.setPhase("fixture");
 let deps: Awaited<ReturnType<typeof createDeps>> | undefined;
@@ -68,10 +72,12 @@ try {
   const draft = sourceRecording
     ? await deps.db.query.cvDrafts.findFirst({ where: eq(schema.cvDrafts.id, readRecordingHeader(sourceRecording).meta?.draftId ?? "") })
     : await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 200, targetedSignpost: targeted }).client,
-      fixtureEmail, { targeted });
+      fixtureEmail, { targeted, ranked });
   if (!draft) throw new Error("The provider-recorded synthetic draft is unavailable for resume.");
   if (targeted !== (draft.targetingBrief?.priority.state === "confirmed"))
     throw new Error("The source recording does not match the requested targeting mode.");
+  if (ranked && !draft.targetingBrief?.priority.requirements?.some(row => row.id.startsWith("u:")))
+    throw new Error("Ranked qualification requires the edited synthetic priority list.");
   if (draft.model !== model) throw new Error("Synthetic draft model does not match the authorised provider model.");
   const [fixtureUser] = await deps.db.select({ email: schema.users.email }).from(schema.users).where(eq(schema.users.id, draft.userId));
   if (fixtureUser?.email !== fixtureEmail)
@@ -101,6 +107,7 @@ try {
     guard.setPhase("cv");
     const recording = resolve(outDir, "cv-live-provider-recording.jsonl");
     const recorded = await recordCvDraft(deps, draft.id, { path: recording, ...(resumeAuthorFrom ? { resumeAuthorFrom } : {}) });
+    writeFileSync(resolve(outDir, "cv-recorded-report.json"), JSON.stringify(recorded.report, null, 2) + "\n");
     if (recorded.report.unverified || recorded.report.outcome !== "published"
       || recorded.report.grade?.invariants.claimsSupported !== true
       || recorded.report.grade?.invariants.pageLimitMet !== true)

@@ -207,6 +207,80 @@ it("saves wording immediately without a task and keeps the rubric for an explici
   expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess" });
 });
 
+it("saves successive ranked priority edits freely and checks the final wording with the original rubric", async () => {
+  const rubric = rubricFixture("Finance operations");
+  const source = cvTargetingSource(1, CvLibrarySchema.parse(library), "Finance operations");
+  const rubricKey = "e".repeat(64);
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  const parent = await failedDraft({ status: "ready", error: null, failure: null,
+    buildCheckpoint: { sourceRubric: rubric, tailoringPlan: plan },
+    targetingBrief: { version: 1, source, entries: [{ entryId: "one", treatment: "feature" }],
+      presentation: { maxPages: 2, bodySizePt: 12 }, priority: { state: "confirmed", rubric, rubricKey,
+        emphasisRequirementIds: ["r1"], mappedRequirements: [{ id: "r1", text: rubric.requirements[0]!.label, essential: true }],
+        acknowledgedEssentialOmissionIds: [] } } });
+  const save = (id: string, label: string) => {
+    const form = new FormData();
+    form.set("summary", "Edited profile");
+    form.set("section-0", "Led a team");
+    form.set("targetingChoices", JSON.stringify({ entries: [{ entryId: "one", treatment: "feature" }],
+      presentation: { maxPages: 2, bodySizePt: 12 }, requirements: [{ id: "r1", text: label, essential: true }],
+      emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [] }));
+    form.set("targetingExpectedSource", JSON.stringify(source));
+    form.set("targetingExpectedRubricKey", rubricKey);
+    return saveWithBase(id, { ok: true }, form);
+  };
+  await expect(save(parent.id, "Corporate development")).rejects.toThrow("redirect:/cv/");
+  const first = (await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id)))[0]!;
+  expect(first.targetingBrief?.priority.requirements?.[0]?.text).toBe("Corporate development");
+  expect(first.targetingBrief?.priority.rubric).toEqual(rubric);
+  expect(first.assessment).toBeNull();
+  expect(first.buildCheckpoint?.sourceRubric).toEqual(rubric);
+  expect(await buildTasks()).toHaveLength(0);
+  await expect(save(first.id, "Strategic transactions")).rejects.toThrow("redirect:/cv/");
+  const second = (await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, first.id)))[0]!;
+  expect(second.targetingBrief?.priority.requirements?.[0]?.text).toBe("Strategic transactions");
+  expect(second.targetingBrief?.priority.rubric).toEqual(rubric);
+  expect(second.assessment).toBeNull();
+  expect(await buildTasks()).toHaveLength(0);
+  expect(await assessCvDraft(second.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  expect((await buildTasks())[0]?.payload).toMatchObject({ draftId: second.id, mode: "assess" });
+  expect((await draftRow(second.id)).targetingBrief?.priority.requirements?.[0]?.text).toBe("Strategic transactions");
+  expect((await draftRow(second.id)).buildCheckpoint?.sourceRubric).toEqual(rubric);
+});
+
+it("treats unchanged ranked rows on a legacy brief as an ordinary wording Save", async () => {
+  const description = "Finance operations; commercial planning; team leadership";
+  const baseRubric = rubricFixture("Finance operations");
+  const rubric = { ...baseRubric, requirements: [baseRubric.requirements[0]!,
+    { ...baseRubric.requirements[0]!, id: "r2", label: "Commercial planning", quote: "commercial planning", importance: "desirable" as const },
+    { ...baseRubric.requirements[0]!, id: "r3", label: "Team leadership", quote: "team leadership", importance: "desirable" as const }] };
+  const source = cvTargetingSource(1, CvLibrarySchema.parse(library), description);
+  const parent = await failedDraft({ status: "ready", error: null, failure: null,
+    jobDescription: description,
+    buildCheckpoint: { sourceRubric: rubric }, targetingBrief: { version: 1, source,
+      entries: [{ entryId: "one", treatment: "feature" }], presentation: { maxPages: 2, bodySizePt: 12 },
+      priority: { state: "confirmed", rubric, rubricKey: "f".repeat(64),
+        emphasisRequirementIds: ["r3", "r1", "r2"], acknowledgedEssentialOmissionIds: [] } } });
+  const form = new FormData();
+  form.set("summary", "Edited profile");
+  form.set("section-0", "Led a team");
+  form.set("targetingChoices", JSON.stringify({ entries: [{ entryId: "one", treatment: "feature" }],
+    presentation: { maxPages: 3, bodySizePt: 12 },
+    requirements: [rubric.requirements[2]!, rubric.requirements[0]!, rubric.requirements[1]!]
+      .map(item => ({ id: item.id, text: item.label, essential: item.importance === "essential" })),
+    emphasisRequirementIds: ["r3", "r1", "r2"], acknowledgedEssentialOmissionIds: [] }));
+  form.set("targetingExpectedSource", JSON.stringify(source));
+  form.set("targetingExpectedRubricKey", "f".repeat(64));
+  await expect(saveWithBase(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  const child = (await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id)))[0]!;
+  expect(child.targetingBrief?.priority.requirements).toBeUndefined();
+  expect(child.targetingBrief?.priority.emphasisRequirementIds).toEqual(["r3", "r1", "r2"]);
+  expect(child.targetingBrief?.presentation.maxPages).toBe(3);
+  expect(child.buildCheckpoint?.sourceRubric).toEqual(rubric);
+  expect(await buildTasks()).toHaveLength(0);
+});
+
 it.each(["not-json", "{}", "[\"one\",\"one\"]"])(
   "rejects invalid supporting choices %s before reading the current Library", async (payload) => {
     await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });

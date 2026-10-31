@@ -25,7 +25,11 @@ export const CvRubricSchema = z.object({
     .max(30),
   caveats: z.array(z.string().max(500)).max(8),
 });
-export type CvRubric = z.infer<typeof CvRubricSchema>;
+type ExtractedCvRubric = z.infer<typeof CvRubricSchema>;
+/** Trusted per-CV overlays add provenance; model-extracted rubrics remain source-only. */
+export type CvRubric = Omit<ExtractedCvRubric, "requirements"> & { requirements: Array<
+  ExtractedCvRubric["requirements"][number] & { origin?: "role" | "user"; customised?: boolean; rank?: number }
+> };
 /** How well the library evidences one requirement; shared by the review and the tailoring plan. */
 export const RequirementStatusSchema = z.enum(["demonstrated", "partial", "missing", "unknown"]);
 const status = RequirementStatusSchema;
@@ -148,8 +152,14 @@ export const cvMatchPoints = (
   value: CvReviewPlan["matches"][number]["status"],
 ) => (value === "demonstrated" ? 1 : value === "partial" ? 0.5 : 0);
 export const cvRequirementWeight = (
-  requirement: CvRubric["requirements"][number],
-) => (requirement.importance === "essential" ? 2 : 1);
+  requirement: CvRubric["requirements"][number] & { rank?: number },
+) => {
+  const importance = requirement.importance === "essential" ? 2 : 1;
+  // An explicit rank owns weighting: rank 1 is 2 points, rank 30 is 1 point,
+  // strictly decreasing in between. Essential remains a separate assurance flag.
+  // Legacy rubrics have no rank and retain their original importance weighting.
+  return requirement.rank === undefined ? importance : 1 + (30 - requirement.rank) / 29;
+};
 export function cvImprovementOwner(
   match: CvReviewPlan["matches"][number],
 ): "system" | "user" | "none" {

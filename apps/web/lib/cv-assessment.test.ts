@@ -69,6 +69,20 @@ for (const [paused, label] of [["evidence", "evidence questions"], ["priorities"
     expect(html).not.toContain("Saved — check when ready");
   });
 }
+it("labels a ranked assessment as the member's chosen requirements", async () => {
+  const rubric = rubricFixture("Own a budget");
+  const review = reviewFixture({ rubric, cv: cvTextItems(content), claims: cvClaimItems(content),
+    evidence: cvEvidenceItems(library) });
+  const assessment = createCvAssessment({ content, description: "Own a budget", library,
+    rubric, review, model: "test", pageCount: 1 });
+  assessment.rubric.requirements[0]!.rank = 1;
+  const html = await renderSettled(createElement(CvAssessmentPanel, {
+    id: "test", assessment, current: true, finalised: false, busy: false,
+    hasContent: true, content, library,
+  }));
+  expect(html).toContain("Coverage of your chosen requirements");
+  expect(html).toContain("weighted by your ranked requirements");
+});
 it("links a completed evidence parent to its continuation without offering another decision", () => {
   const html = renderToStaticMarkup(createElement(CvAssessmentPanel, {
     id: "parent", assessment: null, current: false, finalised: false, busy: false,

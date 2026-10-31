@@ -1,4 +1,5 @@
-import { CvContentSchema } from "@col/core";
+import { CvContentSchema, CvLibrarySchema } from "@col/core";
+import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import { routeUser } from "@/lib/route-auth";
 import { getOwnCvDraftForPdf } from "@/lib/queries/cv";
 import { zUuid } from "@/lib/validation";
@@ -34,9 +35,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     if (refused) return refused;
     try {
       const content = CvContentSchema.parse(draft.content);
+      const display = cvEmploymentDisplay(content, CvLibrarySchema.parse(draft.librarySnapshot));
       pdf = preview
-        ? (await renderCvPdfWithReport(content)).pdf
-        : await renderCvPdf(content);
+        ? (await renderCvPdfWithReport(content, display)).pdf
+        : await renderCvPdf(content, display);
     }
     catch (error) {
       if (error instanceof CvLayoutError) return new Response(error.message, { status: 422 });

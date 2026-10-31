@@ -24,7 +24,8 @@ const download = () => GET(new Request(`http://localhost/api/cv/${ID}/pdf`), { p
 beforeEach(() => {
   auth.mockReset(); auth.mockResolvedValue({ id: "user-1" });
   throttle.mockReset(); throttle.mockResolvedValue(true);
-  draft.mockReset(); draft.mockResolvedValue({ id: ID, status: "ready", content: CONTENT, companyName: "Acme", finalisedAt: null });
+  draft.mockReset(); draft.mockResolvedValue({ id: ID, status: "ready", content: CONTENT, librarySnapshot: LIBRARY,
+    companyName: "Acme", finalisedAt: null });
   store.storedFinalisedCvPdf.mockReset(); store.storedFinalisedCvPdf.mockResolvedValue(null);
 });
 

@@ -1478,7 +1478,7 @@ it("carries library styling through generation, revision, matching preview/downl
   const preview = await previewCv(
     new Request("http://localhost/api/cv/preview", {
       method: "POST",
-      body: JSON.stringify(revised!.content),
+      body: JSON.stringify({ draftId: revised!.id, content: revised!.content }),
     }),
   );
   const download = await downloadCv(

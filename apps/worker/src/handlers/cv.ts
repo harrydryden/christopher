@@ -4,6 +4,7 @@ import {
   assertCvPageLimit,
   CvLayoutError,
 } from "@col/core/cv-pdf";
+import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import {
   createCvAssessment,
   cvAssessmentCurrent,
@@ -364,7 +365,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if (saved) {
             const maxPages = cvMaxPages(saved.theme);
             const measure = await journal.open("measure", { maxPages });
-            savedPages = await renderCvPdfWithReport(saved)
+            savedPages = await renderCvPdfWithReport(saved, cvEmploymentDisplay(saved, fullLibrary))
               .then(report => report.pageCount)
               .catch(error => {
                 if (error instanceof CvLayoutError) return Number.POSITIVE_INFINITY;
@@ -860,7 +861,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       let semanticAuditCache: { identity: string; review: CvReviewPlan } | null = null;
       const assessContent = async (candidate: CvContent, pass: CvAuditPass, knownPages?: number): Promise<CvAssessment> => {
         await stage("assessing");
-        const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate)).pageCount;
+        const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate, cvEmploymentDisplay(candidate, fullLibrary))).pageCount;
         assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
         const claimEvidence = cvEvidenceItems(inputs.brief ? library : fullLibrary)
           .filter(item => !inputs.brief || item.text.trim().length > 0);

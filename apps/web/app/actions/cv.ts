@@ -2,6 +2,7 @@
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { cvReviewEditedContent, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { CV_LIMITS, cvSectionTexts } from "@col/core/cv-format";
+import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import { cvImprovementOwner } from "@col/core/cv-assessment";
 import { assertCvFinalisable, canonicalJson, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
 import { z } from "zod";
@@ -1220,7 +1221,8 @@ export async function finaliseCvDraft(
     // The content is parsed as the download parses it, so the bytes kept below are the bytes a
     // download would have rendered.
     const { renderCvPdf } = await import("@/lib/cv-pdf");
-    const pdf = await renderCvPdf(CvContentSchema.parse(checked.content));
+    const finalContent = CvContentSchema.parse(checked.content);
+    const pdf = await renderCvPdf(finalContent, cvEmploymentDisplay(finalContent, CvLibrarySchema.parse(checked.librarySnapshot)));
     await db().transaction(async (tx) => {
       const [draft] = await tx
         .select()

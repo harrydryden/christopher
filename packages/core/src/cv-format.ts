@@ -26,7 +26,7 @@ export const CV_SUPPORTING_GROUPS = [
   { kind: "skill", title: "Skills" },
   { kind: "interest", title: "Interests" },
 ] as const;
-export const CV_GROUPS = [{ kind: "experience", title: "Work experience" }, ...CV_SUPPORTING_GROUPS] as const;
+export const CV_GROUPS = [{ kind: "experience", title: "Experience" }, ...CV_SUPPORTING_GROUPS] as const;
 export type CvSectionKind = typeof CV_GROUPS[number]["kind"];
 export type CvSupportingKind = typeof CV_SUPPORTING_GROUPS[number]["kind"];
 export const CV_SECTION_ORDER = Object.fromEntries(CV_GROUPS.map((group, index) => [group.kind, index])) as Record<CvSectionKind, number>;

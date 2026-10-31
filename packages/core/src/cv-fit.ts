@@ -13,6 +13,7 @@ import {
 } from "./cv-budget";
 import { cvTailoringCoverage, validateCvPlanProvenance } from "./cv-tailoring";
 import { renderCvPdfWithReport, CvLayoutError } from "./cv-pdf";
+import { cvEmploymentDisplay } from "./cv-employment-display";
 import { cvMaxPages } from "./cv-theme";
 import { CV_LIMITS } from "./cv-format";
 import type { CvBuildFailure, CvFailureKind } from "./cv-build";
@@ -375,7 +376,7 @@ export async function selectCvToFit(
     const known = measured.get(index);
     if (known) return known;
     const content = materialiseCv(library, reachable[index]!.plan);
-    const { pageCount } = await renderCvPdfWithReport(content);
+    const { pageCount } = await renderCvPdfWithReport(content, cvEmploymentDisplay(content, library));
     const result = { content, pageCount };
     measured.set(index, result);
     return result;
@@ -449,7 +450,7 @@ export async function buildFittedCv(
   let previous: { reason: "overflow" | "layout_error"; pages: number } | { corrections: number } | undefined;
   if (initial) {
     const content = materialiseCv(library, initial);
-    const report = await renderCvPdfWithReport(content).catch((error) => {
+    const report = await renderCvPdfWithReport(content, cvEmploymentDisplay(content, library)).catch((error) => {
       if (error instanceof CvLayoutError)
         return { pageCount: maxPages + 1 };
       throw error;

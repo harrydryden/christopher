@@ -1,0 +1,209 @@
+{
+  "content": {
+    "gaps": [
+      "Supplier negotiation (r6) is not explicitly evidenced; the library shows a supplier scorecard and quarterly service-level reviews, not negotiation, so the CV describes performance management only.",
+      "The tailoringPlan marks the user criterion 'Lead weekly operational performance reviews' as missing, but entry:ev-head:row:1 confirms running a weekly performance review against published measures, so it is featured as the lead bullet.",
+      "Power BI, NetSuite, Process mapping and Vendor management are stored skill labels but were not listed in relevantSkillItems, so only SQL appears as a skill pill; Power BI is covered in the Operations Manager bullet and summary instead.",
+      "The advert refers to twelve sites; the evidence confirms eleven community clinics at Northwind Health."
+    ],
+    "name": "Rowan Mercer",
+    "theme": {
+      "font": "Course of Life",
+      "pill": "#e6e6e6",
+      "primary": "#000000",
+      "surface": "#f2f2f2",
+      "version": 1,
+      "maxPages": 2,
+      "background": "#ffffff",
+      "bodySizePt": 12,
+      "introPanel": true,
+      "skillPills": true
+    },
+    "contact": "Manchester, UK · rowan.mercer@example.test",
+    "summary": "Head of Operations at Northwind Health, leading four operations managers across eleven community clinics with a £14m cost base. Rebuilt rostering around a single demand model, cutting agency spend by 22%, and built the first operational reporting pack in SQL and Power BI.",
+    "fitNotes": [],
+    "sections": [
+      {
+        "kind": "experience",
+        "bullets": [
+          "Lead four operations managers and a shared scheduling team of eighteen, running a weekly performance review against published measures.",
+          "Cut agency spend by 22% in the first year by rebuilding rostering around a single demand model.",
+          "Own the operational plan for eleven community clinics, reporting delivery, cost and quality to the executive team every month.",
+          "Introduced a supplier scorecard covering the eight largest contracts, with quarterly reviews against agreed service levels.",
+          "Partner with finance on the annual budget and on monthly variance across a £14m cost base."
+        ],
+        "entryId": "ev-head",
+        "heading": "Head of Operations · Northwind Health · Apr 2021 – Present",
+        "bulletSources": [
+          [
+            "entry:ev-head:row:1"
+          ],
+          [
+            "entry:ev-head:row:2"
+          ],
+          [
+            "entry:ev-head:row:0"
+          ],
+          [
+            "entry:ev-head:row:4"
+          ],
+          [
+            "entry:ev-head:row:3"
+          ]
+        ],
+        "bulletSignposts": [
+          "Weekly performance reviews",
+          "Rostering improvement",
+          "Multi-site operational plan",
+          "Supplier performance",
+          "Budget and variance"
+        ],
+        "industryDescriptions": [
+          "Healthcare",
+          "Regulated services"
+        ]
+      },
+      {
+        "kind": "experience",
+        "bullets": [
+          "Built the first operational reporting pack in SQL and Power BI, replacing a manual month-end spreadsheet, while running day-to-day operations for four clinics and owning the rota, patient flow and site budget."
+        ],
+        "entryId": "ev-manager",
+        "heading": "Operations Manager · Northwind Health · Jan 2018 – Mar 2021",
+        "bulletSources": [
+          [
+            "entry:ev-manager:row:1",
+            "entry:ev-manager:row:0"
+          ]
+        ],
+        "bulletSignposts": [
+          "SQL and Power BI reporting"
+        ],
+        "industryDescriptions": [
+          "Healthcare",
+          "Regulated services"
+        ]
+      },
+      {
+        "kind": "education",
+        "bullets": [
+          "BSc (Hons) Economics, University of Manchester, 2014",
+          "PRINCE2 Practitioner, APMG International, 2019"
+        ],
+        "entryId": "ev-education",
+        "heading": "Education",
+        "bulletSources": [
+          [
+            "entry:ev-education:row:0"
+          ],
+          [
+            "entry:ev-education:row:1"
+          ]
+        ]
+      },
+      {
+        "kind": "skill",
+        "bullets": [
+          "SQL"
+        ],
+        "entryId": "ev-skills",
+        "heading": "Systems and tools",
+        "skillItems": [
+          "SQL"
+        ],
+        "bulletSources": [
+          [
+            "entry:ev-skills:skill:0"
+          ]
+        ]
+      }
+    ],
+    "summarySources": [
+      "entry:ev-head:row:0",
+      "entry:ev-head:row:1",
+      "entry:ev-head:row:2",
+      "entry:ev-head:row:3",
+      "entry:ev-manager:row:1"
+    ]
+  },
+  "pageCount": 1,
+  "maxPages": 2,
+  "layout": {
+    "summaryLines": 4,
+    "firstPageEntryIds": [
+      "ev-head",
+      "ev-manager",
+      "ev-education",
+      "ev-skills"
+    ],
+    "sectionPages": [
+      {
+        "entryId": "ev-head",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-manager",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-education",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-skills",
+        "startPage": 1,
+        "endPage": 1
+      }
+    ],
+    "claimPages": [
+      {
+        "claimId": "section:ev-head:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:1",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:2",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:3",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:4",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-manager:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-education:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-education:1",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-skills:0",
+        "startPage": 1,
+        "endPage": 1
+      }
+    ]
+  }
+}

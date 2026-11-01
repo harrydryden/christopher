@@ -1,6 +1,6 @@
 import { cvSectionHeading, cvSectionTexts, cvSupportingTitle } from "./cv-format";
 import PDFDocument from "pdfkit";
-import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, cvMaxPages, CvContentSchema, CV_GROUPS, type CvContent, type CvFont } from "./cv";
+import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, cvMaxPages, CvContentSchema, CV_GROUPS, type CvContent, type CvFont, type CvTheme } from "./cv";
 import { LIBERATION_SANS_BOLD, LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
 
 import { cleanCvText, measurePillRows, drawPillRow, PILL_STYLES } from "./cv-pdf-pills";
@@ -21,6 +21,54 @@ export type CvPdfLayoutReport = {
 };
 export type CvEmploymentDisplay = ReadonlyMap<string, { heading: string; industry: string | null }>;
 
+type PdfFontMetrics = { capHeight: number; ascender: number; descender: number };
+type RoleIndustryPill = { label: string; width: number; height: number; topOffset: number; textTopOffset: number; fontSize: number };
+const pdfFontMetrics = (doc: PDFKit.PDFDocument) =>
+  (doc as PDFKit.PDFDocument & { _font: PdfFontMetrics })._font;
+
+/** The experience pill is one cap-height line, separate from the padded skill pills. */
+function measureRoleIndustryPill(doc: PDFKit.PDFDocument, source: string, maxWidth: number,
+  face: { regular: string; bold: string }, headingSize: number): RoleIndustryPill {
+  doc.font(face.bold).fontSize(headingSize);
+  const headingFont = pdfFontMetrics(doc);
+  const height = headingFont.capHeight * headingSize / 1000;
+  const topOffset = (headingFont.ascender - headingFont.capHeight) * headingSize / 1000;
+  doc.font(face.regular);
+  const labelFont = pdfFontMetrics(doc);
+  // Descenders must fit too; this only reduces the legacy label by a fraction of a point.
+  const fontSize = Math.min(PILL_STYLES.industry.fontSize,
+    (height - 0.4) * 1000 / (labelFont.capHeight - labelFont.descender));
+  doc.fontSize(fontSize);
+  const available = maxWidth - PILL_STYLES.industry.paddingX * 2 - 1;
+  const original = cleanCvText(source);
+  let label = original;
+  if (doc.widthOfString(label) > available) {
+    const chars = Array.from(original);
+    let low = 0;
+    let high = chars.length;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (doc.widthOfString(`${chars.slice(0, middle).join("").trimEnd()}…`) <= available) low = middle;
+      else high = middle - 1;
+    }
+    label = `${chars.slice(0, low).join("").trimEnd()}…`;
+  }
+  const labelHeight = (labelFont.capHeight - labelFont.descender) * fontSize / 1000;
+  const textTopOffset = (height - labelHeight) / 2 -
+    (labelFont.ascender - labelFont.capHeight) * fontSize / 1000;
+  return { label, width: Math.min(maxWidth, Math.ceil(doc.widthOfString(label) +
+    PILL_STYLES.industry.paddingX * 2 + 1)), height, topOffset, textTopOffset, fontSize };
+}
+
+function drawRoleIndustryPill(doc: PDFKit.PDFDocument, pill: RoleIndustryPill, left: number, headingTop: number,
+  colour: string, font: string): void {
+  const top = headingTop + pill.topOffset;
+  doc.roundedRect(left, top, pill.width, pill.height, pill.height / 2).fill(colour);
+  doc.font(font).fontSize(pill.fontSize).fillColor(cvForeground(colour))
+    .text(pill.label, left + PILL_STYLES.industry.paddingX, top + pill.textTopOffset,
+      { width: pill.width - PILL_STYLES.industry.paddingX * 2, lineBreak: false, baseline: "top" });
+}
+
 const decodeFont = (base64: string) => Buffer.from(base64.replace(/\s+/g, ""), "base64");
 let liberationSans: { regular: Buffer; bold: Buffer } | undefined;
 /** Course of Life is pdfkit's built-in Helvetica; Arial embeds the bundled Liberation Sans bytes. */
@@ -30,6 +78,29 @@ function registerCvFont(doc: PDFKit.PDFDocument, font: CvFont): { regular: strin
   doc.registerFont("Arial", liberationSans.regular);
   doc.registerFont("Arial-Bold", liberationSans.bold);
   return { regular: "Arial", bold: "Arial-Bold" };
+}
+
+/** Actual renderer page and body-font geometry for an approximate writing envelope.
+ * Callers subtract their selected headings, sections and first-page masthead; rendering
+ * remains authoritative because line breaks depend on the final words. */
+export function cvPdfBodyMetrics(theme: CvTheme | undefined): {
+  usablePageHeightPt: number;
+  bodyWidthPt: number;
+  lineHeightPt: number;
+  representativeCharacterWidthPt: number;
+  charactersPerLine: number;
+} {
+  theme ??= DEFAULT_CV_THEME;
+  const doc = new PDFDocument({ size: "A4", margin: 44 });
+  const bodyWidthPt = doc.page.width - 88 - 12;
+  const usablePageHeightPt = doc.page.height - 44 - 55;
+  const sample = "Led a cross-functional team to deliver measurable results across the organisation.";
+  doc.font(registerCvFont(doc, theme.font).regular).fontSize(theme.bodySizePt ?? 10);
+  const lineHeightPt = doc.heightOfString("X", { width: bodyWidthPt, lineGap: 2.5 });
+  const representativeCharacterWidthPt = doc.widthOfString(sample) / sample.length;
+  doc.end();
+  return { usablePageHeightPt, bodyWidthPt, lineHeightPt, representativeCharacterWidthPt,
+    charactersPerLine: bodyWidthPt / representativeCharacterWidthPt };
 }
 
 /** Server-side, selectable-text A4 PDF held to the content's own page limit. No browser, remote fonts or model-authored HTML. */
@@ -221,15 +292,18 @@ export async function renderCvPdfWithReport(
       ? [clean(display ? display.industry ?? "Industry unspecified"
         : section.industryDescriptions?.find(item => clean(item)) ?? "Industry unspecified")]
       : section.industryDescriptions ?? [];
-    const industryRows = measurePillRows(doc, industryLabels,
-      section.kind === "experience" ? Math.min(160, width * 0.34) : width,
-      PILL_STYLES.industry, face.regular);
-    const rolePillWidth = section.kind === "experience" ? industryRows[0]!.pills[0]!.width : 0;
+    const rolePill = section.kind === "experience"
+      ? measureRoleIndustryPill(doc, industryLabels[0]!, Math.min(160, width * 0.34), face, sectionHeadingSize)
+      : null;
+    const industryRows = section.kind === "experience" ? [] :
+      measurePillRows(doc, industryLabels, width, PILL_STYLES.industry, face.regular);
+    const rolePillWidth = rolePill?.width ?? 0;
     const roleHeadingWidth = width - rolePillWidth - PILL_STYLES.industry.gapX - 4;
     doc.font(face.bold).fontSize(section.kind === "skill" ? 9 : sectionHeadingSize);
     const headerHeight = showHeading
       ? section.kind === "experience"
-        ? Math.max(industryRows[0]!.height, doc.heightOfString(sectionHeading, { width: roleHeadingWidth, lineGap: 2.5 })) + 6
+        ? Math.max(rolePill!.topOffset + rolePill!.height,
+          doc.heightOfString(sectionHeading, { width: roleHeadingWidth, lineGap: 2.5 })) + 6
         : doc.heightOfString(sectionHeading, { width, lineGap: 2.5 }) + 4
       : 0;
     const bulletHeights = (section.skillItems ?? section.bullets).map((bullet, index) => {
@@ -278,6 +352,7 @@ export async function renderCvPdfWithReport(
       showHeading,
       headerHeight,
       industryRows,
+      rolePill,
       rolePillWidth,
       roleHeadingWidth,
       skillRows,
@@ -321,6 +396,7 @@ export async function renderCvPdfWithReport(
         showHeading,
         headerHeight,
         industryRows,
+        rolePill,
         rolePillWidth,
         roleHeadingWidth,
         skillRows,
@@ -384,7 +460,7 @@ export async function renderCvPdfWithReport(
       }
       if (section.kind === "experience" && sectionHeading) {
         const top = doc.y;
-        drawPillRow(doc, industryRows[0]!, 44, top, theme.pill, PILL_STYLES.industry, face.regular);
+        drawRoleIndustryPill(doc, rolePill!, 44, top, theme.pill, face.regular);
         doc.font(face.bold).fontSize(sectionHeadingSize).fillColor(ink)
           .text(sectionHeading, 44 + rolePillWidth + PILL_STYLES.industry.gapX + 4, top,
             { width: roleHeadingWidth, lineGap: 2.5 });

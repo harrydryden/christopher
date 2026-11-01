@@ -13,6 +13,7 @@ import PDFDocument from "pdfkit";
 import { afterEach, vi } from "vitest";
 import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@col/core/cv";
 import { renderCvPdfWithReport } from "./cv-pdf";
+import { cvPdfBodyMetrics } from "@col/core/cv-pdf";
 import { cvReviewSections } from "./cv-review-edits";
 const fixture: CvContent = { name: "Example Candidate", contact: "London", summary: "Operations leader.", sections: [
   { entryId: "skill", kind: "skill", heading: "Internal evidence label", bullets: ["Planning and reporting."] },
@@ -20,6 +21,23 @@ const fixture: CvContent = { name: "Example Candidate", contact: "London", summa
   { entryId: "extra", kind: "education", heading: "Project qualification", bullets: ["Completed practical training."] },
 ], gaps: [] };
 afterEach(() => vi.restoreAllMocks());
+it("reports actual body geometry for the selected font and size", () => {
+  const metrics = (font: "Course of Life" | "Arial", bodySizePt?: 11 | 12) =>
+    cvPdfBodyMetrics({ ...DEFAULT_CV_THEME, font, bodySizePt });
+  const legacy = metrics("Course of Life");
+  const eleven = metrics("Course of Life", 11);
+  const twelve = metrics("Course of Life", 12);
+  const arial = metrics("Arial", 12);
+  expect(legacy.usablePageHeightPt).toBeGreaterThan(legacy.lineHeightPt * 40);
+  expect(legacy.bodyWidthPt).toBeGreaterThan(400);
+  expect(legacy.charactersPerLine).toBeGreaterThan(twelve.charactersPerLine);
+  expect(legacy.lineHeightPt).toBeLessThan(eleven.lineHeightPt);
+  expect(eleven.lineHeightPt).toBeLessThan(twelve.lineHeightPt);
+  expect(arial.bodyWidthPt).toBe(legacy.bodyWidthPt);
+  expect(arial.lineHeightPt).toBeLessThan(twelve.lineHeightPt);
+  expect(arial.charactersPerLine).toBeLessThan(twelve.charactersPerLine);
+  expect(Number.isFinite(arial.lineHeightPt)).toBe(true);
+});
 it("previews an edited skill heading and item while retaining the saved section identity", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const edited = cvReviewSections(fixture, ["Financial modelling", "BSc Economics, Example University. Distinction.", "Completed practical training."], [], [],
@@ -362,53 +380,62 @@ it("uses trusted company-first display metadata and an honest missing-industry p
   expect(labels.indexOf("Industry unspecified")).toBeLessThan(labels.indexOf("Example · Director · 2020-2025"));
 });
 
-it("centres wrapped skill and industry text inside its pill bounds", async () => {
+it.each([
+  ["Course of Life", undefined], ["Course of Life", 12],
+  ["Arial", undefined], ["Arial", 12],
+] as const)("aligns the single industry pill to the %s heading capitals at %s pt", async (font, bodySizePt) => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
   const long = "W".repeat(110);
   await renderCvPdf({
     ...fixture,
-    theme: { ...DEFAULT_CV_THEME, introPanel: false },
+    theme: { ...DEFAULT_CV_THEME, font, bodySizePt, introPanel: false },
     sections: [
       {
         entryId: "job",
         kind: "experience",
-        heading: "Director",
+        heading: "Director · Example company · 2020–2025",
         industryDescriptions: [long],
         bullets: ["Led a team."],
       },
       { entryId: "skill", kind: "skill", heading: "Skills", bullets: [long] },
     ],
   });
-  const labels = draw.mock.calls.filter((call) => call[0] === long.trim());
-  expect(labels).toHaveLength(2);
-  for (let i = 0; i < labels.length; i++) {
-    const [, x, y, options] = labels[i]!;
-    const [pillX, pillY, pillWidth, pillHeight] = rounded.mock.calls[i === 0 ? 0 : 2]! as [
-      number,
-      number,
-      number,
-      number,
-      number,
-    ];
-    expect(options).toMatchObject({ align: "center", baseline: "middle" });
-    const padding = i === 0 ? 8 : 6;
-    expect(x).toBe(pillX! + padding);
-    expect((options as { width: number }).width).toBeCloseTo(
-      pillWidth! - padding * 2,
-    );
-    const measure = new PDFDocument();
-    measure.font("Helvetica").fontSize(i === 0 ? 8 : 8.5);
-    const textHeight = measure.heightOfString(long.trim(), {
-      width: pillWidth! - padding * 2,
-      lineGap: 1,
-    });
-    expect(y).toBeCloseTo(
-      pillY! +
-        (pillHeight! - textHeight + measure.currentLineHeight(true) + 1) / 2,
-    );
-    measure.end();
-  }
+  const roleLabel = draw.mock.calls.find(call => typeof call[0] === "string" && call[0].endsWith("…"));
+  expect(roleLabel?.[0]).toMatch(/^W+…$/);
+  expect((roleLabel?.[0] as string).length).toBeLessThan(long.length);
+  expect(draw.mock.calls.some(call => call[0] === long)).toBe(true); // Skill text still wraps normally.
+  const heading = draw.mock.calls.find(call => call[0] === "Director · Example company · 2020-2025")!;
+  const [pillX, pillY, pillWidth, pillHeight] = rounded.mock.calls[0]! as [number, number, number, number];
+  const doc = rounded.mock.contexts[0] as PDFKit.PDFDocument & { _font: { capHeight: number; ascender: number } };
+  const headingSize = bodySizePt ? 12 : 10;
+  doc.font(font === "Arial" ? "Arial-Bold" : "Helvetica-Bold").fontSize(headingSize);
+  const capHeight = doc._font.capHeight * headingSize / 1000;
+  const capTop = (heading[2] as number) +
+    (doc._font.ascender - doc._font.capHeight) * headingSize / 1000;
+  expect(pillHeight).toBeCloseTo(capHeight, 5);
+  expect(pillY).toBeCloseTo(capTop, 5);
+  expect(pillX).toBe(44);
+  expect(pillWidth).toBeLessThanOrEqual(160);
+  expect((heading[1] as number)).toBeGreaterThan(pillX + pillWidth);
+});
+
+it("wraps a long role heading beside the one-line industry pill without overlapping its first bullet", async () => {
+  const draw = vi.spyOn(PDFDocument.prototype, "text");
+  const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
+  const title = "Director of Corporate Development and Cross-Regional Programme Operations · Example Company · 2020-2025";
+  await renderCvPdf({ ...fixture, theme: { ...DEFAULT_CV_THEME, introPanel: false, bodySizePt: 12 },
+    sections: [{ entryId: "job", kind: "experience", heading: title,
+      industryDescriptions: ["Manufacturing"], bullets: ["Led a measurable delivery programme."] }] });
+  const heading = draw.mock.calls.find(call => call[0] === title)!;
+  const bullet = draw.mock.calls.find(call => call[0] === "Led a measurable delivery programme.")!;
+  const [pillX, , pillWidth] = rounded.mock.calls[0]! as [number, number, number];
+  const doc = rounded.mock.contexts[0] as PDFKit.PDFDocument;
+  doc.font("Helvetica-Bold").fontSize(12);
+  const headingHeight = doc.heightOfString(title, { width: (heading[3] as { width: number }).width, lineGap: 2.5 });
+  expect(headingHeight).toBeGreaterThan(doc.currentLineHeight(true));
+  expect(heading[1] as number).toBeGreaterThan(pillX + pillWidth);
+  expect(bullet[2] as number).toBeGreaterThan((heading[2] as number) + headingHeight);
 });
 
 it("validates content limits at the shared renderer boundary", async () => {

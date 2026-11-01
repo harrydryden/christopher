@@ -520,7 +520,7 @@ it("reassesses identical saved wording when the effective priority meaning chang
   const checked = await check(changed, unchanged.semanticAuditCache);
   expect(checked.status, checked.error ?? "").toBe("ready");
   expect(checked.content).toEqual(unchanged.content);
-  expect(checked.assessment?.rubric.requirements[0]?.importance).toBe("responsibility");
+  expect(checked.assessment?.rubric.requirements[0]?.importance).toBe("desirable");
   expect(checked.semanticAuditCache?.identity).not.toBe(unchanged.semanticAuditCache!.identity);
   expect(AiEngine.prototype.assessCvBatches).toHaveBeenCalled();
   expect(author).toHaveBeenCalledTimes(1);

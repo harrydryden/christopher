@@ -30,7 +30,7 @@ export default async function LibraryPage({ searchParams }: {
     getLibraryEvidence(user.id, library),
     getCvWritingPreferences(user.id),
     library ? libraryReviewSignature(user.id, library.version) : Promise.resolve(""),
-    listLibraryImports(user.id),
+    listLibraryImports(user.id, 10, user.role === "admin"),
     openEvidenceDrafts("library"),
   ]);
   // Documents still being read. The page watches for them below, and stops watching when the

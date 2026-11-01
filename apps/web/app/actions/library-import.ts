@@ -38,6 +38,7 @@ import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { LIBRARY_UPLOAD_MIMES, uploadKind } from "@/lib/library-upload";
 import { getOwnLibraryImport, reopenLibraryImport } from "@/lib/queries/library-imports";
+import { cvViewerLibraryImportError } from "@/lib/cv-public-diagnostics";
 import { actionError, fail, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidate } from "@/lib/action-helpers";
 
@@ -87,7 +88,8 @@ export async function importLibraryDocument(form: FormData): Promise<ActionResul
       // Nothing was kept from it — a file that could not be converted keeps its refusal and no
       // text — so there is nothing left to read, and the same upload would fail the same way.
       if (!unread && !row.content) {
-        return fail(row.error ?? "Course of Life could not read that document. Try a different export of it, or paste the text instead.");
+        return fail(row.error ? cvViewerLibraryImportError(row.error, user.role === "admin")
+          : "Course of Life could not read that document. Try a different export of it, or paste the text instead.");
       }
       // Read, and still waiting for them: what was found is on this page already.
       if (row.proposal && !row.resolvedAt) {

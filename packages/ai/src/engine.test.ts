@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MODEL_ACCESS_BREAKER_ERROR_PREFIX, STREAM_IDLE_MS } from "./engine";
-import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, isModelAccessFailure } from "./breaker";
+import { MODEL_ACCESS_BREAKER_MS, PROVIDER_BILLING_BREAKER_MS, ModelAccessBreaker, isModelAccessFailure } from "./breaker";
 import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, SDK_MAX_RETRIES, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
@@ -1091,6 +1091,24 @@ describe("named failures", () => {
       expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
       expect(counts()).toEqual({ sent: 2, holds: 2 });
       expect(logs.filter(msg => msg.startsWith("model access breaker open"))).toHaveLength(2);
+    });
+
+    it("pauses only billing refusals for one minute, then sends a fresh call after a top-up window", async () => {
+      const now = { t: 1_000_000 };
+      const message = "Your credit balance is too low to access the Anthropic API.";
+      const error = new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message } }, undefined, headers());
+      const { engine, usage, logs, counts } = tripped(error, now);
+      await engine.analyseCvJob("Must lead operations");
+      expect(engine.breakerStats().open[0]?.openUntil).toBe(now.t + PROVIDER_BILLING_BREAKER_MS);
+      now.t += PROVIDER_BILLING_BREAKER_MS - 1;
+      await engine.analyseCvJob("Must lead operations");
+      expect(counts()).toEqual({ sent: 1, holds: 1 });
+      expect(usage[1]).toMatchObject({ costUsd: 0, failure: { kind: "provider_billing_exhausted", status: 400 } });
+      now.t++;
+      await engine.analyseCvJob("Must lead operations");
+      expect(counts()).toEqual({ sent: 2, holds: 2 });
+      expect(logs.filter(msg => msg.startsWith("provider billing breaker open"))).toHaveLength(2);
+      expect(engine.breakerStats().open[0]?.openUntil).toBe(now.t + PROVIDER_BILLING_BREAKER_MS);
     });
 
     it("does not open for a request that was wrong on its own, or for a throttle", async () => {

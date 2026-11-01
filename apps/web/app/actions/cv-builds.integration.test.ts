@@ -167,6 +167,33 @@ it("retries a failed build with the CV model chosen since, and keeps what it alr
   expect(tasks[0]!.payload).toMatchObject({ draftId: draft.id, userId: expect.any(String) });
 });
 
+it("clears a prior provider-billing failure only when a person successfully queues a retry", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const failure = { kind: "provider_billing_exhausted" as const, resolvedBy: "user" as const,
+    retryable: false, action: "check_provider_billing" as const,
+    message: "The model provider account needs credit.", motion: "assess_batch" as const,
+    attempt: 1, maxAttempts: 3 };
+  const draft = await failedDraft({ failure, error: failure.message });
+  const checkpoint = draft.buildCheckpoint;
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const retried = await draftRow(draft.id);
+  expect(retried).toMatchObject({ status: "queued", error: null, failure: null, buildCheckpoint: checkpoint });
+  const active = await getOwnCvBuildTask(user.id, draft.id);
+  expect(active).toBeTruthy();
+  expect(cvBuildState(retried, active, new Date())).toMatchObject({ phase: "waiting", failure: null, title: null });
+  expect((await buildTasks()).filter(task => (task.payload as { draftId?: string }).draftId === draft.id)).toHaveLength(1);
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toMatchObject({ ok: false });
+  expect(await draftRow(draft.id)).toMatchObject({ status: "queued", failure: null });
+
+  // A queue-key conflict must roll back the status/failure update, leaving the failed draft
+  // available for a later retry once the old task finishes.
+  const blocked = await failedDraft({ failure, error: failure.message });
+  await database.insert(schema.tasks).values({ type: "generate_cv", payload: { draftId: blocked.id, userId: user.id },
+    dedupeKey: `generate_cv:${blocked.id}`, status: "running", attempts: 1, startedAt: new Date() });
+  expect(await assessCvDraft(blocked.id, { ok: true }, new FormData())).toMatchObject({ ok: false });
+  expect(await draftRow(blocked.id)).toMatchObject({ status: "failed", error: failure.message, failure });
+});
+
 it("retries a Direct Edit as an assessment of the wording as typed, with the rubric it carried", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   const rubric = rubricFixture("Finance operations");

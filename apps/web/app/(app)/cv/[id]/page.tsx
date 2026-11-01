@@ -1,7 +1,7 @@
 import { cvVersionLabel } from "@/lib/cv-version";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { dailyCvVersions, getCvMotionMedians, getOwnCvDraft, readCvProgress } from "@/lib/queries/cv";
-import { cvBuildState } from "@/lib/cv-build-state";
+import { cvViewerBuildState } from "@/lib/cv-public-diagnostics";
 import { cvPageMode } from "@/lib/cv-page-mode";
 import { cvProgressReading } from "@/lib/cv-progress";
 import { CvDisclosure } from "@/components/CvDisclosure";
@@ -134,13 +134,14 @@ export default async function CvDraftPage({
   // the progress read above.
   const buildTask = progress?.task ?? null;
   const steps = progress?.steps ?? [];
-  const build = busy || failed ? cvBuildState(draft, buildTask, now, system.timezone) : null;
+  const build = busy || failed ? cvViewerBuildState(draft, buildTask, now, system.timezone, admin) : null;
   // The first reading of the progress feed, from the rows just read: the full draft is newer than
   // the progress read's copy of it by nothing but microseconds, and it is the one the page renders.
   const reading = cvProgressReading(
     { draft, task: buildTask, anyTaskActive: progress?.anyTaskActive ?? false, steps, signature: progress?.signature ?? "0:0:" },
     now,
     system.timezone,
+    admin,
   );
   const maxAttempts = build?.maxAttempts ?? buildTask?.maxAttempts ?? null;
   // Typical durations, for "usually about 50 s" and the time left; held per process, and only read

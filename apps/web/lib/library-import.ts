@@ -9,6 +9,7 @@
  */
 import { countProposedItems, StoredLibraryProposalSchema, type LibraryProposal } from "@col/core/library-import";
 import { LIBRARY_IMPORT_SLOW_MS } from "./library-import-clock";
+import { cvViewerLibraryImportError } from "./cv-public-diagnostics";
 export { LIBRARY_IMPORT_SLOW_MS } from "./library-import-clock";
 
 export type LibraryImportState = "reading" | "proposed" | "failed";
@@ -102,13 +103,13 @@ export function proposalHeadline(
  * worker's writing, and a version of the product that changes the shape must not take the Library
  * page down with it.
  */
-export function libraryImportView(row: LibraryImportRowView, hasDocument = false, now = new Date()): LibraryImportView {
+export function libraryImportView(row: LibraryImportRowView, hasDocument = false, now = new Date(), admin = false): LibraryImportView {
   const source = libraryImportSource(row);
   const empty = { jobs: 0, rows: 0, education: 0, skills: 0 };
   if (row.error) {
     return {
       id: row.id, createdAt: row.createdAt, state: "failed", source, proposal: null, counts: empty,
-      headline: `Could not read ${source}`, error: row.error,
+      headline: `Could not read ${source}`, error: cvViewerLibraryImportError(row.error, admin),
       retryable: hasDocument, stalled: false,
     };
   }

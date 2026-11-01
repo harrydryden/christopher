@@ -281,8 +281,8 @@ it("separates an operator cap from the member's monthly budget", () => {
   expect(state.title).toBe("AI spending limit reached");
   expect(state.action).toBe("check_deployment_budget");
   expect(failureWayForward(state.action, { admin: false, canRetry: true })).toMatchObject({
-    links: [], retry: true, retryNote: "Retry after an administrator confirms the cap has capacity.",
-    note: "Ask an administrator to check the deployment's daily AI cap before retrying.",
+    links: [], retry: true, retryNote: "Retry after an administrator confirms the service is available.",
+    note: "Ask an administrator to check when the CV service can resume.",
   });
   expect(failureWayForward(state.action, { admin: true, canRetry: true }).links)
     .toEqual([{ label: "Open Operations", href: "/admin/health" }]);
@@ -307,7 +307,7 @@ it("offers each failure the page that fixes it, and the retry only where it woul
   expect(failureWayForward("check_model_access", { admin: true }).links.map((link) => link.href)).toEqual(["/admin/settings", "/admin/health"]);
   expect(failureWayForward("check_model_access", { admin: false })).toMatchObject({
     links: [],
-    note: "Ask an administrator to check this deployment's model access.",
+    note: "Ask an administrator to check the CV service.",
   });
   expect(failureWayForward("check_provider_billing", { admin: true, canRetry: true })).toMatchObject({
     links: [{ label: "Open Anthropic Plans & Billing", href: "https://platform.claude.com/settings/billing" }],
@@ -321,9 +321,10 @@ it("offers each failure the page that fixes it, and the retry only where it woul
     links: [{ label: "Open Operations", href: "/admin/health" }], retry: false, retryNote: null,
   });
   expect(failureWayForward("check_provider_request", { admin: false, canRetry: true })).toMatchObject({
-    links: [], note: expect.stringContaining("internal provider error"), retry: false, retryNote: null,
+    links: [], note: "Ask an administrator to check the CV service before starting another CV from the role.", retry: false, retryNote: null,
   });
-  expect(failureWayForward("choose_model").links).toEqual([{ label: "Choose a different CV model", href: "/settings" }]);
+  expect(failureWayForward("choose_model", { admin: true }).links).toEqual([{ label: "Choose a different CV model", href: "/settings" }]);
+  expect(failureWayForward("choose_model", { admin: false }).links).toEqual([]);
   // The retry is a form over `assessCvDraft`, which refuses a finalised or still-building draft.
   expect(failureWayForward("retry", { canRetry: false }).retry).toBe(false);
   expect(failureWayForward("retry", { canRetry: true })).toMatchObject({ retry: true, retryNote: null });

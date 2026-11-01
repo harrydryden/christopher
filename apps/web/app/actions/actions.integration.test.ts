@@ -1,5 +1,7 @@
 import { withCvEditBase } from "@/test/cv-form";
 import { createCvAssessment } from "@col/core/cv-review";
+import { renderCvPdfWithReport } from "@col/core/cv-pdf";
+import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import {
   cvTextItems,
   cvClaimItems,
@@ -42,7 +44,7 @@ async function completeAssessment(id: string) {
     rubric,
     review,
     model: "test",
-    pageCount: 2,
+    pageCount: (await renderCvPdfWithReport(content, cvEmploymentDisplay(content, library))).pageCount,
   });
   await database
     .update(schema.cvDrafts)

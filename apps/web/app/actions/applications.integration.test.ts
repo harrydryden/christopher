@@ -6,6 +6,8 @@
  * there rather than adding a second. Withdrawing is also a decision, so it leaves one.
  */
 import { createCvAssessment } from "@col/core/cv-review";
+import { renderCvPdfWithReport } from "@col/core/cv-pdf";
+import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@col/core/cv-assessment";
 import { rubricFixture, reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -28,10 +30,16 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 const rendering = vi.hoisted(() => ({ during: null as null | (() => Promise<void>) }));
 vi.mock("@/lib/cv-pdf", async (original) => {
   const actual = await original<typeof import("@/lib/cv-pdf")>();
-  return { ...actual, renderCvPdf: async (...args: Parameters<typeof actual.renderCvPdf>) => {
-    await rendering.during?.();
-    return actual.renderCvPdf(...args);
-  } };
+  return { ...actual,
+    renderCvPdf: async (...args: Parameters<typeof actual.renderCvPdf>) => {
+      await rendering.during?.();
+      return actual.renderCvPdf(...args);
+    },
+    renderCvPdfWithReport: async (...args: Parameters<typeof actual.renderCvPdfWithReport>) => {
+      await rendering.during?.();
+      return actual.renderCvPdfWithReport(...args);
+    },
+  };
 });
 
 import { revalidatePath } from "next/cache";
@@ -98,7 +106,8 @@ async function completeAssessment(id: string) {
   const [draft] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id));
   const content = draft!.content!, library = draft!.librarySnapshot, rubric = rubricFixture(draft!.jobDescription);
   const review = reviewFixture({ rubric, cv: cvTextItems(content), claims: cvClaimItems(content), evidence: cvEvidenceItems(library) });
-  const assessment = createCvAssessment({ content, description: draft!.jobDescription, library, rubric, review, model: "test", pageCount: 2 });
+  const pageCount = (await renderCvPdfWithReport(content, cvEmploymentDisplay(content, library))).pageCount;
+  const assessment = createCvAssessment({ content, description: draft!.jobDescription, library, rubric, review, model: "test", pageCount });
   await database.update(schema.cvDrafts).set({ status: "ready", assessment }).where(eq(schema.cvDrafts.id, id));
   expect(await finaliseCvDraft(id, { ok: true }, form({ reviewed: "on" }))).toEqual({ ok: true });
 }

@@ -56,6 +56,7 @@ import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
  * version changes this check.
  */
 function finaliseObstacle(draft: {
+  status: string;
   content: CvContent | null;
   jobDescription: string;
   librarySnapshot: CvLibrary;
@@ -64,10 +65,11 @@ function finaliseObstacle(draft: {
   reviewDecision?: import("@col/core/cv-review").CvReviewDecision | null;
 }): string | null {
   if (!draft.content) return null;
-  const summaryIssue = cvTargetedSummaryFinalisationIssue(draft.content, draft.targetingBrief, draft.assessment);
-  if (summaryIssue) return summaryIssue;
+  if (draft.status !== "ready") return "Wait for this revision’s assessment to finish.";
   try {
-    assertCvFinalisable({ ...draft, content: draft.content });
+    assertCvFinalisable({ ...draft, content: draft.content,
+      reviewDecision: draft.assessment ? { inputHash: draft.assessment.inputHash,
+        assessedAt: draft.assessment.assessedAt, dismissedRowIds: [], skipped: true } : draft.reviewDecision });
     return null;
   } catch (error) {
     return error instanceof Error ? error.message : "This CV cannot be finalised yet.";
@@ -193,6 +195,7 @@ export default async function CvDraftPage({
         library={draft.librarySnapshot}
         libraryDrift={drift}
         finaliseReason={finaliseReason}
+        summaryIssue={content ? cvTargetedSummaryFinalisationIssue(content, draft.targetingBrief, draft.assessment) : null}
         blocked={blocked}
         comments={sharing.comments}
         initialFindingId={initialFindingId}

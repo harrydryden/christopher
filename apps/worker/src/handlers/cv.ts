@@ -5,6 +5,7 @@ import {
   CvLayoutError,
 } from "@col/core/cv-pdf";
 import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
+import { cvOrderedSkillLibrary, cvOrderedSkillPlan, cvValidSkillOrderHint } from "@col/core/cv-skill-order";
 import {
   createCvAssessment,
   cvAssessmentCurrent,
@@ -298,6 +299,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
     const directEdit = !requestedMode && !checkpoint.mode && !!draft.content && !!draft.parentId &&
       !checkpoint.contentAt && !checkpoint.stages?.write;
     const mode = requestedMode ?? checkpoint.mode ?? (directEdit ? "assess" : undefined);
+    const skillHint = mode === "improve" ? cvValidSkillOrderHint(checkpoint.skillOrder) : undefined;
     const sourceRubric = suppliedRubric ?? checkpoint.sourceRubric;
     const sourceImprovements = suppliedImprovements ?? checkpoint.improvements;
     // What this task asked for, written where a retry that knows only the draft will find it.
@@ -376,7 +378,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               : { renders: 1, outcome: "layout_error" });
           }
           // Each saved revision carries its own page limit in its theme.
-          const reusedContent = !!saved && savedPages! <= cvMaxPages(saved.theme);
+          // Check assesses the saved wording even when it exceeds the preferred page count.
+          // Generation and Rewrite still fit to that limit before publication.
+          const reusedContent = !!saved && Number.isFinite(savedPages) && savedPages! > 0 &&
+            (mode === "assess" || savedPages! <= cvMaxPages(saved.theme));
           step.add({
             roles: counted("experience"), qualifications: counted("education") + counted("training"), skillBlocks: counted("skill"),
             reusedRubric: !!reused, reusedContent,
@@ -390,13 +395,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         }
       });
       const { library, fullLibrary } = inputs;
-      // Check judges the person's saved wording. An overlong direct edit must remain theirs to
-      // shorten or explicitly Rewrite; silently authoring a replacement would undo their edits.
+      // An unrenderable saved document cannot be assessed. A renderable page overrun is instead
+      // reported by the current assessment and can be explicitly acknowledged at finalisation.
       if (mode === "assess" && inputs.saved && !inputs.reusedContent) {
-        const limit = cvMaxPages(inputs.saved.theme);
-        const measured = Number.isFinite(inputs.savedPages) ? `${inputs.savedPages} pages` : "more pages than fit";
         throw new CvBuildStop("page_limit_unfittable",
-          `This saved CV measures ${measured} against your ${limit}-page limit. Shorten it or change the page limit, then Check again; Rewrite is a separate choice.`);
+          "This saved CV could not be laid out for assessment. Edit the wording and Check again.");
       }
       const sizes = {
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
@@ -729,9 +732,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             // Saved wording that no longer fits is refitted; a rebuild starts from the Library.
             // A checkpoint saved before citations were ids reads its legacy refs as ids.
             const initial = inputs.saved ? CvStoredPlanSchema.parse(inputs.saved) : undefined;
-            const writingLibrary = inputs.saved
+            const writingLibrary = cvOrderedSkillLibrary(inputs.saved
               ? { ...library, theme: inputs.saved.theme ?? library.theme }
-              : library;
+              : library, skillHint);
             const improvements =
               mode === "improve"
                 ? (sourceImprovements ?? parent?.assessment?.review.matches
@@ -763,7 +766,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
                 const separated = separateCvModelSkillProposals(writingLibrary, authored);
                 for (const proposal of separated.proposals)
                   if (!pendingSkillProposals.has(proposal.id)) pendingSkillProposals.set(proposal.id, proposal);
-                return separated.plan;
+                return cvOrderedSkillPlan(separated.plan, skillHint);
               },
               initial,
               async (event: CvFitEvent) => {
@@ -866,7 +869,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       const assessContent = async (candidate: CvContent, pass: CvAuditPass, knownPages?: number): Promise<CvAssessment> => {
         await stage("assessing");
         const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate, cvEmploymentDisplay(candidate, fullLibrary))).pageCount;
-        assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
+        if (mode !== "assess") assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
         const claimEvidence = cvEvidenceItems(inputs.brief ? library : fullLibrary)
           .filter(item => !inputs.brief || item.text.trim().length > 0);
         const auditRoute = pass === "draft" ? await ai.claimMemoRoute("draft") : null;
@@ -1130,6 +1133,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         opportunities: CvAssessment["review"]["matches"];
         semanticTarget: NonNullable<typeof semantic>;
       }) => {
+        const improvementLibrary = cvOrderedSkillLibrary(library, skillHint);
         const keep = (reason: string) => journal.record("adopt_revision", { reason }, "skipped");
         let fitted: Awaited<ReturnType<typeof selectCvToFit>>;
         let optionalSkillProposals: CvPendingSkillProposal[] = [];
@@ -1142,20 +1146,20 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             callSteps.set("improvement", opened.step);
             // The same scale the baseline actually fitted at: a baseline that had to rewrite twice
             // to fit is not improved by a candidate written to the first attempt's larger budget.
-            const budget = createCvWritingBudget(library, target, writeScale, args.semanticTarget);
-            let plan = requireResult(await ai.buildCv({ library, rubric, tailoringPlan,
+            const budget = createCvWritingBudget(improvementLibrary, target, writeScale, args.semanticTarget);
+            let plan = requireResult(await ai.buildCv({ library: improvementLibrary, rubric, tailoringPlan,
               ...(inputs.brief?.priority.state === "confirmed" ? { emphasisRequirementIds: inputs.brief.priority.emphasisRequirementIds } : {}),
               description: draft.jobDescription, jobTitle: draft.jobTitle, company: draft.companyName,
               improvements: args.opportunities.map(item => item.improvement).filter(Boolean),
-              writingBudget: budget, maxPages: cvMaxPages(library.theme),
+              writingBudget: budget, maxPages: cvMaxPages(improvementLibrary.theme),
             }, ref("improvement", "cv-author", stageCtx.signal, opened.step?.id)), "improvement", AUTHOR_CALL);
-            const separated = separateCvModelSkillProposals(library, plan);
-            plan = separated.plan;
+            const separated = separateCvModelSkillProposals(improvementLibrary, plan);
+            plan = cvOrderedSkillPlan(separated.plan, skillHint);
             optionalSkillProposals = separated.proposals;
             // Every citation must name a source row that exists and says what it quotes. The
             // optional pass has one call and no correction loop: an unverifiable answer keeps the original.
             try {
-              validateCvPlanProvenance(plan, library);
+              validateCvPlanProvenance(plan, improvementLibrary);
             } catch (error) {
               throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
             }
@@ -1170,7 +1174,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             plan.sections = plan.sections.map(section => baselineQualifications.get(section.entryId) ?? section);
             // One author call only. Deterministic fitting may remove whole lower-value bullets; an
             // unfittable or unsupported candidate is discarded rather than starting another loop.
-            const candidate = await selectCvToFit(library, plan, target, budget, args.semanticTarget);
+            const candidate = await selectCvToFit(improvementLibrary, plan, target, budget, args.semanticTarget);
             if (candidate.plan.sections.some(section => args.semanticTarget.treatments?.get(section.entryId) === "summarise"
               && section.bullets.length > 1))
               throw new CvBuildStop("output_invalid", "The optional revision did not keep Summarise to one sourced bullet.");

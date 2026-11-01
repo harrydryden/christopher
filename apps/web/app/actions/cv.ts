@@ -2,6 +2,7 @@
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { cvReviewEditedContent, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { CV_LIMITS, cvSectionTexts } from "@col/core/cv-format";
+import { cvSkillOrderHint } from "@col/core/cv-skill-order";
 import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import { cvImprovementOwner } from "@col/core/cv-assessment";
 import { assertCvFinalisable, canonicalJson, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
@@ -77,6 +78,9 @@ function applyCvFormEdits(saved: CvContent, form: FormData, addedSupportIds: str
     throw new UserFacingError("A signpost belongs to an older CV section. Reload the CV before saving.");
   const removed = JSON.parse(String(form.get("removedSkills") ?? "[]")) as string[];
   const added = JSON.parse(String(form.get("addedSkills") ?? "[]")) as AddedSkillSection[];
+  const skillSectionOrder = form.has("skillSectionOrder")
+    ? z.array(z.string().min(1)).max(CV_LIMITS.sections).parse(JSON.parse(String(form.get("skillSectionOrder"))))
+    : undefined;
   if (!Array.isArray(removed) || !removed.every((id) => typeof id === "string") ||
       !Array.isArray(added) || !added.every((section) => section && typeof section.entryId === "string" && typeof section.heading === "string" && Array.isArray(section.items) && section.items.every((item: unknown) => typeof item === "string")))
     throw new UserFacingError("The skill edits could not be read. Refresh and try again.");
@@ -84,7 +88,7 @@ function applyCvFormEdits(saved: CvContent, form: FormData, addedSupportIds: str
   try {
     content = cvReviewEditedContent(saved, {
       summary, theme, rows, removedSkillIds: removed, addedSkills: added, skillHeadings, bulletSignposts,
-      addedSupportIds,
+      addedSupportIds, skillSectionOrder,
     }, supportSections);
   } catch (error) {
     if (error instanceof Error) throw new UserFacingError(error.message);
@@ -884,6 +888,7 @@ export async function saveCvDraft(
             // What this rebuild was asked for, where a retry of it can find it again.
             buildCheckpoint: {
               tailoringEnabled: true, quizCompleted: true, mode: "improve", improvements,
+              skillOrder: cvSkillOrderHint(content),
               ...(rubricCheckpoint ?? {}),
             },
             reviewDecision: null,
@@ -1186,6 +1191,8 @@ export async function finaliseCvDraft(
     const skipReview = form.get("skipReview") === "on";
     const seenHash = form.get("assessmentHash");
     const seenAt = form.get("assessedAt");
+    if (skipReview && (!seenHash || !seenAt))
+      throw new UserFacingError("Reload the current assessment before finalising with unresolved findings.");
     const finalisable = <T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "assessment" | "jobDescription" | "librarySnapshot" | "reviewDecision" | "targetingBrief">>(draft: T | undefined) => {
       if (!draft?.content || draft.status !== "ready")
         throw new UserFacingError("Wait for this revision’s assessment to finish.");
@@ -1193,7 +1200,7 @@ export async function finaliseCvDraft(
         throw new UserFacingError("The assessment changed. Reload before finalising this revision.");
       const summaryIssue = cvTargetedSummaryFinalisationIssue(CvContentSchema.parse(draft.content),
         draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null, draft.assessment);
-      if (summaryIssue) throw new UserFacingError(summaryIssue);
+      if (summaryIssue && !skipReview) throw new UserFacingError(summaryIssue);
       // What the reviewer found missing is written for the person reading it.
       try {
         assertCvFinalisable({ ...draft, content: draft.content,
@@ -1220,9 +1227,15 @@ export async function finaliseCvDraft(
     // pdfkit is loaded here, by the action that renders, not by every page that imports this module.
     // The content is parsed as the download parses it, so the bytes kept below are the bytes a
     // download would have rendered.
-    const { renderCvPdf } = await import("@/lib/cv-pdf");
+    const { renderCvPdfWithReport } = await import("@/lib/cv-pdf");
     const finalContent = CvContentSchema.parse(checked.content);
-    const pdf = await renderCvPdf(finalContent, cvEmploymentDisplay(finalContent, CvLibrarySchema.parse(checked.librarySnapshot)));
+    const rendered = await renderCvPdfWithReport(finalContent, cvEmploymentDisplay(finalContent, CvLibrarySchema.parse(checked.librarySnapshot)));
+    if (!Number.isInteger(rendered.pageCount) || rendered.pageCount < 1 || rendered.pdf.length < 5)
+      throw new UserFacingError("This CV could not be rendered as a valid PDF. Edit it and Check again.");
+    if (rendered.pageCount !== checked.assessment?.pageCount)
+      throw new UserFacingError("The PDF layout changed since this CV was checked. Check it again before finalising.");
+    if (rendered.pageCount > rendered.maxPages && !skipReview)
+      throw new UserFacingError(`This CV measures ${rendered.pageCount} pages against your ${rendered.maxPages}-page limit. Finalise with warnings to keep this layout, or edit it and Check again.`);
     await db().transaction(async (tx) => {
       const [draft] = await tx
         .select()
@@ -1237,7 +1250,7 @@ export async function finaliseCvDraft(
         throw new UserFacingError("This revision changed while it was being checked. Reload it before finalising.");
       // Save the exact bytes and the finalised timestamp together. A storage failure must not
       // leave a revision claiming to be downloadable without its approved PDF.
-      await tx.insert(cvPdfs).values({ draftId: id, userId: user.id, contentHash: cvPdfContentHash(checked.content), bytes: pdf });
+      await tx.insert(cvPdfs).values({ draftId: id, userId: user.id, contentHash: cvPdfContentHash(checked.content), bytes: rendered.pdf });
       await tx
           .update(cvDrafts)
           .set({ finalisedAt: new Date(), ...(skipReview && current.assessment ? { reviewDecision: {

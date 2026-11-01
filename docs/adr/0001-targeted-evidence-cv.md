@@ -1,5 +1,7 @@
 # ADR 0001: A CV presents targeted evidence for an application
 
+**Later decision:** [ADR 0003](0003-cv-skill-order-and-finalisation-choice.md) supersedes the manual-overrun Check/finalisation policy and makes qualitative warnings explicitly overridable. Historical implementation measurements below describe the policy at that time.
+
 Status: Accepted — completion audit implemented and locally verified; production migration applied and live preparation qualified. Hosted CI and application rollout remain separate gates.
 
 Date: 30 October 2026

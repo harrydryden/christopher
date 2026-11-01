@@ -351,6 +351,30 @@ it("writes a rebuild afresh from the library and preserves the queued revision n
   expect(saved!.revision).toBe(5);
 });
 
+it("keeps selected skill section and label order through a Rewrite without restoring missing labels", async () => {
+  const { task, deps, draft } = await setup();
+  const source = { ...library, entries: [...library.entries,
+    { id: "tools", kind: "skill" as const, heading: "Tools", details: "Confirmed tools", skillItems: ["Python", "SQL", "R"] },
+    { id: "methods", kind: "skill" as const, heading: "Methods", details: "Confirmed methods", skillItems: ["Planning"] }] };
+  const hint = [{ entryId: "methods", items: ["Planning"] }, { entryId: "tools", items: ["SQL", "Python"] }];
+  await client.db.update(schema.cvDrafts).set({ jobDescription: "Lead a team with SQL, Python and Planning",
+    librarySnapshot: source, buildCheckpoint: { mode: "improve", skillOrder: hint } }).where(eq(schema.cvDrafts.id, draft.id));
+  task.payload = { draftId: draft.id, mode: "improve" };
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", gaps: [], sections: [
+    { entryId: "one", bullets: ["Led a team"] },
+    { entryId: "tools", bullets: ["Python", "SQL"], skillItems: ["Python", "SQL", "R"] },
+    { entryId: "methods", bullets: ["Planning"], skillItems: ["Planning"] },
+  ] });
+  await handleGenerateCv(task, deps);
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved?.status, saved?.error ?? "").toBe("ready");
+  expect(build.mock.calls[0]?.[0].library.entries.map(entry => entry.id)).toEqual(["one", "methods", "tools"]);
+  expect(saved?.content?.sections.filter(section => section.kind === "skill").map(section => section.entryId))
+    .toEqual(["methods", "tools"]);
+  expect(saved?.content?.sections.find(section => section.entryId === "tools")?.skillItems)
+    .toEqual(["SQL", "Python"]);
+});
+
 it("keeps a revision's own rubric when its parent never reached assessment", async () => {
   vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();
@@ -426,7 +450,7 @@ it("does not author a CV against a hallucinated requirement", async () => {
   expect(saved!.assessment).toBeNull();
 });
 
-it("keeps oversized saved wording intact and makes Check fail before any provider call", async () => {
+it("assesses oversized saved wording without authoring or shortening it", async () => {
   const { materialiseCv, DEFAULT_CV_THEME } = await import("@col/core/cv");
   const { renderCvPdfWithReport } = await import("@col/core/cv-pdf");
   const { task, deps, draft } = await setup();
@@ -442,15 +466,14 @@ it("keeps oversized saved wording intact and makes Check fail before any provide
   const build = vi.spyOn(AiEngine.prototype, "buildCv");
   await handleGenerateCv(task, deps);
   const saved = await read();
-  expect(saved.status).toBe("failed");
+  expect(saved.status, saved.error ?? "").toBe("ready");
   expect(saved.buildStage).toBeNull();
-  expect(saved.failure).toMatchObject({ kind: "page_limit_unfittable" });
-  expect(saved.error).toContain("measures");
+  expect(saved.failure).toBeNull();
+  expect(saved.assessment?.pageCount).toBeGreaterThan(2);
   expect(saved.content).toEqual(content);
   expect(saved.content!.theme).toEqual(content.theme);
   expect(build).not.toHaveBeenCalled();
-  expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
-  expect(AiEngine.prototype.assessCv).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.assessCvBatches).toHaveBeenCalled();
 });
 
 it("remeasures an appearance-only saved revision and reuses its exact factual audit", async () => {

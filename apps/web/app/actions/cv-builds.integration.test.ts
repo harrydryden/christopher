@@ -11,10 +11,11 @@ import { runMigrations } from "@col/db/migrate";
 import { CV_THEMES, DEFAULT_CV_THEME, CvLibrarySchema } from "@col/core/cv";
 import { cvTailoringEvidence, validateCvTailoringPlan } from "@col/core/cv-tailoring";
 import { cvTargetingSource } from "@col/core/cv-targeting-identity";
+import { CvTargetingBriefSchema, cvTargetedSummaryFinalisationIssue } from "@col/core/cv-targeting";
 import { reviseFailedCvTargeting } from "./cv-targeting";
 import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { reusedCvRubric } from "@col/core";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import type { User } from "@col/db/schema";
 
@@ -35,7 +36,8 @@ vi.mock("@/lib/cv-library-write", async (importOriginal) => {
   return { ...actual, latestLibrary: vi.fn(actual.latestLibrary) };
 });
 /** Runs inside every render the actions ask for, so a test can look at the database mid-render. */
-const rendering = vi.hoisted(() => ({ during: undefined as undefined | (() => Promise<void>) }));
+const rendering = vi.hoisted(() => ({ during: undefined as undefined | (() => Promise<void>),
+  pageCount: undefined as number | undefined }));
 vi.mock("@/lib/cv-pdf", async (actual) => {
   const real = await actual<typeof import("@/lib/cv-pdf")>();
   return {
@@ -44,18 +46,25 @@ vi.mock("@/lib/cv-pdf", async (actual) => {
       await rendering.during?.();
       return real.renderCvPdf(...args);
     },
+    renderCvPdfWithReport: async (...args: Parameters<typeof real.renderCvPdfWithReport>) => {
+      await rendering.during?.();
+      const report = await real.renderCvPdfWithReport(...args);
+      return { ...report, pageCount: rendering.pageCount ?? report.pageCount };
+    },
   };
 });
 
 import { assessCvDraft, dismissCvReviewItem, finaliseCvDraft, quoteCvBuild, requestCv, saveCvDraft } from "./cv";
 import { createCvAssessment } from "@col/core/cv-review";
 import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@col/core/cv-assessment";
+import { renderCvPdfWithReport } from "@col/core/cv-pdf";
 import { reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { CV_BUILD_CAP_MESSAGE, MAX_CV_BUILDS_IN_FLIGHT } from "@/lib/cv-build-capacity";
 import { CV_WORKER_STOPPED_MESSAGE, cvBuildState } from "@/lib/cv-build-state";
 import { getOwnCvBuildTask } from "@/lib/queries/cv";
 import { ensureTestUser } from "@/test/auth";
 import { latestLibrary } from "@/lib/cv-library-write";
+import { createScriptedAiClient, callsOf } from "@/test/scripted-ai-client";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -69,6 +78,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   rendering.during = undefined;
+  rendering.pageCount = undefined;
   await database.execute(
     sql`truncate ai_calls, ai_reservations, applications, cv_versions, cv_drafts, cv_libraries, companies, tasks, settings, user_settings, users restart identity cascade`,
   );
@@ -205,6 +215,45 @@ it("saves wording immediately without a task and keeps the rubric for an explici
   expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await buildTasks();
   expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess" });
+});
+
+it("saves skill order without AI, checks that revision, and carries order into an explicit Rewrite", async () => {
+  const skills = { ...library, entries: [...library.entries,
+    { id: "tools", kind: "skill" as const, heading: "Tools", details: "Confirmed tools", skillItems: ["Python", "SQL"] },
+    { id: "methods", kind: "skill" as const, heading: "Methods", details: "Confirmed methods", skillItems: ["Planning"] }] };
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: skills });
+  const parent = await failedDraft({ status: "ready", error: null, failure: null, librarySnapshot: skills,
+    content: { ...content, sections: [...content.sections,
+      { entryId: "tools", kind: "skill", heading: "Tools", bullets: ["Python", "SQL"], skillItems: ["Python", "SQL"] },
+      { entryId: "methods", kind: "skill", heading: "Methods", bullets: ["Planning"], skillItems: ["Planning"] }] } });
+  const formForOrder = () => {
+    const form = new FormData();
+    for (const [key, value] of Object.entries({ summary: "Operations leader", "section-0": "Led a team",
+      "skills-1": "SQL\nPython", "skills-2": "Planning", skillSectionOrder: JSON.stringify(["methods", "tools"]) })) form.set(key, value);
+    return form;
+  };
+  await expect(saveWithBase(parent.id, { ok: true }, formForOrder())).rejects.toThrow("redirect:/cv/");
+  const [saved] = await database.select().from(schema.cvDrafts)
+    .where(and(eq(schema.cvDrafts.parentId, parent.id), eq(schema.cvDrafts.status, "ready")));
+  expect(saved?.content?.sections.map(section => section.entryId)).toEqual(["one", "methods", "tools"]);
+  expect(saved?.content?.sections[2]?.skillItems).toEqual(["SQL", "Python"]);
+  expect(await buildTasks()).toHaveLength(0);
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  await grantCvCredits(database, { userId: user.id, source: "admin", units: 1, externalRef: "skill-order-rewrite" });
+  const rewrite = formForOrder();
+  rewrite.set("intent", "improve");
+  await expect(saveWithBase(parent.id, { ok: true }, rewrite)).rejects.toThrow("redirect:/cv/");
+  const [queued] = await database.select().from(schema.cvDrafts)
+    .where(and(eq(schema.cvDrafts.parentId, parent.id), eq(schema.cvDrafts.status, "queued")));
+  expect(queued?.buildCheckpoint?.skillOrder).toEqual([
+    { entryId: "methods", items: ["Planning"] },
+    { entryId: "tools", items: ["SQL", "Python"] },
+  ]);
+  expect((await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, queued!.id)))[0]?.status).toBe("reserved");
+  expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  expect((await buildTasks()).find(task => (task.payload as { draftId?: string }).draftId === saved!.id)?.payload)
+    .toMatchObject({ draftId: saved!.id, mode: "assess" });
+  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, saved!.id))).toHaveLength(0);
 });
 
 it("saves successive ranked priority edits freely and checks the final wording with the original rubric", async () => {
@@ -858,6 +907,103 @@ it("allows an explicit finalise-anyway decision and keeps it for later download 
   expect(saved.assessment?.review.claims[0]?.status).toBe("unsupported");
 });
 
+it("finalises every rendered page only after an explicit current-assessment warning acknowledgement", async () => {
+  const draft = await finalisableDraft();
+  const longBullet = "Led a team across regional service delivery and reporting. ".repeat(8).trim();
+  const over = { ...content, summary: "Experienced operations leader across regional service delivery and reporting. ".repeat(20).trim(),
+    sections: [{ ...content.sections[0]!, bullets: Array(6).fill(longBullet) }],
+    theme: { ...DEFAULT_CV_THEME, maxPages: 1 as const } };
+  const rendered = await renderCvPdfWithReport(over);
+  expect(rendered.pageCount).toBeGreaterThan(1);
+  const rubric = draft.assessment!.rubric;
+  const review = reviewFixture({ rubric, cv: cvTextItems(over), claims: cvClaimItems(over), evidence: cvEvidenceItems(library) });
+  const assessment = createCvAssessment({ content: over, description: draft.jobDescription, library,
+    rubric, review, model: "test", pageCount: rendered.pageCount });
+  await database.update(schema.cvDrafts).set({ content: over, assessment }).where(eq(schema.cvDrafts.id, draft.id));
+  const form = reviewed();
+  form.set("assessmentHash", assessment.inputHash);
+  form.set("assessedAt", assessment.assessedAt);
+  expect((await finaliseCvDraft(draft.id, { ok: true }, form)).ok).toBe(false);
+  form.set("skipReview", "on");
+  expect(await finaliseCvDraft(draft.id, { ok: true }, form)).toEqual({ ok: true });
+  const saved = await draftRow(draft.id);
+  expect(saved.assessment?.pageCount).toBe(rendered.pageCount);
+  expect(saved.reviewDecision).toMatchObject({ skipped: true, inputHash: assessment.inputHash });
+  const [pdf] = await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft.id));
+  expect(pdf?.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+  expect(pdf?.bytes.length).toBeGreaterThan(1_000);
+});
+
+it("keeps an omitted-Experience summary warning and permits a current explicit finalise decision", async () => {
+  const fullLibrary = { ...library, entries: [...library.entries,
+    { id: "two", kind: "experience" as const, heading: "Earlier role", details: "Worked in oil and gas",
+      confirmedResponsibilities: ["Worked in oil and gas"] }] };
+  const savedContent = { ...content, summarySources: ["entry:two:row:0"] };
+  const rubric = rubricFixture("Finance operations");
+  const review = reviewFixture({ rubric, cv: cvTextItems(savedContent), claims: cvClaimItems(savedContent),
+    evidence: cvEvidenceItems(fullLibrary) });
+  const assessment = createCvAssessment({ content: savedContent, description: "Finance operations",
+    library: fullLibrary, rubric, review, model: "test", pageCount: 1 });
+  const source = cvTargetingSource(1, CvLibrarySchema.parse(fullLibrary), "Finance operations");
+  const targetingBrief = CvTargetingBriefSchema.parse({ version: 1, source,
+    entries: [{ entryId: "two", treatment: "omit" }], presentation: { maxPages: 2, bodySizePt: 12 },
+    priority: { state: "confirmed", rubric, rubricKey: "a".repeat(64),
+      emphasisRequirementIds: ["r1"], acknowledgedEssentialOmissionIds: [] } });
+  const draft = await failedDraft({ status: "ready", error: null, failure: null, buildCheckpoint: null,
+    librarySnapshot: fullLibrary, content: savedContent, assessment, targetingBrief });
+  expect(cvTargetedSummaryFinalisationIssue(savedContent, targetingBrief, assessment)).toMatch(/omitted/);
+  const form = reviewed();
+  form.set("assessmentHash", assessment.inputHash);
+  form.set("assessedAt", assessment.assessedAt);
+  expect((await finaliseCvDraft(draft.id, { ok: true }, form)).ok).toBe(false);
+  form.set("skipReview", "on");
+  expect(await finaliseCvDraft(draft.id, { ok: true }, form)).toEqual({ ok: true });
+  expect((await draftRow(draft.id)).reviewDecision).toMatchObject({ skipped: true, inputHash: assessment.inputHash });
+});
+
+it("checks an earlier page-limit failure, then finalises and downloads the unchanged overlong wording", async () => {
+  const longBullet = "Led a team across regional service delivery and reporting. ".repeat(8).trim();
+  const over = { ...content, summary: "Experienced operations leader across regional service delivery and reporting. ".repeat(20).trim(),
+    sections: [{ ...content.sections[0]!, bullets: Array(6).fill(longBullet) }],
+    theme: { ...DEFAULT_CV_THEME, maxPages: 1 as const } };
+  const pages = (await renderCvPdfWithReport(over)).pageCount;
+  expect(pages).toBeGreaterThan(1);
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1,
+    content: { ...library, theme: over.theme } });
+  const sourceRubric = rubricFixture("Finance operations");
+  const failure = { kind: "page_limit_unfittable" as const, resolvedBy: "user" as const, retryable: false,
+    action: "shorten_or_raise_pages" as const, message: "The saved CV exceeded its page limit.",
+    motion: "measure" as const, attempt: 1, maxAttempts: 1 };
+  const draft = await failedDraft({ content: over, failure, error: failure.message,
+    buildCheckpoint: { sourceRubric, tailoringEnabled: false } });
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const [task] = (await buildTasks()).filter(row => (row.payload as { draftId?: string }).draftId === draft.id);
+  expect(task?.payload).toMatchObject({ draftId: draft.id, mode: "assess" });
+  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id))).toHaveLength(0);
+  const fake = createScriptedAiClient();
+  const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
+  const result = await handleGenerateCv(task!, { db: database, env: { anthropicApiKey: "scripted-key" },
+    userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }), now: () => new Date(),
+    aiClient: fake.client } as unknown as import("../../../worker/src/context").WorkerDeps);
+  expect(result).toMatchObject({ ready: true });
+  const checked = await draftRow(draft.id);
+  expect(checked.status).toBe("ready");
+  expect(checked.content).toEqual(over);
+  expect(checked.assessment?.pageCount).toBe(pages);
+  expect(callsOf(fake.calls, "author")).toHaveLength(0);
+  const form = reviewed();
+  form.set("assessmentHash", checked.assessment!.inputHash);
+  form.set("assessedAt", checked.assessment!.assessedAt);
+  expect((await finaliseCvDraft(draft.id, { ok: true }, form)).ok).toBe(false);
+  form.set("skipReview", "on");
+  expect(await finaliseCvDraft(draft.id, { ok: true }, form)).toEqual({ ok: true });
+  const { GET } = await import("@/app/api/cv/[id]/pdf/route");
+  const downloaded = await GET(new Request(`http://localhost/api/cv/${draft.id}/pdf`), { params: Promise.resolve({ id: draft.id }) });
+  expect(downloaded.status).toBe(200);
+  expect(downloaded.headers.get("content-type")).toBe("application/pdf");
+  expect(Buffer.from(await downloaded.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
+});
+
 it("refuses to finalise a revision that was assessed again while its PDF was being checked", async () => {
   const draft = await finalisableDraft();
   rendering.during = async () => {
@@ -869,6 +1015,20 @@ it("refuses to finalise a revision that was assessed again while its PDF was bei
     ok: false, error: "This revision changed while it was being checked. Reload it before finalising.",
   });
   expect((await draftRow(draft.id)).finalisedAt).toBeNull();
+});
+
+it("rejects a zero-page or changed PDF layout even with explicit warning acknowledgement", async () => {
+  const draft = await finalisableDraft();
+  const form = reviewed();
+  form.set("skipReview", "on");
+  form.set("assessmentHash", draft.assessment!.inputHash);
+  form.set("assessedAt", draft.assessment!.assessedAt);
+  rendering.pageCount = 0;
+  expect((await finaliseCvDraft(draft.id, { ok: true }, form)).ok).toBe(false);
+  rendering.pageCount = draft.assessment!.pageCount + 1;
+  expect((await finaliseCvDraft(draft.id, { ok: true }, form)).ok).toBe(false);
+  expect((await draftRow(draft.id)).finalisedAt).toBeNull();
+  expect(await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft.id))).toHaveLength(0);
 });
 
 it("queues a Generate while no worker is running, and the CV page says it will start when one is", async () => {

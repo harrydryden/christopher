@@ -210,6 +210,19 @@ it("invalidates stale assessments for wording, theme, evidence or description ch
       assessment: { ...assessment, pageCount: 4 },
     }),
   ).toThrow("3 pages");
+  const overPages = { ...assessment, pageCount: 4 };
+  expect(() => assertCvFinalisable({ content, jobDescription: description, librarySnapshot: library,
+    assessment: overPages, reviewDecision: { inputHash: overPages.inputHash, assessedAt: overPages.assessedAt,
+      dismissedRowIds: [], skipped: true } })).not.toThrow();
+  expect(() => assertCvFinalisable({ content, jobDescription: description, librarySnapshot: library,
+    assessment: overPages, reviewDecision: { inputHash: overPages.inputHash, assessedAt: "old",
+      dismissedRowIds: [], skipped: true } })).toThrow("3 pages");
+  expect(() => assertCvFinalisable({ content, jobDescription: description, librarySnapshot: library,
+    assessment: { ...overPages, pageCount: 0 }, reviewDecision: { inputHash: overPages.inputHash,
+      assessedAt: overPages.assessedAt, dismissedRowIds: [], skipped: true } })).toThrow("valid measured page count");
+  expect(() => assertCvFinalisable({ content, jobDescription: description, librarySnapshot: library,
+    assessment: { ...overPages, pageCount: 1.5 }, reviewDecision: { inputHash: overPages.inputHash,
+      assessedAt: overPages.assessedAt, dismissedRowIds: [], skipped: true } })).toThrow("valid measured page count");
   const twoPage = { ...content, theme: { ...DEFAULT_CV_THEME, maxPages: 2 } };
   const twoPageAssessment = createCvAssessment({
     content: twoPage, description, library, rubric, review: review(), model: "test", pageCount: 3,

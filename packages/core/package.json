@@ -40,6 +40,10 @@
       "types": "./src/cv-skill-draft-context.ts",
       "default": "./src/cv-skill-draft-context.ts"
     },
+    "./cv-skill-order": {
+      "types": "./src/cv-skill-order.ts",
+      "default": "./src/cv-skill-order.ts"
+    },
     "./cv-helpers": {
       "types": "./src/cv-helpers.ts",
       "default": "./src/cv-helpers.ts"

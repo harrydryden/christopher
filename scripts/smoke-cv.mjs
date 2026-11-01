@@ -6,6 +6,7 @@ import "tsx/esm";
 const require = createRequire(import.meta.url);
 require("tsx/cjs");
 const { createCvAssessment } = require("../packages/core/src/cv-review.ts");
+const { renderCvPdfWithReport } = require("../packages/core/src/cv-pdf.ts");
 const {
   cvTextItems,
   cvClaimItems,
@@ -100,7 +101,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     rubric,
     review,
     model: "test",
-    pageCount: 2,
+    pageCount: (await renderCvPdfWithReport(content)).pageCount,
   });
   const setting = async (key) => (await pool.query("select value from user_settings where user_id = $1 and key = $2", [userId, key])).rows[0];
   const originalWriting = await setting("cvWritingPreferences");
@@ -619,8 +620,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       await page.getByRole("table").locator("em").first().textContent(),
       content.summary,
     );
-    assert.equal(await page.getByRole("button", { name: "Finalise this CV", exact: true }).isDisabled(), true);
-    const override = page.getByRole("button", { name: "Skip review and finalise anyway", exact: true });
+    assert.equal(await page.locator('input[name="reviewed"]').getAttribute("required"), "");
+    const override = page.getByRole("button", { name: "Finalise with warnings", exact: true });
     assert.equal(await override.count(), 1);
     await page.locator('input[name="reviewed"]').check();
     await override.click();
@@ -1215,6 +1216,49 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(gone.status, 200);
     assert.ok((await gone.text()).includes("This link has expired or was withdrawn."));
 
+    // The displayed skill order must survive the real preview and free Save, not only local state.
+    const orderId = randomUUID();
+    tableIds.push(orderId);
+    const orderLibrary = { ...library, entries: [...library.entries,
+      { id: "library-tools", kind: "skill", heading: "Tools", details: "Reporting tools", skillItems: ["SQL", "Reporting"] }] };
+    const orderContent = { ...content, sections: [...content.sections,
+      { entryId: "library-skills", kind: "skill", heading: "Commercial capabilities", bullets: ["Forecasting", "Planning"], skillItems: ["Forecasting", "Planning"] },
+      { entryId: "library-tools", kind: "skill", heading: "Tools", bullets: ["SQL", "Reporting"], skillItems: ["SQL", "Reporting"] }] };
+    await pool.query(`insert into cv_drafts
+      (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, content)
+      values ($1, $2, 'Skill ordering', 'Example', $3, 1, $4, 'test', 'ready', $5)`,
+      [orderId, userId, description, JSON.stringify(orderLibrary), JSON.stringify(orderContent)]);
+    await page.goto(`${baseUrl}/cv/${orderId}`);
+    await page.locator('[data-cv-editor-ready="true"]').waitFor();
+    await page.getByRole("button", { name: "Move skill section Tools up", exact: true }).click();
+    await page.getByRole("button", { name: "Move skill 1 down in Tools", exact: true }).click();
+    assert.equal(await page.getByRole("textbox", { name: "Skill 1 in Tools", exact: true }).inputValue(), "Reporting");
+    assert.equal(await page.getByRole("button", { name: "Move skill section Tools up", exact: true }).isDisabled(), true);
+    await page.getByRole("button", { name: "Move skill section Tools up", exact: true }).locator("xpath=ancestor::div[contains(@class, 'space-y-2')][1]").screenshot({ path: "/tmp/cv-skill-order-desktop.png" });
+    await page.setViewportSize({ width: 375, height: 812 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "skill ordering fits a phone width");
+    await page.getByRole("button", { name: "Move skill section Tools up", exact: true }).locator("xpath=ancestor::div[contains(@class, 'space-y-2')][1]").screenshot({ path: "/tmp/cv-skill-order-mobile.png" });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const orderPreview = page.waitForResponse(response => new URL(response.url()).pathname === "/api/cv/preview");
+    await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
+    const orderResponse = await orderPreview;
+    assert.equal(orderResponse.status(), 200);
+    const orderedSkills = orderResponse.request().postDataJSON().content.sections.filter(section => section.kind === "skill");
+    assert.deepEqual(orderedSkills.map(section => section.heading), ["Tools", "Commercial capabilities"]);
+    assert.deepEqual(orderedSkills[0].skillItems, ["Reporting", "SQL"]);
+    await page.getByRole("button", { name: /^Save (changes|as new revision) · free$/ }).click();
+    await page.waitForURL(url => url.pathname.startsWith("/cv/") && !url.pathname.endsWith(orderId));
+    const savedOrderId = new URL(page.url()).pathname.split("/").pop();
+    tableIds.push(savedOrderId);
+    const savedOrder = (await pool.query("select content from cv_drafts where id = $1", [savedOrderId])).rows[0].content;
+    assert.deepEqual(savedOrder.sections.filter(section => section.kind === "skill"), orderedSkills);
+    assert.equal((await pool.query("select count(*)::int n from tasks where payload->>'draftId' = $1", [savedOrderId])).rows[0].n, 0);
+    await page.reload();
+    await page.locator('[data-cv-editor-ready="true"]').waitFor();
+    assert.deepEqual(await page.locator('input[name^="skill-heading-"]').evaluateAll(inputs => inputs.map(input => input.value)),
+      ["Tools", "Commercial capabilities"]);
+    assert.equal(await page.getByRole("textbox", { name: "Skill 1 in Tools", exact: true }).inputValue(), "Reporting");
+
     // A user can dismiss a finding or skip the review. Both decisions persist and keep the
     // original score and flags; neither path should strand the final PDF behind the old gate.
     for (const mode of ["dismiss", "skip"]) {
@@ -1250,8 +1294,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         });
       }
       await page.locator('input[name="reviewed"]').check();
-      await page.getByRole("button", { name: mode === "skip" ? "Skip review and finalise anyway" : "Finalise this CV", exact: true }).click();
-      await page.getByText("Finalised. Download the saved PDF, or create a new revision to make changes.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: mode === "skip" ? "Finalise with warnings" : "Finalise this CV", exact: true }).click();
+      await page.getByText("Finalised. Download the saved PDF, or create a new revision to make changes.", { exact: true }).waitFor().catch(async error => {
+        throw new Error(`Finalisation (${mode}) failed: ${error.message}\n${await page.locator("main").innerText()}`);
+      });
       const savedReview = (await pool.query("select finalised_at, review_decision, assessment from cv_drafts where id = $1", [reviewId])).rows[0];
       assert.ok(savedReview.finalised_at);
       assert.equal(savedReview.review_decision.skipped, mode === "skip");

@@ -193,9 +193,9 @@ describe("CV targeting", () => {
     const target = brief([{ entryId: "one", treatment: "omit" }]);
     const assessment = { review: { claims: [{ claimId: "profile", status: "supported", evidence: [
       { id: "entry:two:row:0", quote: "Managed testing" }], reason: "" }] } } as Parameters<typeof cvTargetedSummaryFinalisationIssue>[2];
-    expect(cvTargetedSummaryFinalisationIssue(content, target, assessment)).toMatch(/Edit the summary/);
+    expect(cvTargetedSummaryFinalisationIssue(content, target, assessment)).toMatch(/summary cites Experience omitted/);
     expect(cvTargetedSummaryFinalisationIssue({ ...content, summarySources: [] }, target, assessment)).toBeNull();
     expect(cvTargetedSummaryFinalisationIssue({ ...content, summarySources: [] }, target,
-      { review: { claims: [{ claimId: "profile", status: "supported", evidence: [{ id: "entry:one:row:0", quote: "Led delivery" }] }] } } as typeof assessment)).toMatch(/Check the edited summary/);
+      { review: { claims: [{ claimId: "profile", status: "supported", evidence: [{ id: "entry:one:row:0", quote: "Led delivery" }] }] } } as typeof assessment)).toMatch(/may rely on omitted Experience/);
   });
 });

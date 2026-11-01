@@ -4,7 +4,7 @@ import { buildFittedCv, CV_FIT_PROBLEM_CHARACTERS, cvFitCorrection, selectCvToFi
 import { CvContentSchema, CvPlanSchema, CvStoredPlanSchema, DEFAULT_CV_THEME, cvSectionTexts, materialiseCv, type CvLibrary, type CvPlan } from './cv';
 import type { CvRubric } from './cv-assessment';
 import type { CvTailoringPlan } from './cv-tailoring';
-import { renderCvPdfWithReport } from './cv-pdf';
+import { cvPdfBodyMetrics, renderCvPdfWithReport } from './cv-pdf';
 // Every render the fitter asks for, counted, so a test can say how many it took.
 const renders = vi.hoisted(() => ({ count: 0 }));
 vi.mock('./cv-pdf', async (actual) => {
@@ -84,7 +84,7 @@ it('keeps citations and signposts aligned when measured fitting removes bullets'
   });
  }
 });
-it('selects an emphasised requirement carrier and retains its citation and signpost', async () => {
+it('retains two distinct sourced requirements when the measured PDF has room despite a one-bullet advisory allowance', async () => {
  const source: CvLibrary = { name: 'Example', contact: 'London', profile: 'Leader', entries: [{ id: 'role',
   kind: 'experience', heading: 'Manager · Example', details: 'Improved reporting.\nLed delivery.',
   confirmedResponsibilities: ['Improved reporting.', 'Led delivery.'] }] };
@@ -97,13 +97,44 @@ it('selects an emphasised requirement carrier and retains its citation and signp
   { requirementId: 'delivery', status: 'demonstrated', evidence: [{ sourceId: 'entry:role:row:1', quote: 'Led delivery.' }], reason: 'Direct.' },
  ], gapQuestions: [] };
  const semantic = { rubric, plan: tailoring, emphasisRequirementIds: new Set(['delivery']) };
- const authored: CvPlan = { summary: 'Leader.', sections: [{ entryId: 'role', bullets: ['Improved reporting.', 'Led delivery.'],
+ const authored: CvPlan = { summary: 'Improved reporting.', summarySources: ['entry:role:row:0'], sections: [{ entryId: 'role', bullets: ['Improved reporting.', 'Led delivery.'],
   bulletSources: [['entry:role:row:0'], ['entry:role:row:1']], bulletSignposts: ['Reporting', 'Delivery'] }], gaps: [] };
  const original = createCvWritingBudget(source, 'reporting delivery', 1, semantic);
  const budget = { ...original, blocks: original.blocks.map(block => ({ ...block, maxBullets: 1 })) };
  const fitted = await selectCvToFit(source, authored, 'reporting delivery', budget, semantic);
- expect(fitted.content.sections[0]).toMatchObject({ bullets: ['Led delivery.'],
-  bulletSources: [['entry:role:row:1']], bulletSignposts: ['Delivery'] });
+ expect(fitted.content.sections[0]).toMatchObject({ bullets: ['Improved reporting.', 'Led delivery.'],
+  bulletSources: [['entry:role:row:0'], ['entry:role:row:1']], bulletSignposts: ['Reporting', 'Delivery'] });
+ expect(fitted.pageCount).toBe(1);
+ const summarise = { ...semantic, treatments: new Map([['role', 'summarise' as const]]) };
+ const write = vi.fn().mockResolvedValueOnce(authored).mockResolvedValue({ ...authored,
+  sections: [{ ...authored.sections[0]!, bullets: ['Led delivery.'],
+   bulletSources: [['entry:role:row:1']], bulletSignposts: ['Delivery'] }] });
+ const repaired = await buildFittedCv(source, 'reporting delivery', write, undefined, undefined, summarise);
+ expect(write).toHaveBeenCalledTimes(2);
+ expect(repaired.sections[0]!.bullets).toEqual(['Led delivery.']);
+});
+it('removes only one achievement when a full eligible plan crosses the measured two-page boundary', async () => {
+ const entries: CvLibrary['entries'] = [...Array.from({ length: 6 }, (_, index) => ({
+  id: `near-${index}`, kind: 'experience' as const,
+  heading: `Director · Example Organisation ${index} · 202${index}–2026`,
+  details: 'Confirmed programme delivery', confirmedResponsibilities: ['Confirmed programme delivery'],
+ })), { id: 'qualification', kind: 'education', heading: 'University', details: 'BSc Economics' }];
+ const source: CvLibrary = { name: 'Example Person', contact: 'London · person@example.com',
+  profile: 'An operations leader with supported delivery experience.',
+  theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 }, entries };
+ const bullet = (length: number) => 'Delivered a confirmed programme across the team and recorded the result. '.repeat(12).slice(0, length).trim();
+ const authored: CvPlan = { summary: source.profile, gaps: [], sections: [
+  ...entries.slice(0, 6).map((entry, index) => ({ entryId: entry.id,
+   bullets: Array.from({ length: index ? 2 : 6 }, (_, row) => bullet(index ? 270 : 400).replace('programme', `programme ${index}-${row}`)) })),
+  { entryId: 'qualification', bullets: ['BSc Economics'] },
+ ] };
+ expect((await renderCvPdfWithReport(materialiseCv(source, authored))).pageCount).toBe(3);
+ const budget = createCvWritingBudget(source, 'confirmed programme delivery', 1, undefined, cvPdfBodyMetrics(source.theme));
+ expect(budget.blocks[0]!.maxBullets).toBeLessThan(6); // the authoring allowance is advisory after writing
+ const fitted = await selectCvToFit(source, authored, 'confirmed programme delivery', budget);
+ expect(fitted.pageCount).toBe(2);
+ expect(fitted.plan.sections.reduce((sum, section) => sum + section.bullets.length, 0)).toBe(16);
+ expect(fitted.content.sections.filter(section => section.kind === 'experience')).toHaveLength(6);
 });
 it('gives the writer budgets before its first attempt and avoids unnecessary model retries',async()=>{
  const write=vi.fn().mockResolvedValue(plan);
@@ -135,7 +166,7 @@ it('reports each motion of writing and fitting with the figures behind it',async
  const shorten = events[5] as Extract<CvFitEvent,{motion:'shorten'}>;
  expect(shorten.removed).toBeGreaterThan(0);
  expect(shorten.changes.length).toBeLessThanOrEqual(6);
- expect(shorten.changes.some(change => change.includes('prioritised'))).toBe(true);
+ expect(shorten.changes.some(change => change.includes('omitted a lower-priority bullet'))).toBe(true);
 });
 it('never silently drops employment or education to satisfy the page count',async()=>{
  const events: CvFitEvent[] = [];
@@ -348,6 +379,43 @@ it('scales the writing budget with the page limit held in the library theme', ()
  // Without a theme the default three-page limit applies.
  const { theme:_theme, ...untitled }=library;
  expect(createCvWritingBudget(untitled,target).totalCharacters).toBe(three.totalCharacters);
+});
+it('uses measured font geometry and selected structure for one, two and three-page writing envelopes', () => {
+ const source = (maxPages: number, bodySizePt: 11 | 12) => ({ ...library,
+  theme: { ...DEFAULT_CV_THEME, maxPages, bodySizePt } });
+ const budget = (maxPages: number, bodySizePt: 11 | 12) => {
+  const selected = source(maxPages, bodySizePt);
+  return createCvWritingBudget(selected, 'Finance', 1, undefined, cvPdfBodyMetrics(selected.theme));
+ };
+ expect(budget(1, 12).totalCharacters).toBeLessThan(budget(2, 12).totalCharacters);
+ expect(budget(2, 12).totalCharacters).toBeLessThan(budget(3, 12).totalCharacters);
+ expect(budget(2, 12).totalCharacters).toBeLessThan(budget(2, 11).totalCharacters);
+ expect(budget(2, 12).totalCharacters).toBeGreaterThan(4195); // measured six-role 12pt baseline was under-filled
+ const crowded = { ...source(2, 12), entries: [...library.entries,
+  { id: 'extra', kind: 'skill' as const, heading: 'Other tools', details: 'Excel', skillItems: ['Excel'] }] };
+ const roleOnly = { ...source(2, 12), entries: library.entries.slice(0, 6) };
+ expect(createCvWritingBudget(crowded, 'SQL Excel', 1, undefined, cvPdfBodyMetrics(crowded.theme)).totalCharacters)
+  .toBeLessThan(createCvWritingBudget(roleOnly, 'SQL Excel', 1, undefined, cvPdfBodyMetrics(roleOnly.theme)).totalCharacters);
+});
+it('offers rich confirmed evidence more bullet slots while a sparse author leaves space unused', async () => {
+ const rich: CvLibrary = { ...library, theme: { ...DEFAULT_CV_THEME, bodySizePt: 12 }, entries:
+  library.entries.slice(0, 6).map((entry, index) => ({ ...entry,
+   details: Array.from({ length: 6 }, (_, row) => `Delivered confirmed programme ${index}-${row} for the team.`).join('\n'),
+   confirmedResponsibilities: Array.from({ length: 6 }, (_, row) => `Delivered confirmed programme ${index}-${row} for the team.`) })) };
+ const write = vi.fn(async ({ writingBudget }: { writingBudget: ReturnType<typeof createCvWritingBudget> }) => ({
+  summary: 'Confirmed operations leader.', gaps: [], sections: writingBudget.blocks.map(block => ({ entryId: block.entryId,
+   bullets: rich.entries.find(entry => entry.id === block.entryId)!.confirmedResponsibilities!.slice(0, block.maxBullets) })) }));
+ const fitted = await buildFittedCv(rich, 'confirmed programme delivery', write);
+ const offered = write.mock.calls[0]![0].writingBudget;
+ expect(cvBudgetViolations(await write.mock.results[0]!.value, offered)).toEqual([]);
+ expect(offered.blocks.reduce((sum, block) => sum + block.maxBullets, 0)).toBeGreaterThan(20);
+ expect(fitted.sections.reduce((sum, section) => sum + section.bullets.length, 0)).toBeGreaterThan(20);
+ expect((await renderCvPdfWithReport(fitted)).pageCount).toBeLessThanOrEqual(2);
+ const sparse: CvLibrary = { ...rich, entries: rich.entries.slice(0, 1).map(entry => ({ ...entry,
+  details: entry.confirmedResponsibilities![0]!, confirmedResponsibilities: entry.confirmedResponsibilities!.slice(0, 1) })) };
+ const one = await buildFittedCv(sparse, 'confirmed programme delivery', async () => ({ summary: 'Operations leader.', gaps: [],
+  sections: [{ entryId: sparse.entries[0]!.id, bullets: sparse.entries[0]!.confirmedResponsibilities! }] }));
+ expect(one.sections[0]!.bullets).toHaveLength(1);
 });
 it('fits to the page limit in the library theme, keeping more achievements when more pages are allowed', async () => {
  const target='Financial planning budgets reporting';

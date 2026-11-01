@@ -12,7 +12,7 @@ import {
   CvBudgetSelectionConflict,
 } from "./cv-budget";
 import { cvTailoringCoverage, validateCvPlanProvenance } from "./cv-tailoring";
-import { renderCvPdfWithReport, CvLayoutError } from "./cv-pdf";
+import { renderCvPdfWithReport, cvPdfBodyMetrics, CvLayoutError } from "./cv-pdf";
 import { cvEmploymentDisplay } from "./cv-employment-display";
 import { cvMaxPages } from "./cv-theme";
 import { CV_LIMITS } from "./cv-format";
@@ -128,40 +128,6 @@ function valueRequirements(section: CvPlan["sections"][number], index: number, s
 const essentialIds = (semantic?: CvSemanticTarget) => new Set(semantic?.rubric.requirements
   .filter(requirement => requirement.importance === "essential").map(requirement => requirement.id) ?? []);
 
-/** Greedy set coverage protects distinct requirements; a duplicate claim adds no semantic value. */
-function selectBulletIndexes(section: CvPlan["sections"][number], limit: number, target: CvRelevanceTarget, semantic: CvSemanticTarget | undefined, library: CvLibrary): Set<number> {
-  if (!semantic || !section.bulletSources) return new Set(section.bullets.map((text, index) => ({ index, score: cvRelevance(text, target) + 1 / (index + 1) }))
-    .sort((a, b) => b.score - a.score).slice(0, limit).map(item => item.index));
-  const weights = cvSemanticRequirementWeights(semantic);
-  const essential = essentialIds(semantic);
-  // Preserve at least one carrier for every represented essential requirement. Protecting only a
-  // globally unique carrier is insufficient: two duplicates can both be trimmed while another
-  // essential's unique carrier consumes the nominal one-bullet budget.
-  const representedEssential = new Set(section.bullets.flatMap((_, index) =>
-    [...valueRequirements(section, index, semantic, library)].filter(id => essential.has(id))));
-  const selected = new Set<number>();
-  const covered = new Set<string>();
-  while ([...representedEssential].some(id => !covered.has(id))) {
-    const carrier = section.bullets.map((_, index) => ({ index, ids: valueRequirements(section, index, semantic, library) }))
-      .filter(item => !selected.has(item.index))
-      .map(item => ({ ...item, gain: [...item.ids].filter(id => representedEssential.has(id) && !covered.has(id)).length }))
-      .sort((a, b) => b.gain - a.gain || a.index - b.index)[0];
-    if (!carrier || !carrier.gain) break;
-    selected.add(carrier.index);
-    carrier.ids.forEach(id => covered.add(id));
-  }
-  while (selected.size < Math.min(limit, section.bullets.length)) {
-    const candidate = section.bullets.map((_, index) => ({ index, ids: sourceRequirements(section.bulletSources?.[index], semantic) }))
-      .filter(item => !selected.has(item.index))
-      .map(item => ({ ...item, score: [...item.ids].filter(id => !covered.has(id)).reduce((sum, id) => sum + (weights.get(id) ?? 0), 0) + 1 / (item.index + 1) }))
-      .sort((a, b) => b.score - a.score)[0];
-    if (!candidate) break;
-    selected.add(candidate.index);
-    candidate.ids.forEach(id => covered.add(id));
-  }
-  return selected;
-}
-
 function requirementCounts(plan: CvPlan, semantic: CvSemanticTarget | undefined, library: CvLibrary): Map<string, number> {
   const counts = new Map<string, number>();
   if (!semantic) return counts;
@@ -259,12 +225,13 @@ export async function selectCvToFit(
     );
     return false;
   });
-  // Keep chronological sections, but use relevance to select their strongest bullets.
+  // Keep chronological sections. Structured-skill limits are mandatory. Prose maxBullets is an
+  // authoring allowance, so the measured fitter starts with every eligible achievement and the
+  // bisection below removes only as many lower-priority bullets as the actual PDF requires.
   for (const section of plan.sections) {
     const block = budget.blocks.find(
       (block) => block.entryId === section.entryId,
     );
-    const sourceKind = library.entries.find((entry) => entry.id === section.entryId)?.kind;
     if (
       (block?.kind === "skill" || library.entries.some(entry => entry.id === section.entryId && entry.kind === "skill")) &&
       section.skillItems &&
@@ -301,22 +268,6 @@ export async function selectCvToFit(
       );
       changes.push(
         `${library.entries.find((entry) => entry.id === section.entryId)!.heading}: prioritised ${section.skillItems.length} relevant skills.`,
-      );
-    }
-    if (
-      block && !section.skillItems &&
-      (sourceKind === "experience" || sourceKind === "interest") &&
-      section.bullets.length > block.maxBullets
-    ) {
-      const selected = selectBulletIndexes(section, block.maxBullets, target, semantic, library);
-      if (selected.size > block.maxBullets) semanticOverflows.push(`${section.entryId}: consolidate achievements without removing sole evidence for an essential requirement.`);
-      section.bullets = section.bullets.filter((_, index) =>
-        selected.has(index),
-      );
-      if (section.bulletSources) section.bulletSources = section.bulletSources.filter((_, index) => selected.has(index));
-      if (section.bulletSignposts) section.bulletSignposts = section.bulletSignposts.filter((_, index) => selected.has(index));
-      changes.push(
-        `${library.entries.find((entry) => entry.id === section.entryId)!.heading}: prioritised ${section.bullets.length} achievements.`,
       );
     }
   }
@@ -440,6 +391,7 @@ export async function buildFittedCv(
   semantic?: CvSemanticTarget,
 ) {
   const maxPages = cvMaxPages(library.theme);
+  const bodyMetrics = cvPdfBodyMetrics(library.theme);
   const say = async (event: CvFitSignal) => { await onEvent?.(event); };
   let feedback: CvFitFeedback | undefined;
   /** Why the last attempt did not stand, which decides what the build says if it was the third. */
@@ -466,7 +418,7 @@ export async function buildFittedCv(
   }
   for (let attempt = 0; attempt < 3; attempt++) {
     let budget: CvWritingBudget;
-    try { budget = createCvWritingBudget(library, target, Math.pow(0.76, attempt), semantic); }
+    try { budget = createCvWritingBudget(library, target, Math.pow(0.76, attempt), semantic, bodyMetrics); }
     catch (error) {
       if (error instanceof CvBudgetSelectionConflict)
         throw new CvFitFailure('page_limit_unfittable', error.message, { maxPages, attempts: 0 });
@@ -475,7 +427,7 @@ export async function buildFittedCv(
     // Corrections describe the budget the next attempt will be given, not the one just missed:
     // measured against the current one, a block that fitted it drew no correction at all, and the
     // ones that did quoted figures a quarter larger than the writer's next allocation.
-    const next = () => createCvWritingBudget(library, target, Math.pow(0.76, attempt + 1), semantic);
+    const next = () => createCvWritingBudget(library, target, Math.pow(0.76, attempt + 1), semantic, bodyMetrics);
     await say({ motion: "write", phase: "start", attempt: attempt + 1, budgetCharacters: budget.totalCharacters,
       budgetScale: Number(Math.pow(0.76, attempt).toFixed(4)), maxPages, ...(attempt && previous ? previous : {}) });
     const plan = await write({

@@ -1,12 +1,14 @@
 # CV replay report
 
-`report.json` is the evaluation report CI holds to the shipped prompt set (`scripts/check-evaluation-reports.ts`; see `docs/DEPLOY.md`). The current report qualifies prompt set **`951386df60b9`** using genuine provider responses for an invented candidate and role. It published supported claims within the selected two-page maximum, passed all four replay invariants and had no missing recorded calls.
+`report.json` is the current verified report checked against the shipped prompt set by `scripts/check-evaluation-reports.ts`. It qualifies **`839f32787cdd`** using fresh provider responses for the ranked, targeted synthetic fixture. All ten printed claims are supported, all three essentials are demonstrated, all four replay invariants pass and no recorded requests are missing.
 
-The confirmed targeting brief features the current role, summarises one earlier role in a single sourced bullet and omits another role. The final claim audit sees only eligible evidence; full-library requirement verdicts remain a separate assessment. The exact one-page PDF, content/layout report and scope/cost notes are in `../cv-targeted-2026-10-30/`. The summary's four measured lines exceed the editorial guide; this remains visible feedback rather than a hard build failure.
+The changed author/improvement instruction uses a measured font-aware capacity allowance. The live fixture's smaller evidence library remains one page within its two-page maximum; rich deterministic fixtures separately verify improved use of two pages. The qualified production-display PDF, content and scope/cost notes are in `../cv-capacity-2026-11-01/`.
 
-The rubric and initial plan are cached synthetic fixture inputs, not live-qualified extraction stages. Two author responses were originally called live; a bounded continuation reused both only after exact request, model, prompt and provider-provenance checks and made two fresh review calls on the final policy. The report's four calls and $0.729880 cost include those reused author responses. Offline replay wall time is not live provider latency. The separate live skill probe in `../cv-skill-live-probe.json` passed with ten suggestions across four categories; replay alone does not exercise skill stages or selected-only persistence. The shared $10 ledger settled at $1.354135 across the initial run and final continuation, which added $0.471457. No customer data or production database was used.
+Three live CV calls cost $0.612663 and two live skill calls cost $0.137558. The skill probe produced ten verified suggestions across three categories. The existing cumulative $10 ledger settled at $4.844924, including previous evaluations; it was not reset. The rubric and initial plan remain cached synthetic inputs, not newly live-qualified extraction stages. Offline replay time is not provider latency. No customer data or production database was used.
 
 ## Historical evidence
+
+- `report-live-2026-10-31-ranked.json` preserves the previous current replay at prompt set `31014dbb8d9a`; its live qualification and skills are in `../cv-ranked-2026-10-31/`.
 
 - `report-live-2026-10-30-before-eligible-audit.json` retains the first passing run before the final separation of printed-claim eligibility from full-library scoring; it does not qualify that later input policy.
 - `report-live-2026-10-28-pre-targeting.json` retains the previously current qualification at prompt set `987e0b5ac958`.

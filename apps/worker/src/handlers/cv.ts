@@ -1,6 +1,7 @@
 import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@col/core/cv-fit";
 import {
   renderCvPdfWithReport,
+  cvPdfBodyMetrics,
   assertCvPageLimit,
   CvLayoutError,
 } from "@col/core/cv-pdf";
@@ -1146,7 +1147,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             callSteps.set("improvement", opened.step);
             // The same scale the baseline actually fitted at: a baseline that had to rewrite twice
             // to fit is not improved by a candidate written to the first attempt's larger budget.
-            const budget = createCvWritingBudget(improvementLibrary, target, writeScale, args.semanticTarget);
+            const budget = createCvWritingBudget(improvementLibrary, target, writeScale, args.semanticTarget,
+              cvPdfBodyMetrics(improvementLibrary.theme));
             let plan = requireResult(await ai.buildCv({ library: improvementLibrary, rubric, tailoringPlan,
               ...(inputs.brief?.priority.state === "confirmed" ? { emphasisRequirementIds: inputs.brief.priority.emphasisRequirementIds } : {}),
               description: draft.jobDescription, jobTitle: draft.jobTitle, company: draft.companyName,

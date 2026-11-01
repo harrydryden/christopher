@@ -6,6 +6,9 @@ import { cvTailoringCoverage, cvTailoringRequirementWeights, type CvTailoringPla
 
 export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number; required?: boolean; relevantSkillItems?: string[] };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
+/** PDF geometry is measured server-side and passed in; budgeting stays browser-safe. */
+export type CvBodyMetrics = { usablePageHeightPt: number; lineHeightPt: number; charactersPerLine: number };
+const LEGACY_BODY_METRICS: CvBodyMetrics = { usablePageHeightPt: 742.89, lineHeightPt: 14.06, charactersPerLine: 112.25 };
 /** A per-CV selection that cannot fit the structural section allowance. */
 export class CvBudgetSelectionConflict extends Error {
   constructor(message: string) { super(message); this.name = 'CvBudgetSelectionConflict'; }
@@ -80,7 +83,7 @@ function relevantSkillBlock(entry: CvLibrary["entries"][number], target: CvRelev
 }
 
 /** Allocate a conservative writing envelope; actual PDF measurement remains authoritative. */
-export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTarget, scale = 1, semantic?: CvSemanticTarget): CvWritingBudget {
+export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTarget, scale = 1, semantic?: CvSemanticTarget, bodyMetrics: CvBodyMetrics = LEGACY_BODY_METRICS): CvWritingBudget {
   const roles = library.entries.filter(entry => entry.kind === 'experience').sort((a, b) => {
     const date = (entry: typeof a) => {
       const job = library.employment?.find(job => job.id === entry.employmentId);
@@ -115,10 +118,20 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
   const interests = targetedInterests ?? (pages < 1 ? [] : library.entries.filter(entry => entry.kind === 'interest')
     .sort(byRelevance).slice(0, Math.min(1, available - skills.length)));
   const bulletCap = Math.max(1, Math.min(CV_LIMITS.bulletsPerSection, Math.round(4 * pages)));
-  // Headings, callouts, masthead and subsection spacing all consume space, even
-  // before achievements are written. More roles therefore mean less prose each.
-  const totalCharacters = Math.round(Math.max(2200, 4900 - roles.length * 110 - education.length * 45) * pages * scale);
-  const summaryCharacters = Math.round(420 * Math.min(1, pages) * scale);
+  // Convert the renderer's actual body geometry to an envelope. Name/contact/profile consume
+  // the first-page masthead; headings, each selected block and bullet gaps use the same page
+  // space as prose. Four spare lines absorb uneven wrapping and section page breaks. This is
+  // guidance for one author call, never a substitute for the final measured PDF.
+  const lineHeight = bodyMetrics.lineHeightPt > 0 ? bodyMetrics.lineHeightPt : LEGACY_BODY_METRICS.lineHeightPt;
+  const charsPerLine = bodyMetrics.charactersPerLine > 0 ? bodyMetrics.charactersPerLine : LEGACY_BODY_METRICS.charactersPerLine;
+  const pageLines = bodyMetrics.usablePageHeightPt / lineHeight;
+  const estimatedBullets = roles.reduce((sum, entry) => sum + Math.min(bulletCap,
+    Math.max(1, new Set((entry.confirmedResponsibilities ?? []).map(row => row.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-GB')).filter(Boolean)).size)), 0);
+  const structuralLines = 5 + 2 + roles.length * 1.5 + education.length * 1.5 + skills.length * 1.5 + interests.length * 1.5
+    + estimatedBullets * 3.5 / lineHeight + 4;
+  const totalCharacters = Math.round(Math.max(roles.length * 100 / charsPerLine,
+    pageLines * cvMaxPages(library.theme) - structuralLines) * charsPerLine * scale);
+  const summaryCharacters = Math.round(Math.min(420, 3 * charsPerLine) * Math.min(1, pages) * scale);
   const qualificationCharacters = education.length * Math.round(150 * scale);
   // An exact source label cannot be shortened to satisfy a smaller retry budget. Reserve at
   // least enough for the longest relevant label in each structured block, including one-page CVs.
@@ -133,8 +146,13 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
   const sum = weights.reduce((a, b) => a + b, 0) || 1;
   const blocks: CvBlockBudget[] = roles.map((entry, index) => {
     const maxCharacters = Math.floor(roleCharacters * weights[index]! / sum);
+    const distinctConfirmedRows = new Set((entry.confirmedResponsibilities ?? [])
+      .map(row => row.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-GB')).filter(Boolean)).size;
+    const evidenceCap = Math.min(CV_LIMITS.bulletsPerSection, Math.max(bulletCap, distinctConfirmedRows));
+    const maxBullets = semantic?.treatments?.get(entry.id) === "summarise" ? 1
+      : Math.max(1, Math.min(evidenceCap, Math.floor(maxCharacters / 160)));
     return { entryId: entry.id, kind: entry.kind, priority: weights[index]!, maxCharacters,
-      maxBullets: semantic?.treatments?.get(entry.id) === "summarise" ? 1 : Math.max(1, Math.min(bulletCap, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
+      maxBullets, maxBulletCharacters: Math.min(CV_LIMITS.bulletCharacters, maxCharacters), maxSkills: 0 };
   });
   blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10,
     maxBullets: semantic?.treatments?.get(entry.id) === "summarise" ? 1 : 6,

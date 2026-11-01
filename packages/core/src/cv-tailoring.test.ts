@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { CvRubric } from "./cv-assessment";
-import { CvContentSchema, CvPlanSchema, CvStoredPlanSchema, type CvLibrary, type CvPlan } from "./cv";
+import { CvContentSchema, CvPlanSchema, CvStoredPlanSchema, DEFAULT_CV_THEME, type CvLibrary, type CvPlan } from "./cv";
 import { CvTailoringPlanOutputSchema, CvTailoringPlanSchema, cvTailoringEvidence, cvTailoringPlanForWriter, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "./cv-tailoring";
 import { selectCvToFit } from "./cv-fit";
 
@@ -120,7 +120,7 @@ it("reads a legacy {sourceId, quote} citation as its id, and the writer's schema
   expect(CvPlanSchema.safeParse(read).success).toBe(true);
 });
 
-it("keeps paraphrased evidence for distinct requirements and drops duplicate keyword coverage", async () => {
+it("keeps all sourced achievements when the measured PDF fits despite a lower advisory bullet allowance", async () => {
   const plan: CvPlan = { summary: "Commercial leader", summarySources: ["source:profile"], sections: [{ entryId: "role", bullets: [
     "Built an additional route to customers.",
     "New market launch and market expansion.",
@@ -132,11 +132,12 @@ it("keeps paraphrased evidence for distinct requirements and drops duplicate key
   ] }], gaps: [] };
   const budget = { summaryCharacters: 500, totalCharacters: 2000, blocks: [{ entryId: "role", kind: "experience", priority: 1, maxBullets: 2, maxCharacters: 1000, maxBulletCharacters: 500, maxSkills: 0 }] };
   const fitted = await selectCvToFit(library, plan, "new market launch", budget, { plan: tailoring, rubric });
-  expect(fitted.plan.sections[0]!.bullets).toEqual(["Built an additional route to customers.", "Helped six managers grow as leaders."]);
-  expect(fitted.plan.sections[0]!.bulletSources).toHaveLength(2);
+  expect(fitted.plan.sections[0]!.bullets).toEqual(plan.sections[0]!.bullets);
+  expect(fitted.plan.sections[0]!.bulletSources).toEqual(plan.sections[0]!.bulletSources);
+  expect(fitted.pageCount).toBe(1);
 });
 
-it("keeps sole evidence for two essential requirements even when the early bullet cap is one", async () => {
+it("keeps sole evidence for two essential requirements when an advisory bullet allowance is one", async () => {
   const plan: CvPlan = { summary: "Commercial leader", summarySources: ["source:profile"], sections: [{ entryId: "role",
     bullets: ["Built another route to customers.", "Helped six managers grow."],
     bulletSources: [["entry:role:row:0"], ["entry:role:row:1"]],
@@ -144,19 +145,26 @@ it("keeps sole evidence for two essential requirements even when the early bulle
   const budget = { summaryCharacters: 500, totalCharacters: 1000, blocks: [{ entryId: "role", kind: "experience", priority: 1, maxBullets: 1, maxCharacters: 500, maxBulletCharacters: 250, maxSkills: 0 }] };
   const fitted = await selectCvToFit(library, plan, "market", budget, { plan: tailoring, rubric });
   expect(fitted.plan.sections[0]!.bullets).toHaveLength(2);
-  expect(fitted.semanticOverflows).toEqual([expect.stringContaining("sole evidence")]);
-  expect(fitted.changes).toContain("Retained distinct essential evidence because the measured PDF still fits the page limit.");
+  expect(fitted.semanticOverflows).toEqual([]);
+  expect(fitted.changes).toEqual([]);
 });
 
-it("keeps one duplicate carrier plus a distinct essential when the cap is one", async () => {
+it("drops a duplicate carrier before distinct essentials when the actual page limit is crossed", async () => {
+  const extra = Array.from({ length: 3 }, (_, index) => ({ id: `extra${index}`, kind: "experience" as const,
+    heading: `Manager · Company ${index} · 201${index}–2020`, details: "Operations delivery",
+    confirmedResponsibilities: ["Operations delivery"] }));
+  const crowded: CvLibrary = { ...library, theme: { ...DEFAULT_CV_THEME, maxPages: 1, bodySizePt: 12 },
+    entries: [...library.entries, ...extra] };
+  const long = "Opened a new sales channel and coached six managers through confirmed work. ".repeat(12).slice(0, 600).trim();
   const plan: CvPlan = { summary: "Commercial leader", sections: [{ entryId: "role",
-    bullets: ["Opened a route.", "Launched a channel.", "Coached managers."],
+    bullets: ["Opened a route.", long, "Coached managers."],
     bulletSources: [["entry:role:row:0"], ["entry:role:row:0"], ["entry:role:row:1"]],
-  }], gaps: [] };
+  }, ...extra.map(entry => ({ entryId: entry.id, bullets: [long] }))], gaps: [] };
   const budget = { summaryCharacters: 500, totalCharacters: 1000, blocks: [{ entryId: "role", kind: "experience", priority: 1, maxBullets: 1, maxCharacters: 500, maxBulletCharacters: 250, maxSkills: 0 }] };
-  const fitted = await selectCvToFit(library, plan, "market", budget, { plan: tailoring, rubric });
+  const fitted = await selectCvToFit(crowded, plan, "market", budget, { plan: tailoring, rubric });
   expect(fitted.plan.sections[0]!.bullets).toEqual(["Opened a route.", "Coached managers."]);
-  expect(fitted.semanticOverflows).toHaveLength(1);
+  expect(fitted.pageCount).toBe(1);
+  expect(fitted.changes.filter(change => change.includes("omitted a lower-priority bullet"))).toHaveLength(1);
 });
 
 it("does not drop an optional skill block that alone represents an essential requirement", async () => {

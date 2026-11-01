@@ -793,22 +793,35 @@ it("refuses to delete a build that starts while the delete waits for its locks",
   const queued = await draft(1, { status: "queued" });
   // A worker claims the build and moves it to generating in a transaction of its own.
   const worker = await pool.connect();
+  let workerTransactionOpen = false;
+  let deleting: Promise<unknown> | undefined;
   try {
     await worker.query("begin");
+    workerTransactionOpen = true;
     await worker.query("update cv_drafts set status = 'generating' where id = $1", [queued.id]);
-    const deleting = actionCvs(database, user.id, [queued.id], "delete").then(() => "deleted", (error) => error);
+    deleting = actionCvs(database, user.id, [queued.id], "delete").then(() => "deleted", (error) => error);
     // Wait until the delete is queued behind the worker's row lock, then let the worker commit.
-    for (;;) {
+    const deadline = Date.now() + 5_000;
+    let waitingForLock = false;
+    while (Date.now() < deadline) {
       const waiting = await database.execute(
         sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' limit 1`,
       );
-      if (waiting.rows.length) break;
-      await new Promise((resolve) => setImmediate(resolve));
+      if (waiting.rows.length) { waitingForLock = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
+    expect(waitingForLock, "delete should wait on the worker's row lock").toBe(true);
     await worker.query("commit");
+    workerTransactionOpen = false;
     expect(await deleting).toBeInstanceOf(CvBuildInFlightError);
   } finally {
-    worker.release();
+    try {
+      if (workerTransactionOpen) await worker.query("rollback");
+    } finally {
+      worker.release();
+    }
+    // A failed assertion must not leave the delete running against the next test's database.
+    await deleting;
   }
   expect((await rows()).map((row) => [row.id, row.status])).toEqual([[queued.id, "generating"]]);
 });

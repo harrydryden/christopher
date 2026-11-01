@@ -16,6 +16,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { materialiseCv, type CvLibrary } from "@col/core/cv";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
+import { withCvEditBase } from "@/test/cv-form";
 import type { User } from "@col/db/schema";
 
 let database: Db;
@@ -35,6 +36,7 @@ import { GET as applicationPdf } from "./api/applications/[id]/pdf/route";
 import { GET as cvPdf } from "./api/cv/[id]/pdf/route";
 import { recordApplication, setRoleStage, updateApplication, manageRoleCv } from "./actions/applications";
 import { archiveRoles, decide, roleDetails } from "./actions/decisions";
+import { assessCvDraft, saveCvDraft } from "./actions/cv";
 
 const SECRET = "two-account-isolation-test-secret";
 /** Ids no row has, of each kind the tests below name. */
@@ -198,4 +200,26 @@ it("answers another account's application PDF, CV PDF and application edits exac
   expect(await rowsOfA()).toEqual(untouched);
   expect(await database.select().from(schema.applications).where(and(eq(schema.applications.userId, b.user.id)))).toEqual([]);
   expect(await database.select().from(schema.decisions).where(eq(schema.decisions.userId, b.user.id))).toEqual([]);
+});
+
+it("does not let another account save or check a CV, or reserve work against it", async () => {
+  const unchanged = async () => ({
+    drafts: await database.select().from(schema.cvDrafts),
+    tasks: await database.select().from(schema.tasks),
+    reservations: await database.select().from(schema.creditReservations),
+    libraries: await database.select().from(schema.cvLibraries),
+  });
+  const before = await unchanged();
+  session = b.cookie;
+
+  const save = async (id: string) => saveCvDraft(id, { ok: true },
+    await withCvEditBase(database, id, form({ summary: "Changed by another account", "section-0": "Changed claim" })));
+  const foreignSave = await save(draft.id);
+  expect(foreignSave).toMatchObject({ ok: false });
+  expect(await save(ABSENT)).toEqual(foreignSave);
+
+  const foreignCheck = await assessCvDraft(draft.id, { ok: true }, new FormData());
+  expect(foreignCheck).toMatchObject({ ok: false });
+  expect(await assessCvDraft(ABSENT, { ok: true }, new FormData())).toEqual(foreignCheck);
+  expect(await unchanged()).toEqual(before);
 });

@@ -53,3 +53,31 @@ test("generated CV grading is non-vacuous and requires useful requirement covera
   assert.equal(gradeGeneratedCv({ assessment: assessment({ score: 79 }), requirementIds: ids, pageCount: 2 }), false);
   assert.equal(gradeGeneratedCv({ assessment: { score: 100, review: { matches: assessment().review.matches, claims: [] } }, requirementIds: ids, pageCount: 1 }), false);
 });
+
+test('generated CV qualification requires a measured positive whole page count within the limit', () => {
+  for (const pageCount of [0, -1, 1.5, 3, NaN, Infinity, null, undefined, '1']) {
+    assert.equal(gradeGeneratedCv({ assessment: assessment(), requirementIds: ids, pageCount }), false,
+      `pageCount ${String(pageCount)} must not qualify`);
+  }
+  for (const pageCount of [1, 2]) {
+    assert.equal(gradeGeneratedCv({ assessment: assessment(), requirementIds: ids, pageCount }), true);
+  }
+});
+
+test('generated CV qualification fails independently for each missing or unsupported requirement', () => {
+  for (const id of Object.values(ids)) {
+    for (const change of ['missing-row', 'partial-cv', 'missing-evidence']) {
+      const candidate = assessment();
+      candidate.review.matches = candidate.review.matches.flatMap(match => {
+        if (match.requirementId !== id) return [match];
+        if (change === 'missing-row') return [];
+        return [{ ...match, ...(change === 'partial-cv' ? { status: 'partial' } : { libraryStatus: 'missing' }) }];
+      });
+      assert.equal(gradeGeneratedCv({ assessment: candidate, requirementIds: ids, pageCount: 1 }), false,
+        `${id}: ${change}`);
+    }
+  }
+  const candidate = assessment();
+  candidate.review.claims.push({ claimId: 'unsupported-metric', status: 'unsupported' });
+  assert.equal(gradeGeneratedCv({ assessment: candidate, requirementIds: ids, pageCount: 1 }), false);
+});

@@ -343,7 +343,10 @@ it("rejects a stale editor after the same revision's saved wording changes", asy
 it("deduplicates repeated direct saves, permits distinct wording, and carries the immediate evidence plan", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
   const parent = await finalisableDraft();
-  const plan = { sections: [{ title: "Existing plan" }] } as never;
+  const plan = { requirements: [{ requirementId: "r1", status: "demonstrated" as const,
+    evidence: [{ sourceId: "entry:one:row:0", quote: "Led a team" }], reason: "Direct evidence" }], gapQuestions: [] };
+  expect(validateCvTailoringPlan(plan, parent.assessment!.rubric, cvTailoringEvidence(CvLibrarySchema.parse(library)), CvLibrarySchema.parse(library)))
+    .toEqual(plan);
   await database.insert(schema.cvTailoringPlans).values({ draftId: parent.id, userId: user.id, plan });
   const edit = (summary: string) => {
     const form = new FormData();
@@ -362,10 +365,17 @@ it("deduplicates repeated direct saves, permits distinct wording, and carries th
   const [grandchild] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, children[0]!.id));
   expect(grandchild?.buildCheckpoint).toEqual({ sourceRubric: parent.assessment!.rubric });
   expect((await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, grandchild!.id)))[0]?.plan).toEqual(plan);
+  expect(await buildTasks()).toHaveLength(0);
+  expect(await assessCvDraft(grandchild!.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  expect(await assessCvDraft(grandchild!.id, { ok: true }, new FormData())).toMatchObject({ ok: false });
+  expect((await buildTasks()).filter(task => task.payload && (task.payload as { draftId?: string }).draftId === grandchild!.id))
+    .toMatchObject([{ payload: { draftId: grandchild!.id, mode: "assess" } }]);
+  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, grandchild!.id)))
+    .toHaveLength(0);
   await expect(saveWithBase(parent.id, { ok: true }, edit("Second saved wording"))).rejects.toThrow("redirect:/cv/");
   children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children).toHaveLength(2);
-  expect(await buildTasks()).toHaveLength(0);
+  expect(await buildTasks()).toHaveLength(1);
 });
 
 it("keeps a genuinely current assessment when a new saved revision changes no assessed input", async () => {

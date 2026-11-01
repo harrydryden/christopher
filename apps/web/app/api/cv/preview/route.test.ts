@@ -35,12 +35,25 @@ it("hydrates the company-first heading from the account-owned draft snapshot", a
   expect(draw.mock.calls.some(call => call[0] === "Acme · Manager · 2020 - 2024")).toBe(true);
   draw.mockRestore();
   ownDraft.mockResolvedValue(null);
-  expect((await POST(new Request("http://localhost/api/cv/preview", { method: "POST",
-    body: JSON.stringify({ draftId: id, content: cv }) }))).status).toBe(404);
+  const missing = await POST(new Request("http://localhost/api/cv/preview", { method: "POST",
+    body: JSON.stringify({ draftId: id, content: cv }) }));
+  expect(missing.status).toBe(404);
+  expect(missing.headers.get("content-type") ?? "").not.toContain("application/pdf");
 });
 it("rejects malformed and oversized bodies and unsupported themes", async () => {
-  for (const body of ['bad json', JSON.stringify({ ...content, theme: { ...DEFAULT_CV_THEME, version: 99 } })]) expect((await POST(new Request('http://localhost', { method: 'POST', body }))).status).toBe(400);
-  expect((await POST(new Request('http://localhost', { method: 'POST', body: 'x'.repeat(150001) }))).status).toBe(413);
+  const invalid = [
+    { name: "malformed JSON", body: "bad json", status: 400 },
+    { name: "unsupported theme", body: JSON.stringify({ ...content, theme: { ...DEFAULT_CV_THEME, version: 99 } }), status: 400 },
+    { name: "malformed wrapped draft ID", body: JSON.stringify({ draftId: "not-an-id", content }), status: 400 },
+    { name: "oversized content", body: "x".repeat(150001), status: 413 },
+  ];
+  for (const { name, body, status } of invalid) {
+    const response = await POST(new Request("http://localhost", { method: "POST", body }));
+    expect(response.status, name).toBe(status);
+    expect(response.headers.get("content-type") ?? "", name).not.toContain("application/pdf");
+  }
+  expect(throttle).not.toHaveBeenCalled();
+  expect(ownDraft).not.toHaveBeenCalled();
 });
 it("requires a session before reading or rendering the content", async () => {
   auth.mockRejectedValue(new Error('Unauthorised'));

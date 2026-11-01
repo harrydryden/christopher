@@ -483,6 +483,49 @@ it("remeasures an appearance-only saved revision and reuses its exact factual au
   expect(AiEngine.prototype.assessCvBatches).toHaveBeenCalled();
 });
 
+it("reassesses identical saved wording when the effective priority meaning changes", async () => {
+  const author = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader",
+    sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  await handleGenerateCv(task, deps);
+  const [first] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(first?.semanticAuditCache?.identity).toMatch(/^[a-f0-9]{64}$/);
+  const sourceRubric = first!.assessment!.rubric;
+  const source = cvTargetingSource(1, library, draft.jobDescription);
+  const requirements = [{ id: "r1", text: sourceRubric.requirements[0]!.label, essential: true }];
+  const brief = CvTargetingBriefSchema.parse({ version: 1, source, entries: [],
+    presentation: { maxPages: 2, bodySizePt: 12 }, priority: { state: "confirmed", rubric: sourceRubric,
+      rubricKey: cvTargetingRubricKey(source, sourceRubric, draft.model, promptSetVersion()),
+      requirements, mappedRequirements: requirements, emphasisRequirementIds: ["r1"],
+      acknowledgedEssentialOmissionIds: [] } });
+  const targetedContent = { ...first!.content!, theme: { ...DEFAULT_CV_THEME, maxPages: 2 as const, bodySizePt: 12 as const } };
+  task.payload = { draftId: draft.id, mode: "assess" };
+  const check = async (targetingBrief: typeof brief, cache: NonNullable<typeof first>["semanticAuditCache"]) => {
+    await client.db.update(schema.cvDrafts).set({ status: "queued", assessment: null,
+      targetingBrief, content: targetedContent, buildCheckpoint: { sourceRubric }, semanticAuditCache: cache })
+      .where(eq(schema.cvDrafts.id, draft.id));
+    vi.mocked(AiEngine.prototype.assessCvBatches).mockClear();
+    await handleGenerateCv(task, deps);
+    return (await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!;
+  };
+  const targeted = await check(brief, first!.semanticAuditCache);
+  expect(targeted.status, targeted.error ?? "").toBe("ready");
+  expect(targeted.semanticAuditCache?.identity).not.toBe(first!.semanticAuditCache!.identity);
+  const unchanged = await check(brief, targeted.semanticAuditCache);
+  expect(unchanged.status, unchanged.error ?? "").toBe("ready");
+  expect(unchanged.semanticAuditCache).toEqual(targeted.semanticAuditCache);
+  expect(AiEngine.prototype.assessCvBatches).not.toHaveBeenCalled();
+  const changed = CvTargetingBriefSchema.parse({ ...brief,
+    priority: { ...brief.priority, requirements: [{ ...requirements[0]!, essential: false }] } });
+  const checked = await check(changed, unchanged.semanticAuditCache);
+  expect(checked.status, checked.error ?? "").toBe("ready");
+  expect(checked.content).toEqual(unchanged.content);
+  expect(checked.assessment?.rubric.requirements[0]?.importance).toBe("responsibility");
+  expect(checked.semanticAuditCache?.identity).not.toBe(unchanged.semanticAuditCache!.identity);
+  expect(AiEngine.prototype.assessCvBatches).toHaveBeenCalled();
+  expect(author).toHaveBeenCalledTimes(1);
+});
+
 it("publishes through rolling retention only after fitting and assessment succeed", async () => {
   vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();

@@ -11,6 +11,7 @@ import { readEnv } from "../apps/worker/src/env";
 import { handleSuggestCvSkills } from "../apps/worker/src/handlers/cv-skill-suggestions";
 import { cvHighlightedSkillRows, cvSkillDraftContext, cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions } from "../packages/core/src/index";
 import { renderCvPdfWithReport } from "../packages/core/src/cv-pdf";
+import { cvEmploymentDisplay } from "../packages/core/src/cv-employment-display";
 import { CvLibrarySchema } from "../packages/core/src/cv";
 import { CvTargetingBriefSchema, cvEligibleSkillLibrary, cvSkillSourcePolicy } from "../packages/core/src/cv-targeting";
 import { schema, type Task } from "../packages/db/src/index";
@@ -120,7 +121,7 @@ try {
   }
 
   if (!replayed.content) throw new Error("The qualified replay did not retain its exact rebuilt wording.");
-  const rendered = await renderCvPdfWithReport(replayed.content);
+  const rendered = await renderCvPdfWithReport(replayed.content, cvEmploymentDisplay(replayed.content, draft.librarySnapshot));
   writeFileSync(resolve(outDir, "qualified-cv.pdf"), rendered.pdf);
   writeFileSync(resolve(outDir, "qualified-cv.json"), JSON.stringify({ content: replayed.content,
     pageCount: rendered.pageCount, maxPages: rendered.maxPages, layout: rendered.layout }, null, 2) + "\n");

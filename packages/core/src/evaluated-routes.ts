@@ -5,9 +5,9 @@ import type { EvaluatedRoutes } from "./stage-route-drift";
 /** The route each CV stage was graded at in the last committed evaluation report. */
 export const EVALUATED_ROUTES: EvaluatedRoutes = {
   "report": "docs/evaluations/cv-replay/report.json",
-  "promptSetVersion": "31014dbb8d9a",
+  "promptSetVersion": "839f32787cdd",
   "unverified": false,
-  "at": "2026-10-31T15:32:30.167Z",
+  "at": "2026-11-01T20:28:37.433Z",
   "routes": {
     "cv.author": {
       "model": "cvModel",

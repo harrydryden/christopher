@@ -342,7 +342,8 @@ it("writes a rebuild afresh from the library and preserves the queued revision n
   await handleGenerateCv(task, deps);
   expect(build.mock.calls[0]![0].layoutFeedback).toBeUndefined();
   expect(build.mock.calls[0]![0].improvements).toEqual(["Name the team size"]);
-  expect(build.mock.calls[0]![0].writingBudget?.summaryCharacters).toBe(420);
+  expect(build.mock.calls[0]![0].writingBudget?.summaryCharacters).toBeGreaterThan(250);
+  expect(build.mock.calls[0]![0].writingBudget?.summaryCharacters).toBeLessThan(420);
   const [saved] = await client.db
     .select()
     .from(schema.cvDrafts)

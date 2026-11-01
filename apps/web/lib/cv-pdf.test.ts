@@ -462,16 +462,37 @@ it("validates content limits at the shared renderer boundary", async () => {
 it("renders both profile and website links as separate PDF annotations", async () => {
   const linkedinUrl = "https://www.linkedin.com/in/example";
   const websiteUrl = "https://example.com/portfolio";
+  const annotations = vi.spyOn(PDFDocument.prototype, "link");
   const pdf = await renderCvPdf({ name: "Example", contact: "London", linkedinUrl, websiteUrl, summary: "Operations leader", sections: [{ entryId: "s", kind: "skill", heading: "Skills", bullets: ["Operations"] }], gaps: [] });
   const raw = pdf.toString("latin1");
   expect(raw).toContain(`/URI (${linkedinUrl})`);
   expect(raw).toContain(`/URI (${websiteUrl})`);
+  // PDFKit uses the same rendered text width for the link rectangle and underline.
+  // Neither rectangle may include the preceding separator, including the one after LinkedIn.
+  for (const [url, label] of [[linkedinUrl, "LinkedIn"], [websiteUrl, "Website"]] as const) {
+    const index = annotations.mock.calls.findIndex(call => call[4] === url);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const doc = annotations.mock.contexts[index] as PDFKit.PDFDocument;
+    const width = annotations.mock.calls[index]![2] as number;
+    doc.font("Helvetica").fontSize(8.5);
+    expect(width).toBeCloseTo(doc.widthOfString(label), 1);
+  }
+  expect(annotations.mock.calls.filter(call => call[4] === linkedinUrl || call[4] === websiteUrl)).toHaveLength(2);
+
+  const firstUrl = "https://www.linkedin.com/in/first-link";
+  await renderCvPdf({ name: "Example", contact: "", linkedinUrl: firstUrl, summary: "Operations leader",
+    sections: [{ entryId: "s", kind: "skill", heading: "Skills", bullets: ["Operations"] }], gaps: [] });
+  const firstIndex = annotations.mock.calls.findIndex(call => call[4] === firstUrl);
+  const firstDoc = annotations.mock.contexts[firstIndex] as PDFKit.PDFDocument;
+  firstDoc.font("Helvetica").fontSize(8.5);
+  expect(annotations.mock.calls[firstIndex]![2]).toBeCloseTo(firstDoc.widthOfString("LinkedIn"), 1);
 });
 
 it("wraps a longer contact line beside a short name without moving it below", async () => {
   const contact = "alex.morgan@example.test · +441234567890 · Greater London, United Kingdom · Open to UK and European roles";
   const draw = vi.spyOn(PDFDocument.prototype, "text");
   const measure = vi.spyOn(PDFDocument.prototype, "heightOfString");
+  const annotations = vi.spyOn(PDFDocument.prototype, "link");
   await renderCvPdfWithReport({ ...fixture, name: "Alex Morgan", contact,
     linkedinUrl: "https://www.linkedin.com/in/alex-morgan-example" });
   const contactDraw = draw.mock.calls.find(call => call[0] === contact);
@@ -482,6 +503,10 @@ it("wraps a longer contact line beside a short name without moving it below", as
     && (call[1] as { width?: number } | undefined)?.width === contactWidth);
   expect(measured).toBeGreaterThanOrEqual(0);
   expect(measure.mock.results[measured]?.value).toBeGreaterThan(18);
+  const link = annotations.mock.calls.findIndex(call => call[4] === "https://www.linkedin.com/in/alex-morgan-example");
+  const doc = annotations.mock.contexts[link] as PDFKit.PDFDocument;
+  doc.font("Helvetica").fontSize(8.5);
+  expect(annotations.mock.calls[link]![2]).toBeCloseTo(doc.widthOfString("LinkedIn"), 1);
 });
 
 it("omits visible summary labels in both layouts while measuring the targeted summary", async () => {

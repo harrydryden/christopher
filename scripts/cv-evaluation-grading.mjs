@@ -53,7 +53,7 @@ export function gradeEvaluationCase({ name, assessment, requirementIds, claimId 
 
 /** A generated CV must be factual, fit the document limit and actually cover the synthetic role. */
 export function gradeGeneratedCv({ assessment, requirementIds, pageCount }) {
-  return pageCount <= 2 && assessment.score >= 80 && allClaimsSupported(assessment)
+  return Number.isInteger(pageCount) && pageCount >= 1 && pageCount <= 2 && assessment.score >= 80 && allClaimsSupported(assessment)
     && demonstrated(matchFor(assessment, requirementIds.leadership))
     && demonstrated(matchFor(assessment, requirementIds.sql))
     && demonstrated(matchFor(assessment, requirementIds.python));

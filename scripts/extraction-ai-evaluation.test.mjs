@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -9,14 +9,16 @@ import test from "node:test";
 const root = resolve(import.meta.dirname, "..");
 const source = resolve(root, "docs/benchmarks/extraction-ai-structure-fix-2026-09-20.json");
 
-test("zero-cost A3 regrade preserves source evidence and exposes field mismatches", async () => {
+test("zero-cost A3 regrade preserves source evidence and exposes field mismatches", async (t) => {
   const before = await readFile(source);
   const directory = await mkdtemp(join(tmpdir(), "col-a3-regrade-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
   const output = join(directory, "regraded.json");
-  const run = spawnSync("pnpm", ["exec", "tsx", "scripts/evaluate-extraction-ai.ts", "--replay", source, "--output", output], {
+  const run = spawnSync(process.execPath, ["--import", "tsx", "scripts/evaluate-extraction-ai.ts", "--replay", source, "--output", output], {
     cwd: root,
     encoding: "utf8",
   });
+  assert.ifError(run.error);
   assert.equal(run.status, 1, run.stderr || run.stdout);
   const after = await readFile(source);
   assert.equal(createHash("sha256").update(after).digest("hex"), createHash("sha256").update(before).digest("hex"));

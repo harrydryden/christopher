@@ -49,3 +49,19 @@ test('prior spend counts against the cap, a hard cap throws past it, and every c
   assert.equal(budget.snapshot().exceeded, true);
   assert.equal(budget.calls.length, 2);
 });
+
+test('invalid carried spend cannot bypass the evaluation cap', () => {
+  for (const prior of [-1, NaN, Infinity, -Infinity, '0.5', null]) {
+    assert.throws(() => evaluationBudget(1, { prior }), /prior spend/i, String(prior));
+  }
+});
+
+test('exhausted carried spend refuses new work without losing recorded history', async () => {
+  for (const prior of [1, 1.5]) {
+    const budget = evaluationBudget(1, { prior });
+    assert.equal(await budget.reserve('CV', 0.01), null);
+    assert.equal(budget.snapshot().spentUsd, prior);
+    assert.equal(budget.snapshot().remainingUsd, 0);
+    assert.equal(budget.snapshot().exceeded, prior > 1);
+  }
+});

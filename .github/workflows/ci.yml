@@ -49,8 +49,28 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm typecheck:eval
       - run: pnpm -r test
+      # The benchmark seed integration requires an empty database. Reusing the workspace
+      # suites' database would silently skip it whenever those suites leave fixtures behind.
+      - name: Create an isolated release-test database
+        run: |
+          pnpm --filter @col/db exec node -e '
+            const { Client } = require("pg");
+            (async () => {
+              const client = new Client({ connectionString: process.env.DATABASE_URL });
+              await client.connect();
+              try { await client.query("CREATE DATABASE col_release_test"); }
+              finally { await client.end(); }
+            })().catch(error => { console.error(error); process.exitCode = 1; });
+          '
+      - name: Migrate the release-test database
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_release_test
       - name: Test release and evaluation scripts
         run: pnpm exec node --test scripts/*.test.mjs scripts/perf/*.test.mjs
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_release_test
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_release_test
       # The committed evaluation reports must name the prompt set that ships; a prompt change
       # without a report at its version (verified, or marked unverified) fails here.
       - name: Check evaluation reports against the shipped prompt set

@@ -10,6 +10,7 @@
  */
 export function evaluationBudget(cap, { prior = 0, hardCap = false, onChange } = {}) {
   if (!Number.isFinite(cap) || cap <= 0) throw new Error('The evaluation budget must be positive and finite.');
+  if (!Number.isFinite(prior) || prior < 0) throw new Error('The evaluation prior spend must be non-negative and finite.');
   let spent = prior;
   let held = 0;
   const records = [];

@@ -147,8 +147,8 @@ it("shows evidence questions and actual unsupported wording with a guided finali
   expect(html).not.toContain("claim: section:");
   expect(html).toContain("Review findings");
   expect(html).toContain("Nothing further to add");
-  expect(html).toContain("Skip review and finalise anyway");
-  expect(html).toContain("Finalise this CV");
+  expect(html).toContain("Finalise with warnings");
+  expect(html).not.toContain("Skip review and finalise anyway");
   expect(html).not.toContain("Your input needed");
   expect(html).toContain("<em>Owned a £10m budget</em>");
   expect(html).toContain("Item");
@@ -218,10 +218,10 @@ it("retains finalisation for supported current assessments only", () => {
   expect(render(true, true)).not.toContain("Finalise this CV");
   // The default limit is three pages; a CV whose theme allows two is gated at two.
   expect(render(true, false, 3)).toContain("Finalise this CV");
-  expect(render(true, false, 4)).not.toContain("Finalise this CV");
+  expect(render(true, false, 4)).toContain("Finalise with warnings");
 });
 
-it("says why finalising is unavailable instead of hiding the control", () => {
+it("offers an explicit page-warning choice and explains hard assessment obstacles", () => {
   const description = "Own a budget";
   const rubric = rubricFixture(description);
   const review = reviewFixture({
@@ -239,8 +239,6 @@ it("says why finalising is unavailable instead of hiding the control", () => {
     model: "test",
     pageCount: 4,
   });
-  // The page computes the sentence with `assertCvFinalisable` and passes it in; the panel prints
-  // it rather than leaving an absent button to be interpreted.
   const overPages = renderToStaticMarkup(
     createElement(CvAssessmentPanel, {
       id: "test",
@@ -250,12 +248,10 @@ it("says why finalising is unavailable instead of hiding the control", () => {
       busy: false,
       hasContent: true,
       content,
-      finaliseReason: "Fit this CV to 3 pages before finalising it.",
     }),
   );
-  expect(overPages).toContain("Finalise is not available yet: Fit this CV to 3 pages before finalising it.");
-  expect(overPages).toContain("This revision measures 4 pages");
-  expect(overPages).not.toContain("Finalise this CV");
+  expect(overPages).toContain("Finalise with warnings");
+  expect(overPages).toContain("4 pages against your chosen 3-page limit");
 
   // A stale assessment reaches the panel before any table does: the same sentence, beside the
   // control that clears it.

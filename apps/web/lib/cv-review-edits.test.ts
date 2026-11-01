@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CvContentSchema } from "@col/core/cv";
-import { cvReviewEditedContent, cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, cvReviewSkillCharacterIssue, reconcileCvBulletSignposts, splitCvReviewSkillRow } from "./cv-review-edits";
+import { cvReviewEditedContent, cvReviewSections, cvReviewSupportingSections, librarySupportSections, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, cvReviewSkillCharacterIssue, moveCvReviewItem, reconcileCvBulletSignposts, splitCvReviewSkillRow } from "./cv-review-edits";
 
 const saved = CvContentSchema.parse({
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
@@ -78,6 +78,24 @@ it("adds manually entered skills without claiming Library sources", () => {
   expect(sections[1]?.bulletSources).toBeUndefined();
   expect(sections[2]).toEqual({ entryId: "manual-skill-12345678-1234-1234-1234-123456789abc", kind: "skill", heading: "Tools", skillItems: ["Excel", "SQL"], bullets: ["Excel", "SQL"] });
   expect(CvContentSchema.safeParse({ ...saved, sections }).success).toBe(true);
+});
+
+it("persists exact skill section and item order while leaving Experience in place", () => {
+  const manualId = "manual-skill-12345678-1234-1234-1234-123456789abc";
+  const edits = { summary: saved.summary, theme: saved.theme, rows: ["Built systems.", "Python\nSQL"],
+    removedSkillIds: [], addedSkills: [{ entryId: manualId, heading: "Leadership", items: ["Planning", "Coaching"] }],
+    skillHeadings: {}, addedSupportIds: [], skillSectionOrder: [manualId, "skill-1"] };
+  const edited = cvReviewEditedContent(saved, edits, []);
+  expect(edited.sections.map(section => section.entryId)).toEqual(["role-1", manualId, "skill-1"]);
+  expect(edited.sections[2]).toMatchObject({ skillItems: ["Python", "SQL"], bullets: ["Python", "SQL"] });
+  expect(CvContentSchema.safeParse(edited).success).toBe(true);
+  expect(cvReviewEditedContent(saved, { ...edits, skillSectionOrder: undefined }, []).sections.map(section => section.entryId))
+    .toEqual(["role-1", "skill-1", manualId]);
+  for (const order of [["skill-1", "skill-1"], [manualId], ["role-1", "skill-1"]])
+    expect(() => cvReviewEditedContent(saved, { ...edits, skillSectionOrder: order }, [])).toThrow("skill section order");
+  expect(moveCvReviewItem(["Python", "SQL", "R"], 1, -1)).toEqual(["SQL", "Python", "R"]);
+  expect(moveCvReviewItem(["Python", "SQL"], 0, -1)).toEqual(["Python", "SQL"]);
+  expect(moveCvReviewItem(["Python", "SQL"], 2, -1)).toEqual(["Python", "SQL"]);
 });
 
 it("edits a saved skill heading without changing its identity, items or skill citations", () => {

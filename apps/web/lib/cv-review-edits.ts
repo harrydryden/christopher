@@ -16,21 +16,42 @@ export function cvReviewEditedContent(saved: CvContent, edits: {
   skillHeadings: Readonly<Record<string, string>>;
   bulletSignposts?: Readonly<Record<string, readonly (string | null)[]>>;
   addedSupportIds: string[];
+  skillSectionOrder?: readonly string[];
 }, available: readonly LibrarySupportSection[]): CvContent {
   const summary = edits.summary.trim();
   const content: CvContent = {
     ...saved,
     theme: edits.theme,
     summary,
-    sections: cvReviewSupportingSections(
+    sections: cvReviewSkillSectionOrder(cvReviewSupportingSections(
       cvReviewSections(saved, edits.rows, edits.removedSkillIds, edits.addedSkills, edits.skillHeadings, edits.bulletSignposts),
       edits.addedSupportIds,
       available,
-    ),
+    ), edits.skillSectionOrder),
   };
   if (summary !== saved.summary) delete content.summarySources;
   delete content.fitNotes;
   return content;
+}
+
+/** Move one item without changing its identity or any other item's relative order. */
+export function moveCvReviewItem<T>(items: readonly T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction;
+  if (!Number.isInteger(index) || index < 0 || index >= items.length || target < 0 || target >= items.length) return [...items];
+  const moved = [...items];
+  [moved[index], moved[target]] = [moved[target]!, moved[index]!];
+  return moved;
+}
+
+/** Only skill slots move; Experience and other supporting sections retain their positions. */
+export function cvReviewSkillSectionOrder(sections: CvContent["sections"], order?: readonly string[]): CvContent["sections"] {
+  if (!order) return sections;
+  const skillSections = sections.filter(section => section.kind === "skill");
+  const byId = new Map(skillSections.map(section => [section.entryId, section]));
+  if (order.length !== skillSections.length || new Set(order).size !== order.length || order.some(id => !byId.has(id)))
+    throw new Error("The skill section order changed. Reload this CV before saving.");
+  let position = 0;
+  return sections.map(section => section.kind === "skill" ? byId.get(order[position++]!)! : section);
 }
 
 /** Saved supporting evidence that can be deliberately included in this CV review. */

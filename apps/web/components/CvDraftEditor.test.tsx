@@ -441,6 +441,33 @@ it("lets a reviewer add and remove a skill section without changing Library sect
   expect(container.querySelector('[data-cv-editor-dirty="false"]')).not.toBeNull();
 });
 
+it("moves saved and new skill sections and individual labels without changing Experience order", () => {
+  const ordered = { ...content, sections: [content.sections[0],
+    { entryId: "tools", kind: "skill" as const, heading: "Tools", bullets: ["Python", "SQL"], skillItems: ["Python", "SQL"] },
+    { entryId: "methods", kind: "skill" as const, heading: "Methods", bullets: ["Planning"], skillItems: ["Planning"] }] } as CvContent;
+  act(() => root.render(<CvDraftEditor id="cv-1" content={ordered} theme={DEFAULT_CV_THEME}
+    librarySkillSections={[{ id: "library-people", heading: "People", items: ["Coaching"] }]} />));
+  const click = (name: string) => {
+    const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
+    expect(button.disabled).toBe(false);
+    act(() => button.click());
+  };
+  expect(container.querySelector<HTMLButtonElement>('button[aria-label="Move skill section Tools up"]')?.disabled).toBe(true);
+  click("Move skill section Methods up");
+  expect(JSON.parse(container.querySelector<HTMLInputElement>('[name="skillSectionOrder"]')!.value)).toEqual(["methods", "tools"]);
+  click("Move skill 2 up in Tools");
+  expect(container.querySelector<HTMLInputElement>('[name="skills-1"]')?.value).toBe("SQL\nPython");
+
+  const picker = container.querySelector<HTMLSelectElement>('[aria-label="Add section from Experience"]')!;
+  act(() => { picker.value = "library-people"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
+  click("Move skill section People up");
+  const order = JSON.parse(container.querySelector<HTMLInputElement>('[name="skillSectionOrder"]')!.value) as string[];
+  expect(order[0]).toBe("methods");
+  expect(order[2]).toBe("tools");
+  expect(order[1]).toMatch(/^manual-skill-/);
+  expect(container.querySelector<HTMLTextAreaElement>('[name="section-0"]')?.value).toBe("Wrote the first program.");
+});
+
 it("allows a fifth skill section from Experience and disables a sixth", () => {
   const four = { ...content, sections: [content.sections[0],
     ...Array.from({ length: 4 }, (_, index) => ({ entryId: `skill-${index}`, kind: "skill" as const,

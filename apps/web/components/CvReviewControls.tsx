@@ -9,7 +9,7 @@ import { CvContentBlockLink } from "./CvWorkspace";
 import type { ActionResult } from "@/lib/action-result";
 
 /** An assessment finding stays visible after dismissal; dismissal is a user choice, not verification. */
-export function CvReviewControls({ id, rows, decision, factualRowIds, assessmentHash, assessedAt, initialFindingId = null, canFinalise }: {
+export function CvReviewControls({ id, rows, decision, factualRowIds, assessmentHash, assessedAt, initialFindingId = null, canFinalise, summaryIssue = null, overPages = null, maxPages }: {
   id: string;
   rows: CvEvaluationRow[];
   decision: CvReviewDecision | null;
@@ -18,6 +18,9 @@ export function CvReviewControls({ id, rows, decision, factualRowIds, assessment
   assessedAt: string;
   initialFindingId?: string | null;
   canFinalise: boolean;
+  summaryIssue?: string | null;
+  overPages?: number | null;
+  maxPages?: number;
 }) {
   const findings = rows.filter((row) => row.change !== "None" && row.change !== "Comment")
     .sort((a, b) => {
@@ -30,6 +33,7 @@ export function CvReviewControls({ id, rows, decision, factualRowIds, assessment
   const [error, setError] = useState<string | null>(null);
   const item = findings[Math.min(selected, findings.length - 1)];
   const remainingFacts = factualRowIds.filter((rowId) => !dismissed.includes(rowId));
+  const needsOverride = remainingFacts.length > 0 || !!summaryIssue || overPages !== null;
   const reviewedCount = findings.filter((row) => dismissed.includes(row.id)).length;
 
   async function dismiss() {
@@ -83,12 +87,16 @@ export function CvReviewControls({ id, rows, decision, factualRowIds, assessment
       </div>}
       {error && <p role="alert" className="text-12 text-danger">{error}</p>}
     </section>}
-    {canFinalise && <SettingsForm action={finalise} submitLabel="Finalise this CV" submitDisabled={remainingFacts.length > 0}
-      secondaryActions={remainingFacts.length > 0 ? <button type="submit" name="skipReview" value="on" className="border border-warn px-3 py-2 text-12 font-medium">Skip review and finalise anyway</button> : undefined}>
-      <label className="text-14"><input name="reviewed" type="checkbox" required /> I confirm this saved CV is the version I want to finalise, including any unresolved findings.</label>
+    {canFinalise && <SettingsForm action={finalise} submitLabel={needsOverride ? "Finalise with warnings" : "Finalise this CV"}>
+      {needsOverride && <div className="space-y-1 border border-warn p-3 text-12 text-warn">
+        {remainingFacts.length > 0 && <p>{remainingFacts.length} factual {remainingFacts.length === 1 ? "finding remains" : "findings remain"} open. The assessment and score will stay visible.</p>}
+        {summaryIssue && <p>{summaryIssue}</p>}
+        {overPages !== null && <p>This PDF measures {overPages} pages against your chosen {maxPages}-page limit. All pages will be saved.</p>}
+      </div>}
+      <label className="text-14"><input name="reviewed" type="checkbox" required /> {needsOverride ? "I have reviewed these warnings and choose to finalise this saved CV as it is." : "I confirm this saved CV is the version I want to finalise."}</label>
       <input name="assessmentHash" type="hidden" value={assessmentHash} />
       <input name="assessedAt" type="hidden" value={assessedAt} />
-      {remainingFacts.length > 0 && <p className="text-12 text-warn">{remainingFacts.length} factual {remainingFacts.length === 1 ? "finding is" : "findings are"} still open. You can dismiss each one or explicitly finalise anyway. The findings and score remain unchanged.</p>}
+      {needsOverride && <input name="skipReview" type="hidden" value="on" />}
     </SettingsForm>}
   </div>;
 }

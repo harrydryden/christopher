@@ -34,6 +34,7 @@ export function CvAssessmentPanel({
   library = null,
   libraryDrift = null,
   finaliseReason = null,
+  summaryIssue = null,
   blocked = null,
   comments = [],
   initialFindingId = null,
@@ -59,6 +60,8 @@ export function CvAssessmentPanel({
    * control's absence is explained rather than silent.
    */
   finaliseReason?: string | null;
+  /** A summary citation to omitted evidence is a visible, overridable review warning. */
+  summaryIssue?: string | null;
   /** Why assessing is unavailable — an unverified account — or null when it is not. */
   blocked?: string | null;
   /**
@@ -153,7 +156,7 @@ export function CvAssessmentPanel({
           <li key={`${item.kind}:${index}`}><CvReviewActionLink href={item.href}>{item.text}</CvReviewActionLink></li>)}</ol>
           : <p className="mt-2 text-14">No specific improvement is flagged by this saved review.</p>}
       </div>
-      {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise={!overPages} />}
+      {!finalised && !busy && !finaliseReason && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise summaryIssue={summaryIssue} overPages={overPages ? assessment.pageCount : null} maxPages={cvMaxPages(content?.theme)} />}
       <details id="cv-full-assessment" className="border-t border-line-muted pt-3">
         <summary className="cursor-pointer text-14 font-medium">View full assessment</summary>
         <div className="mt-4 space-y-4">
@@ -212,19 +215,10 @@ export function CvAssessmentPanel({
         <p className="border border-ok p-3 text-14">
           {hasFinalPdf ? "Finalised. Download the saved PDF, or create a new revision to make changes." : "Finalised, but the saved PDF is unavailable. Create a new revision to make a downloadable document."}
         </p>
-      ) : busy ? null : overPages ? (
-        // Findings can be dismissed or explicitly overridden. Page overflow still needs a valid
-        // layout, so explain that obstacle beside the review rather than offering a broken PDF.
+      ) : busy ? null : finaliseReason ? (
         <div role="status" className="space-y-1 border border-warn p-3 text-14">
           {finaliseReason && (
             <p className="text-warn">Finalise is not available yet: {finaliseReason}</p>
-          )}
-          {overPages && (
-            <p className={finaliseReason ? "" : "text-warn"}>
-              This revision measures {assessment.pageCount}{" "}
-              {assessment.pageCount === 1 ? "page" : "pages"}. Raise the page limit on the
-              Appearance tab, or shorten the wording and save again.
-            </p>
           )}
         </div>
       ) : null}

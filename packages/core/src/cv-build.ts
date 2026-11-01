@@ -348,6 +348,8 @@ export interface CvBuildCheckpoint {
   mode?: "improve" | "assess";
   improvements?: string[];
   sourceRubric?: CvRubric;
+  /** Existing selected skills' order for a Rewrite; never a source of new claims. */
+  skillOrder?: import("./cv-skill-order").CvSkillOrderHint;
 }
 
 /**
@@ -366,13 +368,14 @@ export function readCvBuildCheckpoint(
   const stored = raw ?? {};
   if (stored.v !== 2 || stored.promptSetVersion === promptSetVersion)
     return { checkpoint: { ...stored, v: 2, promptSetVersion, stages: { ...(stored.stages ?? {}) } }, discarded: false };
-  const { tailoringEnabled, quizCompleted, mode, improvements, sourceRubric } = stored;
+  const { tailoringEnabled, quizCompleted, mode, improvements, sourceRubric, skillOrder } = stored;
   return {
     checkpoint: {
       v: 2, promptSetVersion, stages: {},
       ...(tailoringEnabled !== undefined ? { tailoringEnabled } : {}),
       ...(quizCompleted !== undefined ? { quizCompleted } : {}),
       ...(mode ? { mode } : {}), ...(improvements ? { improvements } : {}), ...(sourceRubric ? { sourceRubric } : {}),
+      ...(skillOrder ? { skillOrder } : {}),
     },
     discarded: true,
   };

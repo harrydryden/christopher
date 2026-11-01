@@ -356,9 +356,11 @@ export function assertCvFinalisable(input: {
     );
   const assessment = input.assessment!;
   const maxPages = cvMaxPages(input.content.theme);
-  if (assessment.pageCount < 1 || assessment.pageCount > maxPages)
-    throw new Error(`Fit this CV to ${maxPages} ${maxPages === 1 ? "page" : "pages"} before finalising it.`);
   const decision = cvReviewDecisionCurrent(input.reviewDecision, assessment) ? input.reviewDecision : null;
+  if (!Number.isInteger(assessment.pageCount) || assessment.pageCount < 1)
+    throw new Error("This CV needs a valid measured page count before finalising it.");
+  if (assessment.pageCount > maxPages && !decision?.skipped)
+    throw new Error(`Fit this CV to ${maxPages} ${maxPages === 1 ? "page" : "pages"} before finalising it.`);
   if (assessment.review.claims.some((claim) => claim.status !== "supported" &&
       !decision?.skipped && !decision?.dismissedRowIds.includes(`claim:${claim.claimId}`)))
     throw new Error(

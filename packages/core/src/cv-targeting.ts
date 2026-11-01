@@ -204,10 +204,10 @@ export function cvTargetedSummaryFinalisationIssue(content: CvContent, brief: Cv
   const forbidden = (id: string) => id === "source:profile" || [...omitted].some(entryId =>
     id === `entry:${entryId}` || id.startsWith(`entry:${entryId}:`));
   if (content.summarySources?.some(forbidden))
-    return "Edit the summary to remove claims from omitted Experience, then check this revision again.";
+    return "The summary cites Experience omitted from this CV. Edit and Check it again, or explicitly finalise with this warning.";
   const summary = assessment?.review.claims.find(claim => claim.claimId === "profile");
   if (!summary || summary.status !== "supported" || !summary.evidence.some(ref => !forbidden(ref.id)))
-    return "Check the edited summary against included Experience before finalising this CV.";
+    return "The summary may rely on omitted Experience without a confirmed included source. Edit and Check it again, or explicitly finalise with this warning.";
   return null;
 }
 

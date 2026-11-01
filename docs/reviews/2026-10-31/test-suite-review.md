@@ -27,7 +27,7 @@ The browser smoke scripts are additional end-to-end journeys, not included in th
 
 ## Execution and isolation
 
-Database suites fail if their test database is unavailable; they do not silently pass without it. The worker's Chromium suite has an explicit `COL_DISABLE_BROWSER` switch and is exercised separately in CI. Two release-script cases require a database and skip when it is absent; final verification must supply the database environment so these run.
+Database suites fail if their test database is unavailable; they do not silently pass without it. The worker's Chromium suite has an explicit `COL_DISABLE_BROWSER` switch and is exercised separately in CI. Two release-script cases require a database and skip when it is absent. The benchmark seed also skips a populated database, which ordinary workspace tests leave behind. CI now creates and migrates a separate empty release-test database so both cases run; the local final release run used the same isolation.
 
 The existing package dependency order serialises database, worker and web suites. Their destructive test setup must not run concurrently against the same database. In-package file parallelism is disabled where required. This review uses only the retained isolated local test database; no production data, paid model calls or live service mutations are part of the test run.
 
@@ -67,7 +67,7 @@ Local verification passed:
 - Database: 119 tests across 14 files.
 - Focused web: CV actions 35, preview 5, account isolation 3 and lifecycle 32.
 - Workspace and evaluation-script typechecks passed.
-- Release-script baseline: 140 passed, two database-dependent cases skipped without a database. New evaluation and provider regressions passed separately; the complete updated release suite still needs its database-enabled CI run.
+- Release-script final: all 148 passed with zero skips against a newly migrated empty test database. The baseline without a database had 140 passes and two skips; the populated-database rerun still skipped the benchmark seed, exposing the CI isolation gap fixed here.
 - Two added regressions were first observed failing (invalid prior spend and invalid page count), then passed after the bounded fixes.
 
 The first complete worker run suffered a large host clock/suspension gap and reported 12,861 seconds with lease/time-limit failures. A second attempt also encountered a clock gap despite an idle-sleep guard. Neither is claimed as a clean full run. Full normal, shuffled worker, browser and database-enabled release validation is delegated to the pull request's hosted CI. No timeout or assertion was relaxed in response. Hosted CI passed browser/smoke, Lighthouse and the worker image. It exposed an incorrect expectation in the new cache test: removing Essential produces `desirable`, not `responsibility`. The corrected final cache-isolation test passed locally, including unchanged-cache reuse, rechecking after the flag change, preserved wording and no author call. The final full normal and shuffled hosted runs remain the release evidence.

@@ -18,7 +18,7 @@ import { libraryImportView, type LibraryImportView } from "@/lib/library-import"
  * what decides whether the card offers to read it again; it runs only when something failed, and
  * reads one boolean per row rather than the documents themselves.
  */
-export async function listLibraryImports(userId: string, limit = 10): Promise<LibraryImportView[]> {
+export async function listLibraryImports(userId: string, limit = 10, admin = false): Promise<LibraryImportView[]> {
   const rows = await listOpenLibraryImports(db(), userId, limit);
   const failed = rows.filter(row => row.error).map(row => row.id);
   const kept = failed.length
@@ -28,7 +28,7 @@ export async function listLibraryImports(userId: string, limit = 10): Promise<Li
         .where(and(eq(libraryImports.userId, userId), inArray(libraryImports.id, failed))))
       .filter(row => row.kept).map(row => row.id))
     : new Set<string>();
-  return rows.map(row => libraryImportView(row, kept.has(row.id)));
+  return rows.map(row => libraryImportView(row, kept.has(row.id), new Date(), admin));
 }
 
 export interface LibraryImportProgress {

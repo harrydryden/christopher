@@ -92,9 +92,12 @@ it("tells candidates nobody has picked apart from nothing found and from a run t
   expect(byKey(notFound, "discovery").note).toBe("Paste its careers or board URL, or run discovery again.");
 
   const failed = narrate({
-    run: { status: "failed", startedAt: secondsAgo(90), finishedAt: secondsAgo(30), candidates: [], chosenSourceId: null, error: "fetch timed out" },
+    run: { status: "failed", startedAt: secondsAgo(90), finishedAt: secondsAgo(30), candidates: [], chosenSourceId: null, error: "SECRET ANTHROPIC HTTP 400 billing token" },
   });
-  expect(byKey(failed, "discovery")).toMatchObject({ status: "failed", tone: "red", glyph: "✗", note: "fetch timed out" });
+  expect(byKey(failed, "discovery")).toMatchObject({ status: "failed", tone: "red", glyph: "✗", note: "Run discovery again, or paste the careers URL." });
+  expect(JSON.stringify(failed)).not.toContain("SECRET ANTHROPIC HTTP 400 billing token");
+  const adminFailed = narrateCompanySetup({ ...EMPTY, run: { status: "failed", startedAt: secondsAgo(90), finishedAt: secondsAgo(30), candidates: [], chosenSourceId: null, error: "SECRET ANTHROPIC HTTP 400 billing token" } }, NOW, { ...CONTEXT, admin: true });
+  expect(byKey(adminFailed, "discovery").note).toBe("SECRET ANTHROPIC HTTP 400 billing token");
 
   // Resolved once, but the source it chose is gone: still nothing a scan can read.
   const stale = narrate({

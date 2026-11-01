@@ -49,5 +49,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const after = Number.isFinite(afterRaw) && afterRaw > 0 ? Math.floor(afterRaw) : 0;
   const rows = await readCvProgress(auth.user.id, id, { after, last: after > 0 ? signatureMoment(search.get("sig")) : null });
   if (!rows) return Response.json({ ok: false, error: "Not found" }, { status: 404, headers: NO_STORE });
-  return Response.json(cvProgressReading(rows, new Date(), timeZoneOf(search.get("tz"))), { headers: NO_STORE });
+  return Response.json(cvProgressReading(rows, new Date(), timeZoneOf(search.get("tz")), auth.user.role === "admin"), { headers: NO_STORE });
 }

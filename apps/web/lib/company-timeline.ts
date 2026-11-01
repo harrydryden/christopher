@@ -110,6 +110,8 @@ export interface CompanyTimelineStep {
 export interface TimelineContext {
   /** "next scheduled scan at 06:00 Europe/London", from `nextScanSentence`. */
   nextScan: string;
+  /** Stored discovery diagnostics are for administrators; other followers get a recovery step. */
+  admin?: boolean;
 }
 
 /** "5 minutes" from a deadline in milliseconds. */
@@ -215,7 +217,7 @@ function between(from: Date | null | undefined, to: Date | null | undefined): nu
   return Math.max(0, to.getTime() - from.getTime());
 }
 
-function discoveryStep(rows: CompanySetupRows, now: Date): CompanyTimelineStep {
+function discoveryStep(rows: CompanySetupRows, now: Date, admin: boolean): CompanyTimelineStep {
   const { run, discoveryTask, source } = rows;
   const label = "Careers page";
   const short = "looking for the careers page";
@@ -264,7 +266,8 @@ function discoveryStep(rows: CompanySetupRows, now: Date): CompanyTimelineStep {
     return step("discovery", label, short, "failed", "Discovery stopped before it found anything.", {
       startedAt: run.startedAt,
       elapsedMs: elapsed,
-      note: run.error ?? "Run discovery again, or paste the URL.",
+      note: admin ? run.error ?? "Run discovery again, or paste the URL."
+        : "Run discovery again, or paste the careers URL.",
     });
   }
   // Resolved, or asking with nothing to pick, and yet no source a scan can read: the one it chose
@@ -374,7 +377,7 @@ function tableStep(rows: CompanySetupRows, context: TimelineContext): CompanyTim
 
 /** The four steps, in order, for one company and one account. */
 export function narrateCompanySetup(rows: CompanySetupRows, now: Date = new Date(), context: TimelineContext): CompanyTimelineStep[] {
-  return [discoveryStep(rows, now), sourceStep(rows), scanStep(rows, now), tableStep(rows, context)];
+  return [discoveryStep(rows, now, context.admin === true), sourceStep(rows), scanStep(rows, now), tableStep(rows, context)];
 }
 
 /**

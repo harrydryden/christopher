@@ -49,7 +49,7 @@ import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./clai
 import { AiGovernor, abortableSleep, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
 import { scoreLocationEvidence } from "./score-location-evidence";
-import { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, isProviderBillingFailure, type BreakerStats } from "./breaker";
+import { MODEL_ACCESS_BREAKER_MS, PROVIDER_BILLING_BREAKER_MS, ModelAccessBreaker, defaultBreaker, isModelAccessFailure, isProviderBillingFailure, type BreakerStats } from "./breaker";
 
 export type { Effort } from "./prompt-registry";
 
@@ -1285,7 +1285,9 @@ export class AiEngine {
         if ((record.failure?.kind === "model_access" || record.failure?.kind === "provider_billing_exhausted") && cause instanceof APIError
           && (isModelAccessFailure(cause.status, cause.message) || isProviderBillingFailure(cause.status, cause.message))
           && this.breaker.trip(model, cause.message, cause.status))
-          this.log(`model access breaker open for ${model} for ${MODEL_ACCESS_BREAKER_MS / 60_000} minutes`, { status: cause.status, message: cause.message });
+          this.log(`${isProviderBillingFailure(cause.status, cause.message) ? "provider billing" : "model access"} breaker open for ${model} for ${
+            (isProviderBillingFailure(cause.status, cause.message) ? PROVIDER_BILLING_BREAKER_MS : MODEL_ACCESS_BREAKER_MS) / 60_000
+          } minute(s)`, { status: cause.status, message: cause.message });
       }
       landed = await this.record(record);
       call.onRecord?.(record);

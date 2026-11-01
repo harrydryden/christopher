@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, reserveCvCredit, schema, startCvBuildStep, type Db, type Task } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
-import { BadRequestError, InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@col/ai";
+import { BadRequestError, InternalServerError, PROVIDER_BILLING_BREAKER_MS, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@col/ai";
 import { DEFAULT_CV_THEME, materialiseCv } from "@col/core/cv";
 import { createCvAssessment } from "@col/core/cv-review";
 import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@col/core/cv-assessment";
@@ -360,22 +360,51 @@ it("returns the credit when an internal budget limit prevents a build", async ()
 
 it("stops an unfunded Anthropic review without retrying and releases a held app CV credit", async () => {
   const privateError = "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.";
-  const scripted = scriptedClient({ review: () => { throw new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: privateError } }, undefined, new Headers()); } });
+  let funded = false;
+  const scripted = scriptedClient({ review: params => {
+    if (funded) return reviewAnswer(params);
+    throw new BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: privateError } }, undefined, new Headers());
+  } });
   deps.aiClient = scripted.client;
   const draft = await makeDraft();
   await db.transaction(tx => reserveCvCredit(tx, userId, draft.id));
+  let nowMs = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+  try {
+    await queueFor().drain();
 
-  await queueFor().drain();
+    const failed = await draftAfter(draft.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.failure).toMatchObject({ kind: "provider_billing_exhausted", resolvedBy: "user", retryable: false, action: "check_provider_billing", motion: "assess_batch" });
+    expect(failed.error).toContain("Anthropic API account needs credit");
+    expect(failed.error).not.toContain(privateError);
+    expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("released");
+    expect((await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.draftId, draft.id))).map(row => row.kind)).toEqual(["reserve", "release"]);
+    expect(scripted.count("review")).toBe(1);
+    expect((await taskRow()).status).toBe("done");
 
-  const failed = await draftAfter(draft.id);
-  expect(failed.status).toBe("failed");
-  expect(failed.failure).toMatchObject({ kind: "provider_billing_exhausted", resolvedBy: "user", retryable: false, action: "check_provider_billing", motion: "assess_batch" });
-  expect(failed.error).toContain("Anthropic API account needs credit");
-  expect(failed.error).not.toContain(privateError);
-  expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("released");
-  expect((await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.draftId, draft.id))).map(row => row.kind)).toEqual(["reserve", "release"]);
-  expect(scripted.count("review")).toBe(1);
-  expect((await taskRow()).status).toBe("done");
+    // A failed audit is not a reusable checkpoint. After the billing pause and a person's
+    // explicit retry, the same client must ask the provider again, while keeping paid rubric
+    // and wording stages that completed before the billing refusal.
+    funded = true;
+    nowMs += PROVIDER_BILLING_BREAKER_MS + 1;
+    await db.update(schema.cvDrafts).set({ status: "queued", failure: null, error: null }).where(eq(schema.cvDrafts.id, draft.id));
+    await db.transaction(tx => reserveCvCredit(tx, userId, draft.id));
+    const payload = { draftId: draft.id, userId };
+    expect(await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) })).toBeTruthy();
+    await queueFor().drain();
+    const recovered = await draftAfter(draft.id);
+    expect(recovered.status).toBe("ready");
+    expect(recovered.failure).toBeNull();
+    expect(scripted.count("review")).toBe(2);
+    expect(scripted.count("rubric")).toBe(1);
+    expect(scripted.count("author")).toBe(1);
+    const reviews = await db.select().from(schema.aiCalls).where(eq(schema.aiCalls.refId, draft.id));
+    expect(reviews.filter(row => row.stage === "review" && !row.ok)).toHaveLength(1);
+    expect(reviews.filter(row => row.stage === "review" && row.ok)).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 it("gives up on a CV that will not fit the page limit, showing what each attempt measured", async () => {

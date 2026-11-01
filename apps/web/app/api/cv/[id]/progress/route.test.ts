@@ -102,7 +102,7 @@ it("answers the page's own token and signature, from one query beside the sessio
   expect(body.steps[0]!.taskId).toMatch(/^[0-9a-f-]{36}$/);
 });
 
-it("keeps private provider diagnostics out of the member feed and initial page reading", async () => {
+it("keeps stored provider diagnostics admin-only in both the member feed and initial page reading", async () => {
   const { draft } = await seed();
   const privateDetail = "PRIVATE PROVIDER REQUEST EXCERPT";
   const failure = {
@@ -110,7 +110,9 @@ it("keeps private provider diagnostics out of the member feed and initial page r
     message: "The provider rejected the request.", cause: privateDetail,
   };
   await database.execute(sql`update cv_drafts set status = 'failed', error = ${failure.message}, failure = ${JSON.stringify(failure)}::jsonb where id = ${draft.id}`);
-  await database.execute(sql`update cv_build_steps set status = 'failed', error = ${failure.message}, failure = ${JSON.stringify(failure)}::jsonb where draft_id = ${draft.id} and seq = 3`);
+  await database.execute(sql`update cv_build_steps set status = 'failed', error = ${failure.message}, failure = ${JSON.stringify(failure)}::jsonb,
+    detail = ${JSON.stringify({ error: privateDetail, nested: { provider: privateDetail }, claims: 3 })}::jsonb
+    where draft_id = ${draft.id} and seq = 3`);
 
   const rows = await readCvProgress(user.id, draft.id);
   const fullDraft = await getOwnCvDraft(user.id, draft.id);
@@ -118,11 +120,17 @@ it("keeps private provider diagnostics out of the member feed and initial page r
   const { status, body } = await read(draft.id);
   expect(status).toBe(200);
   for (const reading of [pageReading, body]) {
-    expect(reading.failure).toMatchObject({ kind: "request_invalid", message: failure.message });
-    expect(reading.failure).not.toHaveProperty("cause");
-    expect(reading.steps[2]!.failure).not.toHaveProperty("cause");
+    expect(reading.failure).toBeNull();
+    expect(reading.build?.title).toBe("CV service unavailable");
+    expect(reading.steps[2]!.detail).toEqual({ claims: 3 });
     expect(JSON.stringify(reading)).not.toContain(privateDetail);
+    expect(JSON.stringify(reading)).not.toContain(failure.message);
   }
+  signedIn = { ...user, role: "admin" };
+  const admin = await read(draft.id);
+  expect(admin.status).toBe(200);
+  expect(JSON.stringify(admin.body)).toContain(privateDetail);
+  expect(admin.body.failure?.cause).toBe(privateDetail);
 });
 
 it("returns only what moved since the reader's last look", async () => {

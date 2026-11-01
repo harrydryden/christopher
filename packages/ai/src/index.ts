@@ -30,7 +30,7 @@ export { canonicalEvidence, canonicalEvidenceBlock, canonicalEvidenceItems, evid
 export type { CanonicalEvidence, CanonicalEvidenceEntry, CanonicalEvidenceRow } from "./evidence";
 export { AiGovernor, BASE_PAUSE_MS, DEFAULT_MAX_STREAMS, MAX_PAUSE_MS, aiGovernorStats, defaultGovernor, maxStreamsFromEnv, retryAfterMs } from "./governor";
 export type { GovernorOptions, GovernorStats } from "./governor";
-export { MODEL_ACCESS_BREAKER_MS, ModelAccessBreaker, aiBreakerStats, defaultBreaker, isModelAccessFailure } from "./breaker";
+export { MODEL_ACCESS_BREAKER_MS, PROVIDER_BILLING_BREAKER_MS, ModelAccessBreaker, aiBreakerStats, defaultBreaker, isModelAccessFailure } from "./breaker";
 export type { BreakerStats, BreakerTrip } from "./breaker";
 export { modelSupportsEffort, modelSupportsServerFallback } from "./model-capabilities";
 export * as schemas from "./schemas";

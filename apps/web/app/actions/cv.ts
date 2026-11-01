@@ -3,6 +3,7 @@ import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { cvReviewEditedContent, librarySupportSections, cvReviewSkillCharacterIssue, cvReviewSkillLimitIssue, cvReviewSkillSectionLimitIssue, type AddedSkillSection } from "@/lib/cv-review-edits";
 import { CV_LIMITS, cvSectionTexts } from "@col/core/cv-format";
 import { cvSkillOrderHint } from "@col/core/cv-skill-order";
+import { cvViewerSkillSuggestionError } from "@/lib/cv-public-diagnostics";
 import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import { cvImprovementOwner } from "@col/core/cv-assessment";
 import { assertCvFinalisable, canonicalJson, cvAssessmentCurrent, cvReviewDecisionCurrent, type CvReviewDecision } from "@col/core/cv-review";
@@ -620,7 +621,8 @@ export async function requestCvSkillSuggestions(id: string, refresh = false, pag
         await tx.update(cvSkillSuggestionRuns).set({ status: "failed", error: "Experience or target role changed.", updatedAt: new Date() })
           .where(eq(cvSkillSuggestionRuns.id, previous.id));
       else if (previous && (["queued", "running"].includes(previous.status) || (!refresh && previous.status === "ready" && previous.inputHash === inputHash)))
-        return { ok: true as const, run: { id: previous.id, status: previous.status, suggestions: previous.suggestions, error: previous.error } };
+        return { ok: true as const, run: { id: previous.id, status: previous.status, suggestions: previous.suggestions,
+          error: cvViewerSkillSuggestionError(previous.error, user.role === "admin") } };
       const [run] = await tx.insert(cvSkillSuggestionRuns).values({ userId: user.id, draftId: id,
         libraryVersion: latest.version, inputHash }).returning();
       await enqueue("suggest_cv_skills", { userId: user.id, draftId: id, runId: run!.id,
@@ -658,7 +660,8 @@ export async function readCvSkillSuggestions(id: string, runId: string): Promise
         cvSkillEvidenceRows(cvEligibleSkillLibrary(CvLibrarySchema.parse(latest.content), brief)), cvDraftContextHighlightedSkills(context.draftContext),
         context.draftContext, context.baseRevision!, cvSkillSourcePolicy(brief)) !== run.inputHash)
       return { ok: false, error: "Your Experience, target role or CV changed. Generate skills again." };
-    return { ok: true, run: { id: run.id, status: run.status, suggestions: run.suggestions, error: run.error } };
+    return { ok: true, run: { id: run.id, status: run.status, suggestions: run.suggestions,
+      error: cvViewerSkillSuggestionError(run.error, user.role === "admin") } };
   } catch (error) {
     const result = actionError(error, "Could not read skill suggestions. Please try again.");
     return { ok: false, error: result.ok ? "Could not read skill suggestions." : result.error };
@@ -1101,6 +1104,9 @@ export async function assessCvDraft(
         .set({
           status: "queued",
           error: null,
+          // This is a new, person-requested attempt. Its previous terminal failure remains in
+          // call and build-step history, but must not describe the queued attempt as still failed.
+          failure: null,
           buildStage: null,
           model,
           ...(content ? { content } : {}),
@@ -1118,7 +1124,6 @@ export async function assessCvDraft(
               ...(checkpoint.improvements ? { improvements: checkpoint.improvements } : {}),
               ...(checkpoint.sourceRubric ? { sourceRubric: checkpoint.sourceRubric } : {}),
             },
-            failure: null,
           } : {}),
         })
         .where(eq(cvDrafts.id, id));

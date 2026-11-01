@@ -317,8 +317,8 @@ export function failureWayForward(
       return context.admin
         ? { links: [{ label: "Open Operations", href: "/admin/health" }],
             note: "Check the worker's daily AI cap before retrying.", ...done }
-        : { links: [], note: "Ask an administrator to check the deployment's daily AI cap before retrying.",
-            retry: canRetry, retryNote: canRetry ? "Retry after an administrator confirms the cap has capacity." : null };
+        : { links: [], note: "Ask an administrator to check when the CV service can resume.",
+            retry: canRetry, retryNote: canRetry ? "Retry after an administrator confirms the service is available." : null };
     case "fix_library":
       return { links: [{ label: "Open the Library", href: "/library" }], note: null, ...done };
     case "shorten_or_raise_pages":
@@ -347,23 +347,25 @@ export function failureWayForward(
             note: null,
             ...done,
           }
-        : { links: [], note: "Ask an administrator to check this deployment's model access.", ...done };
+        : { links: [], note: "Ask an administrator to check the CV service.", ...done };
     case "check_provider_billing":
       return context.admin
         ? { links: [{ label: "Open Anthropic Plans & Billing", href: "https://platform.claude.com/settings/billing" }],
-            note: "Restore the Anthropic API credit balance, then allow up to 10 minutes for temporarily paused model calls before retrying this CV. Your app CV credits are separate.",
+            note: "Restore the Anthropic API credit balance, then allow up to 1 minute for temporarily paused model calls before retrying this CV. Your app CV credits are separate.",
             ...done }
-        : { links: [], note: "Ask an administrator to restore the Anthropic API credit balance. Model calls may remain paused for up to 10 minutes afterwards; then retry this CV. Your CV credits are separate.",
+        : { links: [], note: "Ask an administrator to check the CV service before retrying. Your saved work is retained, and your CV credits are separate.",
             ...done };
     case "check_provider_request":
       return context.admin
         ? { links: [{ label: "Open Operations", href: "/admin/health" }],
             note: "The detailed provider error is in internal AI call records. Check and correct the request before starting another CV from the role.",
             retry: false, retryNote: null }
-        : { links: [], note: "Ask an administrator to check the internal provider error and correct the request before starting another CV from the role.",
+        : { links: [], note: "Ask an administrator to check the CV service before starting another CV from the role.",
             retry: false, retryNote: null };
     case "choose_model":
-      return { links: [{ label: "Choose a different CV model", href: "/settings" }], note: null, ...done };
+      return context.admin
+        ? { links: [{ label: "Choose a different CV model", href: "/settings" }], note: null, ...done }
+        : { links: [], note: "Ask an administrator to check the CV service.", ...done };
     case "retry":
       return { links: [], note: null, retry: canRetry, retryNote: null };
     default:

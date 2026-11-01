@@ -7,10 +7,14 @@
  * took a budget hold and wrote a failed row: 157 of them in one month, each one a page classified
  * as "other" or a role marked scored with no score. After one such failure the model is refused
  * in-process for `MODEL_ACCESS_BREAKER_MS`, without a governor slot or a hold, and the trip is
- * logged once. When the window ends the next call is sent and, if the model is still unreachable,
- * trips it again.
+ * logged once. Provider billing refusals use a shorter window because an account top-up can
+ * restore access without a worker restart. When either window ends the next call is sent and,
+ * if the model is still unreachable, trips it again.
  */
 export const MODEL_ACCESS_BREAKER_MS = 10 * 60_000;
+/** Billing can be restored while the worker stays up. One minute avoids a burst of known refusals
+ * yet lets a person retry promptly after an account top-up. Other access failures keep ten minutes. */
+export const PROVIDER_BILLING_BREAKER_MS = 60_000;
 
 export interface BreakerTrip {
   model: string;
@@ -60,7 +64,9 @@ export class ModelAccessBreaker {
     const now = this.now();
     const open = this.trips.get(model);
     if (open && open.openUntil > now) return false;
-    const trip: BreakerTrip = { model, message: message.split("\n")[0]!.slice(0, 300), ...(status !== undefined ? { status } : {}), trippedAt: now, openUntil: now + this.windowMs, refused: 0 };
+    const windowMs = isProviderBillingFailure(status, message)
+      ? Math.min(this.windowMs, PROVIDER_BILLING_BREAKER_MS) : this.windowMs;
+    const trip: BreakerTrip = { model, message: message.split("\n")[0]!.slice(0, 300), ...(status !== undefined ? { status } : {}), trippedAt: now, openUntil: now + windowMs, refused: 0 };
     this.trips.set(model, trip);
     this.latest = trip;
     for (const listener of this.listeners) {

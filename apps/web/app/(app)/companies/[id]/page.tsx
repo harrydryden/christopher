@@ -155,7 +155,7 @@ async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date)
    * source it chose, the scan it read and what this account's gate made of it. Every figure comes
    * from a row, and the elapsed one on an open step keeps moving on the client.
    */
-  const setupSteps = narrateCompanySetup(setup, now, { nextScan: nextScanSentence(system.scanTime, system.timezone) });
+  const setupSteps = narrateCompanySetup(setup, now, { nextScan: nextScanSentence(system.scanTime, system.timezone), admin });
   /**
    * Nobody has a working careers page for this company yet. Everything needed to fix that is in
    * one card, and the card is gone the moment a source works — a discovery run that stopped and

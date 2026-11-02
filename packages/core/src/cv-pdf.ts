@@ -187,9 +187,12 @@ export async function renderCvPdfWithReport(
     ];
     doc.x = left;
     doc.y = top;
-    if (contact) doc.text(contact, { width: availableWidth, lineGap: 2.5, continued: links.length > 0 });
+    if (contact) doc.text(contact, { width: availableWidth, lineGap: 2.5, continued: links.length > 0,
+      link: null, underline: false });
     links.forEach((link, index) => {
-      doc.text(`${contact || index ? " · " : ""}${link.label}`, { link: link.url, underline: true,
+      if (contact || index) doc.text(" · ", { link: null, underline: false,
+        width: availableWidth, lineGap: 2.5, continued: true });
+      doc.text(link.label, { link: link.url, underline: true,
         width: availableWidth, lineGap: 2.5, continued: index < links.length - 1 });
     });
   };

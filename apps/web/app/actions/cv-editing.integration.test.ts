@@ -9,7 +9,8 @@ import { rubricFixture, reviewFixture } from "../../../../packages/core/test/cv-
 import { runMigrations } from "@col/db/migrate";
 import { createTestDb } from "@/test/db";
 import { signInTestUser } from "@/test/auth";
-import { createCvApplicationContext, createManualCvEdition, generateRefinedCv, openOrClaimAutoCv,
+import { applyCvRefinementRebase, createCvApplicationContext, createManualCvEdition, generateRefinedCv,
+  openOrClaimAutoCv, previewCvRefinementRebase, updateCvApplicationDescription,
   resetCvRefinement, saveCvRefinement, saveManualCvEdition } from "./cv-editing";
 import { saveCvDraft } from "./cv";
 
@@ -190,6 +191,30 @@ it("starts Manual without a task and rejects a forged legacy Save that would lea
   expect((await database.select().from(schema.creditReservations)).length).toBe(0);
 });
 
+it("saves an unsaved Manual buffer against its pinned advert after this context receives a newer JD", async () => {
+  const opened = await context();
+  const started = await createManualCvEdition(opened.contextId, opened.descriptionVersionId);
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const [source] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, started.draftId));
+  const nextRole = await updateCvApplicationDescription(opened.contextId, opened.descriptionVersionId,
+    `${description} A new advert adds further responsibilities.`);
+  expect(nextRole.ok, JSON.stringify(nextRole)).toBe(true);
+  const wording = { name: "Ada Example", contact: "London", summary: "My saved wording",
+    sections: [{ entryId: `manual:${crypto.randomUUID()}`, kind: "experience" as const,
+      heading: "Operations Manager", bullets: ["A user-authored achievement"] }], gaps: [] };
+  const saved = await saveManualCvEdition(started.draftId, source!.revision, wording);
+  expect(saved).toMatchObject({ ok: true });
+  if (!saved.ok) return;
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, saved.draftId));
+  expect(child).toMatchObject({ editingMode: "manual", parentId: source!.id,
+    descriptionVersionId: opened.descriptionVersionId, jobDescription: description,
+    jobSource: source!.jobSource, content: expect.objectContaining({ summary: wording.summary }) });
+  expect(await database.select().from(schema.cvLibraries)).toHaveLength(0);
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+});
+
 it("projects two successive exact Refine changes from Auto without another task or credit", async () => {
   const opened = await context();
   await database.insert(schema.cvLibraries).values({ userId, version: 1, content: library });
@@ -312,4 +337,92 @@ it("binds chained cited locks to the retained Auto source, including a re-edited
     text: "New manual bullet", order: 4 });
   expect(missingAnchor).toMatchObject({ ok: false });
   if (!missingAnchor.ok) expect(missingAnchor.error).toMatch(/Auto source changed/i);
+});
+
+it("rebases only chosen exact anchors to the current JD and leaves a changed fact visible", async () => {
+  const opened = await context();
+  const sourceLibrary = { ...library, entries: [{ ...library.entries[0]!,
+    details: "Reduced backlog by 20%\nImproved reporting cadence",
+    confirmedResponsibilities: ["Reduced backlog by 20%", "Improved reporting cadence"] }] };
+  await database.insert(schema.cvLibraries).values({ userId, version: 1, content: sourceLibrary });
+  await grantCvCredits(database, { userId, source: "admin", units: 3, externalRef: `rebase-${userId}` });
+  const first = await openOrClaimAutoCv(opened.contextId, "update");
+  expect(first.ok, JSON.stringify(first)).toBe(true);
+  if (!first.ok || !first.baselineId || !first.draftId) return;
+  const oldContent = CvContentSchema.parse({ name: "Ada Example", contact: "London", summary: "Operations lead",
+    sections: [{ entryId: "role", kind: "experience", heading: "Operations Manager",
+      bullets: ["Reduced backlog by 20%", "Improved reporting cadence"],
+      bulletSources: [["entry:role:row:0"], ["entry:role:row:1"]] }], gaps: [] });
+  const oldTargets = cvEditingTargetsFor(oldContent, () => crypto.randomUUID());
+  const rubric = rubricFixture(description);
+  const assessmentFor = (content: typeof oldContent, source: typeof sourceLibrary, role: string) =>
+    createCvAssessment({ content, description: role, library: source, rubric,
+      review: reviewFixture({ rubric, cv: cvTextItems(content), claims: cvClaimItems(content),
+        evidence: cvEvidenceItems(source) }), model: "test", pageCount: 1 });
+  await database.transaction(tx => publishCvAutoBaseline(tx, { userId, baselineId: first.baselineId!,
+    sourceDraftId: first.draftId!, content: oldContent, assessment: assessmentFor(oldContent, sourceLibrary, description),
+    librarySnapshot: sourceLibrary, editingTargets: oldTargets }));
+  await database.update(schema.cvDrafts).set({ status: "ready", content: oldContent,
+    editingTargets: oldTargets }).where(eq(schema.cvDrafts.id, first.draftId));
+  await database.update(schema.tasks).set({ status: "done" }).where(sql`${schema.tasks.payload}->>'draftId' = ${first.draftId}`);
+  const firstRule = await saveCvRefinement(opened.contextId, 0, { sourceKind: "baseline",
+    sourceId: first.baselineId, kind: "exact_wording",
+    target: { type: "bullet", id: oldTargets.sections[0]!.bulletIds[0] },
+    text: "Cut the backlog by 20%", order: 0 });
+  expect(firstRule).toMatchObject({ ok: true, version: 1 });
+  const secondRule = await saveCvRefinement(opened.contextId, 1, { sourceKind: "baseline",
+    sourceId: first.baselineId, kind: "exact_wording",
+    target: { type: "bullet", id: oldTargets.sections[0]!.bulletIds[1] },
+    text: "Improved reporting each week", order: 1 });
+  expect(secondRule).toMatchObject({ ok: true, version: 2 });
+  const updatedRole = `${description} Maintain the same operations evidence while improving the team.`;
+  const changed = await updateCvApplicationDescription(opened.contextId, opened.descriptionVersionId, updatedRole);
+  expect(changed.ok, JSON.stringify(changed)).toBe(true);
+  const nextLibrary = { ...sourceLibrary, entries: [{ ...sourceLibrary.entries[0]!,
+    details: "Reduced backlog by 20%\nImproved reporting daily",
+    confirmedResponsibilities: ["Reduced backlog by 20%", "Improved reporting daily"] }] };
+  await database.insert(schema.cvLibraries).values({ userId, version: 2, content: nextLibrary });
+  const second = await openOrClaimAutoCv(opened.contextId, "update");
+  expect(second.ok, JSON.stringify(second)).toBe(true);
+  if (!second.ok || !second.baselineId || !second.draftId) return;
+  const nextContent = CvContentSchema.parse({ ...oldContent, sections: [{ ...oldContent.sections[0]!,
+    bullets: ["Improved reporting daily", "Reduced backlog by 20%"],
+    bulletSources: [["entry:role:row:1"], ["entry:role:row:0"]] }] });
+  const nextTargets = cvEditingTargetsFor(nextContent, () => crypto.randomUUID());
+  await database.transaction(tx => publishCvAutoBaseline(tx, { userId, baselineId: second.baselineId!,
+    sourceDraftId: second.draftId!, content: nextContent,
+    assessment: assessmentFor(nextContent, nextLibrary, updatedRole),
+    librarySnapshot: nextLibrary, editingTargets: nextTargets }));
+  await database.update(schema.cvDrafts).set({ status: "ready", content: nextContent,
+    editingTargets: nextTargets }).where(eq(schema.cvDrafts.id, second.draftId));
+  const preview = await previewCvRefinementRebase(opened.contextId, 2, first.baselineId, second.baselineId);
+  expect(preview.ok, JSON.stringify(preview)).toBe(true);
+  if (!preview.ok) return;
+  expect(preview.items).toMatchObject([{ status: "compatible", target: { type: "bullet",
+    id: nextTargets.sections[0]!.bulletIds[1] } }, { status: "conflict", reason: "changed_source" }]);
+  const ownerSession = session;
+  const foreign = await signInTestUser(database, process.env.SESSION_SECRET!, "foreign@example.com");
+  session = foreign.cookie;
+  expect(await previewCvRefinementRebase(opened.contextId, 2, first.baselineId, second.baselineId))
+    .toMatchObject({ ok: false });
+  expect(await applyCvRefinementRebase(opened.contextId, 2, first.baselineId, second.baselineId,
+    preview.previewKey, [preview.items[0]!.id])).toMatchObject({ ok: false });
+  session = ownerSession;
+  const compatibleId = preview.items[0]!.id;
+  const refused = await applyCvRefinementRebase(opened.contextId, 2, first.baselineId, second.baselineId,
+    preview.previewKey, [preview.items[1]!.id]);
+  expect(refused).toMatchObject({ ok: false });
+  const stale = await applyCvRefinementRebase(opened.contextId, 2, first.baselineId, second.baselineId,
+    "0".repeat(64), [compatibleId]);
+  expect(stale).toMatchObject({ ok: false });
+  const applied = await applyCvRefinementRebase(opened.contextId, 2, first.baselineId, second.baselineId,
+    preview.previewKey, [compatibleId]);
+  expect(applied).toMatchObject({ ok: true, version: 3, rebasedIds: [compatibleId],
+    conflicts: [{ id: preview.items[1]!.id, reason: "changed_source" }] });
+  const later = await previewCvRefinementRebase(opened.contextId, 3, first.baselineId, second.baselineId);
+  expect(later.ok).toBe(true);
+  if (later.ok) expect(later.items).toMatchObject([{ id: compatibleId, status: "current" },
+    { id: preview.items[1]!.id, status: "conflict", reason: "changed_source" }]);
+  expect((await database.select().from(schema.tasks)).filter(task => task.type === "generate_cv")).toHaveLength(2);
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(2);
 });

@@ -45,9 +45,22 @@ it("does not measure or approve while a mounted editor has unsaved wording", asy
   } finally { dirty.remove(); }
 });
 
+it("does not approve a saved Manual edition while its visible Manual buffer differs", async () => {
+  const dirty = document.createElement("div"); dirty.dataset.cvModeDirty = "true";
+  dirty.dataset.cvModeEditorId = "manual-edition"; document.body.append(dirty);
+  try {
+    act(() => root.render(<CvFinaliseControl id="manual-edition" revision={2} baseHash="saved" />));
+    await act(async () => { container.querySelector<HTMLButtonElement>("button")!.click(); });
+    expect(container.textContent).toContain("Save your CV edits");
+    expect(prepareCvFinalisation).not.toHaveBeenCalled();
+  } finally { dirty.remove(); }
+});
+
 it("ignores unsaved wording in a different mounted mode or edition", async () => {
   const other = document.createElement("div"); other.dataset.cvEditorDirty = "true"; other.dataset.cvEditorId = "refine-edition";
-  document.body.append(other);
+  const otherMode = document.createElement("div"); otherMode.dataset.cvModeDirty = "true";
+  otherMode.dataset.cvModeEditorId = "other-manual-edition";
+  document.body.append(other, otherMode);
   vi.mocked(prepareCvFinalisation).mockResolvedValue({ ok: true, token: "signed", measuredPages: 1, maxPages: 2,
     assessmentState: "unchecked", warnings: [{ id: "assessment", text: "Not checked" }] });
   vi.mocked(approveCvFinalisation).mockResolvedValue({ ok: true });
@@ -62,5 +75,5 @@ it("ignores unsaved wording in a different mounted mode or edition", async () =>
     expect(router.refresh).toHaveBeenCalledOnce();
     expect(other.dataset.cvEditorDirty).toBe("true");
     expect(container.textContent).toContain("The saved PDF is now available");
-  } finally { other.remove(); }
+  } finally { other.remove(); otherMode.remove(); }
 });

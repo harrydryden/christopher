@@ -7,11 +7,12 @@ import type { CvEditingTargets } from "@col/core/cv-editing-modes";
 import type { CvContent } from "@col/core/cv";
 import type { CvTargetingChoices, CvTargetingView } from "@col/core/cv-targeting";
 import type { CvTheme } from "@col/core/cv-theme-values";
-import { CvAppearance } from "./CvAppearance";
+import { useCvContextLayout } from "./CvContextLayout";
 import { CvTargetingControls, initialCvTargetingChoices, cvTargetingChoiceIssue } from "./CvTargetingPanel";
 import { generateRefinedCv, resetCvRefinement, saveCvRefinement } from "@/app/actions/cv-editing";
 
-export type RefinementTargetOption = { type: CvRefinementV1["target"]["type"]; id?: string; label: string; sourceText: string };
+export type RefinementTargetOption = { type: CvRefinementV1["target"]["type"]; id?: string; label: string;
+  sourceText: string; entryId?: string };
 
 export function CvRefineMode({ contextId, source: incomingSource, initialVersion, targets: incomingTargets, refinements,
   sourceContent: incomingContent = null, sourceTargets: incomingSourceTargets = null,
@@ -44,9 +45,22 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const target = targets[targetIndex];
+  // Skill sections mirror their printable labels in bullets for provenance. Show the item once;
+  // retain the mirrored bullet target in the secondary picker for existing remembered rules.
+  const visibleTargets = targets.filter(option => option.type !== "bullet" || !sourceTargets?.sections.some((ids, index) =>
+    sourceContent?.sections[index]?.kind === "skill" && ids.bulletIds.includes(option.id ?? "")));
+  const contextualTargets = target && !visibleTargets.includes(target) ? [...visibleTargets, target] : visibleTargets;
   const needsNewGeneration = !(source?.kind === "baseline" || source?.autoOrigin) ||
     refinements.some(row => row.kind === "instruction");
   const sourceChanged = incomingSource?.id !== source?.id || incomingSource?.kind !== source?.kind;
+  useCvContextLayout("refine", appearance, next => { setAppearance(next); setStructureDirty(true); },
+    () => saveStructure("appearance"), pending || sourceChanged);
+  function chooseTarget(index: number) {
+    if (index === targetIndex) return;
+    if (text.trim()) { setError("Save or clear this wording before choosing another item. Your text remains here."); return; }
+    setError(null); setEditingId(null); setTargetIndex(index);
+    requestAnimationFrame(() => document.getElementById("cv-refine-wording")?.focus());
+  }
   useEffect(() => {
     if (!sourceChanged || text.trim() || structureDirty || editingId) return;
     setBase({ source: incomingSource, targets: incomingTargets, sourceContent: incomingContent,
@@ -73,21 +87,22 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
     } catch { setError("Could not save this refinement. Your wording is still here."); }
     finally { setPending(false); }
   }
-  async function saveStructure() {
+  async function saveStructure(selectedFocus: "wording" | "targeting" | "appearance" | "order" = focus) {
     if (!source || pending || sourceChanged) return;
-    const structured: CvRefinementV1["structured"] = focus === "targeting" && choices ? { kind: "targeting", choices }
-      : focus === "appearance" && appearance ? { kind: "appearance", theme: appearance }
-        : focus === "order" && sourceTargets ? { kind: "item_order", sectionIds: sectionOrder, itemIds: itemOrder }
+    const structured: CvRefinementV1["structured"] = selectedFocus === "targeting" && choices ? { kind: "targeting", choices }
+      : selectedFocus === "appearance" && appearance ? { kind: "appearance", theme: appearance }
+        : selectedFocus === "order" && sourceTargets ? { kind: "item_order", sectionIds: sectionOrder, itemIds: itemOrder }
           : undefined;
     if (!structured) return;
-    const issue = focus === "targeting" && targetingView && choices ? cvTargetingChoiceIssue(targetingView, choices) : null;
+    const issue = selectedFocus === "targeting" && targetingView && choices ? cvTargetingChoiceIssue(targetingView, choices) : null;
     if (issue) { setError(issue); return; }
+    const matchingEdit = refinements.find(row => row.id === editingId && row.structured?.kind === structured.kind);
     setPending(true); setError(null); setNotice(null);
     try {
       const result = await saveCvRefinement(contextId, version, {
-        ...(editingId ? { id: editingId } : {}), kind: "structured",
-        target: { type: focus === "appearance" ? "appearance" : "selection" }, structured,
-        order: editingId ? refinements.find(row => row.id === editingId)?.order ?? refinements.length : refinements.length,
+        ...(matchingEdit ? { id: matchingEdit.id } : {}), kind: "structured",
+        target: { type: selectedFocus === "appearance" ? "appearance" : "selection" }, structured,
+        order: matchingEdit?.order ?? refinements.length,
         sourceKind: source.kind, sourceId: source.id,
       });
       if (!result.ok) setError(result.error);
@@ -97,6 +112,7 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
     finally { setPending(false); }
   }
   function edit(row: CvRefinementV1) {
+    if (text.trim() && row.id !== editingId) { setError("Save or clear this wording before editing another remembered item."); return; }
     setEditingId(row.id);
     setStructureDirty(false);
     if (row.kind === "structured") {
@@ -150,40 +166,57 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
       {sourceChanged && <p role="alert" className="border border-warn p-3 text-14">The selected edition changed while this refinement buffer was open. Your wording remains here for its original source. Re-select that source from history to save it, or copy the text before reloading.</p>}
       <div role="group" aria-label="Refinement type" className="flex flex-wrap gap-2">
         {([ ["wording", "Wording or instruction"], ["targeting", "Role priorities and evidence"],
-          ["appearance", "Layout"], ["order", "Section and skill order"] ] as const).map(([value, label]) =>
+          ["order", "Section and skill order"] ] as const).map(([value, label]) =>
           <button key={value} type="button" className="min-h-11 border border-line-muted px-3" aria-pressed={focus === value}
             onClick={() => setFocus(value)}>{label}</button>)}
       </div>
       {focus === "wording" ? <>
-      <label className="block space-y-1"><span className="font-medium">Item to refine</span>
+      <div className="space-y-3" aria-label="Saved wording to refine">
+        {contextualTargets.filter(option => ["summary", "section", "bullet", "skill"].includes(option.type)).map(option => {
+          const index = targets.indexOf(option);
+          const remembered = refinements.filter(row => row.target.type === option.type && row.target.id === option.id);
+          return <section key={`${option.type}:${option.id}`} className="border-b border-line-muted py-2"
+            data-cv-source-entry={option.entryId} data-cv-source-summary={option.type === "summary" ? "true" : undefined}>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="min-w-0 flex-1 whitespace-pre-wrap"><strong>{option.type === "section" ? "Heading" : option.label}</strong>
+                {!visibleTargets.includes(option) && " · Historical mirrored target"}{option.sourceText ? ` · ${option.sourceText}` : ""}</p>
+              <button type="button" className="min-h-11 border border-line-muted px-3" aria-pressed={targetIndex === index}
+                onClick={() => chooseTarget(index)}>
+                {targetIndex === index ? "Editing" : "Edit wording"}</button>
+              {remembered.map(row => <span key={row.id} className="flex flex-wrap items-center gap-2">
+                <span className="text-12 text-accent">Remembered {row.kind === "instruction" ? "instruction" : "wording"}</span>
+                <button type="button" className="min-h-11 border border-line-muted px-3" onClick={() => edit(row)}>Edit</button>
+                <button type="button" className="min-h-11 border border-line-muted px-3" onClick={() => reset(row.id)}>Reset</button>
+              </span>)}
+            </div>
+            {targetIndex === index && <div className="mt-3 space-y-2 border-t border-line-muted pt-3">
+              <fieldset className="space-y-2"><legend className="font-medium">How should this item change?</legend>
+                <label className="flex min-h-11 items-center gap-2"><input type="radio" name="refinement-kind" checked={kind === "exact_wording"}
+                  onChange={() => setKind("exact_wording")} /> Keep my exact wording</label>
+                <label className="flex min-h-11 items-center gap-2"><input type="radio" name="refinement-kind" checked={kind === "instruction"}
+                  onChange={() => setKind("instruction")} /> Give a writing instruction</label>
+              </fieldset>
+              <label className="block space-y-1"><span className="font-medium">{kind === "exact_wording" ? "Exact wording" : "Instruction for this role"}</span>
+                <textarea id="cv-refine-wording" className="min-h-24 w-full border border-line-muted bg-raised p-3" value={text}
+                  maxLength={kind === "instruction" ? 2000 : 40000} onChange={event => setText(event.target.value)} /></label>
+              <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || !text.trim() || sourceChanged} onClick={save}>
+                {pending ? "Saving…" : editingId ? "Update refinement · free" : "Save refinement · free"}</button>
+            </div>}
+          </section>;
+        })}
+      </div>
+      <details><summary className="cursor-pointer">Find an item by name</summary><label className="mt-2 block space-y-1"><span>Item to refine</span>
         <select className="min-h-11 w-full border border-line-muted bg-raised px-3" value={targetIndex}
-          onChange={event => setTargetIndex(Number(event.target.value))}>
+          onChange={event => chooseTarget(Number(event.target.value))}>
           {targets.map((option, index) => <option key={`${option.type}:${option.id}`} value={index}>{option.label}</option>)}
-        </select></label>
-      {target?.sourceText && <div className="border border-line-muted p-3"><p className="text-12 font-medium">Source wording</p>
-        <p className="whitespace-pre-wrap text-14">{target.sourceText}</p></div>}
-      <fieldset className="space-y-2"><legend className="font-medium">How should this item change?</legend>
-        <label className="flex min-h-11 items-center gap-2"><input type="radio" name="refinement-kind" checked={kind === "exact_wording"}
-          onChange={() => setKind("exact_wording")} /> Keep my exact wording</label>
-        <label className="flex min-h-11 items-center gap-2"><input type="radio" name="refinement-kind" checked={kind === "instruction"}
-          onChange={() => setKind("instruction")} /> Give a writing instruction</label>
-      </fieldset>
-      <label className="block space-y-1"><span className="font-medium">{kind === "exact_wording" ? "Exact wording" : "Instruction for this role"}</span>
-        <textarea className="min-h-24 w-full border border-line-muted bg-raised p-3" value={text}
-          maxLength={kind === "instruction" ? 2000 : 40000} onChange={event => setText(event.target.value)} /></label>
-      <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || !text.trim() || sourceChanged} onClick={save}>
-        {pending ? "Saving…" : editingId ? "Update refinement · free" : "Save refinement · free"}</button>
+        </select></label></details>
       </> : focus === "targeting" ? targetingView && choices ? <>
         <CvTargetingControls view={targetingView} value={choices} context="refine"
           onChange={next => { setChoices(next); setStructureDirty(true); }} />
         <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || sourceChanged}
-          onClick={saveStructure}>{editingId ? "Update role choices · free" : "Remember role choices · free"}</button>
+          onClick={() => saveStructure()}>{editingId ? "Update role choices · free" : "Remember role choices · free"}</button>
       </> : <p className="text-14 text-muted">Open a saved edition with a current role assessment to change role priorities and evidence treatment.</p>
-      : focus === "appearance" && appearance ? <>
-        <CvAppearance value={appearance} onChange={next => { setAppearance(next); setStructureDirty(true); }} />
-        <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || sourceChanged} onClick={saveStructure}>
-          {editingId ? "Update layout choice · free" : "Remember layout choice · free"}</button>
-      </> : focus === "order" && sourceTargets ? <>
+      : focus === "order" && sourceTargets ? <>
         <p className="text-12 text-muted">Move sections and skill labels by their saved identities. New output keeps only skills it can support.</p>
         {sectionOrder.map((sectionId, index) => {
           const sourceIndex = sourceTargets.sections.findIndex(row => row.sectionId === sectionId);
@@ -207,7 +240,7 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
             })}
           </div>;
         })}
-        <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || sourceChanged} onClick={saveStructure}>
+        <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || sourceChanged} onClick={() => saveStructure()}>
           {editingId ? "Update order · free" : "Remember order · free"}</button>
       </> : null}
     </>}

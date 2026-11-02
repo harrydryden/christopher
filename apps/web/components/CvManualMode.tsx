@@ -6,7 +6,7 @@ import type { CvContent } from "@col/core/cv";
 import type { CvEditingTargets } from "@col/core/cv-editing-modes";
 import type { CvTheme } from "@col/core/cv-theme-values";
 import { createManualCvEdition, saveManualCvEdition } from "@/app/actions/cv-editing";
-import { CvAppearance } from "./CvAppearance";
+import { useCvContextLayout } from "./CvContextLayout";
 
 type Kind = CvContent["sections"][number]["kind"];
 type Item = { id: string; text: string; sources?: string[]; signpost?: string | null };
@@ -52,6 +52,7 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
   const [sections, setSections] = useState<Section[]>(() => sectionsFrom(draft));
   const [expectedChild, setExpectedChild] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  useCvContextLayout("manual", theme, setTheme, undefined, pending);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const stale = !!base && !!draft && draft.id !== base.id && draft.id !== expectedChild;
@@ -132,7 +133,8 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
     } catch { setError("Could not save Manual wording. Your edits are still here."); }
     finally { setPending(false); }
   }
-  return <div className="space-y-4 border border-line-muted p-4 text-14" data-cv-mode-dirty={dirty ? "true" : "false"}>
+  return <div className="space-y-4 border border-line-muted p-4 text-14" data-cv-mode-dirty={dirty ? "true" : "false"}
+    data-cv-mode-editor-id={base?.id}>
     <div><h2 className="font-semibold">Manual · this version only</h2>
       <p className="text-12 text-muted">Write and save your own CV. Nothing here is added to Experience or remembered for Auto or Refine unless you explicitly choose it later.</p></div>
     {!base ? <div className="flex flex-wrap gap-2">
@@ -144,11 +146,9 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
       {stale && <p role="alert" className="border border-warn p-3">The selected edition changed. Your typed wording remains here; copy it before reloading this application.</p>}
       <label className="block space-y-1"><span className="font-medium">Name</span><input className="min-h-11 w-full border border-line-muted bg-raised px-3" maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label>
       <label className="block space-y-1"><span className="font-medium">Contact</span><input className="min-h-11 w-full border border-line-muted bg-raised px-3" maxLength={500} value={contact} onChange={event => setContact(event.target.value)} /></label>
-      <label className="block space-y-1"><span className="font-medium">Summary</span><textarea className="min-h-24 w-full border border-line-muted bg-raised p-3" value={summary} onChange={event => setSummary(event.target.value)} /></label>
-      {theme && <details className="border border-line-muted p-3"><summary className="cursor-pointer font-medium">Layout for this Manual edition</summary>
-        <div className="mt-3"><CvAppearance value={theme} onChange={setTheme} /></div></details>}
+      <label className="block space-y-1" data-cv-source-summary="true"><span className="font-medium">Summary</span><textarea className="min-h-24 w-full border border-line-muted bg-raised p-3" value={summary} onChange={event => setSummary(event.target.value)} /></label>
       <div className="space-y-3"><h3 className="font-semibold">Sections</h3>
-        {sections.map((row, index) => <fieldset key={row.sectionId} className="space-y-2 border border-line-muted p-3">
+        {sections.map((row, index) => <fieldset key={row.sectionId} className="space-y-2 border border-line-muted p-3" data-cv-source-entry={row.entryId}>
           <legend className="font-medium">Section {index + 1}</legend>
           <label className="block space-y-1"><span>Type</span><select className="min-h-11 w-full border border-line-muted bg-raised px-3" value={row.kind}
             disabled={!!row.original}

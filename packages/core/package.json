@@ -36,6 +36,10 @@
       "types": "./src/cv-editing-modes.ts",
       "default": "./src/cv-editing-modes.ts"
     },
+    "./cv-refinement-rebase": {
+      "types": "./src/cv-refinement-rebase.ts",
+      "default": "./src/cv-refinement-rebase.ts"
+    },
     "./cv-format": {
       "types": "./src/cv-format.ts",
       "default": "./src/cv-format.ts"

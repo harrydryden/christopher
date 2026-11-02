@@ -1,14 +1,72 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CvEditingMode } from "@col/core/cv-editing-modes";
+import { CvContextLayout } from "./CvContextLayout";
+import { cvSectionEntryId } from "@/lib/cv-content-links";
 
 /** Primary modes stay mounted after a visit so local wording survives a mode switch. */
 export function CvContextModes({ initialMode, auto, refine, manual }: {
   initialMode: CvEditingMode; auto: ReactNode; refine: ReactNode; manual: ReactNode;
 }) {
   const [mode, setMode] = useState<CvEditingMode>(initialMode);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const [visited, setVisited] = useState<Set<CvEditingMode>>(() => new Set([initialMode]));
+  useEffect(() => {
+    let pendingAnchor: MutationObserver | null = null;
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearPending = () => { pendingAnchor?.disconnect(); pendingAnchor = null;
+      if (pendingTimer) clearTimeout(pendingTimer); pendingTimer = null; };
+    const navigateFragment = () => {
+      clearPending();
+      let hash: string;
+      try { hash = decodeURIComponent(window.location.hash.slice(1)); } catch { return; }
+      const rawHash = window.location.hash;
+      if (!hash) return;
+      if (hash === "cv-panel-evaluation" || hash === "cv-guided-review" || hash.startsWith("cv-review-row-") ||
+        hash === "cv-context-feedback") {
+        const panel = document.getElementById("cv-context-feedback") as HTMLDetailsElement | null;
+        if (panel) { panel.open = true; panel.querySelector<HTMLElement>("summary")?.focus(); panel.scrollIntoView?.(); }
+      } else if (hash === "cv-panel-appearance" || hash === "cv-context-layout") {
+        if (modeRef.current === "auto") { setVisited(previous => new Set([...previous, "refine"])); setMode("refine"); }
+        const panel = document.getElementById("cv-context-layout") as HTMLDetailsElement | null;
+        if (panel) { panel.open = true; panel.querySelector<HTMLElement>("summary")?.focus(); panel.scrollIntoView?.(); }
+      } else if (hash === "cv-panel-content" || hash.startsWith("cv-content-")) {
+        const next = modeRef.current === "auto" ? "refine" : modeRef.current;
+        setVisited(previous => new Set([...previous, next])); setMode(next);
+        requestAnimationFrame(() => {
+          const panel = document.getElementById(`cv-mode-panel-${next}`);
+          const entryId = cvSectionEntryId(hash);
+          const findItem = () => hash === "cv-content-profile" ? panel?.querySelector<HTMLElement>('[data-cv-source-summary="true"]')
+            : entryId ? [...(panel?.querySelectorAll<HTMLElement>("[data-cv-source-entry]") ?? [])]
+              .find(element => element.dataset.cvSourceEntry === entryId) : null;
+          const focusItem = () => {
+            if (modeRef.current !== next || window.location.hash !== rawHash) { clearPending(); return true; }
+            const item = findItem();
+            if (!item) return false;
+            (item.querySelector<HTMLElement>("button, textarea, input") ?? item).focus();
+            item.scrollIntoView?.(); clearPending(); return true;
+          };
+          if (!focusItem()) {
+            document.getElementById(`cv-mode-${next}`)?.focus();
+            if (panel && (entryId || hash === "cv-content-profile")) {
+              pendingAnchor = new MutationObserver(() => { focusItem(); });
+              pendingAnchor.observe(panel, { childList: true, subtree: true });
+              pendingTimer = setTimeout(clearPending, 5_000);
+            }
+          }
+        });
+      } else if (hash === "cv-mode-refine" || hash === "cv-mode-manual" || hash === "cv-mode-auto") {
+        const next = hash.slice("cv-mode-".length) as CvEditingMode;
+        setVisited(previous => new Set([...previous, next])); setMode(next);
+        requestAnimationFrame(() => document.getElementById(hash)?.focus());
+      }
+    };
+    navigateFragment();
+    window.addEventListener("hashchange", navigateFragment);
+    return () => { clearPending(); window.removeEventListener("hashchange", navigateFragment); };
+  }, []);
   useEffect(() => {
     const hasDirtyBuffer = () => !!document.querySelector('[data-cv-mode-dirty="true"]');
     const unloading = (event: BeforeUnloadEvent) => {
@@ -31,7 +89,7 @@ export function CvContextModes({ initialMode, auto, refine, manual }: {
   const tabs = [{ id: "auto" as const, label: "Auto", hint: "From Experience and this role" },
     { id: "refine" as const, label: "Refine", hint: "Remembered for this role" },
     { id: "manual" as const, label: "Manual", hint: "This version only" }];
-  return <div className="space-y-4">
+  return <CvContextLayout mode={mode} chooseRefine={() => select("refine")}><div className="space-y-4">
     <div role="group" aria-label="CV editing mode" className="grid gap-2 sm:grid-cols-3">
       {tabs.map(tab => <button key={tab.id} type="button"
         id={`cv-mode-${tab.id}`} aria-controls={`cv-mode-panel-${tab.id}`} aria-pressed={mode === tab.id}
@@ -44,5 +102,5 @@ export function CvContextModes({ initialMode, auto, refine, manual }: {
       aria-labelledby={`cv-mode-${tab.id}`} hidden={mode !== tab.id}>
       {visited.has(tab.id) ? tab.id === "auto" ? auto : tab.id === "refine" ? refine : manual : null}
     </section>)}
-  </div>;
+  </div></CvContextLayout>;
 }

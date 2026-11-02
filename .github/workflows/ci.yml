@@ -172,6 +172,35 @@ jobs:
           COL_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
       - run: pnpm smoke:web
+      # The mode journey owns a separate database and server. It reuses the build above, while
+      # the legacy smoke continues to prove its own account, redirects and PDF behaviour.
+      - name: Create isolated editing-mode browser database
+        run: |
+          pnpm --filter @col/db exec node -e '
+            const { Client } = require("pg");
+            (async () => {
+              const client = new Client({ connectionString: process.env.DATABASE_URL });
+              await client.connect();
+              try { await client.query("CREATE DATABASE col_cv_modes_browser_1102"); }
+              finally { await client.end(); }
+            })().catch(error => { console.error(error); process.exitCode = 1; });
+          '
+      - name: Smoke Auto, Refine and Manual editing
+        run: node scripts/smoke-cv-modes.mjs
+        env:
+          CV_MODES_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/col_cv_modes_browser_1102
+      - name: Remove isolated editing-mode browser database
+        if: always()
+        run: |
+          pnpm --filter @col/db exec node -e '
+            const { Client } = require("pg");
+            (async () => {
+              const client = new Client({ connectionString: process.env.DATABASE_URL });
+              await client.connect();
+              try { await client.query("DROP DATABASE IF EXISTS col_cv_modes_browser_1102 WITH (FORCE)"); }
+              finally { await client.end(); }
+            })().catch(error => { console.error(error); process.exitCode = 1; });
+          '
       # The smoke run has just built .next; each route's first-load JavaScript, gzipped, against
       # scripts/bundle-budget.json. Under two seconds, and the table lands in the run's summary.
       - name: Check first-load JavaScript against the per-route budgets

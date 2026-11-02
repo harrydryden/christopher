@@ -7,8 +7,8 @@ import { zUuid } from "@/lib/validation";
 import { PageHeader } from "@/components/PageHeader";
 import { CvContextModes } from "@/components/CvContextModes";
 import { CvAutoMode } from "@/components/CvAutoMode";
-import { CvRefineMode, type RefinementTargetOption } from "@/components/CvRefineMode";
-import { CvManualMode } from "@/components/CvManualMode";
+import type { RefinementTargetOption } from "@/components/CvRefineMode";
+import { CvRefineModeLazy, CvManualModeLazy } from "@/components/CvContextLazyModes";
 import { CvLibrarySchema } from "@col/core/cv";
 import { contactLine } from "@col/core/cv-helpers";
 import { cvLibraries } from "@col/db/schema";
@@ -127,7 +127,7 @@ export default async function CvContextPage({ params, searchParams }: { params: 
         timeZone={system.timezone} versionLabel={`V${selectedDraft.revision}`} />
     </section>}
     <CvContextModes initialMode={initialMode} auto={auto}
-      refine={<><CvRefineMode contextId={id} source={refinementSource
+      refine={<><CvRefineModeLazy contextId={id} source={refinementSource
         ? { kind: refinementSource.kind, id: refinementSource.id, label: refinementSource.label,
           autoOrigin: refinementSource.kind === "baseline" || refinementSource.autoOrigin } : null}
         initialVersion={workspace.context.refinementsVersion} targets={targetOptions} refinements={workspace.refinements}
@@ -145,7 +145,7 @@ export default async function CvContextPage({ params, searchParams }: { params: 
           <li key={edition.id} className="flex flex-wrap items-center gap-2"><CvSelectEdition contextId={id} kind="draft" id={edition.id}
             label={`Select Refine edition V${edition.revision}`} /><Link className="underline" href={`/cv/${edition.id}`}>Open details</Link> · {edition.status}</li>)}</ul>}
       </>}
-      manual={<><CvManualMode contextId={id} descriptionVersionId={workspace.context.currentDescriptionVersionId}
+      manual={<><CvManualModeLazy contextId={id} descriptionVersionId={workspace.context.currentDescriptionVersionId}
         copySource={workspace.selected ? { kind: workspace.selected.kind, id: workspace.selected.id } : null}
         draft={selectedDraft?.editingMode === "manual" ? { id: selectedDraft.id, revision: selectedDraft.revision,
           content: selectedDraft.content, editingTargets: selectedDraft.editingTargets } : null} prefill={prefill}

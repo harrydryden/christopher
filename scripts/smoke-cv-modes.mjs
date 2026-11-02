@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { insertSession, startWeb } from "./lib/web.mjs";
 const require = createRequire(import.meta.url);
 require("tsx/cjs");
@@ -20,7 +22,7 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
   const { db, pool } = createDb(databaseUrl, { max: 3 });
   const secret = `synthetic-browser-only-${randomUUID()}-${randomUUID()}`;
   let browser, web, page;
-  const errors = [], timings = {};
+  const errors = [], timings = {}, resources = {};
   try {
     await runMigrations(db);
     const user = (await createUser(db, { email: `modes-${randomUUID()}@example.invalid`, name: "Synthetic Mode Candidate", role: "member", emailVerified: true })).user;
@@ -70,8 +72,16 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     timings.autoReuseMs=Math.round(performance.now()-started);
     assert.deepEqual(await workCounts(),initialWork,"Auto cache hit creates no work or credit reservation");
     await page.reload();
+    const jsResources = () => page.evaluate(() => {
+      const rows = performance.getEntriesByType("resource").filter(entry => entry.name.includes("/_next/static/") && entry.name.endsWith(".js"));
+      return { requests: rows.length, transferBytes: rows.reduce((sum, entry) => sum + entry.transferSize, 0),
+        encodedBytes: rows.reduce((sum, entry) => sum + entry.encodedBodySize, 0) };
+    });
+    resources.beforeModes = await jsResources();
     await page.getByRole("button",{name:"Refine Remembered for this role",exact:true}).click();
     const refine=page.locator("#cv-mode-panel-refine");
+    await refine.getByLabel("Exact wording",{exact:true}).waitFor();
+    resources.afterRefine = await jsResources();
     await refine.getByLabel("Exact wording",{exact:true}).fill("Operations leader focused on reliable delivery");
     await refine.getByRole("button",{name:"Save refinement · free",exact:true}).click();
     await refine.getByText("Refinement saved for this application.",{exact:true}).waitFor();
@@ -92,6 +102,8 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     assert.deepEqual(await workCounts(),initialWork,"Chained structured Refine is free");
     await page.getByRole("button",{name:"Manual This version only",exact:true}).click();
     const manual=page.locator("#cv-mode-panel-manual");
+    await manual.getByRole("button",{name:"Copy selected CV into Manual · free",exact:true}).waitFor();
+    resources.afterManual = await jsResources();
     await manual.getByRole("button",{name:"Copy selected CV into Manual · free",exact:true}).click();
     await manual.getByRole("textbox",{name:"Summary",exact:true}).waitFor({timeout:5000});
     await manual.getByRole("textbox",{name:"Summary",exact:true}).fill("My final wording for this application");
@@ -141,8 +153,8 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     assert.equal(application.context_id,contextId);
     assert.equal(application.cv_id,saved.id);
     assert.deepEqual(errors,[],"No browser runtime errors");
-    await writeFile(`${outDir}/result.json`,JSON.stringify({contextId,userId:user.id,selectedDraftId:saved.id,timings,initialWork,errors},null,2));
-    return { contextId,userId:user.id,selectedDraftId:saved.id,timings,initialWork,errors };
+    await writeFile(`${outDir}/result.json`,JSON.stringify({contextId,userId:user.id,selectedDraftId:saved.id,timings,resources,initialWork,errors},null,2));
+    return { contextId,userId:user.id,selectedDraftId:saved.id,timings,resources,initialWork,errors };
   } catch (error) {
     if (page) {
       await mkdir(outDir,{recursive:true});
@@ -153,4 +165,12 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     if (web) await writeFile(`${outDir}/server.log`,web.log());
     throw error;
   } finally { await browser?.close(); await web?.stop(); await pool.end(); }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const databaseUrl = process.env.CV_MODES_DATABASE_URL;
+  if (!databaseUrl) throw new Error("Set CV_MODES_DATABASE_URL to an isolated col_cv_modes_browser_<date> database.");
+  verifyCvEditingModes({ databaseUrl }).then(result => {
+    console.log(`Editing modes browser smoke passed: ${JSON.stringify(result.timings)}`);
+  }).catch(error => { console.error(error); process.exitCode = 1; });
 }

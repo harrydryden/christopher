@@ -3,6 +3,11 @@ export type CvRetentionRow = {
   id: string;
   status: "queued" | "generating" | "awaiting_evidence" | "awaiting_priorities" | "ready" | "failed";
   archivedAt: Date | null;
+  /** Historical null rows keep the old one-predecessor rule. */
+  editingMode?: "auto" | "refine" | "manual" | null;
+  finalisedAt?: Date | null;
+  autoBaselineId?: string | null;
+  refinedResultKey?: string | null;
 };
 export type CvRetentionPlan = {
   currentId?: string;
@@ -35,6 +40,7 @@ function plan(
           row.id !== currentId &&
           row.id !== archiveId &&
           !cvBuildInFlight(row) &&
+          row.editingMode !== "manual" && !row.finalisedAt && !row.autoBaselineId && !row.refinedResultKey &&
           (row.status === "ready" ||
             row.archivedAt ||
             additionallyObsolete.has(row.id)),

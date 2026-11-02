@@ -10,8 +10,9 @@ import { affectedCvTargetingEssentials, cvTargetingChoiceIssue, initialCvTargeti
 export { cvTargetingChoiceIssue, initialCvTargetingChoices, normaliseCvTargetingChoices } from "@/lib/cv-targeting-choices";
 
 /** Browser-safe controls. Labels and rubric come from an account-scoped server view. */
-export function CvTargetingControls({ view, value, onChange, disabled = false }: {
+export function CvTargetingControls({ view, value, onChange, disabled = false, context = "draft" }: {
   view: CvTargetingView; value: CvTargetingChoices; onChange: (next: CvTargetingChoices) => void; disabled?: boolean;
+  context?: "draft" | "refine";
 }) {
   const essentials = affectedCvTargetingEssentials(view, value);
   const requirements = value.requirements ?? initialCvTargetingChoices(view).requirements ?? [];
@@ -53,7 +54,9 @@ export function CvTargetingControls({ view, value, onChange, disabled = false }:
     withCvTargetingRequirements(value, next)));
   return <section className="space-y-4 border-2 border-line bg-raised p-4" aria-labelledby="cv-targeting-title">
     <div><h2 id="cv-targeting-title" className="text-18 font-semibold">Target this CV</h2>
-      <p className="mt-1 text-14 text-muted">Choose what to feature or omit for this application. Experience and Interests can also be summarised; choose individual skills in Write. Experience stays intact. Save stores your current wording and these choices together; Check and Rewrite remain separate.</p></div>
+      <p className="mt-1 text-14 text-muted">{context === "refine"
+        ? "Choose what to feature, summarise or omit for this role. Save remembers these choices; Apply creates a separate saved result. Experience remains unchanged."
+        : "Choose what to feature or omit for this application. Experience and Interests can also be summarised; choose individual skills in Write. Experience stays intact. Save stores your current wording and these choices together; Check and Rewrite remain separate."}</p></div>
     <fieldset className="space-y-2" disabled={disabled}><legend className="font-medium">Evidence from Experience</legend>
       <p className="text-12 text-muted">Summarise keeps one sourced bullet; Omit leaves the entry out of this CV.</p>
       <table className="w-full table-fixed border border-line-muted text-left text-14">

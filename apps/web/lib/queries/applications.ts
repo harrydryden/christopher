@@ -24,6 +24,7 @@ import type { CvJournalStep } from "@/lib/cv-build-journal";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import {
   applications,
+  cvApplicationContexts,
   companies,
   cvDrafts,
   cvRoleKey,
@@ -111,6 +112,9 @@ export interface PipelineRow {
   stage: RoleStage;
   application: PipelineApplication | null;
   cv: PipelineCv | null;
+  /** Explicit new-workspace selection; a retained Auto baseline need not have a draft row. */
+  cvContextId?: string | null;
+  cvSelectedKind?: "baseline" | "draft" | null;
   /** The retained predecessor of the current CV: what "Restore previous CV" puts back. */
   archivedCvId: string | null;
   updatedAt: Date;
@@ -261,6 +265,8 @@ function roleIndex(userId: string, company?: PipelineCompany) {
       or(isNull(jobs.manualOwnerId), eq(jobs.manualOwnerId, userId)),
       company ? eq(companies.id, company.id) : undefined,
       ne(stage, "matched"),
+      sql`not exists (select 1 from ${cvApplicationContexts} own_context
+        where own_context.user_id = ${userId} and own_context.job_id = ${jobs.id})`,
       or(ne(stage, "dismissed"), isNotNull(latest.id), sql`exists (select 1 from ${cvDrafts} pursued where pursued.user_id = ${userId} and pursued.job_id = ${jobs.id})`),
     ))
     .as("role_index");
@@ -286,6 +292,7 @@ function legacyIndex(userId: string, company?: PipelineCompany) {
     .from(applications)
     .where(and(
       eq(applications.userId, userId),
+      isNull(applications.contextId),
       withoutRoleView(userId, applications.jobId),
       company ? sameCompanyName(applications.companyName, company.name) : undefined,
     ))
@@ -304,6 +311,7 @@ function legacyIndex(userId: string, company?: PipelineCompany) {
     .from(cvDrafts)
     .where(and(
       eq(cvDrafts.userId, userId),
+      isNull(cvDrafts.contextId),
       withoutRoleView(userId, cvDrafts.jobId),
       isNull(cvDrafts.archivedAt),
       company ? sameCompanyName(cvDrafts.companyName, company.name) : undefined,
@@ -330,7 +338,25 @@ function pipelineIndex(userId: string, company?: PipelineCompany): SQL {
            coalesce(legacy_app."stage", 'applying') as stage,
            greatest(coalesce(legacy_app."moved_at", to_timestamp(0)), coalesce(legacy_cv."created_at", to_timestamp(0))) as updated_at,
            legacy_app."due_on" as due_on
-      from ${application} full join ${draft} on legacy_app."key" = legacy_cv."key"`;
+      from ${application} full join ${draft} on legacy_app."key" = legacy_cv."key"
+    union all
+    select 'context' as source, context.id::text as key,
+           case when context_app.status is null then 'applying'
+             else ${applicationStageCase(sql`context_app.status`)} end as stage,
+           greatest(context.created_at, coalesce(context_app.created_at, context.created_at),
+             coalesce(selected_cv.created_at, context.created_at)) as updated_at,
+           case when context_app.next_action is not null and btrim(context_app.next_action) <> ''
+             and context_app.status not in (${sql.join(SETTLED_STATUSES.map(status => sql`${status}`), sql`, `)})
+             then context_app.next_action_on else null end as due_on
+      from ${cvApplicationContexts} context
+      left join lateral (select status, created_at, next_action, next_action_on from ${applications}
+        where user_id = ${userId} and context_id = context.id
+        order by created_at desc, id desc limit 1) context_app on true
+      left join ${cvDrafts} selected_cv on context.selected_kind = 'draft'
+        and selected_cv.id = context.selected_id and selected_cv.user_id = ${userId}
+      where context.user_id = ${userId}
+        ${company ? sql`and lower(btrim(regexp_replace(context.company_name, '[[:space:]]+', ' ', 'g')))
+          = lower(btrim(regexp_replace(${company.name}, '[[:space:]]+', ' ', 'g')))` : sql``}`;
 }
 
 const NO_STAGE_COUNTS = (): Record<RoleStage, number> =>
@@ -439,6 +465,21 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
       or(ne(stage, "dismissed"), isNotNull(latest.id), sql`exists (select 1 from ${cvDrafts} pursued where pursued.user_id = ${userId} and pursued.job_id = ${jobs.id})`),
     ));
 
+  const contextRows = rows.length ? await db().select({ id: cvApplicationContexts.id,
+    jobId: cvApplicationContexts.jobId, selectedKind: cvApplicationContexts.selectedKind,
+    selectedId: cvApplicationContexts.selectedId, createdAt: cvApplicationContexts.createdAt })
+    .from(cvApplicationContexts).where(and(eq(cvApplicationContexts.userId, userId),
+      inArray(cvApplicationContexts.jobId, rows.map(row => row.jobId))))
+    .orderBy(desc(cvApplicationContexts.createdAt), desc(cvApplicationContexts.id)) : [];
+  const contextFor = new Map<string, typeof contextRows[number]>();
+  for (const context of contextRows) if (context.jobId && !contextFor.has(context.jobId)) contextFor.set(context.jobId, context);
+  const selectedDraftIds = contextRows.flatMap(context => context.selectedKind === "draft" && context.selectedId
+    ? [context.selectedId] : []);
+  const selectedDrafts = selectedDraftIds.length ? await db().select({ id: cvDrafts.id,
+    contextId: cvDrafts.contextId, status: cvDrafts.status, revision: cvDrafts.revision,
+    finalisedAt: cvDrafts.finalisedAt, createdAt: cvDrafts.createdAt })
+    .from(cvDrafts).where(and(eq(cvDrafts.userId, userId), inArray(cvDrafts.id, selectedDraftIds))) : [];
+  const selectedDraftFor = new Map(selectedDrafts.map(draft => [draft.id, draft]));
   return rows.map((row) => {
     const application: PipelineApplication | null = row.applicationId
       ? {
@@ -453,7 +494,14 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
           hasPdf: !!row.hasPdf,
         }
       : null;
-    const cv: PipelineCv | null = row.cvId
+    const context = contextFor.get(row.jobId);
+    const selectedDraft = context?.selectedKind === "draft" && context.selectedId
+      ? selectedDraftFor.get(context.selectedId) : null;
+    const cv: PipelineCv | null = context
+      ? selectedDraft?.contextId === context.id ? { id: selectedDraft.id, status: selectedDraft.status,
+        revision: selectedDraft.revision, finalisedAt: selectedDraft.finalisedAt,
+        createdAt: selectedDraft.createdAt } : null
+      : row.cvId
       ? { id: row.cvId, status: row.cvStatus as CvStatus, revision: row.cvRevision ?? 0, finalisedAt: row.cvFinalisedAt, createdAt: row.cvCreatedAt! }
       : null;
     return {
@@ -467,6 +515,8 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
       stage: row.stage as RoleStage,
       application,
       cv,
+      cvContextId: context?.id ?? null,
+      cvSelectedKind: context?.selectedKind ?? null,
       archivedCvId: row.archivedCvId,
       // A role archived by a narrowed gate has neither a decision nor an application, so the
       // view's own last change is what is left to date it by.
@@ -568,6 +618,55 @@ async function legacyRows(userId: string, only: { keys?: string[] } = {}): Promi
   return [...byKey.values()].filter((row) => row.application || row.cv);
 }
 
+/** A context is one application, even when another context has the same posting or title. */
+async function contextRows(userId: string, contextIds: string[]): Promise<PipelineRow[]> {
+  if (!contextIds.length) return [];
+  const contexts = await db().select({ id: cvApplicationContexts.id, jobId: cvApplicationContexts.jobId,
+    companyName: cvApplicationContexts.companyName, jobTitle: cvApplicationContexts.jobTitle,
+    selectedKind: cvApplicationContexts.selectedKind, selectedId: cvApplicationContexts.selectedId,
+    createdAt: cvApplicationContexts.createdAt })
+    .from(cvApplicationContexts).where(and(eq(cvApplicationContexts.userId, userId), inArray(cvApplicationContexts.id, contextIds)));
+  const jobIds = contexts.flatMap(row => row.jobId ? [row.jobId] : []);
+  const selectedIds = contexts.flatMap(row => row.selectedKind === "draft" && row.selectedId ? [row.selectedId] : []);
+  const [applicationRows, selectedDrafts, jobRows] = await Promise.all([
+    db().select({ id: applications.id, contextId: applications.contextId, status: applications.status,
+      appliedOn: applications.appliedOn, cvId: applications.cvId, notes: applications.notes,
+      history: applications.history, nextAction: applications.nextAction, nextActionOn: applications.nextActionOn,
+      hasPdf: sql<boolean>`${applications.pdfBase64} is not null`, createdAt: applications.createdAt })
+      .from(applications).where(and(eq(applications.userId, userId), inArray(applications.contextId, contextIds)))
+      .orderBy(desc(applications.createdAt), desc(applications.id)),
+    selectedIds.length ? db().select({ id: cvDrafts.id, contextId: cvDrafts.contextId, status: cvDrafts.status,
+      revision: cvDrafts.revision, finalisedAt: cvDrafts.finalisedAt, createdAt: cvDrafts.createdAt })
+      .from(cvDrafts).where(and(eq(cvDrafts.userId, userId), inArray(cvDrafts.id, selectedIds))) : Promise.resolve([]),
+    jobIds.length ? db().select({ id: jobs.id, url: jobs.url, companyId: companies.id,
+      faviconUrl: companies.faviconUrl, domain: companies.domain, logoFetchedAt: companies.logoFetchedAt })
+      .from(jobs).leftJoin(companies, eq(jobs.companyId, companies.id)).where(inArray(jobs.id, jobIds)) : Promise.resolve([]),
+  ]);
+  const appByContext = new Map<string, typeof applicationRows[number]>();
+  for (const row of applicationRows) if (row.contextId && !appByContext.has(row.contextId)) appByContext.set(row.contextId, row);
+  const draftById = new Map(selectedDrafts.map(row => [row.id, row]));
+  const jobById = new Map(jobRows.map(row => [row.id, row]));
+  return contexts.map(context => {
+    const application = appByContext.get(context.id);
+    const selected = context.selectedKind === "draft" && context.selectedId ? draftById.get(context.selectedId) : null;
+    const job = context.jobId ? jobById.get(context.jobId) : null;
+    const app: PipelineApplication | null = application ? { id: application.id, status: application.status,
+      appliedOn: application.appliedOn, cvId: application.cvId, notes: application.notes,
+      history: application.history, nextAction: application.nextAction, nextActionOn: application.nextActionOn,
+      hasPdf: application.hasPdf } : null;
+    const cv: PipelineCv | null = selected?.contextId === context.id ? { id: selected.id, status: selected.status,
+      revision: selected.revision, finalisedAt: selected.finalisedAt, createdAt: selected.createdAt } : null;
+    return { key: context.id, jobId: context.jobId, companyId: job?.companyId ?? null,
+      companyName: context.companyName, companyIcon: job?.companyId ? companyIcon({ id: job.companyId,
+        faviconUrl: job.faviconUrl, domain: job.domain ?? "", logoFetchedAt: job.logoFetchedAt }) : null,
+      jobTitle: context.jobTitle, jobUrl: job?.url ?? null,
+      stage: app ? applicationStage(app.status) : "applying" as const,
+      application: app, cv, cvContextId: context.id, cvSelectedKind: context.selectedKind,
+      archivedCvId: null, updatedAt: newest(context.createdAt, application?.createdAt, selected?.createdAt)!,
+    };
+  });
+}
+
 /**
  * One role's row as the table would show it now, or null when the role is not in the pipeline
  * (matched, or merely passed on). A CV action returns this so the row can follow the database
@@ -667,11 +766,12 @@ export async function listPipeline(
   if (total === 0) return { rows: [], page, pageCount, total, counts, stages: stageCounts, due, overdue };
   const keys = { rows: read.rows.flatMap((row) => (row.kind === "key" && row.key !== null ? [{ source: row.source!, key: row.key }] : [])) };
   const order = keys.rows.map((row) => row.key);
-  const [roles, legacy] = await Promise.all([
+  const [roles, legacy, contexts] = await Promise.all([
     roleRows(userId, { jobIds: keys.rows.filter((row) => row.source === "role").map((row) => row.key) }),
     legacyRows(userId, { keys: keys.rows.filter((row) => row.source === "legacy").map((row) => row.key) }),
+    contextRows(userId, keys.rows.filter(row => row.source === "context").map(row => row.key)),
   ]);
-  const hydrated = new Map([...roles, ...legacy].map((row) => [row.key, row]));
+  const hydrated = new Map([...roles, ...legacy, ...contexts].map((row) => [row.key, row]));
   // The index decided the order; a key it listed that hydration cannot find changed underneath
   // this read and is left out rather than rendered half-empty.
   const rows = await withBuildProgress(userId, order.flatMap((key) => (hydrated.has(key) ? [hydrated.get(key)!] : [])));

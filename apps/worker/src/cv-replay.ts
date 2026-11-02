@@ -48,6 +48,7 @@ import { cvMaxPages } from "@col/core";
 import { cvMatchPoints, type CvAssessment } from "@col/core/cv-assessment";
 import { diagnoseCvQuality, type CvQualityDiagnostics } from "@col/core/cv-quality";
 import type { CvContent } from "@col/core/cv";
+import { cvAutoInputKey, cvRefinementDependencies } from "@col/core/cv-editing-modes";
 import type { WorkerDeps } from "./context";
 import { handleGenerateCv, type CvBuildSink } from "./handlers/cv";
 import type { AiHold } from "./budget";
@@ -254,9 +255,17 @@ export interface CvReplayRun {
 export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: CvReplayOptions): Promise<CvReplayRun> {
   const [draft] = await deps.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draftId));
   if (!draft) throw new Error(`No CV draft ${draftId}.`);
+  if (draft.editingMode === "manual")
+    throw new Error("Manual wording is not an Auto or Refine generation fixture. Evaluate a saved generated source instead.");
+  const [autoSource] = draft.editingMode === "auto" && draft.autoBaselineId
+    ? await deps.db.select().from(schema.cvAutoBaselines).where(and(
+      eq(schema.cvAutoBaselines.id, draft.autoBaselineId), eq(schema.cvAutoBaselines.userId, draft.userId))) : [];
+  if (draft.editingMode === "auto" && !autoSource)
+    throw new Error("The Auto replay requires its pinned baseline input and engine contract.");
   const [plan] = await deps.db.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, draftId));
   const deploymentRoutes = await Promise.resolve(deps.settings()).then(settings => settings.stageRoutes ?? {}).catch(() => ({}));
-  const routes = mergeStageRoutes(deploymentRoutes as StageRoutes, options.routes);
+  const routes = mergeStageRoutes((autoSource?.engineContract.routes ??
+    draft.refinementEngineContract?.routes ?? deploymentRoutes) as StageRoutes, options.routes);
   const baseline = options.baseline !== undefined ? options.baseline
     : draft.assessment ? cvReplayBaseline(draft.assessment, "draft") : null;
 
@@ -281,7 +290,55 @@ export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: 
       const [scratch] = await db.insert(schema.users).values({
         email: `replay-${randomUUID()}@replay.invalid`, name: "CV replay", role: "member", emailVerifiedAt: now, claimedAt: now,
       }).returning({ id: schema.users.id });
+      // Mode-aware replays must exercise the same worker branch, not quietly become legacy builds.
+      // Only ownership/description identities change; confirmed evidence and explicit targets remain
+      // frozen. These isolated records, including the claim publication, roll back with the run.
+      let modeFields: Partial<typeof schema.cvDrafts.$inferInsert> = {};
+      const copyId = randomUUID();
+      if (draft.editingMode) {
+        const contextId = randomUUID(), descriptionVersionId = randomUUID();
+        await db.insert(schema.cvApplicationContexts).values({ id: contextId, userId: scratch!.id,
+          requestKey: `replay:${randomUUID()}`, jobTitle: draft.jobTitle, companyName: draft.companyName });
+        await db.insert(schema.cvContextDescriptions).values({ id: descriptionVersionId, contextId,
+          userId: scratch!.id, version: 1, text: draft.jobDescription, source: draft.jobSource });
+        await db.update(schema.cvApplicationContexts).set({ currentDescriptionVersionId: descriptionVersionId })
+          .where(eq(schema.cvApplicationContexts.id, contextId));
+        modeFields = { contextId, descriptionVersionId, editingMode: draft.editingMode,
+          editingTargets: draft.editingTargets, appliedRefinements: draft.appliedRefinements };
+        if (autoSource) {
+          const baselineId = randomUUID();
+          const pinnedRoutes = mergeStageRoutes(autoSource.engineContract.routes as StageRoutes, options.routes);
+          const input = { ...autoSource.inputSnapshot, contextId, descriptionVersionId,
+            routes: pinnedRoutes as typeof autoSource.inputSnapshot.routes };
+          await db.insert(schema.cvAutoBaselines).values({ id: baselineId, userId: scratch!.id,
+            contextId, descriptionVersionId, inputKey: cvAutoInputKey(input), inputSnapshot: input,
+            engineContract: { ...autoSource.engineContract, routes: input.routes }, status: "queued", sourceDraftId: copyId });
+          modeFields.autoBaselineId = baselineId;
+        } else {
+          if (!draft.refinementSourceContent || !draft.refinementSourceTargets || !draft.refinementEngineContract)
+            throw new Error("The Refine replay requires its frozen source, stable targets and engine contract.");
+          const source = draft.refinementSourceContent, targets = draft.refinementSourceTargets;
+          if (!draft.descriptionVersionId || !draft.refinementSnapshot?.length || draft.refinementSnapshot.some(row => {
+            const dependency = cvRefinementDependencies({ content: source, targets,
+              library: draft.librarySnapshot, descriptionVersionId: draft.descriptionVersionId!,
+              target: row.target, structured: row.structured });
+            return row.dependencies.descriptionVersionId !== draft.descriptionVersionId ||
+              row.dependencies.sourceHash !== dependency.sourceHash;
+          })) throw new Error("The Refine replay source dependencies are stale; a replay must not repair the fixture implicitly.");
+          modeFields = { ...modeFields, refinementSourceContent: source, refinementSourceTargets: targets,
+            refinementOriginKind: draft.refinementOriginKind,
+            refinedResultKey: draft.refinedResultKey,
+            refinementEngineContract: { ...draft.refinementEngineContract,
+              routes: mergeStageRoutes(draft.refinementEngineContract.routes as StageRoutes, options.routes) as typeof draft.refinementEngineContract.routes },
+            refinementSnapshot: (draft.refinementSnapshot ?? []).map(row => ({ ...row,
+              dependencies: { descriptionVersionId, ...cvRefinementDependencies({ content: source, targets,
+                library: draft.librarySnapshot, descriptionVersionId, target: row.target, structured: row.structured }) },
+            })),
+          };
+        }
+      }
       const [copy] = await db.insert(schema.cvDrafts).values({
+        id: copyId, ...modeFields,
         userId: scratch!.id, jobTitle: draft.jobTitle, companyName: draft.companyName, jobDescription: draft.jobDescription,
         jobSource: draft.jobSource, libraryVersion: draft.libraryVersion, librarySnapshot: draft.librarySnapshot, model: draft.model,
         status: "queued", revision: 1, targetingBrief: draft.targetingBrief,
@@ -399,12 +456,19 @@ export async function recordCvDraft(deps: WorkerDeps, draftId: string, options: 
   if (options.resumeAuthorFrom && resolve(options.resumeAuthorFrom) === path)
     throw new Error("The provider source recording and new destination must differ.");
   mkdirSync(dirname(path), { recursive: true });
-  const [draft] = await deps.db.select({ model: schema.cvDrafts.model }).from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draftId));
+  const [draft] = await deps.db.select({ model: schema.cvDrafts.model, userId: schema.cvDrafts.userId,
+    editingMode: schema.cvDrafts.editingMode, autoBaselineId: schema.cvDrafts.autoBaselineId,
+    refinementEngineContract: schema.cvDrafts.refinementEngineContract }).from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draftId));
   if (!draft) throw new Error(`No CV draft ${draftId}.`);
+  if (draft.editingMode === "manual") throw new Error("Manual wording is not an authoring recording fixture.");
+  const [autoSource] = draft.editingMode === "auto" && draft.autoBaselineId
+    ? await deps.db.select({ engineContract: schema.cvAutoBaselines.engineContract }).from(schema.cvAutoBaselines)
+      .where(and(eq(schema.cvAutoBaselines.id, draft.autoBaselineId), eq(schema.cvAutoBaselines.userId, draft.userId))) : [];
   const deploymentRoutes = await Promise.resolve(deps.settings()).then(settings => settings.stageRoutes ?? {}).catch(() => ({}));
   const meta: RecordingMeta = {
     kind: "meta", draftId, promptSetVersion: promptSetVersion(), client: injected ? "injected" : "provider",
-    routes: cvStageRoutes(mergeStageRoutes(deploymentRoutes as StageRoutes, options.routes), draft.model), at: deps.now().toISOString(),
+    routes: cvStageRoutes(mergeStageRoutes((autoSource?.engineContract.routes ??
+      draft.refinementEngineContract?.routes ?? deploymentRoutes) as StageRoutes, options.routes), draft.model), at: deps.now().toISOString(),
   };
   writeFileSync(path, JSON.stringify(meta) + "\n");
   let inner = deps.aiClient ?? createProviderClient(apiKey!);

@@ -107,6 +107,7 @@ export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, 
  * once and remembered once they are all present (`presentOnceFound`).
  */
 const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz", "targeting_brief", "pending_skill_proposals", "semantic_audit_cache"] as const;
+const EDITING_COLUMNS = ["context_id", "description_version_id", "editing_mode", "auto_baseline_id", "editing_targets", "applied_refinements", "refinement_snapshot", "refined_result_key", "refinement_source_content", "refinement_source_targets", "refinement_engine_contract", "refinement_origin_kind"] as const;
 const cvBuildColumnsPresent = presentOnceFound(() =>
   db()
     .execute<{ n: number }>(
@@ -115,6 +116,14 @@ const cvBuildColumnsPresent = presentOnceFound(() =>
             and column_name in (${sql.join(BUILD_COLUMNS.map((column) => sql`${column}`), sql`, `)})`,
     )
     .then((result) => (result.rows[0]?.n ?? 0) === BUILD_COLUMNS.length));
+const cvEditingColumnsPresent = presentOnceFound(() =>
+  db()
+    .execute<{ n: number }>(
+      sql`select count(*)::int as n from information_schema.columns
+          where table_schema = 'public' and table_name = 'cv_drafts'
+            and column_name in (${sql.join(EDITING_COLUMNS.map((column) => sql`${column}`), sql`, `)})`,
+    )
+    .then((result) => (result.rows[0]?.n ?? 0) === EDITING_COLUMNS.length));
 
 /** Every column of `cv_drafts` that predates the build ledger, for a database without the rest. */
 const settledCvDraftColumns = {
@@ -140,18 +149,37 @@ const settledCvDraftColumns = {
   archivedAt: cvDrafts.archivedAt,
   createdAt: cvDrafts.createdAt,
 };
+const buildCvDraftColumns = {
+  ...settledCvDraftColumns,
+  progressAt: cvDrafts.progressAt,
+  buildCheckpoint: cvDrafts.buildCheckpoint,
+  failure: cvDrafts.failure,
+  gapQuiz: cvDrafts.gapQuiz,
+  targetingBrief: cvDrafts.targetingBrief,
+  pendingSkillProposals: cvDrafts.pendingSkillProposals,
+  semanticAuditCache: cvDrafts.semanticAuditCache,
+};
+const legacyEditingFields = { contextId: null, descriptionVersionId: null, editingMode: null,
+  autoBaselineId: null, editingTargets: null, appliedRefinements: null,
+  refinementSnapshot: null, refinedResultKey: null, refinementSourceContent: null,
+  refinementSourceTargets: null, refinementEngineContract: null, refinementOriginKind: null } as const;
 
 /** One account's draft by id, or null when it belongs to someone else. */
 export async function getOwnCvDraft(userId: string, id: string): Promise<typeof cvDrafts.$inferSelect | null> {
   const owned = and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId));
-  if (await cvBuildColumnsPresent()) {
+  if (await cvEditingColumnsPresent() && await cvBuildColumnsPresent()) {
     const [draft] = await db().select().from(cvDrafts).where(owned).limit(1);
     return draft ?? null;
+  }
+  if (await cvBuildColumnsPresent()) {
+    const [draft] = await db().select(buildCvDraftColumns).from(cvDrafts).where(owned).limit(1);
+    return draft ? { ...draft, ...legacyEditingFields } : null;
   }
   const [draft] = await db().select(settledCvDraftColumns).from(cvDrafts).where(owned).limit(1);
   // A build that has not been recorded yet reads as one that recorded nothing.
   return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null, gapQuiz: null,
-    targetingBrief: null, pendingSkillProposals: null, semanticAuditCache: null } : null;
+    targetingBrief: null, pendingSkillProposals: null, semanticAuditCache: null,
+    ...legacyEditingFields } : null;
 }
 
 /**
@@ -161,8 +189,7 @@ export async function getOwnCvDraft(userId: string, id: string): Promise<typeof 
  * stay, because the check hashes them against the assessment.
  */
 export async function getOwnCvDraftForPdf(userId: string, id: string) {
-  const [draft] = await db()
-    .select({
+  const columns = {
       id: cvDrafts.id,
       status: cvDrafts.status,
       content: cvDrafts.content,
@@ -172,11 +199,18 @@ export async function getOwnCvDraftForPdf(userId: string, id: string) {
       reviewDecision: cvDrafts.reviewDecision,
       jobDescription: cvDrafts.jobDescription,
       librarySnapshot: cvDrafts.librarySnapshot,
-    })
+  };
+  if (await cvEditingColumnsPresent()) {
+    const [draft] = await db().select({ ...columns, editingMode: cvDrafts.editingMode })
+      .from(cvDrafts).where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId))).limit(1);
+    return draft ?? null;
+  }
+  const [draft] = await db()
+    .select(columns)
     .from(cvDrafts)
     .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId)))
     .limit(1);
-  return draft ?? null;
+  return draft ? { ...draft, editingMode: null } : null;
 }
 
 /** The raw row `readCvProgress` reads, before it is shaped. */

@@ -41,3 +41,20 @@ export function cvEmploymentDisplay(content: CvContent, library: CvLibrary): CvE
   }
   return display;
 }
+
+/** Manual headings remain verbatim in print; this warning makes missing source support visible. */
+export function cvManualHeadingWarnings(content: CvContent, library: CvLibrary): Array<{ id: string; text: string }> {
+  const jobs = new Map((library.employment ?? []).map(job => [job.id, job]));
+  const entries = new Map(library.entries.map(entry => [entry.id, entry]));
+  return content.sections.flatMap(section => {
+    if (section.kind === "education" || section.kind === "training") {
+      const source = entries.get(section.entryId);
+      return source?.kind === section.kind && section.heading === source.heading ? []
+        : [{ id: `manual-heading:${section.entryId}`, text: "This qualification heading is manually worded and has not been verified against confirmed Experience." }];
+    }
+    if (section.kind !== "experience") return [];
+    const job = jobs.get(entries.get(section.entryId)?.employmentId ?? "");
+    if (job && (section.heading === employmentHeading(job) || section.heading === employmentCvHeading(job))) return [];
+    return [{ id: `manual-heading:${section.entryId}`, text: "This experience heading is manually worded and has not been verified against confirmed employment details." }];
+  });
+}

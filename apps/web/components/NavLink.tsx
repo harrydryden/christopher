@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { workspaceNavActive } from "@/lib/workspace-navigation";
 
 export function NavLink({
   href,
@@ -22,9 +23,7 @@ export function NavLink({
   const pathname = usePathname();
   // The sidebar is brand green: the lit entry is a light-green block with green text, the others
   // light-green text that darkens the green under them on hover.
-  // A sidebar entry owns every page its section reaches, so the CV workspace keeps Applications
-  // lit; Health and Learning have their own entries, and Account keeps Settings lit.
-  const active = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`) || (href === "/companies" && pathname === "/suggestions") || (href === "/applications" && pathname.startsWith("/cv")) || (href === "/settings" && pathname === "/account");
+  const active = workspaceNavActive(href, pathname);
   const showCount = count !== null && count > 0;
   // A named count describes the link rather than naming it: the entry keeps its plain label to a
   // reader and to anything that finds it by name, and the figure's meaning follows as its

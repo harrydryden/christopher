@@ -373,6 +373,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     const panel = document.getElementById("library-import-panel");
     if (panel instanceof HTMLDetailsElement) panel.open = true;
     const section = document.getElementById("library-import-linkedin");
+    if (section instanceof HTMLDetailsElement) section.open = true;
     section?.scrollIntoView?.({ behavior: "auto", block: "start" });
     document.getElementById("library-linkedin-pdf")?.focus({ preventScroll: true });
   }

@@ -35,7 +35,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     if (refused) return refused;
     try {
       const content = CvContentSchema.parse(draft.content);
-      const display = cvEmploymentDisplay(content, CvLibrarySchema.parse(draft.librarySnapshot));
+      const display = draft.editingMode === "manual" ? undefined : cvEmploymentDisplay(content, CvLibrarySchema.parse(draft.librarySnapshot));
       pdf = preview
         ? (await renderCvPdfWithReport(content, display)).pdf
         : await renderCvPdf(content, display);

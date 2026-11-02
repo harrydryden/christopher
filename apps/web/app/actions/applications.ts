@@ -135,12 +135,12 @@ function recordsEvent(existing: Pick<StoredStage, "status" | "notes" | "appliedO
   );
 }
 
-/** The account's newest application for a posting, locked, or null when it has none. */
+/** The posting-level stage has its own legacy row; it never hijacks a distinct application context. */
 async function latestApplicationRow(tx: Transaction, userId: string, jobId: string) {
   const [row] = await tx
     .select()
     .from(applications)
-    .where(and(eq(applications.userId, userId), eq(applications.jobId, jobId)))
+    .where(and(eq(applications.userId, userId), eq(applications.jobId, jobId), isNull(applications.contextId)))
     .orderBy(desc(applications.createdAt), desc(applications.id))
     .limit(1)
     .for("update");
@@ -297,7 +297,10 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
       }
       jobId = draft.jobId;
       const at = new Date().toISOString();
-      const existing = jobId ? await latestApplicationRow(tx, user.id, jobId) : null;
+      const [contextual] = draft.contextId ? await tx.select().from(applications).where(and(
+        eq(applications.userId, user.id), eq(applications.contextId, draft.contextId)))
+        .orderBy(desc(applications.createdAt), desc(applications.id)).limit(1).for("update") : [];
+      const existing = draft.contextId ? contextual ?? null : jobId ? await latestApplicationRow(tx, user.id, jobId) : null;
       if (existing && !existing.pdfBase64) {
         // A role already at interview or already closed does not go back to "applied" because the
         // CV that was sent has now been recorded against it.
@@ -307,12 +310,13 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
         const entry: HistoryEntry = { status, at, notes, ...(status === "applied" ? { on: appliedOn } : {}) };
         await tx
           .update(applications)
-          .set({ cvId, pdfBase64: pdf.toString("base64"), appliedOn, status, notes, history: [...existing.history, entry] })
+          .set({ cvId, contextId: draft.contextId, pdfBase64: pdf.toString("base64"), appliedOn, status, notes, history: [...existing.history, entry] })
           .where(eq(applications.id, existing.id));
         return;
       }
       await tx.insert(applications).values({
-        userId: user.id, cvId, jobId, jobTitle: draft.jobTitle, companyName: draft.companyName, appliedOn, notes,
+        userId: user.id, cvId, jobId, contextId: draft.contextId,
+        jobTitle: draft.jobTitle, companyName: draft.companyName, appliedOn, notes,
         pdfBase64: pdf.toString("base64"), status: "applied", history: [{ status: "applied", at, notes, on: appliedOn }],
       });
     });

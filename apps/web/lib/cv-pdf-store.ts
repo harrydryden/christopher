@@ -51,3 +51,15 @@ export async function hasStoredFinalisedCvPdf(userId: string, draftId: string): 
     return false;
   }
 }
+
+/** Approval provenance for a selected finalised revision; null also covers older missing rows. */
+export async function storedFinalisedCvPdfStatus(userId: string, draftId: string): Promise<{ approvalMode: "checked" | "unchecked" | null } | null> {
+  try {
+    const [row] = await db().select({ approvalMode: cvPdfs.approvalMode }).from(cvPdfs)
+      .where(and(eq(cvPdfs.draftId, draftId), eq(cvPdfs.userId, userId))).limit(1);
+    return row ?? null;
+  } catch (error) {
+    logStoreProblem("cv_final_pdf_approval_read_failed", error);
+    return null;
+  }
+}

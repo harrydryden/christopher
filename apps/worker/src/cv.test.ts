@@ -8,6 +8,9 @@ import { runMigrations } from "@col/db/migrate";
 import { AiEngine, promptSetVersion } from "@col/ai";
 import { DEFAULT_CV_THEME } from "@col/core/cv";
 import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
+import { CV_FIT_VERSION, CV_RENDER_VERSION, CvRefinementSchema, cvEditingTargetsFor,
+  cvRefinementDependencies } from "@col/core/cv-editing-modes";
+import { CV_REVIEW_VERSION } from "@col/core/cv-assessment";
 import { cvTargetingRubricKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "./test-users";
@@ -435,6 +438,123 @@ it("retains authored content when assessment fails, then retries assessment with
   expect(ready!.status).toBe("ready");
   expect(ready!.assessment!.score).toBe(100);
 });
+it("checks a materialised Auto edition without authoring or republishing its immutable baseline", async () => {
+  const author = vi.spyOn(AiEngine.prototype, "buildCv");
+  const { task, deps, draft } = await setup();
+  const [context] = await client.db.insert(schema.cvApplicationContexts).values({ userId,
+    requestKey: `paste:${crypto.randomUUID()}`, companyName: "Acme", jobTitle: draft.jobTitle }).returning();
+  const [description] = await client.db.insert(schema.cvContextDescriptions).values({ userId,
+    contextId: context!.id, version: 1, text: draft.jobDescription }).returning();
+  await client.db.update(schema.cvApplicationContexts).set({ currentDescriptionVersionId: description!.id })
+    .where(eq(schema.cvApplicationContexts.id, context!.id));
+  const content = { name: "Test Candidate", contact: "London", summary: "Operations",
+    sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme",
+      bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] };
+  const targets = cvEditingTargetsFor(content, () => crypto.randomUUID());
+  const [baseline] = await client.db.insert(schema.cvAutoBaselines).values({ userId,
+    contextId: context!.id, descriptionVersionId: description!.id, inputKey: "a".repeat(64),
+    inputSnapshot: { version: 1, contextId: context!.id, descriptionVersionId: description!.id,
+      jobTitle: draft.jobTitle, companyName: draft.companyName, description: draft.jobDescription,
+      library, basePriorityIdentity: "source-default", appearance: undefined, writingPreferences: {},
+      routes: {}, contracts: { promptSet: promptSetVersion(), review: "test", fit: "test", render: "test" } },
+    status: "ready", sourceDraftId: draft.id, content, librarySnapshot: library,
+    editingTargets: targets, publishedAt: new Date(),
+    engineContract: { promptSet: promptSetVersion(), review: "test", fit: "test", render: "test", routes: {} },
+  }).returning();
+  await client.db.update(schema.cvDrafts).set({ contextId: context!.id,
+    descriptionVersionId: description!.id, editingMode: "auto", autoBaselineId: baseline!.id,
+    status: "queued", content, editingTargets: targets }).where(eq(schema.cvDrafts.id, draft.id));
+  task.payload = { draftId: draft.id, mode: "assess" };
+  await handleGenerateCv(task, deps);
+  const [ready] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const [retained] = await client.db.select().from(schema.cvAutoBaselines).where(eq(schema.cvAutoBaselines.id, baseline!.id));
+  expect(ready?.status, ready?.error ?? "").toBe("ready");
+  expect(ready?.content).toEqual(content);
+  expect(ready?.assessment).toBeTruthy();
+  expect(author).not.toHaveBeenCalled();
+  expect(retained?.content).toEqual(content);
+  expect(retained?.assessment).toBeNull();
+  expect(retained?.publishedAt).toEqual(baseline!.publishedAt);
+});
+it("checks saved Manual wording with no confirmed Experience as unverified, without authoring", async () => {
+  const author = vi.spyOn(AiEngine.prototype, "buildCv");
+  const { task, deps, draft } = await setup();
+  const content = { name: "Test Candidate", contact: "London", summary: "Operations leader",
+    sections: [{ entryId: `manual:${crypto.randomUUID()}`, kind: "experience" as const,
+      heading: "Director", bullets: ["Led a team"] }], gaps: [] };
+  await client.db.update(schema.cvDrafts).set({ editingMode: "manual", status: "queued",
+    content, librarySnapshot: { name: "Test Candidate", contact: "London", profile: "", entries: [] },
+    buildCheckpoint: { tailoringEnabled: false, quizCompleted: true } }).where(eq(schema.cvDrafts.id, draft.id));
+  vi.mocked(AiEngine.prototype.assessCvBatches).mockImplementation(async input => {
+    const result = { matches: input.rubric.requirements.map(requirement => ({ requirementId: requirement.id,
+      status: "missing" as const, libraryStatus: "missing" as const, cvEvidence: [], libraryEvidence: [],
+      reason: "No confirmed Experience", improvement: "Confirm supporting facts" })),
+    claims: input.claims.map(claim => ({ claimId: claim.id, status: "unsupported" as const,
+      evidence: [], reason: "No confirmed Experience" })) };
+    return { pass: "draft", total: 1, batches: [{ index: 0, status: "done", result, usage: [] }], review: null };
+  });
+  task.payload = { draftId: draft.id, mode: "assess" };
+  await handleGenerateCv(task, deps);
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved?.status, saved?.error ?? "").toBe("ready");
+  expect(saved?.content).toEqual(content);
+  expect(saved?.assessment?.review.matches.every(match => match.libraryStatus === "missing")).toBe(true);
+  expect(saved?.assessment?.review.claims.every(claim => claim.status === "unsupported")).toBe(true);
+  expect(author).not.toHaveBeenCalled();
+});
+it("passes distinct stable instruction targets to the writer and applies one exact bullet lock", async () => {
+  const author = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations",
+    sections: [{ entryId: "one", bullets: ["Managed a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  const source = { name: "Test Candidate", contact: "London", profile: "Operations", summary: "Operations",
+    sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme",
+      bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] };
+  const targets = cvEditingTargetsFor(source, () => crypto.randomUUID());
+  const descriptionVersionId = crypto.randomUUID();
+  const row = (kind: "exact_wording" | "instruction", type: "bullet" | "section", id: string,
+    text: string, order: number) => CvRefinementSchema.parse({ id: crypto.randomUUID(), version: 1,
+      order, kind, target: { type, id }, text, reset: false,
+      dependencies: { descriptionVersionId, ...cvRefinementDependencies({ content: source, targets,
+        library, descriptionVersionId, target: { type, id } }) } });
+  const bulletId = targets.sections[0]!.bulletIds[0]!;
+  const sectionId = targets.sections[0]!.sectionId;
+  const refinements = [row("exact_wording", "bullet", bulletId, "Led a team", 0),
+    row("instruction", "bullet", bulletId, "Keep the measurable team contribution concise", 1),
+    row("instruction", "section", sectionId, "Emphasise delivery impact", 2)];
+  const rubric = rubricFixture(draft.jobDescription);
+  const identity = cvTargetingSource(draft.libraryVersion, library, draft.jobDescription);
+  const choices = { entries: [], presentation: { maxPages: 2 as const, bodySizePt: 12 as const },
+    emphasisRequirementIds: ["r1"], requirements: [{ id: "r1", text: "Lead measurable teams", essential: true }],
+    acknowledgedEssentialOmissionIds: [] };
+  refinements.push(CvRefinementSchema.parse({ id: crypto.randomUUID(), version: 1, order: 3,
+    kind: "structured", target: { type: "selection" }, structured: { kind: "targeting", choices }, reset: false,
+    dependencies: { descriptionVersionId, ...cvRefinementDependencies({ content: source, targets,
+      library, descriptionVersionId, target: { type: "selection" }, structured: { kind: "targeting", choices } }) } }));
+  const brief = CvTargetingBriefSchema.parse({ version: 1, source: identity,
+    entries: [], presentation: choices.presentation, manualSections: source.sections,
+    priority: { state: "confirmed", rubric,
+      rubricKey: cvTargetingRubricKey(identity, rubric, draft.model, promptSetVersion()),
+      emphasisRequirementIds: choices.emphasisRequirementIds, requirements: choices.requirements,
+      acknowledgedEssentialOmissionIds: [] } });
+  await client.db.update(schema.cvDrafts).set({ editingMode: "refine", descriptionVersionId,
+    refinementSnapshot: refinements, refinementSourceContent: source, refinementSourceTargets: targets,
+    refinementEngineContract: { promptSet: promptSetVersion(), review: CV_REVIEW_VERSION,
+      fit: CV_FIT_VERSION, render: CV_RENDER_VERSION, routes: {} },
+    targetingBrief: brief, buildCheckpoint: { tailoringEnabled: false, quizCompleted: true,
+      sourceRubric: rubric } }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  const [ready] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(ready?.status, ready?.error ?? "").toBe("ready");
+  expect(ready?.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+  expect(author).toHaveBeenCalledWith(expect.objectContaining({ refinementInstructions: [
+    expect.objectContaining({ target: `bullet:${bulletId}` }),
+    expect.objectContaining({ target: `section:${sectionId}` }),
+  ] }), expect.anything());
+  expect(author.mock.calls[0]![0].rubric?.requirements[0]).toMatchObject({ label: "Lead measurable teams",
+    importance: "essential", customised: true });
+  expect(vi.mocked(AiEngine.prototype.assessCvBatches).mock.calls[0]?.[0].rubric.requirements[0])
+    .toMatchObject({ label: "Lead measurable teams", customised: true });
+});
 it("does not author a CV against a hallucinated requirement", async () => {
   vi.mocked(AiEngine.prototype.analyseCvJob).mockResolvedValue(
     rubricFixture("Invented requirement"),
@@ -477,8 +597,8 @@ it("assesses oversized saved wording without authoring or shortening it", async 
   expect(AiEngine.prototype.assessCvBatches).toHaveBeenCalled();
 });
 
-it("remeasures an appearance-only saved revision and reuses its exact factual audit", async () => {
-  vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader",
+it.each(["legacy", "manual"] as const)("remeasures a %s appearance-only saved revision and reuses its exact factual audit", async mode => {
+  const author = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader",
     sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();
   await handleGenerateCv(task, deps);
@@ -486,6 +606,7 @@ it("remeasures an appearance-only saved revision and reuses its exact factual au
   expect(first?.semanticAuditCache?.identity).toMatch(/^[a-f0-9]{64}$/);
   const revised = { ...first!.content!, theme: { ...DEFAULT_CV_THEME, primary: "#285447" } };
   await client.db.update(schema.cvDrafts).set({ status: "queued", content: revised, assessment: null,
+    editingMode: mode === "manual" ? "manual" : null,
     buildCheckpoint: { sourceRubric: first!.assessment!.rubric }, semanticAuditCache: first!.semanticAuditCache })
     .where(eq(schema.cvDrafts.id, draft.id));
   vi.mocked(AiEngine.prototype.assessCvBatches).mockClear();
@@ -498,6 +619,7 @@ it("remeasures an appearance-only saved revision and reuses its exact factual au
   expect(second?.assessment?.inputHash).not.toBe(first!.assessment!.inputHash);
   expect(AiEngine.prototype.assessCvBatches).not.toHaveBeenCalled();
   expect(AiEngine.prototype.assessCv).not.toHaveBeenCalled();
+  expect(author).toHaveBeenCalledTimes(1);
   expect(second?.semanticAuditCache).toEqual(first!.semanticAuditCache);
   await client.db.update(schema.cvDrafts).set({ status: "queued",
     content: { ...revised, summary: "Newly asserted leadership result" }, assessment: null,

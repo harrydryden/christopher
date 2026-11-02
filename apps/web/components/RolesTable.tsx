@@ -3,14 +3,13 @@
 import { memo, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { decideWithUndoToken, decideRolesWithUndoTokens, undoDecisionIfCurrent, undoDecisionsIfCurrent, archiveRoles, roleDetails } from "@/app/actions/decisions";
-import { requestCv } from "@/app/actions/cv";
+import { CvWorkspaceEntry } from "@/components/CvWorkspaceEntry";
 import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } from "@/components/Badge";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
 import { MarkSmall } from "@/components/brand";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
-import { SettingsForm } from "@/components/SettingsForm";
 import { RetryScore } from "@/components/RetryScore";
 import type { RoleCompaniesVM, RoleCompanyVM, RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 import { missingDecisionReason } from "@/lib/decision-reason";
@@ -54,7 +53,7 @@ function movedOn(row: RoleRowVM): boolean {
  * CV to build until there is one; from Applying on, the row is an application to open.
  */
 function applicationLabel(row: RoleRowVM): string {
-  return roleStageRank(row.stage) >= roleStageRank("applying") ? "Open application" : "Build CV";
+  return roleStageRank(row.stage) >= roleStageRank("applying") ? "Open application" : "Prepare CV";
 }
 
 /** What a row's live-for figure counts from, for its `title`: the server sends only which basis. */
@@ -84,36 +83,9 @@ type DetailState =
   | { state: "ready"; details: RoleDetailsVM }
   | { state: "error"; error: string };
 
-/**
- * The build offered where the role was shortlisted, with its credit cost beside the action.
- *
- * The quote rides in on the panel's own round trip, so this costs no extra request. A budget that
- * will not take the build says so here instead of on a CV page after the redirect, an account with
- * nothing in its Library is sent to the Library rather than to a price, and an unconfirmed address
- * disables the button with the sentence the rest of the product uses. `requestCv` redirects to the
- * new CV on success, which is the one click this recommendation is about.
- */
-function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsVM }) {
-  if (!details.cvQuote)
-    return (
-      <p className="text-12 text-muted">
-        Save your Library first. <Link prefetch={false} href="/library" className="underline">Open Library</Link>
-      </p>
-    );
-  if (details.cvQuote.refusal) return <p className="text-12 text-warn" role="status">{details.cvQuote.refusal} <Link prefetch={false} href="/account#top-ups" className="underline">Add CV credits</Link></p>;
-  const label = `Build a CV for this role · ${details.cvQuote.line}`;
-  if (details.cvBlocked)
-    return (
-      <div className="flex flex-col gap-2">
-        <div><Button size="sm" variant="primary" disabled aria-describedby={`cv-blocked-${jobId}`}>{label}</Button></div>
-        <p id={`cv-blocked-${jobId}`} className="text-12 text-warn">{details.cvBlocked}</p>
-      </div>
-    );
-  return (
-    <SettingsForm action={requestCv} submitLabel={label}>
-      <input type="hidden" name="jobId" value={jobId} />
-    </SettingsForm>
-  );
+/** Opening the application is free; generation is a separate, priced choice inside it. */
+function BuildCvOffer({ jobId }: { jobId: string }) {
+  return <CvWorkspaceEntry jobId={jobId} />;
 }
 
 /**
@@ -394,7 +366,7 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                 {detail?.state === "ready" && detail.details.archiveNotes.map((note, i) => <p key={i} className="text-12 text-muted">{note}</p>)}
                 {/* A shortlisted role with no CV yet is built from here; everything else
                     keeps the link to the application that holds its CV. */}
-                {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
+                {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} />}
                 <div className="flex flex-wrap items-center gap-4 text-12">
                   {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
                   {row.url && <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>}

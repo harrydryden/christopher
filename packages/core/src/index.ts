@@ -22,6 +22,7 @@ export type { DiscoveryContext, DiscoveryCandidate, DiscoveryResult, DiscoveryOu
 export * from "./cv";
 export * from "./cv-targeting";
 export * from "./cv-semantic-audit";
+export * from "./cv-editing-modes";
 export * from "./cv-pending-skills";
 export * from "./cv-tailoring";
 export * from "./cv-build";

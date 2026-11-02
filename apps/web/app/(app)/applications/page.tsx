@@ -1,19 +1,19 @@
 import Link from "next/link";
 import { z } from "zod";
 import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@col/core";
-import { ApplicationsTable, type PipelineCvQuotes } from "@/components/ApplicationsTable";
+import { ApplicationsTable } from "@/components/ApplicationsTable";
+import { CvPastedApplicationEntry } from "@/components/CvPastedApplicationEntry";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { getCvWorkStatus } from "@/lib/work-status";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { nextStep } from "@/lib/application-dates";
-import { needsEmailConfirmation, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import {
   applicationStaleHint,
   listPipeline,
   pipelineCompany,
-  pipelineCvQuotes,
   pipelineFilter,
   PIPELINE_FILTERS,
   PIPELINE_FILTER_LABELS,
@@ -34,16 +34,6 @@ const EMPTY: Record<string, { title: string; description?: string }> = {
   closed: { title: "Nothing closed yet" },
   all: { title: "Nothing in progress", description: "Shortlist a role from Roles to start." },
 };
-
-/** Each row's one-credit offer and any refusal, streamed into its CV section. */
-async function pricedQuotes(userId: string, rows: Parameters<typeof pipelineCvQuotes>[1]): Promise<PipelineCvQuotes> {
-  // The build action reserves the credit atomically; this read shows the current balance.
-  const quotes = await pipelineCvQuotes(userId, rows).catch((error: unknown) => {
-    console.error(JSON.stringify({ event: "cv_credit_read_failed", message: error instanceof Error ? error.message : String(error) }));
-    return {} as Awaited<ReturnType<typeof pipelineCvQuotes>>;
-  });
-  return quotes;
-}
 
 export default async function ApplicationsPage({
   searchParams,
@@ -66,9 +56,6 @@ export default async function ApplicationsPage({
   ]);
   const duePreview = !focus && !stage && result.due > 0
     ? await listPipeline(user.id, { filter: "active", company: company ?? undefined, focus: "due", now }) : null;
-  // The fixed credit cost and available balance stream into an open row's CV section.
-  const unverified = needsEmailConfirmation(user);
-  const quotes = unverified ? {} : pricedQuotes(user.id, result.rows);
   // The two lines a row can carry under its stage, worked out here so the table shows the words
   // the server computed rather than deriving them again against the viewer's clock. A next step
   // the person wrote answers "what do I owe" better than silence does, so it wins over the hint.
@@ -108,6 +95,7 @@ export default async function ApplicationsPage({
         title={company ? `Applications at ${company.name}` : "Applications"}
         description={company ? <Link prefetch={false} href={`/applications?filter=${filter}`} className="underline">Show all companies</Link> : undefined}
       />
+      <CvPastedApplicationEntry />
       {duePreview && duePreview.rows.length > 0 && <section aria-labelledby="needs-action-heading" className="border-l-2 border-warn pl-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="needs-action-heading" className="font-semibold">Needs action · {result.due}</h2>
@@ -154,10 +142,8 @@ export default async function ApplicationsPage({
         key={`${filter}:${stage ?? ""}:${focus ?? ""}:${result.page}:${company?.id ?? ""}`}
         rows={result.rows}
         openKey={job}
-        quotes={quotes}
         nextSteps={nextSteps}
         staleHints={staleHints}
-        unverified={unverified}
         emptyState={<EmptyState title={empty.title} description={empty.description} />}
       />
       {result.pageCount > 1 && (

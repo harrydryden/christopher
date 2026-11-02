@@ -6,6 +6,7 @@ import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvLazyWidgets";
 import { CvCheckForm } from "./CvCheckForm";
 import { CvReviewControls } from "./CvReviewControls";
+import { CvFinaliseControl } from "./CvFinaliseControl";
 import { cvReviewActions } from "@/lib/cv-review-actions";
 import { CvContentBlockLink, CvReviewActionLink } from "./CvWorkspace";
 
@@ -22,10 +23,13 @@ function LibraryDrift({ sentence }: { sentence: string | null }) {
 
 export function CvAssessmentPanel({
   id,
+  revision = 0,
+  baseHash = "",
   assessment,
   current,
   finalised,
   hasFinalPdf = false,
+  approvalMode = null,
   busy,
   paused = null,
   continuationDraftId = null,
@@ -41,10 +45,13 @@ export function CvAssessmentPanel({
   reviewDecision = null,
 }: {
   id: string;
+  revision?: number;
+  baseHash?: string;
   assessment: CvAssessment | null;
   current: boolean;
   finalised: boolean;
   hasFinalPdf?: boolean;
+  approvalMode?: "checked" | "unchecked" | null;
   busy: boolean;
   paused?: "evidence" | "priorities" | null;
   continuationDraftId?: string | null;
@@ -88,9 +95,13 @@ export function CvAssessmentPanel({
         <h2 className="text-14 font-semibold">Job match assessment</h2>
         <p className="text-14">{finalised
           ? hasFinalPdf
-            ? "This finalised revision no longer has a current assessment. Its saved PDF is still available; create a new revision for a current review."
+            ? approvalMode === "unchecked"
+              ? "CV finalised · Not checked. The saved PDF is ready to download."
+              : "This finalised revision no longer has a current assessment. Its saved PDF is still available; create a new revision for a current review."
             : "This finalised revision has no saved PDF available. Create a new revision, check it and finalise again."
           : busy ? "Assessment pending" : hasContent ? "Saved — check when ready" : "Assessment required"}</p>
+        {finalised && hasFinalPdf && <a className="inline-flex min-h-11 items-center text-14 underline"
+          href={`/api/cv/${id}/pdf`}>Download saved PDF</a>}
         {!busy && !finalised && finaliseReason && (
           <p className="text-14 text-warn">{finaliseReason}</p>
         )}
@@ -103,6 +114,7 @@ export function CvAssessmentPanel({
               {hasContent && <p className="mt-2 text-12 text-muted">Check assesses this exact saved wording. It does not rewrite or shorten it.</p>}
             </fieldset>
             {blocked && <p role="status" className="text-14 text-warn">{blocked}</p>}
+            {hasContent && baseHash && <CvFinaliseControl id={id} revision={revision} baseHash={baseHash} />}
           </>
         )}
       </section>
@@ -156,7 +168,8 @@ export function CvAssessmentPanel({
           <li key={`${item.kind}:${index}`}><CvReviewActionLink href={item.href}>{item.text}</CvReviewActionLink></li>)}</ol>
           : <p className="mt-2 text-14">No specific improvement is flagged by this saved review.</p>}
       </div>
-      {!finalised && !busy && !finaliseReason && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise summaryIssue={summaryIssue} overPages={overPages ? assessment.pageCount : null} maxPages={cvMaxPages(content?.theme)} />}
+      {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise={false} summaryIssue={summaryIssue} overPages={overPages ? assessment.pageCount : null} maxPages={cvMaxPages(content?.theme)} />}
+      {!finalised && !busy && content && baseHash && <CvFinaliseControl id={id} revision={revision} baseHash={baseHash} />}
       <details id="cv-full-assessment" className="border-t border-line-muted pt-3">
         <summary className="cursor-pointer text-14 font-medium">View full assessment</summary>
         <div className="mt-4 space-y-4">
@@ -212,9 +225,11 @@ export function CvAssessmentPanel({
 
       </div>
       {finalised ? (
-        <p className="border border-ok p-3 text-14">
-          {hasFinalPdf ? "Finalised. Download the saved PDF, or create a new revision to make changes." : "Finalised, but the saved PDF is unavailable. Create a new revision to make a downloadable document."}
-        </p>
+        <div className="border border-ok p-3 text-14"><p>
+          {hasFinalPdf ? approvalMode === "unchecked" ? "CV finalised · Not checked. The saved PDF is ready to download."
+            : "Finalised. Download the saved PDF, or create a new revision to make changes."
+            : "Finalised, but the saved PDF is unavailable. Create a new revision to make a downloadable document."}
+        </p>{hasFinalPdf && <a className="inline-flex min-h-11 items-center underline" href={`/api/cv/${id}/pdf`}>Download saved PDF</a>}</div>
       ) : busy ? null : finaliseReason ? (
         <div role="status" className="space-y-1 border border-warn p-3 text-14">
           {finaliseReason && (

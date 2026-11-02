@@ -1,39 +1,39 @@
 {
   "kind": "cv-replay",
-  "at": "2026-11-01T20:28:37.433Z",
-  "draftId": "d1637cc8-9b2a-4cc6-854a-600224495038",
-  "promptSetVersion": "839f32787cdd",
+  "at": "2026-11-02T17:27:12.984Z",
+  "draftId": "53c57ae6-089b-44ea-8307-0aa646e742c1",
+  "promptSetVersion": "f21a62396b80",
   "unverified": false,
   "source": "recording",
-  "recording": "/tmp/col-cv-capacity-evaluation-1101/cv-live-provider-recording.jsonl",
+  "recording": "/tmp/col-cv-refine-eval-1102/cv-live-provider-recording.jsonl",
   "routes": {
     "cv.rubric": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high"
     },
     "cv.planning": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high"
     },
     "cv.author": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high"
     },
     "cv.improvement": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high"
     },
     "cv.review": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high"
     },
     "cv.review_candidate": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high"
     }
@@ -42,19 +42,19 @@
   "outcome": "published",
   "error": null,
   "misses": [],
-  "costUsd": 0.612663,
-  "calls": 3,
+  "costUsd": 0.728887,
+  "calls": 4,
   "byStage": {
     "author": {
-      "calls": 1,
-      "costUsd": 0.2534
+      "calls": 2,
+      "costUsd": 0.423923
     },
     "review": {
       "calls": 2,
-      "costUsd": 0.359263
+      "costUsd": 0.304964
     }
   },
-  "wallMs": 97,
+  "wallMs": 139,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",
@@ -84,8 +84,8 @@
       "coverageScore": 93,
       "factualSupport": {
         "score": 100,
-        "supported": 10,
-        "total": 10,
+        "supported": 9,
+        "total": 9,
         "unsupported": 0,
         "uncertain": 0
       },
@@ -119,9 +119,9 @@
         },
         "concision": {
           "kind": "heuristic_editorial_signal",
-          "score": 80,
+          "score": 89,
           "label": "Review",
-          "note": "2 lines are over the editing guide of 32 words or 240 characters."
+          "note": "1 line is over the editing guide of 32 words or 240 characters."
         },
         "summaryFocus": {
           "kind": "heuristic_editorial_signal",

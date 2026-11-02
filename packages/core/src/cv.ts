@@ -269,6 +269,17 @@ export function groupCvLibrary(library: CvLibrary): CvLibrary {
   }) };
 }
 
+/** Review can report missing evidence for Manual prose; generation still requires confirmed rows. */
+export function cvReviewEvidenceLibrary(library: CvLibrary): CvLibrary {
+  const parsed = CvLibrarySchema.parse(library);
+  try { return groupCvLibrary(parsed); }
+  catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith("Confirm at least one responsibility or outcome")) throw error;
+    // Neither unconfirmed rows nor an unattributed profile can support a factual claim.
+    return { ...parsed, profile: "", employment: [], entries: [] };
+  }
+}
+
 function combineEvidence(members: CvLibrary["entries"]): string {
   const lines = new Set<string>();
   return members.map(entry => entry.details.split("\n").filter(line => {

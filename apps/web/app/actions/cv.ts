@@ -593,8 +593,11 @@ export async function requestCvSkillSuggestions(id: string, refresh = false, pag
     return await db().transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:skillrun:${id}`}))`);
       const [draft] = await tx.select({ id: cvDrafts.id, status: cvDrafts.status, content: cvDrafts.content, revision: cvDrafts.revision,
-        jobDescription: cvDrafts.jobDescription, targetingBrief: cvDrafts.targetingBrief }).from(cvDrafts)
+        jobDescription: cvDrafts.jobDescription, targetingBrief: cvDrafts.targetingBrief,
+        editingMode: cvDrafts.editingMode }).from(cvDrafts)
         .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id))).limit(1);
+      if (draft?.editingMode)
+        throw new UserFacingError("Use the application workspace for mode-specific CV refinements.");
       if (!draft?.content || !["ready", "failed"].includes(draft.status))
         throw new UserFacingError("Wait for this CV to finish before asking for skill suggestions.");
       if (!Number.isInteger(baseRevision) || baseRevision !== draft.revision)
@@ -682,6 +685,8 @@ export async function saveCvDraft(
       .select()
       .from(cvDrafts)
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
+    if (draft?.editingMode)
+      return fail("Open this CV in its application workspace to save or refine it.");
     if (!draft || !["ready", "failed"].includes(draft.status) || !draft.content)
       return fail("Wait for the current build to finish before editing.");
     const baseRevision = Number(form.get("baseRevision"));
@@ -750,6 +755,8 @@ export async function saveCvDraft(
       const [source] = await tx.select().from(cvDrafts)
         .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id))).for("update");
       if (!source) throw new UserFacingError("This CV was deleted. Open the latest saved CV before editing.");
+      if (source.editingMode)
+        throw new UserFacingError("Open this CV in its application workspace to save or refine it.");
       if (source.status !== "ready" && source.status !== "failed")
         throw new UserFacingError("Wait for the current build to finish before editing.");
       if (source.revision !== baseRevision || !source.content
@@ -1222,10 +1229,11 @@ export async function finaliseCvDraft(
     // Only what the check and the render read: the build checkpoint, gap quiz and the rest of the
     // row stay in the database. The locked re-read below is the whole row.
     const [read] = await db()
-      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot, reviewDecision: cvDrafts.reviewDecision, targetingBrief: cvDrafts.targetingBrief, finalisedAt: cvDrafts.finalisedAt })
+      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot, reviewDecision: cvDrafts.reviewDecision, targetingBrief: cvDrafts.targetingBrief, finalisedAt: cvDrafts.finalisedAt, editingMode: cvDrafts.editingMode })
       .from(cvDrafts)
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     if (read?.finalisedAt) throw new UserFacingError("This revision is already finalised. Create a new revision to make changes.");
+    if (read?.editingMode) throw new UserFacingError("Use the application workspace to approve this CV edition.");
     const checked = finalisable(read);
     // The render proves the revision lays out; it is seconds of work for a long CV, so it runs
     // before the transaction rather than holding the draft's row lock and a pooled connection.

@@ -16,13 +16,14 @@ import { importLibraryDocument } from "@/app/actions/library-import";
 export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean }) {
   return (
     <Card title={showTitle ? "Import a document" : undefined}>
-      <div className="grid gap-5">
+      <div className="grid gap-2">
         <p className="text-14 text-muted">
-          Nothing is added to Experience until you confirm it.
+          Choose one source. Nothing is added to Experience until you review and confirm it.
         </p>
 
-        <section id="library-import-cv" className="grid gap-2">
-          <h3 className="ds-pixel text-12 text-fg">Upload a CV or career document</h3>
+        <details id="library-import-cv" name="library-import-source" open={showTitle} className="border-t border-line-muted pt-2">
+          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">CV or career document</summary>
+          <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
             PDF or Word, up to 5 MB.
           </p>
@@ -33,10 +34,12 @@ export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean })
               <input type="file" name="file" required accept={UPLOAD_ACCEPT} className={`${inputClass} mt-1.5`} />
             </label>
           </LibraryImportForm>
-        </section>
+          </div>
+        </details>
 
-        <section id="library-import-linkedin" className="grid gap-2 border-t-2 border-line-muted pt-5">
-          <h3 className="ds-pixel text-12 text-fg">Import your LinkedIn PDF</h3>
+        <details id="library-import-linkedin" name="library-import-source" className="border-t border-line-muted pt-2">
+          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">LinkedIn PDF export</summary>
+          <div className="grid gap-2 pb-4">
           <ol className="list-decimal space-y-1 pl-5 text-12 text-muted">
             <li>On a desktop, open your own LinkedIn profile.</li>
             <li>Choose More or Resources → Save to PDF.</li>
@@ -52,10 +55,12 @@ export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean })
               <input id="library-linkedin-pdf" type="file" name="file" required accept="application/pdf,.pdf" className={`${inputClass} mt-1.5`} />
             </label>
           </LibraryImportForm>
-        </section>
+          </div>
+        </details>
 
-        <section className="grid gap-2 border-t-2 border-line-muted pt-5">
-          <h3 className="ds-pixel text-12 text-fg">Paste text</h3>
+        <details name="library-import-source" className="border-t border-line-muted pt-2">
+          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">Pasted text</summary>
+          <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
             100 to 40,000 characters, one document at a time.
           </p>
@@ -66,10 +71,12 @@ export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean })
               <textarea name="content" required minLength={100} maxLength={40000} rows={6} className={`${inputClass} mt-1.5 resize-y`} />
             </label>
           </LibraryImportForm>
-        </section>
+          </div>
+        </details>
 
-        <section className="grid gap-2 border-t-2 border-line-muted pt-5">
-          <h3 className="ds-pixel text-12 text-fg">Read your website</h3>
+        <details name="library-import-source" className="border-t border-line-muted pt-2">
+          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">Your website or portfolio</summary>
+          <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
             Your own site or portfolio. Job sites are never read.
           </p>
@@ -80,7 +87,8 @@ export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean })
               <input type="url" name="url" required maxLength={2048} placeholder="https://" className={`${inputClass} mt-1.5`} />
             </label>
           </LibraryImportForm>
-        </section>
+          </div>
+        </details>
       </div>
     </Card>
   );

@@ -1,0 +1,203 @@
+{
+  "content": {
+    "gaps": [
+      "Rank 1 user criterion (lead weekly operational performance reviews) is marked missing in the tailoringPlan, but entry:ev-head:row:1 states the candidate runs a weekly performance review against published measures; the bullet rests on that row and should be checked by the reviewer.",
+      "r6 supplier negotiation: no explicit negotiation evidence in the library. The supplier scorecard and quarterly service-level reviews (entry:ev-head:row:4) show supplier performance management, not negotiation; the tailoringPlan cites row 0, which does not mention suppliers.",
+      "r7 is a customised label (lead multi-site service delivery) whose retained quote concerns the degree requirement; multi-site delivery is supported by entry:ev-head:row:0 and the degree by the Education entry, but the reviewer should confirm which meaning is intended.",
+      "Advert describes a portfolio of twelve sites; confirmed evidence is eleven community clinics as Head of Operations and four clinics as Operations Manager. No claim of twelve sites has been made.",
+      "r4 five years in a regulated environment: tenure at Northwind Health runs Jan 2018 to present and the stored industry description includes Regulated services; no separate statement of the regulatory regime exists in the library.",
+      "Skills section now cites entry:ev-skills:skill:0 for the SQL label, correcting the earlier citation of the prose row; Power BI, NetSuite, Process mapping and Vendor management were not listed as relevant skill items and are omitted.",
+      "Layout refit: Head of Operations consolidated from five to four bullets and the summary shortened to fit the two-page limit; all experience, education and qualification entries retained.",
+      "Rubric caveat: the advert does not state the reporting line or the size of the operational budget, so scope is judged from responsibilities only."
+    ],
+    "name": "Rowan Mercer",
+    "theme": {
+      "font": "Course of Life",
+      "pill": "#e6e6e6",
+      "primary": "#000000",
+      "surface": "#f2f2f2",
+      "version": 1,
+      "maxPages": 2,
+      "background": "#ffffff",
+      "bodySizePt": 12,
+      "introPanel": true,
+      "skillPills": true
+    },
+    "contact": "Manchester, UK · rowan.mercer@example.test",
+    "summary": "Head of Operations at Northwind Health, owning the operational plan for eleven community clinics and reporting delivery, cost and quality to the executive team monthly; leads four operations managers.",
+    "fitNotes": [
+      "Wording tightened against smaller per-block budgets after measuring the PDF."
+    ],
+    "sections": [
+      {
+        "kind": "experience",
+        "bullets": [
+          "Run a weekly performance review against published measures, leading four operations managers and a shared scheduling team of eighteen.",
+          "Own the operational plan for eleven community clinics, reporting delivery, cost and quality to the executive team every month.",
+          "Rebuilt rostering around a single demand model, cutting agency spend by 22% in the first year; introduced a supplier scorecard covering the eight largest contracts, with quarterly reviews against agreed service levels.",
+          "Partner with finance on the annual budget and on monthly variance across a £14m cost base."
+        ],
+        "entryId": "ev-head",
+        "heading": "Head of Operations · Northwind Health · Apr 2021 – Present",
+        "bulletSources": [
+          [
+            "entry:ev-head:row:1"
+          ],
+          [
+            "entry:ev-head:row:0"
+          ],
+          [
+            "entry:ev-head:row:2",
+            "entry:ev-head:row:4"
+          ],
+          [
+            "entry:ev-head:row:3"
+          ]
+        ],
+        "bulletSignposts": [
+          "Weekly performance reviews",
+          "Multi-site operational plan",
+          "Rostering and supplier performance",
+          "Budget and variance"
+        ],
+        "industryDescriptions": [
+          "Healthcare",
+          "Regulated services"
+        ]
+      },
+      {
+        "kind": "experience",
+        "bullets": [
+          "Built the first operational reporting pack in SQL and Power BI, replacing a manual month-end spreadsheet, while running day-to-day operations for four clinics."
+        ],
+        "entryId": "ev-manager",
+        "heading": "Operations Manager · Northwind Health · Jan 2018 – Mar 2021",
+        "bulletSources": [
+          [
+            "entry:ev-manager:row:1",
+            "entry:ev-manager:row:0"
+          ]
+        ],
+        "bulletSignposts": [
+          "SQL and Power BI reporting"
+        ],
+        "industryDescriptions": [
+          "Healthcare",
+          "Regulated services"
+        ]
+      },
+      {
+        "kind": "education",
+        "bullets": [
+          "BSc (Hons) Economics, University of Manchester, 2014",
+          "PRINCE2 Practitioner, APMG International, 2019"
+        ],
+        "entryId": "ev-education",
+        "heading": "Education",
+        "bulletSources": [
+          [
+            "entry:ev-education:row:0"
+          ],
+          [
+            "entry:ev-education:row:1"
+          ]
+        ]
+      },
+      {
+        "kind": "skill",
+        "bullets": [
+          "SQL"
+        ],
+        "entryId": "ev-skills",
+        "heading": "Systems and tools",
+        "skillItems": [
+          "SQL"
+        ],
+        "bulletSources": [
+          [
+            "entry:ev-skills:skill:0"
+          ]
+        ]
+      }
+    ],
+    "summarySources": [
+      "entry:ev-head:row:0",
+      "entry:ev-head:row:1"
+    ]
+  },
+  "pageCount": 1,
+  "maxPages": 2,
+  "layout": {
+    "summaryLines": 3,
+    "firstPageEntryIds": [
+      "ev-head",
+      "ev-manager",
+      "ev-education",
+      "ev-skills"
+    ],
+    "sectionPages": [
+      {
+        "entryId": "ev-head",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-manager",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-education",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "entryId": "ev-skills",
+        "startPage": 1,
+        "endPage": 1
+      }
+    ],
+    "claimPages": [
+      {
+        "claimId": "section:ev-head:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:1",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:2",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-head:3",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-manager:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-education:0",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-education:1",
+        "startPage": 1,
+        "endPage": 1
+      },
+      {
+        "claimId": "section:ev-skills:0",
+        "startPage": 1,
+        "endPage": 1
+      }
+    ]
+  }
+}

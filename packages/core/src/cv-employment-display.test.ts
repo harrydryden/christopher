@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { CvContent, CvLibrary } from "./cv";
-import { cvEmploymentDisplay } from "./cv-employment-display";
+import { cvEmploymentDisplay, cvManualHeadingWarnings } from "./cv-employment-display";
 
 const jobs = [
   { id: "job-1", company: "Acme", jobTitle: "Head of Operations", startDate: "2022-01", endDate: "", current: true,
@@ -34,6 +34,11 @@ it("keeps a manually edited heading, rejects an unsupported descriptor, and neve
   const unknown = { ...library, employment: jobs.map(job => ({ ...job, industryDescriptions: "" })) } as CvLibrary;
   expect(cvEmploymentDisplay(content, unknown).get("new")?.industry).toBeNull();
   expect(cvEmploymentDisplay(content, { ...library, employment: [] }).size).toBe(0);
+  expect(cvManualHeadingWarnings(manual, library)).toEqual([{
+    id: "manual-heading:new", text: "This experience heading is manually worded and has not been verified against confirmed employment details.",
+  }]);
+  expect(cvManualHeadingWarnings(content, library)).toEqual([]);
+  expect(cvManualHeadingWarnings(content, { ...library, employment: [] })).toHaveLength(2);
 });
 
 it("does not revive a sector that exists only on an omitted role at the same company", () => {
@@ -43,4 +48,16 @@ it("does not revive a sector that exists only on an omitted role at the same com
     { ...jobs[1]!, industryDescriptions: "Oil and gas" },
   ] } as CvLibrary;
   expect(cvEmploymentDisplay(printed, source).get("new")?.industry).toBeNull();
+});
+
+it("marks a manually changed qualification heading without judging a skill category as a fact", () => {
+  const source = { ...library, entries: [...library.entries,
+    { id: "degree", kind: "education", heading: "BSc Mathematics", details: "BSc Mathematics" }] } as CvLibrary;
+  const manual = { ...content, sections: [...content.sections,
+    { entryId: "degree", kind: "education", heading: "PhD Mathematics", bullets: ["BSc Mathematics"] },
+    { entryId: "skill", kind: "skill", heading: "Capabilities", bullets: ["SQL"], skillItems: ["SQL"] },
+  ] } as CvContent;
+  expect(cvManualHeadingWarnings(manual, source)).toEqual([{
+    id: "manual-heading:degree", text: "This qualification heading is manually worded and has not been verified against confirmed Experience.",
+  }]);
 });

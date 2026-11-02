@@ -12,6 +12,7 @@ import {
   cvAssessmentCurrent,
   cvLibraryVerdicts,
   validateCvRubric,
+  canonicalJson,
 } from "@col/core/cv-review";
 import {
   cvTextItems,
@@ -20,6 +21,7 @@ import {
   cvImprovementOwner,
   CvRubricSchema,
   CvReviewPlanSchema,
+  CV_REVIEW_VERSION,
   type CvAssessment,
   type CvReviewPlan,
   type CvRubric,
@@ -31,8 +33,12 @@ import { separateCvModelSkillProposals, type CvPendingSkillProposal } from "@col
 import { cvSemanticAuditIdentity } from "@col/core/cv-semantic-audit";
 import { buildCvGapQuiz } from "@col/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality, improvementWorthwhile } from "@col/core/cv-quality";
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, releaseCvCredit, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@col/db";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCallRecord, releaseAiHolds, releaseCvCredit, saveCvTailoringPlan, saveImprovedCvRevision, publishCvAutoBaseline, schema, skipOpenCvBuildSteps, type Task, type Db } from "@col/db";
+import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvCarryEditingTargets, cvEditingTargetsFor,
+  cvApplyGeneratedExactLocks, cvApplyGeneratedStructure, cvRefineWritingLibrary,
+  cvRefinementDependencies, CvRefinementSchema } from "@col/core/cv-editing-modes";
+import { randomUUID } from "node:crypto";
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@col/ai";
 import { serverFallbackEnabled } from "../provider-routing";
 import {
@@ -48,6 +54,7 @@ import {
   createCvWritingBudget,
   missingRequiredCvBlocks,
   groupCvLibrary,
+  cvReviewEvidenceLibrary,
   readCvBuildCheckpoint,
   reusedCvRubric,
   usd,
@@ -121,9 +128,11 @@ type FitMotion = CvFitEvent["motion"] | "rewrite";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Whether publishing this build will archive a CV that is currently the saved one for its role. */
-async function archivesPrevious(db: Db, draft: { id: string; userId: string; companyName: string; jobTitle: string }): Promise<boolean> {
+async function archivesPrevious(db: Db, draft: { id: string; userId: string; companyName: string; jobTitle: string; contextId?: string | null }): Promise<boolean> {
   const rows = await db.select({ id: schema.cvDrafts.id }).from(schema.cvDrafts).where(and(
-    sql`${cvRoleKey(schema.cvDrafts.userId, schema.cvDrafts.companyName, schema.cvDrafts.jobTitle)} = ${cvRoleKey(draft.userId, draft.companyName, draft.jobTitle)}`,
+    draft.contextId ? and(eq(schema.cvDrafts.userId, draft.userId), eq(schema.cvDrafts.contextId, draft.contextId))
+      : and(sql`${cvRoleKey(schema.cvDrafts.userId, schema.cvDrafts.companyName, schema.cvDrafts.jobTitle)} = ${cvRoleKey(draft.userId, draft.companyName, draft.jobTitle)}`,
+        isNull(schema.cvDrafts.contextId)),
     eq(schema.cvDrafts.status, "ready"), isNull(schema.cvDrafts.archivedAt), ne(schema.cvDrafts.id, draft.id),
   )).limit(1);
   return rows.length > 0;
@@ -212,7 +221,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         if (patch.status === "ready") return completeCv(tx, draftId, { ...patch, status: "ready" });
         const updated = await tx.update(schema.cvDrafts).set(patch)
           .where(eq(schema.cvDrafts.id, draftId)).returning({ id: schema.cvDrafts.id });
-        if (updated.length && patch.status === "failed") await releaseCvCredit(tx, draftId, "CV build failed");
+        if (updated.length && patch.status === "failed") {
+          await releaseCvCredit(tx, draftId, "CV build failed");
+          await tx.update(schema.cvAutoBaselines).set({ status: "failed" })
+            .where(and(eq(schema.cvAutoBaselines.sourceDraftId, draftId), eq(schema.cvAutoBaselines.status, "queued")));
+        }
         return updated.length > 0;
       });
       if (!exists) throw new CvDeletedError();
@@ -333,6 +346,21 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             .from(schema.cvDrafts)
             .where(eq(schema.cvDrafts.id, draft.parentId))
         : [];
+      const refinements = draft.editingMode === "refine"
+        ? (draft.refinementSnapshot ?? []).map(value => CvRefinementSchema.parse(value)) : [];
+      const refineSourceContent = draft.refinementSourceContent;
+      const refineSourceTargets = draft.refinementSourceTargets;
+      if (draft.editingMode === "refine" && mode !== "assess" && (!refineSourceContent || !refineSourceTargets || !refinements.length ||
+        !draft.descriptionVersionId))
+        throw new CvBuildStop("library_invalid", "The Refine source changed. Reopen the application and review its refinements.");
+      if (draft.editingMode === "refine" && mode !== "assess" && refinements.some(row => {
+        if (!refineSourceContent || !refineSourceTargets || !draft.descriptionVersionId) return true;
+        const actual = cvRefinementDependencies({ content: refineSourceContent, targets: refineSourceTargets,
+          library: draft.librarySnapshot, descriptionVersionId: draft.descriptionVersionId, target: row.target,
+          structured: row.structured });
+        return row.dependencies.descriptionVersionId !== draft.descriptionVersionId || row.dependencies.sourceHash !== actual.sourceHash;
+      }))
+        throw new CvBuildStop("library_invalid", "A Refine target changed. Review its conflict before generating.");
       // This build's own rubric first, then the task's, then the parent's for the same description:
       // a direct edit whose checkpoint the interface stripped still takes its parent's rubric
       // before it pays for a new one.
@@ -351,12 +379,17 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         maxAttempts,
       }, async step => {
         try {
-          const fullLibrary = groupCvLibrary(CvLibrarySchema.parse(draft.librarySnapshot));
+          const snapshot = CvLibrarySchema.parse(draft.librarySnapshot);
+          const manualCheck = draft.editingMode === "manual" && mode === "assess" && !!draft.content;
+          const fullLibrary = manualCheck ? cvReviewEvidenceLibrary(snapshot) : groupCvLibrary(snapshot);
           const brief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
           if (brief && JSON.stringify(brief.source) !== JSON.stringify(cvTargetingSource(draft.libraryVersion, CvLibrarySchema.parse(draft.librarySnapshot), draft.jobDescription)))
             throw new CvBuildStop("library_invalid", "The targeting choices belong to older Experience or role text. Reload this CV before building.");
-          const library = projectCvWritingLibrary(fullLibrary, brief);
-          if (!library.entries.length) throw new CvBuildStop("library_invalid", "Choose at least one Experience or qualification section for this CV.");
+          const library = draft.editingMode === "refine"
+            ? cvRefineWritingLibrary(projectCvWritingLibrary(fullLibrary, brief), refinements)
+            : projectCvWritingLibrary(fullLibrary, brief);
+          if (!library.entries.length && !(draft.editingMode === "manual" && mode === "assess" && draft.content))
+            throw new CvBuildStop("library_invalid", "Choose at least one Experience or qualification section for this CV.");
           const counted = (kind: string) => library.entries.filter(entry => entry.kind === kind).length;
           // Saved wording is reused when this build already wrote it (the checkpoint says so) or
           // when the task asked for an assessment of what is stored. Old drafts and manual edits
@@ -368,7 +401,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if (saved) {
             const maxPages = cvMaxPages(saved.theme);
             const measure = await journal.open("measure", { maxPages });
-            savedPages = await renderCvPdfWithReport(saved, cvEmploymentDisplay(saved, fullLibrary))
+            savedPages = await renderCvPdfWithReport(saved,
+              draft.editingMode === "manual" ? undefined : cvEmploymentDisplay(saved, fullLibrary))
               .then(report => report.pageCount)
               .catch(error => {
                 if (error instanceof CvLayoutError) return Number.POSITIVE_INFINITY;
@@ -408,7 +442,29 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       };
       // The administrator's per-stage routes: each stage is priced, and called, at its own model.
       // Read once for the attempt; a settings fault prices every stage at its entry's own route.
-      const stageRoutes = await Promise.resolve(deps.settings?.()).then(settings => settings?.stageRoutes ?? null).catch(() => null);
+      const [autoClaim] = draft.editingMode === "auto" && mode !== "assess" && draft.autoBaselineId
+        ? await deps.db.select().from(schema.cvAutoBaselines)
+          .where(and(eq(schema.cvAutoBaselines.id, draft.autoBaselineId), eq(schema.cvAutoBaselines.userId, draft.userId)))
+        : [];
+      if (draft.editingMode === "auto" && mode !== "assess" && (!autoClaim || autoClaim.status !== "queued"
+        || autoClaim.sourceDraftId !== draft.id || !autoClaim.inputSnapshot
+        || cvAutoInputKey(autoClaim.inputSnapshot) !== autoClaim.inputKey
+        || autoClaim.inputSnapshot.description !== draft.jobDescription
+        || autoClaim.inputSnapshot.descriptionVersionId !== draft.descriptionVersionId
+        || autoClaim.inputSnapshot.contextId !== draft.contextId
+        || canonicalJson(autoClaim.inputSnapshot.library) !== canonicalJson(draft.librarySnapshot)
+        || autoClaim.engineContract.promptSet !== prompts
+        || autoClaim.engineContract.review !== CV_REVIEW_VERSION
+        || autoClaim.engineContract.fit !== CV_FIT_VERSION
+        || autoClaim.engineContract.render !== CV_RENDER_VERSION))
+        throw new CvBuildStop("library_invalid", "The Auto engine or source changed before this build started. Open the application and request an update.");
+      const refineContract = draft.editingMode === "refine" && mode !== "assess" ? draft.refinementEngineContract : null;
+      if (draft.editingMode === "refine" && mode !== "assess" && (!refineContract ||
+        refineContract.promptSet !== prompts || refineContract.review !== CV_REVIEW_VERSION ||
+        refineContract.fit !== CV_FIT_VERSION || refineContract.render !== CV_RENDER_VERSION))
+        throw new CvBuildStop("library_invalid", "This Refine engine changed before generation. Request a new refined result.");
+      const stageRoutes = autoClaim?.engineContract.routes ?? refineContract?.routes
+        ?? await Promise.resolve(deps.settings?.()).then(settings => settings?.stageRoutes ?? null).catch(() => null);
       const models = { cvModel: draft.model, routes: stageRoutes };
       // A version 1 build stopped during its optional improvement had already written, assessed
       // and saved its baseline, and its fence says the improvement is not tried twice. Its saved
@@ -683,7 +739,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
             return { draftId, awaitingPriorities: true };
           }
         }
-        if (!checkpoint.quizCompleted) {
+        if (draft.editingMode !== "auto" && !checkpoint.quizCompleted) {
           const gapQuiz = buildCvGapQuiz(tailoringPlan.gapQuestions, draft.librarySnapshot, draft.libraryVersion, rubric);
           await journal.record("gap_quiz", { questions: gapQuiz?.questions.length ?? 0, skipped: !gapQuiz });
           if (gapQuiz) {
@@ -757,6 +813,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
                       rubric,
                       ...(inputs.brief?.priority.state === "confirmed" ? { emphasisRequirementIds: inputs.brief.priority.emphasisRequirementIds } : {}),
                       improvements,
+                      ...(draft.editingMode === "refine" ? { refinementInstructions: refinements
+                        .filter(row => row.kind === "instruction" && !row.reset)
+                        .map(row => ({ id: row.id, version: row.version,
+                          target: `${row.target.type}:${row.target.id ?? ""}`,
+                          sourceIds: row.dependencies.sourceIds,
+                          text: row.text!.trim() })) } : {}),
                       tailoringPlan,
                       ...input,
                     },
@@ -832,6 +894,24 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           }
         });
         content = fitted;
+        if (draft.editingMode === "refine" && mode !== "assess" && refineSourceContent && refineSourceTargets) {
+          const structured = cvApplyGeneratedStructure({ candidate: content, source: refineSourceContent,
+            sourceTargets: refineSourceTargets, refinements });
+          if (structured.conflicts.length)
+            throw new CvBuildStop("page_limit_unfittable", "A Refine order or selection no longer matches the generated CV. Review the affected item.");
+          content = structured.content;
+          const locked = cvApplyGeneratedExactLocks({ candidate: content, source: refineSourceContent,
+            sourceTargets: refineSourceTargets, library: draft.librarySnapshot, refinements,
+            descriptionVersionId: draft.descriptionVersionId! });
+          if (locked.conflicts.length)
+            throw new CvBuildStop("page_limit_unfittable", "An exact refinement conflicts with the current source or fit. Review that locked wording before retrying.");
+          content = locked.content;
+          const pages = (await renderCvPdfWithReport(content, cvEmploymentDisplay(content, fullLibrary))).pageCount;
+          if (pages > cvMaxPages(content.theme)) {
+            await save({ content });
+            throw new CvBuildStop("page_limit_unfittable", `The exact wording is preserved but spans ${pages} pages. Change this CV's page choice or refinements.`);
+          }
+        }
         // Retain a recoverable draft if the later assessment fails, and record that this build has
         // paid for the writing: a retry assesses what is saved instead of rewriting it. The
         // content and its checkpoint entry are one write, so neither can exist without the other.
@@ -869,7 +949,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       let semanticAuditCache: { identity: string; review: CvReviewPlan } | null = null;
       const assessContent = async (candidate: CvContent, pass: CvAuditPass, knownPages?: number): Promise<CvAssessment> => {
         await stage("assessing");
-        const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate, cvEmploymentDisplay(candidate, fullLibrary))).pageCount;
+        const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate,
+          draft.editingMode === "manual" ? undefined : cvEmploymentDisplay(candidate, fullLibrary))).pageCount;
         if (mode !== "assess") assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
         const claimEvidence = cvEvidenceItems(inputs.brief ? library : fullLibrary)
           .filter(item => !inputs.brief || item.text.trim().length > 0);
@@ -1107,6 +1188,35 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           buildCheckpoint: null, failure: null,
         });
         if (!ok) return false;
+        if (draft.editingMode === "auto" && mode !== "assess") {
+          if (!draft.autoBaselineId || !draft.contextId || !draft.descriptionVersionId || !content)
+            throw new Error("Auto publication is missing its claimed application context.");
+          const [previous] = await tx.select().from(schema.cvAutoBaselines).where(and(
+            eq(schema.cvAutoBaselines.userId, draft.userId), eq(schema.cvAutoBaselines.contextId, draft.contextId),
+            eq(schema.cvAutoBaselines.status, "ready"), ne(schema.cvAutoBaselines.id, draft.autoBaselineId)))
+            .orderBy(desc(schema.cvAutoBaselines.publishedAt)).limit(1);
+          const editingTargets = previous?.content && previous.editingTargets && previous.librarySnapshot
+            ? cvCarryEditingTargets({ priorContent: previous.content, priorTargets: previous.editingTargets,
+              priorLibrary: previous.librarySnapshot, priorDescriptionVersionId: previous.descriptionVersionId,
+              content, library: draft.librarySnapshot, descriptionVersionId: draft.descriptionVersionId,
+              createId: randomUUID })
+            : cvEditingTargetsFor(content, randomUUID);
+          await tx.update(schema.cvDrafts).set({ editingTargets })
+            .where(and(eq(schema.cvDrafts.id, draftId), eq(schema.cvDrafts.userId, draft.userId)));
+          await publishCvAutoBaseline(tx, { userId: draft.userId, baselineId: draft.autoBaselineId,
+            sourceDraftId: draftId, content, assessment, librarySnapshot: draft.librarySnapshot,
+            tailoringPlan: fullTailoringPlan, editingTargets });
+        }
+        if (draft.editingMode === "refine" && mode !== "assess" && content) {
+          const editingTargets = refineSourceContent && refineSourceTargets
+            ? cvCarryEditingTargets({ priorContent: refineSourceContent, priorTargets: refineSourceTargets,
+              priorLibrary: draft.librarySnapshot, priorDescriptionVersionId: draft.descriptionVersionId!,
+              content, library: draft.librarySnapshot, descriptionVersionId: draft.descriptionVersionId!,
+              createId: randomUUID })
+            : cvEditingTargetsFor(content, randomUUID);
+          await tx.update(schema.cvDrafts).set({ editingTargets }).where(and(
+            eq(schema.cvDrafts.id, draftId), eq(schema.cvDrafts.userId, draft.userId)));
+        }
         // The plan the wording was written against stays beside the assessment, for replay.
         if (fullTailoringPlan) await saveCvTailoringPlan(tx, draftId, draft.userId, fullTailoringPlan);
         const spent = await tx.execute<{ spent: number }>(
@@ -1236,11 +1346,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       // closing on a page with room for it (`improvementWorthwhile`), and record why otherwise, with
       // the gap's weight and the headroom, so adoption by gap weight can be measured later.
       const gate = improvementWorthwhile(diagnostics, writeScale);
-      if (semantic && mode !== "assess" && !legacyFenced && opportunities.length > 0 && gate.worthwhile)
+      if (!draft.editingMode && semantic && mode !== "assess" && !legacyFenced && opportunities.length > 0 && gate.worthwhile)
         await improve({ baselineContent: content!, baselineAssessment: assessment, opportunities, semanticTarget: semantic });
       else if (semantic && !legacyFenced && mode !== "assess")
         await journal.record("improve_content", {
-          opportunities: opportunities.length, skipped: true, reason: gate.reason,
+          opportunities: opportunities.length, skipped: true, reason: draft.editingMode
+            ? "This edition stays selected until you explicitly request a refinement." : gate.reason,
           weightedPoints: diagnostics.evidencedOpportunityGap.weightedPoints,
           availableWeight: diagnostics.priorityCoverage.availableWeight,
           essential: diagnostics.evidencedOpportunityGap.essential, writeScale,

@@ -43,6 +43,7 @@ import { cvTargetedSummaryFinalisationIssue, type CvTargetingBriefV1 } from "@co
 import { cvTargetingViewForOwnedDraft } from "@/lib/cv-targeting-view";
 import { hasStoredFinalisedCvPdf } from "@/lib/cv-pdf-store";
 import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
+import { CvSelectEdition } from "@/components/CvSelectEdition";
 
 /**
  * Why the actions that spend money are unavailable to an unverified account, in the sentence the
@@ -92,6 +93,42 @@ export default async function CvDraftPage({
   if (!zUuid().safeParse(id).success) notFound();
   const draft = await getOwnCvDraft(user.id, id);
   if (!draft) notFound();
+  if (draft.contextId) {
+    const [hasPdf, [recorded]] = await Promise.all([
+      draft.finalisedAt ? hasStoredFinalisedCvPdf(user.id, id) : Promise.resolve(false),
+      db().select({ id: applications.id }).from(applications)
+        .where(and(eq(applications.userId, user.id), eq(applications.cvId, id))).limit(1),
+    ]);
+    const saved = draft.content;
+    return <div className="max-w-4xl space-y-5">
+      <PageHeader title={`${draft.jobTitle} · ${draft.companyName}`}
+        description="Saved CV edition. Return to the application workspace to edit, Check or review final approval."
+        actions={<Link className="min-h-11 text-14 underline" href={`/cv/context/${draft.contextId}`}>Application workspace</Link>} />
+      <section className="space-y-3 border border-line-muted p-4 text-14">
+        <h2 className="font-semibold">This saved edition</h2>
+        <p>{draft.editingMode === "manual" ? "Manual" : draft.editingMode === "refine" ? "Refine" : "Auto"}
+          {` · V${draft.revision} · ${draft.finalisedAt ? "finalised" : draft.status}`}</p>
+        <CvSelectEdition contextId={draft.contextId} kind="draft" id={id} label="Select this edition in the workspace" />
+        {saved ? <>
+          <p><strong>{saved.name}</strong> · {saved.summary}</p>
+          <ul className="list-disc pl-5">{saved.sections.map(section => <li key={section.entryId}>{section.heading}</li>)}</ul>
+          {(!draft.finalisedAt || hasPdf) && (draft.status === "ready" || draft.status === "failed") &&
+            <a className="inline-flex min-h-11 items-center underline" href={`/api/cv/${id}/pdf${draft.finalisedAt ? "" : "?preview=1"}`}
+              target="_blank" rel="noopener noreferrer">{draft.finalisedAt ? "Open the approved PDF" : "Open this saved PDF preview"}</a>}
+          {draft.finalisedAt && !hasPdf && <p role="alert" className="text-warn">The approved PDF is unavailable. Review this edition in the workspace.</p>}
+        </> : <p>This edition has no saved CV wording yet. Its build and recovery are in the application workspace.</p>}
+      </section>
+      {draft.finalisedAt && hasPdf && <section className="space-y-3 border border-line-muted p-4 text-14">
+        <h2 className="font-semibold">Application record</h2>
+        {recorded ? <Link className="underline" href="/applications">Application recorded · open Applications</Link>
+          : <SettingsForm action={recordApplication.bind(null, id)} submitLabel="Record application">
+            <p>Records that you applied; nothing is sent to the employer.</p>
+            <label className="block space-y-1">Application date<input type="date" name="appliedOn" required className={inputClass} /></label>
+            <label className="block space-y-1">Notes<textarea name="notes" maxLength={4000} rows={3} className={inputClass} /></label>
+          </SettingsForm>}
+      </section>}
+    </div>;
+  }
   // Everything below is read once the draft is known to be this account's, side by side.
   const now = new Date();
   const [versions, progress, system, admin, latestLibrary, sharing, [application], hasFinalPdf, targetingView] = await Promise.all([
@@ -160,7 +197,7 @@ export default async function CvDraftPage({
   // Work that calls a model is held back until the address is confirmed, so the controls that ask
   // for one say why rather than refusing after the wording has been typed.
   const blocked = needsEmailConfirmation(user) ? VERIFY_SENTENCE : null;
-  const finaliseReason = finaliseObstacle(draft);
+  const finaliseReason = draft.status === "ready" && content ? null : finaliseObstacle(draft);
   // What the whole build came to, once there is nothing left running to change it.
   const totals = !busy && steps.length ? cvBuildTotalsLine(cvBuildTotals(steps, now, { live: reading.live })) : null;
   // The Library this revision was written from, and what has been saved over it since: the
@@ -183,6 +220,8 @@ export default async function CvDraftPage({
     <>
       <CvAssessmentPanel
         id={id}
+        revision={draft.revision}
+        baseHash={content ? cvDraftEditBaseHash(content, draft.targetingBrief) : ""}
         assessment={draft.assessment}
         reviewDecision={draft.reviewDecision}
         current={current}

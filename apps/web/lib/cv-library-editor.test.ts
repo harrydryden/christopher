@@ -26,7 +26,7 @@ it("opens the LinkedIn PDF import without navigating or losing unsaved Experienc
   const container = document.createElement("div");
   const panel = document.createElement("details");
   panel.id = "library-import-panel";
-  const section = document.createElement("section");
+  const section = document.createElement("details");
   section.id = "library-import-linkedin";
   const upload = document.createElement("input");
   upload.id = "library-linkedin-pdf";
@@ -47,6 +47,7 @@ it("opens the LinkedIn PDF import without navigating or losing unsaved Experienc
     expect(button.type).toBe("button");
     await act(async () => button.click());
     expect(panel.open).toBe(true);
+    expect(section.open).toBe(true);
     expect(scroll).toHaveBeenCalledOnce();
     expect(document.activeElement).toBe(upload);
     expect(intro.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Unsaved bio");

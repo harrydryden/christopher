@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
-/**
- * The applications table's CV section waits for the credit read; a credit refusal disables the
- * build, while a pasted advert does not change its one-credit price.
- */
+/** Opening a CV application workspace is free; generation is a separate choice there. */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
+const router = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("@/app/actions/applications", () => ({ manageRoleCv: vi.fn(), setRoleStage: vi.fn(), updateApplication: vi.fn() }));
 vi.mock("@/app/actions/cv", () => ({ requestCv: vi.fn() }));
+vi.mock("@/app/actions/cv-editing", () => ({ createCvApplicationContext: vi.fn() }));
 
 import { ApplicationsTable, type PipelineCvQuotes } from "./ApplicationsTable";
+import { createCvApplicationContext } from "@/app/actions/cv-editing";
 import type { PipelineRow } from "@/lib/queries/applications";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,6 +26,7 @@ const row: PipelineRow = {
 let root: Root;
 let container: HTMLElement;
 beforeEach(() => {
+  vi.clearAllMocks();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -39,35 +40,39 @@ afterEach(() => {
 const text = () => container.textContent ?? "";
 const pricing = () => container.querySelector('[aria-label="Checking CV credits"]');
 
-it("shows the table at once and the credit cost when the stream arrives", async () => {
+it("shows a free workspace entry immediately without waiting for a credit quote", async () => {
   let resolve!: (quotes: PipelineCvQuotes) => void;
   const quotes = new Promise<PipelineCvQuotes>((done) => { resolve = done; });
   await act(async () => root.render(<ApplicationsTable rows={[row]} openKey={JOB} quotes={quotes} emptyState={<p>Nothing</p>} />));
   expect(text()).toContain("Operations Manager");
-  expect(pricing()).not.toBeNull();
-  expect(text()).not.toContain("Paste a replacement description");
+  expect(pricing()).toBeNull();
+  expect(text()).toContain("Prepare CV · free");
+  expect(container.querySelector('textarea[placeholder^="Paste the original advert"]')).not.toBeNull();
 
   await act(async () => resolve({ [JOB]: { line: "Uses 1 CV credit · 2 remaining", refusal: null } }));
   expect(pricing()).toBeNull();
-  expect(text()).toContain("Paste a replacement description");
-  expect(text()).toContain("Uses 1 CV credit · 2 remaining");
+  expect(text()).toContain("Prepare CV · free");
+  expect(text()).toContain("one CV credit only when you request it");
 });
 
-it("disables the build when no CV credits remain", async () => {
+it("allows free workspace preparation even when no CV credits remain", async () => {
   const refusal = "No CV credits left. Add credits in Account to build this CV.";
+  vi.mocked(createCvApplicationContext).mockResolvedValue({ ok: true, contextId: "context-id", descriptionVersionId: "description-id" });
   await act(async () => root.render(
     <ApplicationsTable rows={[row]} openKey={JOB} quotes={Promise.resolve({ [JOB]: { line: "Uses 1 CV credit · 0 remaining", refusal } })} emptyState={<p>Nothing</p>} />,
   ));
-  expect(text()).toContain(refusal);
-  const build = [...container.querySelectorAll("button")].find((el) => el.textContent === "Build CV" && el.hasAttribute("aria-describedby"));
-  expect(build?.disabled).toBe(true);
+  const prepare = [...container.querySelectorAll("button")].find((el) => el.textContent === "Prepare CV · free")!;
+  expect(prepare.disabled).toBe(false);
+  await act(async () => prepare.click());
+  expect(createCvApplicationContext).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB }));
+  expect(router.push).toHaveBeenCalledWith("/cv/context/context-id");
 });
 
-it("never waits on credits for an account that cannot build yet", async () => {
+it("keeps free preparation available while the credit quote never resolves", async () => {
   const never = new Promise<PipelineCvQuotes>(() => {});
   await act(async () => root.render(<ApplicationsTable rows={[row]} openKey={JOB} quotes={never} unverified emptyState={<p>Nothing</p>} />));
   expect(pricing()).toBeNull();
-  expect(text()).toContain("Confirm");
+  expect(text()).toContain("Prepare CV · free");
 });
 
 it("renders one expanded editor inside a mobile card, with its role context", async () => {
@@ -77,7 +82,8 @@ it("renders one expanded editor inside a mobile card, with its role context", as
   const mobile = container.querySelector('[aria-label="Applications"]')!;
   expect(mobile.textContent).toContain("Operations Manager");
   expect(mobile.textContent).toContain("View vacancy");
-  expect(mobile.querySelectorAll("form")).toHaveLength(2);
+  expect(mobile.querySelectorAll("form")).toHaveLength(1);
+  expect(mobile.querySelector('textarea[placeholder^="Paste the original advert"]')).not.toBeNull();
   expect(container.querySelectorAll(`#application-${JOB}`)).toHaveLength(1);
 });
 
@@ -123,12 +129,12 @@ it("keeps saved next steps and notes in a guided update while their fields are h
   expect(new FormData(form).get("nextAction")).toBe("Call recruiter");
 });
 
-it("uses an Open CV action with revision details as secondary text", async () => {
+it("opens the saved CV workspace with revision details as secondary text", async () => {
   const withCv: PipelineRow = { ...row, cv: { id: "ad83a8ec-771b-43ed-a2bd-71cde1bf88c1", status: "ready", revision: 14,
     finalisedAt: new Date("2026-09-20T09:00:00Z"), createdAt: new Date("2026-09-19T09:00:00Z") } };
   await act(async () => root.render(<ApplicationsTable rows={[withCv]} quotes={{}} emptyState={<p>Nothing</p>} />));
   const link = container.querySelector<HTMLAnchorElement>(`a[href="/cv/${withCv.cv!.id}"]`)!;
-  expect(link.textContent).toBe("Open CV");
+  expect(link.textContent).toBe("Open CV workspace");
   expect(link.parentElement?.textContent).toContain("V14 · finalised");
 });
 
@@ -144,17 +150,26 @@ it("does not close an edited application without an explicit discard", async () 
   expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("unsaved changes"));
 });
 
-it("keeps the same credit price when the advert is replaced", async () => {
+it("preserves a pasted advert and request key across a failed free workspace attempt", async () => {
+  vi.mocked(createCvApplicationContext).mockRejectedValueOnce(new Error("network"))
+    .mockResolvedValueOnce({ ok: true, contextId: "context-id", descriptionVersionId: "description-id" });
   await act(async () => root.render(<ApplicationsTable rows={[row]} openKey={JOB}
     quotes={{ [JOB]: { line: "Uses 1 CV credit · 2 remaining", refusal: null } }} emptyState={<p>Nothing</p>} />));
-  const textarea = container.querySelector('textarea[name="description"]') as HTMLTextAreaElement;
+  const textarea = container.querySelector('textarea[placeholder^="Paste the original advert"]') as HTMLTextAreaElement;
   const change = (value: string) => act(() => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, value);
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
   });
   change("First pasted advert");
-  const build = [...container.querySelectorAll("button")].find((el) => el.textContent === "Build CV" && el.type === "submit")!;
-  expect(text()).toContain("Uses 1 CV credit · 2 remaining");
-  expect(container.querySelector('textarea[name="description"]')).toHaveProperty("value", "First pasted advert");
-  expect(build.disabled).toBe(false);
+  const prepare = [...container.querySelectorAll("button")].find((el) => el.textContent === "Prepare CV · free")!;
+  await act(async () => prepare.click());
+  expect(textarea.value).toBe("First pasted advert");
+  expect(text()).toContain("Your pasted description is still here");
+  await act(async () => prepare.click());
+  expect(createCvApplicationContext).toHaveBeenCalledTimes(2);
+  const first = vi.mocked(createCvApplicationContext).mock.calls[0]![0];
+  const second = vi.mocked(createCvApplicationContext).mock.calls[1]![0];
+  expect(first).toMatchObject({ jobId: JOB, description: "First pasted advert" });
+  expect(second.requestKey).toBe(first.requestKey);
+  expect(router.push).toHaveBeenCalledWith("/cv/context/context-id");
 });

@@ -1,0 +1,32 @@
+{
+  "contextId": "cea46790-15fd-434b-96fc-efe5a0ff2e98",
+  "userId": "0ce36c10-caf8-4e9e-85f4-847f05468a8c",
+  "selectedDraftId": "6ef40356-1c7a-4d49-8ece-5b0c7d55d2c1",
+  "timings": {
+    "workspaceLoadMs": 557,
+    "autoReuseMs": 894,
+    "manualSaveMs": 55,
+    "finaliseMs": 64
+  },
+  "initialWork": {
+    "tasks": 1,
+    "credits": 1
+  },
+  "errors": [],
+  "environment": "local production build, synthetic fixture, loopback database; single sample, not a production latency claim",
+  "verified": [
+    "Auto exact-input reuse adds no task or credit",
+    "Exact Refine and chained skill reordering remain free",
+    "Manual copy/save retains wording across mode switches without library writes",
+    "Unchecked finalisation stores PDF; download matches approved bytes",
+    "Reset-all restores Auto and retains final Manual PDF",
+    "390px viewport without overflow; keyboard mode selection",
+    "Application record retains exact context and final CV",
+    "No browser runtime errors"
+  ],
+  "routeBundle": {
+    "route": "/cv/context/[id]",
+    "routeKb": 13.5,
+    "firstLoadKb": 134
+  }
+}

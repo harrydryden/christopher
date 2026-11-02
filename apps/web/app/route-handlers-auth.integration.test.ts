@@ -54,6 +54,7 @@ const ROUTES: Record<string, Access> = {
   "api/cron/route.ts": { bearer: "CRON_SECRET" },
   "api/cv/[id]/pdf/route.ts": "session",
   "api/cv/[id]/progress/route.ts": "session",
+  "api/cv/baseline/[id]/pdf/route.ts": "session",
   "api/cv/library/imports/route.ts": "session",
   "api/cv/library/reviews/route.ts": "session",
   "api/cv/library/route.ts": "session",
@@ -182,5 +183,29 @@ describe("a signed cookie whose session row is gone", () => {
     const refused = await download();
     expect(refused.status).toBe(401);
     expect(refused.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("serves a retained Auto PDF only within its owning account", async () => {
+    const { GET } = await import("./api/cv/baseline/[id]/pdf/route");
+    const owner = await signInTestUser(database, SECRET, "baseline-owner@example.com", "member");
+    const [contextRow] = await database.insert(schema.cvApplicationContexts).values({ userId: owner.user.id,
+      requestKey: `paste:${crypto.randomUUID()}`, jobTitle: "Analyst", companyName: "Example Co" }).returning();
+    const [description] = await database.insert(schema.cvContextDescriptions).values({ userId: owner.user.id,
+      contextId: contextRow!.id, version: 1, text: "Analyse reports" }).returning();
+    const [baseline] = await database.insert(schema.cvAutoBaselines).values({ userId: owner.user.id,
+      contextId: contextRow!.id, descriptionVersionId: description!.id, inputKey: "held-input", inputSnapshot: {} as never,
+      engineContract: { promptSet: "test", review: "test", fit: "test", render: "test", routes: {} },
+      status: "failed" }).returning();
+    const download = () => GET(new Request(`http://col.test/api/cv/baseline/${baseline!.id}/pdf`),
+      { params: Promise.resolve({ id: baseline!.id }) });
+    session = owner.cookie;
+    expect((await download()).status).toBe(409);
+    const stranger = await signInTestUser(database, SECRET, "baseline-stranger@example.com", "member");
+    session = stranger.cookie;
+    expect((await download()).status).toBe(404);
+    session = owner.cookie;
+    await database.update(schema.sessions).set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.sessions.id, owner.sessionId));
+    expect((await download()).status).toBe(401);
   });
 });

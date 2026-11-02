@@ -13,7 +13,9 @@ import { CvTargetingBriefSchema, cvEffectiveRubric, cvMappedEssentialOmissionIds
 import { cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { CvTailoringPlanSchema } from "@col/core/cv-tailoring";
 import { randomUUID } from "node:crypto";
-import type { AiClientLike } from "@col/ai";
+import { CV_PROMPT_IDS, PROMPTS, promptSetVersion, resolveRoute, routedModel, type AiClientLike } from "@col/ai";
+import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvEditingTargetsFor, cvRefinementDependencies, type CvAutoInputV1, type CvRefinementV1 } from "@col/core/cv-editing-modes";
+import { CV_REVIEW_VERSION } from "@col/core/cv-assessment";
 import { eq } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { TaskQueue } from "./queue";
@@ -89,7 +91,7 @@ export const REPLAY_FIXTURE_LIBRARY = {
  * real queue and handler against `client`. Throws when it does not publish.
  */
 export async function publishReplayFixture(deps: WorkerDeps, client: AiClientLike,
-  email = "cv-replay-fixture@example.invalid", options: { targeted?: boolean; ranked?: boolean } = {}) {
+  email = "cv-replay-fixture@example.invalid", options: { targeted?: boolean; ranked?: boolean; mode?: "auto" | "refine" } = {}) {
   const [existing] = await deps.db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1);
   const user = existing ?? (await createUser(deps.db, { email, name: "Replay fixture", role: "member", emailVerified: true })).user;
   const draft = await seedReplayFixtureDraft(deps.db, user.id, options);
@@ -148,7 +150,57 @@ export async function publishReplayFixture(deps: WorkerDeps, client: AiClientLik
   }
   const [built] = await deps.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   if (built?.status !== "ready") throw new Error(`The fixture draft did not publish: ${built?.status} ${built?.error ?? ""}`);
+  if (options.mode) return pinReplayFixtureMode(deps, built, options.mode);
   return built;
+}
+
+/** Give an invented, published source the same frozen mode inputs used by the actual replay. */
+async function pinReplayFixtureMode(deps: WorkerDeps, draft: typeof schema.cvDrafts.$inferSelect, mode: "auto" | "refine") {
+  if (!draft.content) throw new Error("The mode fixture needs a complete source CV.");
+  const contextId = randomUUID(), descriptionVersionId = randomUUID(), baselineId = randomUUID();
+  const targets = cvEditingTargetsFor(draft.content, randomUUID);
+  const settings = await deps.settings();
+  const routes = Object.fromEntries(CV_PROMPT_IDS.map(id => {
+    const route = resolveRoute(PROMPTS[id], settings.stageRoutes);
+    return [id, { model: routedModel(route, { cvModel: draft.model, callSite: draft.model }, draft.model), effort: route.effort }];
+  })) as CvAutoInputV1["routes"];
+  const contracts = { promptSet: promptSetVersion(), fit: CV_FIT_VERSION, render: CV_RENDER_VERSION, review: CV_REVIEW_VERSION };
+  const snapshot: CvAutoInputV1 = { version: 1, contextId, descriptionVersionId, jobTitle: draft.jobTitle,
+    companyName: draft.companyName, description: draft.jobDescription, library: draft.librarySnapshot,
+    basePriorityIdentity: "source-default", appearance: draft.librarySnapshot.theme, writingPreferences: {}, routes, contracts };
+  const refinements: CvRefinementV1[] = [{ id: randomUUID(), version: 1, order: 0, kind: "instruction",
+    target: { type: "summary", id: targets.summaryId },
+    text: "Keep the summary concise and emphasise confirmed operational leadership. Do not add facts.",
+    reset: false, dependencies: { descriptionVersionId, ...cvRefinementDependencies({ content: draft.content,
+      targets, library: draft.librarySnapshot, descriptionVersionId, target: { type: "summary", id: targets.summaryId } }) } }];
+  if (draft.targetingBrief) {
+    const brief = CvTargetingBriefSchema.parse(draft.targetingBrief);
+    const structured = { kind: "targeting" as const, choices: { entries: brief.entries,
+      presentation: brief.presentation, emphasisRequirementIds: brief.priority.emphasisRequirementIds,
+      ...(brief.priority.requirements ? { requirements: brief.priority.requirements } : {}),
+      acknowledgedEssentialOmissionIds: brief.priority.acknowledgedEssentialOmissionIds } };
+    refinements.push({ id: randomUUID(), version: 1, order: 1, kind: "structured", target: { type: "selection" },
+      structured, reset: false, dependencies: { descriptionVersionId, ...cvRefinementDependencies({ content: draft.content,
+        targets, library: draft.librarySnapshot, descriptionVersionId, target: { type: "selection" }, structured }) } });
+  }
+  return deps.db.transaction(async tx => {
+    await tx.insert(schema.cvApplicationContexts).values({ id: contextId, userId: draft.userId,
+      requestKey: `fixture:${randomUUID()}`, jobTitle: draft.jobTitle, companyName: draft.companyName });
+    await tx.insert(schema.cvContextDescriptions).values({ id: descriptionVersionId, contextId,
+      userId: draft.userId, version: 1, text: draft.jobDescription, source: draft.jobSource });
+    await tx.update(schema.cvApplicationContexts).set({ currentDescriptionVersionId: descriptionVersionId,
+      selectedKind: "draft", selectedId: draft.id }).where(eq(schema.cvApplicationContexts.id, contextId));
+    if (mode === "auto") await tx.insert(schema.cvAutoBaselines).values({ id: baselineId, userId: draft.userId,
+      contextId, descriptionVersionId, inputSnapshot: snapshot, inputKey: cvAutoInputKey(snapshot),
+      engineContract: { ...contracts, routes }, sourceDraftId: draft.id, status: "ready", content: draft.content,
+      librarySnapshot: draft.librarySnapshot, assessment: draft.assessment, editingTargets: targets, publishedAt: deps.now() });
+    const [updated] = await tx.update(schema.cvDrafts).set({ contextId, descriptionVersionId, editingMode: mode,
+      editingTargets: targets, ...(mode === "auto" ? { autoBaselineId: baselineId } : {
+        refinementSnapshot: refinements, refinementSourceContent: draft.content, refinementSourceTargets: targets,
+        refinementEngineContract: { ...contracts, routes }, refinementOriginKind: "baseline" as const,
+      }) }).where(eq(schema.cvDrafts.id, draft.id)).returning();
+    return updated!;
+  });
 }
 
 /** A queued, planned draft for `userId`, with its build task: drain the queue to publish it. */

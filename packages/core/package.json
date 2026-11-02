@@ -32,6 +32,10 @@
       "types": "./src/cv-semantic-audit.ts",
       "default": "./src/cv-semantic-audit.ts"
     },
+    "./cv-editing-modes": {
+      "types": "./src/cv-editing-modes.ts",
+      "default": "./src/cv-editing-modes.ts"
+    },
     "./cv-format": {
       "types": "./src/cv-format.ts",
       "default": "./src/cv-format.ts"

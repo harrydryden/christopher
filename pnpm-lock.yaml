@@ -35,6 +35,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@col/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@col/core':
         specifier: workspace:*
         version: link:../../packages/core

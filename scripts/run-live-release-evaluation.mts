@@ -32,6 +32,9 @@ const maxUsd = Number(process.env.CV_EVAL_MAX_USD);
 const dbUrl = process.env.DATABASE_URL;
 const targeted = process.env.CV_EVAL_TARGETED_FIXTURE === "1";
 const ranked = process.env.CV_EVAL_RANKED_FIXTURE === "1";
+const editingMode = process.env.CV_EVAL_EDITING_MODE;
+if (editingMode && (editingMode !== "refine" || !targeted))
+  throw new Error("Mode qualification currently supports Refine on the targeted synthetic fixture only.");
 if (process.env.CV_EVAL_RANKED_FIXTURE && (!ranked || !targeted))
   throw new Error("Ranked qualification requires both ranked and targeted fixture modes.");
 if (process.env.CV_EVAL_TARGETED_FIXTURE && !targeted)
@@ -56,8 +59,10 @@ if (targeted !== (localDatabaseName === "col_cv_targeted_eval_1030"))
   throw new Error("Targeted evaluation needs its dedicated local database and explicit mode together.");
 const prior = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, "utf8")) : undefined;
 const guard = installLiveEvaluationGuard({ model, maxUsd, phases: {
-  // Ranked qualification extends the same ledger to a new scenario, retaining its cumulative $10 cap.
-  fixture: { maxUsd: 0, maxRequests: 0 }, cv: { maxUsd: 9, maxRequests: ranked ? 21 : 7 }, skills: { maxUsd: 2, maxRequests: ranked ? 8 : 4 },
+  // Each new scenario retains the same cumulative $10 cap and ledger. Refine adds at most seven
+  // CV requests and two skills probes beyond the eighteen/eight already recorded in that ledger.
+  fixture: { maxUsd: 0, maxRequests: 0 }, cv: { maxUsd: 9, maxRequests: editingMode ? 25 : ranked ? 21 : 7 },
+  skills: { maxUsd: 2, maxRequests: editingMode ? 10 : ranked ? 8 : 4 },
 }, prior, onDebit: snapshot => writeFileSync(ledgerPath, JSON.stringify(snapshot, null, 2) + "\n") });
 guard.setPhase("fixture");
 let deps: Awaited<ReturnType<typeof createDeps>> | undefined;
@@ -73,8 +78,10 @@ try {
   const draft = sourceRecording
     ? await deps.db.query.cvDrafts.findFirst({ where: eq(schema.cvDrafts.id, readRecordingHeader(sourceRecording).meta?.draftId ?? "") })
     : await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 200, targetedSignpost: targeted }).client,
-      fixtureEmail, { targeted, ranked });
+      fixtureEmail, { targeted, ranked, ...(editingMode ? { mode: "refine" as const } : {}) });
   if (!draft) throw new Error("The provider-recorded synthetic draft is unavailable for resume.");
+  if ((draft.editingMode ?? undefined) !== editingMode)
+    throw new Error("The fixture editing mode does not match the requested qualification; legacy replay cannot qualify Refine.");
   if (targeted !== (draft.targetingBrief?.priority.state === "confirmed"))
     throw new Error("The source recording does not match the requested targeting mode.");
   if (ranked && !draft.targetingBrief?.priority.requirements?.some(row => row.id.startsWith("u:")))

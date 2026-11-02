@@ -17,6 +17,7 @@ import type { CvReviewDecision } from "@col/core/cv-review";
 import type { CvTailoringPlan } from "@col/core/cv-tailoring";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz, CvTargetingBriefV1 } from "@col/core";
 import type { CvPendingSkillProposal } from "@col/core/cv-pending-skills";
+import type { CvAutoInputV1, CvEditingMode, CvEditingTargets, CvRefinementV1 } from "@col/core/cv-editing-modes";
 import { APPLICATION_STATUSES, type ApplicationStatus } from "@col/core/role-workflow";
 import { EVIDENCE_RATINGS, LIBRARY_REVIEW_SOURCES, type EvidenceRating, type LibraryReviewSource } from "@col/core/library-review";
 import { LOGO_SOURCES } from "@col/core/logo-capture";
@@ -1030,6 +1031,36 @@ export const cvLibraryReviews = pgTable("cv_library_reviews", {
 export type CvLibraryReview = typeof cvLibraryReviews.$inferSelect;
 export type NewCvLibraryReview = typeof cvLibraryReviews.$inferInsert;
 
+/** A durable account-owned application identity, independent of company/title spelling. */
+export const cvApplicationContexts = pgTable("cv_application_contexts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  /** A repeated request key reopens its context; a deliberate new application supplies a new key. */
+  requestKey: text("request_key").notNull(),
+  jobTitle: text("job_title").notNull(),
+  companyName: text("company_name").notNull(),
+  currentDescriptionVersionId: uuid("current_description_version_id"),
+  /** Selection is explicit; a background result never replaces a mounted edition. */
+  selectedKind: text("selected_kind", { enum: ["baseline", "draft"] }),
+  selectedId: uuid("selected_id"),
+  refinementsVersion: integer("refinements_version").notNull().default(0),
+  createdAt: tsNow("created_at"),
+}, table => [uniqueIndex("cv_application_contexts_user_request_idx").on(table.userId, table.requestKey),
+  index("cv_application_contexts_user_idx").on(table.userId, table.createdAt)]);
+
+/** Exact immutable role text; changing an advert creates another numbered version. */
+export const cvContextDescriptions = pgTable("cv_context_descriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  contextId: uuid("context_id").notNull().references(() => cvApplicationContexts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  text: text("text").notNull(),
+  source: jsonb("source").$type<CvJobSource>(),
+  createdAt: tsNow("created_at"),
+}, table => [uniqueIndex("cv_context_descriptions_version_idx").on(table.contextId, table.version),
+  index("cv_context_descriptions_user_idx").on(table.userId, table.contextId)]);
+
 export const cvDrafts = pgTable("cv_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -1038,6 +1069,21 @@ export const cvDrafts = pgTable("cv_drafts", {
   companyName: text("company_name").notNull(),
   jobDescription: text("job_description").notNull(),
   jobSource: jsonb("job_source").$type<CvJobSource>(),
+  contextId: uuid("context_id"),
+  descriptionVersionId: uuid("description_version_id"),
+  /** Null is historical provenance, not a claim that an old CV was manually authored. */
+  editingMode: text("editing_mode", { enum: ["auto", "refine", "manual"] }).$type<CvEditingMode>(),
+  autoBaselineId: uuid("auto_baseline_id"),
+  editingTargets: jsonb("editing_targets").$type<CvEditingTargets>(),
+  appliedRefinements: jsonb("applied_refinements").$type<Array<Pick<CvRefinementV1, "id" | "version">>>(),
+  refinementSnapshot: jsonb("refinement_snapshot").$type<CvRefinementV1[]>(),
+  /** Frozen target source for explicit locks; never passed wholesale to the writer. */
+  refinementSourceContent: jsonb("refinement_source_content").$type<CvContent>(),
+  refinementSourceTargets: jsonb("refinement_source_targets").$type<CvEditingTargets>(),
+  refinementEngineContract: jsonb("refinement_engine_contract").$type<CvAutoInputV1["contracts"] & { routes: CvAutoInputV1["routes"] }>(),
+  /** An Auto-descended Refine may project free; Manual wording is never implicitly promoted. */
+  refinementOriginKind: text("refinement_origin_kind", { enum: ["baseline", "manual"] }),
+  refinedResultKey: text("refined_result_key"),
   assessment: jsonb("assessment").$type<CvAssessment>(),
   /** Exact factual audit input and its completed review; layout-only revisions remeasure the PDF. */
   semanticAuditCache: jsonb("semantic_audit_cache").$type<{ identity: string; review: CvAssessment["review"] }>(),
@@ -1073,6 +1119,8 @@ export const cvDrafts = pgTable("cv_drafts", {
   index("cv_drafts_user_idx").on(table.userId, table.archivedAt, table.createdAt),
   // The job's side of `on delete set null`, and the per-role "does this account hold a CV" probe.
   index("cv_drafts_job_user_idx").on(table.jobId, table.userId).where(sql`${table.jobId} is not null`),
+  uniqueIndex("cv_drafts_refined_result_idx").on(table.userId, table.contextId, table.refinedResultKey)
+    .where(sql`${table.refinedResultKey} is not null`),
 ]);
 
 /**
@@ -1104,6 +1152,8 @@ export const applications = pgTable("applications", {
   cvId: uuid("cv_id").references(() => cvDrafts.id, { onDelete: "set null" }),
   /** The shared posting this is an application for: what ties the row to the account's role stage. */
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  /** New editions use the exact application context; legacy rows remain null. */
+  contextId: uuid("context_id"),
   jobTitle: text("job_title").notNull(),
   companyName: text("company_name").notNull(),
   /** Only a known submission has this date; later status updates need not invent one. */
@@ -1137,6 +1187,40 @@ export const resourceLeases = pgTable("resource_leases", {
   owner: uuid("owner").notNull(),
   expiresAt: ts("expires_at").notNull(),
 });
+
+/** A claimable, account-owned Auto result kept outside ordinary CV revision pruning. */
+export const cvAutoBaselines = pgTable("cv_auto_baselines", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  contextId: uuid("context_id").notNull().references(() => cvApplicationContexts.id, { onDelete: "cascade" }),
+  descriptionVersionId: uuid("description_version_id").notNull().references(() => cvContextDescriptions.id),
+  inputKey: text("input_key").notNull(),
+  inputSnapshot: jsonb("input_snapshot").$type<CvAutoInputV1>().notNull(),
+  status: text("status", { enum: ["queued", "ready", "failed"] }).notNull().default("queued"),
+  /** An ordinary draft may be pruned; publication copies everything needed to reopen the Auto result. */
+  sourceDraftId: uuid("source_draft_id"),
+  content: jsonb("content").$type<CvContent>(),
+  assessment: jsonb("assessment").$type<CvAssessment>(),
+  librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>(),
+  tailoringPlan: jsonb("tailoring_plan").$type<CvTailoringPlan>(),
+  editingTargets: jsonb("editing_targets").$type<CvEditingTargets>(),
+  engineContract: jsonb("engine_contract").$type<CvAutoInputV1["contracts"] & { routes: CvAutoInputV1["routes"] }>().notNull(),
+  createdAt: tsNow("created_at"),
+  publishedAt: ts("published_at"),
+}, table => [uniqueIndex("cv_auto_baselines_input_idx").on(table.userId, table.contextId, table.inputKey),
+  index("cv_auto_baselines_user_idx").on(table.userId, table.contextId, table.createdAt)]);
+
+/** Immutable, ordered revisions of a role-scoped refinement. A reset is a tombstone version. */
+export const cvRefinementEvents = pgTable("cv_refinement_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  contextId: uuid("context_id").notNull().references(() => cvApplicationContexts.id, { onDelete: "cascade" }),
+  stableId: uuid("stable_id").notNull(),
+  version: integer("version").notNull(),
+  refinement: jsonb("refinement").$type<CvRefinementV1>().notNull(),
+  createdAt: tsNow("created_at"),
+}, table => [uniqueIndex("cv_refinement_events_stable_version_idx").on(table.contextId, table.stableId, table.version),
+  index("cv_refinement_events_user_idx").on(table.userId, table.contextId, table.createdAt)]);
 
 /** One account-owned proposal set; selections are saved only by an explicit CV review action. */
 export const cvSkillSuggestionRuns = pgTable("cv_skill_suggestion_runs", {
@@ -1332,6 +1416,11 @@ export const cvPdfs = pgTable("cv_pdfs", {
   userId: uuid("user_id").notNull(),
   contentHash: text("content_hash").notNull(),
   bytes: bytea("bytes").notNull(),
+  /** Null means the historical approval predates explicit checked/unchecked provenance. */
+  approvalMode: text("approval_mode", { enum: ["checked", "unchecked"] }),
+  approvalHash: text("approval_hash"),
+  measuredPages: integer("measured_pages"),
+  acknowledgedWarnings: jsonb("acknowledged_warnings").$type<string[]>(),
   createdAt: tsNow("created_at"),
 }, (t) => [index("cv_pdfs_user_idx").on(t.userId)]);
 export type CvPdf = typeof cvPdfs.$inferSelect;

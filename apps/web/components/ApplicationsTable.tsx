@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, use, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -19,7 +19,7 @@ import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { SettingsForm } from "@/components/SettingsForm";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { manageRoleCv, setRoleStage, updateApplication } from "@/app/actions/applications";
-import { requestCv } from "@/app/actions/cv";
+import { CvWorkspaceEntry } from "@/components/CvWorkspaceEntry";
 import { historyLine, type NextStepNote } from "@/lib/application-dates";
 import { relativeTime } from "@/lib/format";
 import type { PipelineCvQuote, PipelineRow } from "@/lib/queries/applications";
@@ -224,42 +224,8 @@ function StatusPanel({ row, guided = false, onSaved }: { row: PipelineRow; guide
 }
 
 /** The build form, or the sentence that says why it cannot be pressed, once credits are checked. */
-function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: PipelineRow; jobId: string; quotes: QuoteSource; unverified: boolean; buildLabel: string }) {
-  const [description, setDescription] = useState("");
-  // An unconfirmed account cannot build, so it never waits on the credit read.
-  const quote = unverified ? undefined : (isThenable(quotes) ? use(quotes) : quotes)[jobId];
-  // The same one-credit price applies whether the stored or pasted advert is used.
-  const blocked = unverified ? UNVERIFIED : null;
-  const blockedId = `cv-blocked-${row.key.replace(/\s+/g, "-")}`;
-  return blocked ? (
-    <div className="flex flex-col gap-3">
-      <p id={blockedId} className="text-13 text-muted">{blocked}</p>
-      <div>
-        <Button variant="primary" size="sm" disabled aria-describedby={blockedId}>{buildLabel}</Button>
-      </div>
-    </div>
-  ) : (
-    <SettingsForm action={requestCv} submitLabel={buildLabel}
-      submitDisabled={!quote || !!quote.refusal}
-      submitDescribedBy={quote?.refusal ? blockedId : undefined}>
-      <input type="hidden" name="jobId" value={jobId} />
-      <label className="grid gap-1.5">
-        <span className={labelClass}>Paste a replacement description</span>
-        <textarea
-          name="description"
-          rows={3}
-          maxLength={60000}
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          placeholder="Optional. Leave empty to use the stored description."
-          className={`resize-y ${inputClass}`}
-        />
-      </label>
-      {quote && <p className="text-12 text-muted">{quote.line}</p>}
-      {quote?.refusal && <p id={blockedId} className="text-13 text-warn">{quote.refusal} <Link prefetch={false} href="/account#top-ups" className="underline">Add CV credits</Link></p>}
-      {!quote && <p role="status" className="text-13 text-warn">Could not check your CV credits. Reload and try again.</p>}
-    </SettingsForm>
-  );
+function CvBuildControl({ jobId }: { jobId: string }) {
+  return <CvWorkspaceEntry jobId={jobId} />;
 }
 
 function CvPanel({
@@ -280,7 +246,7 @@ function CvPanel({
   const { busy: managing, error: manageError, setError: setManageError, run } = useActionCall();
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => { if (focus) heading.current?.focus(); }, [focus]);
-  const buildLabel = row.cv ? "Rebuild CV" : "Build CV";
+  const cvHref = row.cvContextId ? `/cv/context/${row.cvContextId}` : row.cv ? `/cv/${row.cv.id}` : null;
   /**
    * Archive, restore and delete call the action directly, and the action answers with the row as
    * the database now has it, which the table shows at once. The page is asked for again as well,
@@ -301,18 +267,18 @@ function CvPanel({
   return (
     <div className="space-y-3">
       <h3 className="ds-label" tabIndex={-1} ref={heading}>CV</h3>
-      {row.cv ? (
+      {cvHref ? (
         <p className="text-14">
-          <Link prefetch={false} href={`/cv/${row.cv.id}`} className="underline">Open CV</Link>
-          <span className="ml-2 text-muted">{cvLabel(row)}</span>
+          <Link prefetch={false} href={cvHref} className="underline">Open CV workspace</Link>
+          <span className="ml-2 text-muted">{row.cvSelectedKind === "baseline" ? "Auto selected" : cvLabel(row)}</span>
         </p>
       ) : (
         <p className="text-14 text-muted">No CV for this role yet.</p>
       )}
-      {row.jobId ? (
+      {row.jobId && !row.cvContextId ? (
         // Availability streams in behind the table; until it lands the control waits under the mark.
         <Suspense fallback={<span className="inline-block text-muted"><MarkSmall size={16} searching title="Checking CV credits" /></span>}>
-          <CvBuildControl row={row} jobId={row.jobId} quotes={quotes} unverified={unverified} buildLabel={buildLabel} />
+          <CvBuildControl jobId={row.jobId} />
         </Suspense>
       ) : (
         <p className="text-13 text-muted">
@@ -465,12 +431,12 @@ export function ApplicationsTable({
                   )}
                 </TD>
                 <TD className="max-w-[14rem]">
-                  {row.cv ? (
-                    <><Link prefetch={false} href={`/cv/${row.cv.id}`} className="underline">Open CV</Link><span className="mt-1 block text-12 text-muted">{cvLabel(row)}</span></>
+                  {row.cvContextId || row.cv ? (
+                    <><Link prefetch={false} href={row.cvContextId ? `/cv/context/${row.cvContextId}` : `/cv/${row.cv!.id}`} className="underline">Open CV workspace</Link><span className="mt-1 block text-12 text-muted">{row.cvSelectedKind === "baseline" ? "Auto selected" : cvLabel(row)}</span></>
                   ) : row.jobId ? (
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="text-muted">—</span>
-                      <Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openCv(row.key)}>Build CV</Button>
+                      <Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openCv(row.key)}>Prepare CV</Button>
                     </span>
                   ) : (
                     <span className="text-muted">—</span>
@@ -519,8 +485,8 @@ export function ApplicationsTable({
           {nextSteps[row.key] && <p className={`mt-2 text-13 ${nextSteps[row.key]!.overdue ? "text-warn" : "text-muted"}`}>{nextSteps[row.key]!.line}</p>}
           {staleHints[row.key] && <p className="mt-2 text-12 text-muted">{staleHints[row.key]}</p>}
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-13">
-            {row.cv ? <span><Link prefetch={false} href={`/cv/${row.cv.id}`} className="inline-flex min-h-11 items-center py-2 underline">Open CV</Link><span className="ml-2 text-12 text-muted">{cvLabel(row)}</span></span>
-              : row.jobId ? <Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openCv(row.key)}>Build CV</Button>
+            {row.cvContextId || row.cv ? <span><Link prefetch={false} href={row.cvContextId ? `/cv/context/${row.cvContextId}` : `/cv/${row.cv!.id}`} className="inline-flex min-h-11 items-center py-2 underline">Open CV workspace</Link><span className="ml-2 text-12 text-muted">{row.cvSelectedKind === "baseline" ? "Auto selected" : cvLabel(row)}</span></span>
+              : row.jobId ? <Button size="sm" aria-expanded={expanded} aria-controls={`application-${row.key}`} onClick={() => openCv(row.key)}>Prepare CV</Button>
               : <span className="text-muted">No CV</span>}
             <time dateTime={new Date(row.updatedAt).toISOString()} className="text-12 text-muted">Updated {relativeTime(new Date(row.updatedAt))}</time>
           </div>

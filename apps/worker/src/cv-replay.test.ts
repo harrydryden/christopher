@@ -47,6 +47,64 @@ beforeEach(async () => {
   deps.env.anthropicApiKey = "fixture-key";
 });
 
+it.each(["auto", "refine"] as const)("replays the %s worker branch with isolated frozen mode inputs", async mode => {
+  const draft = await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 1 }).client,
+    `cv-${mode}-replay@example.invalid`, { mode });
+  const before = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  let inspected = false;
+  const result = await replayCvDraft(deps, draft.id, {
+    client: createScriptedAiClient({ barrierMs: 1 }).client, source: "live", unverified: true,
+    inspect: async scratch => {
+      const [copy] = await scratch.select().from(schema.cvDrafts).where(sql`${schema.cvDrafts.userId} <> ${draft.userId} and ${schema.cvDrafts.editingMode} = ${mode}`)
+        .orderBy(sql`${schema.cvDrafts.createdAt} desc`).limit(1);
+      expect(copy).toBeDefined();
+      expect(copy!.contextId).not.toBe(draft.contextId);
+      expect(copy!.descriptionVersionId).not.toBe(draft.descriptionVersionId);
+      expect(copy!.status).toBe("ready");
+      if (mode === "auto") {
+        const [claim] = await scratch.select().from(schema.cvAutoBaselines).where(eq(schema.cvAutoBaselines.id, copy!.autoBaselineId!));
+        expect(claim).toMatchObject({ userId: copy!.userId, sourceDraftId: copy!.id, status: "ready" });
+      } else {
+        expect(copy!.refinementSnapshot?.[0]).toMatchObject({ kind: "instruction",
+          text: draft.refinementSnapshot![0]!.text, dependencies: { descriptionVersionId: copy!.descriptionVersionId } });
+      }
+      inspected = true;
+    },
+  });
+  expect(inspected).toBe(true);
+  expect(result.report.outcome).toBe("published");
+  expect(result.report.calls).toBeGreaterThan(0);
+  deps.aiClient = createScriptedAiClient({ barrierMs: 1 }).client;
+  const recording = join(mkdtempSync(join(tmpdir(), `col-${mode}-replay-`)), "calls.jsonl");
+  await recordCvDraft(deps, draft.id, { path: recording });
+  const replay = await replayFromRecording(deps, draft.id, recording);
+  expect(replay.report).toMatchObject({ outcome: "published", unverified: true, misses: [] });
+  expect(await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id))).toEqual(before);
+}, 120_000);
+
+it("refuses to turn a Manual edition into an authoring replay", async () => {
+  const draft = await seedReplayFixtureDraft(db, userId);
+  await db.update(schema.cvDrafts).set({ editingMode: "manual" }).where(eq(schema.cvDrafts.id, draft.id));
+  const client = createScriptedAiClient({ barrierMs: 1 }).client;
+  await expect(replayCvDraft(deps, draft.id, { client, source: "live", unverified: true }))
+    .rejects.toThrow("Manual wording");
+});
+
+it("qualifies Refine with an explicit instruction and the saved ranked targeting choices", async () => {
+  const draft = await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 1, targetedSignpost: true }).client,
+    "cv-ranked-refine-replay@example.invalid", { mode: "refine", targeted: true, ranked: true });
+  expect(draft.refinementSnapshot).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "instruction" }),
+    expect.objectContaining({ kind: "structured", structured: expect.objectContaining({ kind: "targeting" }) }),
+  ]));
+  deps.aiClient = createScriptedAiClient({ barrierMs: 1, targetedSignpost: true }).client;
+  const path = join(mkdtempSync(join(tmpdir(), "col-ranked-refine-")), "calls.jsonl");
+  const recorded = await recordCvDraft(deps, draft.id, { path });
+  expect(recorded.report.outcome).toBe("published");
+  const replayed = await replayFromRecording(deps, draft.id, path);
+  expect(replayed.report).toMatchObject({ outcome: "published", misses: [], unverified: true });
+}, 120_000);
+
 it("pauses a targeted fixture for owned priorities, then publishes its confirmed brief", async () => {
   const draft = await publishReplayFixture(deps, createScriptedAiClient({ barrierMs: 200, targetedSignpost: true }).client,
     "cv-targeted-replay@example.invalid", { targeted: true });

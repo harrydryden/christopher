@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   const draft = wrapped ? await getOwnCvDraftForPdf(auth.user.id, wrapped.draftId as string) : null;
   if (wrapped && !draft) return new Response("CV draft not found.", { status: 404 });
   let result;
-  try { result = await renderCvPdfWithReport(parsed.data, draft
+  try { result = await renderCvPdfWithReport(parsed.data, draft && draft.editingMode !== "manual"
     ? cvEmploymentDisplay(parsed.data, CvLibrarySchema.parse(draft.librarySnapshot)) : undefined); }
   catch (error) {
     if (error instanceof CvLayoutError) return new Response(error.message, { status: 422 });

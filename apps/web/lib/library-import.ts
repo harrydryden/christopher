@@ -39,6 +39,7 @@ export interface LibraryImportRowView {
 
 export interface LibraryImportView {
   id: string;
+  kind: LibraryImportRowView["kind"];
   createdAt: Date;
   state: LibraryImportState;
   /** What the person called this document, in a few words. */
@@ -108,14 +109,14 @@ export function libraryImportView(row: LibraryImportRowView, hasDocument = false
   const empty = { jobs: 0, rows: 0, education: 0, skills: 0 };
   if (row.error) {
     return {
-      id: row.id, createdAt: row.createdAt, state: "failed", source, proposal: null, counts: empty,
+      id: row.id, kind: row.kind, createdAt: row.createdAt, state: "failed", source, proposal: null, counts: empty,
       headline: `Could not read ${source}`, error: cvViewerLibraryImportError(row.error, admin),
       retryable: hasDocument, stalled: false,
     };
   }
   if (!row.processedAt || row.proposal == null) {
     return {
-      id: row.id, createdAt: row.createdAt, state: "reading", source, proposal: null, counts: empty,
+      id: row.id, kind: row.kind, createdAt: row.createdAt, state: "reading", source, proposal: null, counts: empty,
       headline: `Reading ${source}…`, error: null, retryable: false,
       stalled: now.getTime() - row.createdAt.getTime() > LIBRARY_IMPORT_SLOW_MS,
     };
@@ -123,7 +124,7 @@ export function libraryImportView(row: LibraryImportRowView, hasDocument = false
   const parsed = StoredLibraryProposalSchema.safeParse(row.proposal);
   if (!parsed.success) {
     return {
-      id: row.id, createdAt: row.createdAt, state: "failed", source, proposal: null, counts: empty,
+      id: row.id, kind: row.kind, createdAt: row.createdAt, state: "failed", source, proposal: null, counts: empty,
       headline: `Could not read ${source}`,
       error: "What was read from this document can no longer be shown. Dismiss it and import the document again.",
       retryable: false, stalled: false,
@@ -131,7 +132,7 @@ export function libraryImportView(row: LibraryImportRowView, hasDocument = false
   }
   const counts = countProposedItems(parsed.data);
   return {
-    id: row.id, createdAt: row.createdAt, state: "proposed", source, proposal: parsed.data, counts,
+    id: row.id, kind: row.kind, createdAt: row.createdAt, state: "proposed", source, proposal: parsed.data, counts,
     headline: proposalHeadline(counts, source), error: null, retryable: false, stalled: false,
   };
 }

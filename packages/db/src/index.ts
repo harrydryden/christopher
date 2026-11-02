@@ -27,6 +27,8 @@ export { scanRunSummary, scanRunSummaries, type ScanRunSummary } from "./scan-su
 
 export { abandonCvDraft, actionCvs, completeCv, CvBuildInFlightError, cvRevisionName, lockCvDraft, lockCvLifecycle, nextCvRevision, noteCvBuildFailure, saveCvTailoringPlan, saveImprovedCvRevision, type CvImprovedRevision } from "./cv-lifecycle";
 export { confirmCvTargetingPrioritiesForUser, CvTargetingConfirmationError } from "./cv-targeting-confirm";
+export { resolveCvApplicationContext, updateCvContextDescription, claimCvAutoBaseline, attachCvAutoBaselineDraft, publishCvAutoBaseline, CvContextConflict } from "./cv-editing-context";
+export { currentCvRefinements, appendCvRefinement, CvRefinementConflict } from "./cv-refinements";
 
 export { startCvBuildStep, finishCvBuildStep, failOpenCvBuildSteps, skipOpenCvBuildSteps, listCvBuildSteps, cvBuildStepsSignature, cvBuildMotionStats, type StartCvBuildStep, type FinishCvBuildStep, type CvBuildMotionStat } from "./cv-build-steps";
 

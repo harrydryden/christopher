@@ -1537,6 +1537,8 @@ export class AiEngine {
       tailoringPlan?: CvTailoringPlan;
       emphasisRequirementIds?: string[];
       improvements?: string[];
+      refinementInstructions?: Array<{ id: string; version: number; target: string;
+        sourceIds: string[]; text: string }>;
       layoutFeedback?: {
         pageCount: number;
         maxPages: number;
@@ -1577,6 +1579,7 @@ export class AiEngine {
     const volatile = {
       ...(input.writingBudget ? { writingBudget: input.writingBudget } : {}),
       ...(input.improvements?.length ? { improvements: input.improvements } : {}),
+      ...(input.refinementInstructions?.length ? { refinementInstructions: input.refinementInstructions } : {}),
       ...(input.layoutFeedback ? { layoutFeedback: input.layoutFeedback } : {}),
     };
     const plan = await this.run<CvPlan>(entry, {

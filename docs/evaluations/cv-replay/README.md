@@ -1,12 +1,14 @@
 # CV replay report
 
-`report.json` is the current verified report checked against the shipped prompt set by `scripts/check-evaluation-reports.ts`. It qualifies **`839f32787cdd`** using fresh provider responses for the ranked, targeted synthetic fixture. All ten printed claims are supported, all three essentials are demonstrated, all four replay invariants pass and no recorded requests are missing.
+`report.json` is the current verified report checked against the shipped prompt set by `scripts/check-evaluation-reports.ts`. It qualifies **`f21a62396b80`** using fresh provider responses for a Refine edition with a writing instruction and ranked, targeted synthetic choices. All four replay invariants pass with no missing recorded requests.
 
-The changed author/improvement instruction uses a measured font-aware capacity allowance. The live fixture's smaller evidence library remains one page within its two-page maximum; rich deterministic fixtures separately verify improved use of two pages. The qualified production-display PDF, content and scope/cost notes are in `../cv-capacity-2026-11-01/`.
+The worker preserves the editing mode, frozen source, stable targets, role choices and pinned routes through the isolated replay rather than converting the fixture to a legacy build. The live result, exact PDF and scope notes are in `../cv-modes-2026-11-02/`.
 
-Three live CV calls cost $0.612663 and two live skill calls cost $0.137558. The skill probe produced ten verified suggestions across three categories. The existing cumulative $10 ledger settled at $4.844924, including previous evaluations; it was not reset. The rubric and initial plan remain cached synthetic inputs, not newly live-qualified extraction stages. Offline replay time is not provider latency. No customer data or production database was used.
+Four live CV calls cost $0.728887; two skill calls cost $0.135528 and produced ten suggestions across five categories. The existing cumulative $10 ledger settled at $5.709337; it was not reset. The rubric and initial evidence map remain cached synthetic inputs, not newly live-qualified extraction stages. Offline replay time is not provider latency. No customer data or production database was used.
 
 ## Historical evidence
+
+- `report-live-2026-11-01-capacity.json` preserves the previous qualification at `839f32787cdd`; its live artefacts remain in `../cv-capacity-2026-11-01/`.
 
 - `report-live-2026-10-31-ranked.json` preserves the previous current replay at prompt set `31014dbb8d9a`; its live qualification and skills are in `../cv-ranked-2026-10-31/`.
 

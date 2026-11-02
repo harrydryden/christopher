@@ -115,6 +115,13 @@ const GATES: Record<string, Record<string, Gate>> = {
   },
   "actions/cv-share.ts": { createCvShareLink: "user", revokeCvShareLink: "user", resolveCvShareComment: "user" },
   "actions/cv-targeting.ts": { confirmCvTargetingPriorities: "verified", reviseFailedCvTargeting: "verified" },
+  "actions/cv-editing.ts": {
+    createCvApplicationContext: "user", updateCvApplicationDescription: "user",
+    saveCvRefinement: "user", resetCvRefinement: "user", createManualCvEdition: "user",
+    saveManualCvEdition: "user", selectCvEdition: "user", openCvAutoEdition: "user",
+    openOrClaimAutoCv: "user", retryFailedAutoCv: "verified", generateRefinedCv: "verified",
+  },
+  "actions/cv-finalisation.ts": { prepareCvFinalisation: "user", approveCvFinalisation: "user" },
   "actions/cv-pending-skills.ts": { decideCvPendingSkill: "verified" },
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",

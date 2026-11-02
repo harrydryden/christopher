@@ -50,6 +50,7 @@ describe("libraryImportView", () => {
     const view = libraryImportView(row({ proposal, processedAt: new Date() }));
 
     expect(view.state).toBe("proposed");
+    expect(view.kind).toBe("cv");
     expect(view.counts).toEqual({ jobs: 1, rows: 2, education: 1, skills: 1 });
     expect(view.headline).toBe("Found in jane-okafor-cv.pdf: 1 job, 2 responsibilities, 1 education or training item and 1 skill");
     expect(view.proposal!.employment[0]!.company).toBe("Acme Logistics");
@@ -76,6 +77,12 @@ describe("libraryImportView", () => {
     expect(libraryImportSource({ kind: "website", filename: null, url: "https://www.jane.example/about" })).toBe("jane.example/about");
     expect(libraryImportSource({ kind: "paste", filename: null, url: null })).toBe("Pasted text");
     expect(libraryImportSource({ kind: "linkedin", filename: null, url: null })).toBe("LinkedIn profile");
+  });
+
+  it("retains the source kind even when a filename alone would hide it", () => {
+    const view = libraryImportView(row({ kind: "linkedin", proposal, processedAt: new Date() }));
+    expect(view.kind).toBe("linkedin");
+    expect(view.source).toBe("jane-okafor-cv.pdf");
   });
 });
 

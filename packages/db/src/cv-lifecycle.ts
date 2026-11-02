@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { CvBuildFailure } from "@col/core";
 import type { Db } from "./client";
-import { cvDrafts, cvShareComments, cvShares, cvTailoringPlans } from "./schema";
+import { cvAutoBaselines, cvDrafts, cvShareComments, cvShares, cvTailoringPlans } from "./schema";
 import type { CvTailoringPlan } from "@col/core/cv-tailoring";
 import { cvRoleKey } from "./cv-role-key";
 import {
@@ -30,7 +30,7 @@ export class CvBuildInFlightError extends Error {
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Draft = typeof cvDrafts.$inferSelect;
-type CvRole = Pick<Draft, "userId" | "companyName" | "jobTitle">;
+type CvRole = Pick<Draft, "userId" | "companyName" | "jobTitle"> & { contextId?: string | null };
 type CompletionValues = Pick<
   Partial<typeof cvDrafts.$inferInsert>,
   // A published CV has nothing left to resume from and nothing left to explain, so publication is
@@ -48,7 +48,12 @@ const roleKey = (
         jobTitle: typeof cvDrafts.jobTitle;
       },
 ) => cvRoleKey(role.userId, role.companyName, role.jobTitle);
-const sameRole = (role: CvRole) => sql`${roleKey(cvDrafts)} = ${roleKey(role)}`;
+const lifecycleKey = sql<string>`case when ${cvDrafts.contextId} is not null
+  then 'cv:context:' || ${cvDrafts.userId}::text || ':' || ${cvDrafts.contextId}::text
+  else ${roleKey(cvDrafts)} end`;
+const sameRole = (role: CvRole) => role.contextId
+  ? and(eq(cvDrafts.userId, role.userId), eq(cvDrafts.contextId, role.contextId))!
+  : and(sql`${roleKey(cvDrafts)} = ${roleKey(role)}`, isNull(cvDrafts.contextId))!;
 const metadata = {
   id: cvDrafts.id,
   userId: cvDrafts.userId,
@@ -56,13 +61,18 @@ const metadata = {
   jobTitle: cvDrafts.jobTitle,
   status: cvDrafts.status,
   archivedAt: cvDrafts.archivedAt,
+  contextId: cvDrafts.contextId,
+  editingMode: cvDrafts.editingMode,
+  finalisedAt: cvDrafts.finalisedAt,
+  autoBaselineId: cvDrafts.autoBaselineId,
+  refinedResultKey: cvDrafts.refinedResultKey,
 };
 const newest = [desc(cvDrafts.createdAt), desc(cvDrafts.id)];
 
 /** Unrelated roles can progress independently; the lock lasts only for the transaction. */
 export async function lockCvLifecycle(tx: Transaction, role: CvRole) {
   await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${roleKey(role)}, 0))`,
+    sql`select pg_advisory_xact_lock(hashtextextended(${role.contextId ? `cv:context:${role.userId}:${role.contextId}` : roleKey(role)}, 0))`,
   );
 }
 
@@ -124,7 +134,9 @@ async function pruneFailedCvDrafts(
     .select({ id: cvDrafts.id })
     .from(cvDrafts)
     .where(
-      and(sameRole(role), eq(cvDrafts.status, "failed"), isNull(cvDrafts.archivedAt)),
+      and(sameRole(role), eq(cvDrafts.status, "failed"), isNull(cvDrafts.archivedAt),
+        isNull(cvDrafts.finalisedAt), isNull(cvDrafts.autoBaselineId), isNull(cvDrafts.refinedResultKey),
+        sql`${cvDrafts.editingMode} is distinct from 'manual'`),
     )
     .orderBy(...newest);
   const candidates = failed
@@ -237,7 +249,7 @@ export async function actionCvs(
   await database.transaction(async (tx) => {
     // Lock all affected roles in a stable order, preventing crossed bulk requests deadlocking.
     const roles = await tx
-      .selectDistinct({ key: roleKey(cvDrafts) })
+      .selectDistinct({ key: lifecycleKey })
       .from(cvDrafts)
       .where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId)));
     for (const { key } of roles.sort((a, b) =>
@@ -281,13 +293,13 @@ export async function actionCvs(
     if (!roles.length) return;
     // One metadata query for the entire selection; never load content, evidence or assessments.
     const rows = await tx
-      .select({ ...metadata, key: roleKey(cvDrafts) })
+      .select({ ...metadata, key: lifecycleKey })
       .from(cvDrafts)
       .where(
         and(
           eq(cvDrafts.userId, userId),
           inArray(
-            roleKey(cvDrafts),
+            lifecycleKey,
             roles.map((role) => role.key),
           ),
         ),
@@ -371,7 +383,11 @@ export async function abandonCvDraft(
       .set({ status: "failed", error: error.slice(0, 1000), buildStage: null, ...(failure ? { failure } : {}) })
       .where(and(eq(cvDrafts.id, id), inArray(cvDrafts.status, ["queued", "generating"])))
       .returning({ id: cvDrafts.id });
-    if (rows.length) await releaseCvCredit(tx, id, "CV build stopped before completion");
+    if (rows.length) {
+      await releaseCvCredit(tx, id, "CV build stopped before completion");
+      await tx.update(cvAutoBaselines).set({ status: "failed" })
+        .where(and(eq(cvAutoBaselines.sourceDraftId, id), eq(cvAutoBaselines.status, "queued")));
+    }
     return rows.length ? { userId: draft.userId } : null;
   });
 }

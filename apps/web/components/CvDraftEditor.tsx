@@ -468,7 +468,7 @@ export function CvDraftEditor({
   return (
     <>
       {/* Save and every editable panel remain disabled until React has attached their handlers. */}
-      <fieldset disabled={!!blocked || !hydrated} className="min-w-0" data-cv-editor-dirty={dirty ? "true" : "false"}
+      <fieldset disabled={!!blocked || !hydrated} className="min-w-0" data-cv-editor-id={id} data-cv-editor-dirty={dirty ? "true" : "false"}
         data-cv-editor-ready={hydrated ? "true" : "false"}>
         <SettingsForm
           id={formId}

@@ -145,6 +145,37 @@ it("treats a saved CV with no posting as a role being applied for", async () => 
   expect(page.counts.active).toBe(1);
 });
 
+it("keeps separate application contexts distinct for one posting and includes a pasted no-build context", async () => {
+  const { job } = await role("Operations Lead");
+  await shortlist(job.id);
+  const contexts = await database.insert(schema.cvApplicationContexts).values([
+    { userId: user.id, jobId: job.id, requestKey: `job:${job.id}`, jobTitle: job.title,
+      companyName: "Acme" },
+    { userId: user.id, jobId: job.id, requestKey: `new:${crypto.randomUUID()}`, jobTitle: job.title,
+      companyName: "Acme" },
+    { userId: user.id, jobId: null, requestKey: `paste:${crypto.randomUUID()}`,
+      jobTitle: "Pasted Role", companyName: "Pasted Co" },
+  ]).returning();
+  const [first] = await buildCv(job.id, { contextId: contexts[0]!.id });
+  const [second] = await buildCv(job.id, { contextId: contexts[1]!.id, revision: 2 });
+  await database.update(schema.cvApplicationContexts).set({ selectedKind: "draft", selectedId: first!.id })
+    .where(eq(schema.cvApplicationContexts.id, contexts[0]!.id));
+  await database.update(schema.cvApplicationContexts).set({ selectedKind: "draft", selectedId: second!.id })
+    .where(eq(schema.cvApplicationContexts.id, contexts[1]!.id));
+  await record(job.id, "interview", { contextId: contexts[1]!.id, cvId: second!.id });
+
+  const page = await listPipeline(user.id, { filter: "all" });
+  expect(page.total).toBe(3);
+  expect(new Set(page.rows.map(row => row.key))).toEqual(new Set(contexts.map(row => row.id)));
+  expect(page.rows.find(row => row.cvContextId === contexts[0]!.id)).toMatchObject({ cv: { id: first!.id }, application: null });
+  expect(page.rows.find(row => row.cvContextId === contexts[1]!.id)).toMatchObject({
+    cv: { id: second!.id }, application: { status: "interview" }, stage: "in_process",
+  });
+  expect(page.rows.find(row => row.cvContextId === contexts[2]!.id)).toMatchObject({
+    jobId: null, jobTitle: "Pasted Role", cv: null, application: null, stage: "applying",
+  });
+});
+
 it("orders by how far a role has got, then by what moved last, and pages at fifty", async () => {
   const { job } = await role("Head of Delivery");
   await shortlist(job.id);

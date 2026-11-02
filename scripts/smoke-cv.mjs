@@ -620,14 +620,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       await page.getByRole("table").locator("em").first().textContent(),
       content.summary,
     );
-    assert.equal(await page.locator('input[name="reviewed"]').getAttribute("required"), "");
-    const override = page.getByRole("button", { name: "Finalise with warnings", exact: true });
-    assert.equal(await override.count(), 1);
-    await page.locator('input[name="reviewed"]').check();
-    await override.click();
-    await page.getByText(/You have unsaved CV edits/).waitFor();
+    const approval = page.getByRole("region", { name: "Finalise saved CV", exact: true });
+    await approval.getByRole("button", { name: "Review final PDF and warnings", exact: true }).click();
+    await approval.getByText("Save your CV edits before reviewing the final PDF.", { exact: true }).waitFor();
     assert.equal((await pool.query("select finalised_at from cv_drafts where id = $1", [readyId])).rows[0].finalised_at, null);
-    await page.locator('input[name="reviewed"]').uncheck();
+    assert.equal((await pool.query("select count(*)::int n from cv_pdfs where draft_id = $1", [readyId])).rows[0].n, 0);
     await page
       .getByRole("button", { name: "Uncertain 1", exact: true })
       .click();
@@ -1139,13 +1136,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       1,
     );
     await page.getByRole("button", { name: "Restore previous CV", exact: true }).click();
-    await tableRow().getByRole("link", { name: "Open CV", exact: true }).waitFor().catch(async (error) => {
+    await tableRow().getByRole("link", { name: "Open CV workspace", exact: true }).waitFor().catch(async (error) => {
       throw new Error(
         `${error.message}\nTable state: ${await page.locator("main").innerText()}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
       );
     });
     assert.match(await tableRow().innerText(), /Ready · V1/);
-    assert.equal(new URL(await tableRow().getByRole("link", { name: "Open CV", exact: true }).getAttribute("href"), baseUrl).pathname, `/cv/${tableIds[0]}`);
+    assert.equal(new URL(await tableRow().getByRole("link", { name: "Open CV workspace", exact: true }).getAttribute("href"), baseUrl).pathname, `/cv/${tableIds[0]}`);
     assert.equal(
       (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is null", [tableIds])).rows[0].n,
       1,
@@ -1178,8 +1175,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     );
     await page.getByRole("button", { name: "Delete CV", exact: true }).click();
     await confirmedDeletion;
-    // With no CV the role falls back to Shortlisted and offers to build one.
-    await tableRow().getByRole("button", { name: "Build CV", exact: true }).waitFor({ timeout: 60_000 }).catch(async (error) => {
+    // With no CV the role falls back to Shortlisted and offers a free workspace entry.
+    await tableRow().getByRole("button", { name: "Prepare CV", exact: true }).waitFor({ timeout: 60_000 }).catch(async (error) => {
       throw new Error(
         `${error.message}\nDelete UI: ${await page.locator("main").innerText()}\nErrors: ${JSON.stringify(errors)}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
       );
@@ -1259,9 +1256,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       ["Tools", "Commercial capabilities"]);
     assert.equal(await page.getByRole("textbox", { name: "Skill 1 in Tools", exact: true }).inputValue(), "Reporting");
 
-    // A user can dismiss a finding or skip the review. Both decisions persist and keep the
-    // original score and flags; neither path should strand the final PDF behind the old gate.
-    for (const mode of ["dismiss", "skip"]) {
+    // A user can dismiss a finding or leave its warning open, then deliberately approve the
+    // measured PDF. Both paths keep the assessment and its factual warnings visible.
+    for (const mode of ["dismiss", "leave-warning"]) {
       const reviewId = randomUUID();
       tableIds.push(reviewId);
       await pool.query(`insert into cv_drafts
@@ -1293,18 +1290,26 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
           throw new Error(`Dismissal reload at ${page.url()}: ${error.message}\n${await page.locator("main").innerText()}`);
         });
       }
-      await page.locator('input[name="reviewed"]').check();
-      await page.getByRole("button", { name: mode === "skip" ? "Finalise with warnings" : "Finalise this CV", exact: true }).click();
+      const finalApproval = page.getByRole("region", { name: "Finalise saved CV", exact: true });
+      await finalApproval.getByRole("button", { name: "Review final PDF and warnings", exact: true }).click();
+      await finalApproval.getByText(/Measured PDF:/).waitFor();
+      assert.match(await finalApproval.innerText(), /current Check/);
+      assert.match(await finalApproval.innerText(), /A factual claim remains uncertain/);
+      await finalApproval.getByRole("checkbox", { name: /I have reviewed this saved PDF and its warnings/ }).check();
+      await finalApproval.getByRole("button", { name: "Finalise this CV", exact: true }).click();
       await page.getByText("Finalised. Download the saved PDF, or create a new revision to make changes.", { exact: true }).waitFor().catch(async error => {
         throw new Error(`Finalisation (${mode}) failed: ${error.message}\n${await page.locator("main").innerText()}`);
       });
       const savedReview = (await pool.query("select finalised_at, review_decision, assessment from cv_drafts where id = $1", [reviewId])).rows[0];
       assert.ok(savedReview.finalised_at);
-      assert.equal(savedReview.review_decision.skipped, mode === "skip");
+      assert.equal(savedReview.review_decision?.dismissedRowIds?.length > 0, mode === "dismiss");
       assert.deepEqual(savedReview.assessment, assessment);
+      const approvalRow = (await pool.query("select approval_mode, acknowledged_warnings, bytes from cv_pdfs where draft_id = $1", [reviewId])).rows[0];
+      assert.equal(approvalRow.approval_mode, "checked");
+      assert.ok(approvalRow.acknowledged_warnings.some(warning => warning.startsWith("claim:")));
       const downloaded = await context.request.get(`${baseUrl}/api/cv/${reviewId}/pdf`);
       assert.equal(downloaded.status(), 200);
-      assert.equal((await downloaded.body()).subarray(0, 5).toString(), "%PDF-");
+      assert.deepEqual(await downloaded.body(), approvalRow.bytes, "the approved PDF bytes are served unchanged");
     }
     // Older drafts may store several visual pills in one bullet. Count and edit each label.
     const legacyId = randomUUID();

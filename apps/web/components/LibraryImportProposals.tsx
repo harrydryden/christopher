@@ -5,6 +5,13 @@ import { LibraryImportReading } from "@/components/LibraryImportReading";
 import { acceptLibraryImport, dismissLibraryImport, retryLibraryImport } from "@/app/actions/library-import";
 import { proposedDates, type LibraryImportView } from "@/lib/library-import";
 
+const IMPORT_SOURCE_LABELS: Record<LibraryImportView["kind"], string> = {
+  cv: "CV or career document",
+  linkedin: "LinkedIn PDF export",
+  website: "Website or portfolio",
+  paste: "Pasted text",
+};
+
 /**
  * What came of each document, and the controls that decide what happens to it.
  *
@@ -21,6 +28,7 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
     <div className="grid gap-5">
       {imports.map(view => (
         <Card key={view.id} title={view.headline}>
+          <p className="mb-3 text-13 text-muted">Source: {IMPORT_SOURCE_LABELS[view.kind]}</p>
           {/* The deadline is local to this card: it changes after fifteen minutes even when the
               worker never writes a row and the ten-minute signature poll has stopped. */}
           {view.state === "reading" && <LibraryImportReading id={view.id} createdAtMs={view.createdAt.getTime()} initialStalled={view.stalled} />}

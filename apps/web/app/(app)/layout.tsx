@@ -14,23 +14,11 @@ import { getBillingSummary } from "@/lib/billing/service";
 // The banner and every control it disables say one sentence, from one place.
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { NavLink } from "@/components/NavLink";
+import { PRIMARY_NAV_ITEMS, SECONDARY_NAV_ITEMS } from "@/lib/workspace-navigation";
 import { MarkSmall } from "@/components/brand";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
-
-/** One entry for applications and CVs: the two are one job, on one page, under one heading. */
-const NAV_ITEMS: Array<{ href: string; label: string }> = [
-  { href: "/", label: "Roles" },
-  { href: "/companies", label: "Companies" },
-  { href: "/applications", label: "Applications" },
-  { href: "/library", label: "Experience" },
-];
-const SECONDARY_ITEMS = [
-  { href: "/settings", label: "Preferences" },
-  { href: "/learning", label: "Search profile" },
-  { href: "/health", label: "Needs attention" },
-];
 
 /** Attention leads straight to its resolution, without blocking the rest of the shell. */
 async function HealthNavLink({ userId, href, children }: { userId: string; href: string; children: ReactNode }) {
@@ -74,14 +62,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex flex-1 flex-col md:flex-row">
         <WorkspaceMenu mobilePlan={<Suspense fallback={null}><BillingReadout pending={billing} mobile /></Suspense>}>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
-            {NAV_ITEMS.map((item) => (
+            {PRIMARY_NAV_ITEMS.map((item) => (
               <NavLink key={item.href} href={item.href}>
                 {item.label}
               </NavLink>
             ))}
           </nav>
           <nav aria-label="Workspace tools" className="mt-3 flex flex-wrap gap-0.5 border-t border-brand-ink-muted pt-3 md:block md:space-y-0.5">
-            {[...SECONDARY_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (
+            {[...SECONDARY_NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (
               <Suspense key={item.href} fallback={<NavLink secondary href={item.href}>{item.label}</NavLink>}>
                 <HealthNavLink userId={user.id} href={item.href}>{item.label}</HealthNavLink>
               </Suspense>

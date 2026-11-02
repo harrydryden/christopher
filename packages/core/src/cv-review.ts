@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   CvContentSchema,
-  groupCvLibrary,
+  cvReviewEvidenceLibrary,
   type CvContent,
   type CvLibrary,
 } from "./cv";
@@ -236,7 +236,7 @@ export function cvReviewHash(
         version: CV_REVIEW_VERSION,
         content: printed,
         description,
-        library: groupCvLibrary(library),
+        library: cvReviewEvidenceLibrary(library),
       }),
     )
     .digest("hex");
@@ -258,7 +258,7 @@ export function createCvAssessment(input: {
   /** Trusted, account-owned per-CV ranking; never accepted from the model's rubric call. */
   priorityOverlay?: { sourceRubric: CvRubric; requirements: CvPriorityChoice[] };
 }): CvAssessment {
-  const library = groupCvLibrary(input.library);
+  const library = cvReviewEvidenceLibrary(input.library);
   const rubric = input.priorityOverlay
     ? validateCvEffectiveRubric(validateCvRubric(input.description, input.priorityOverlay.sourceRubric),
       input.priorityOverlay.requirements, input.rubric)

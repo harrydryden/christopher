@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { prerenderToNodeStream } from "react-dom/static";
 import { expect, it, vi } from "vitest";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 import { createCvAssessment } from "@col/core/cv-review";
 import { materialiseCv, type CvLibrary } from "@col/core/cv";
 import {
@@ -23,6 +24,9 @@ vi.mock("next/dynamic", async () => {
 vi.mock("@/app/actions/cv", () => ({
   assessCvDraft: vi.fn(),
   finaliseCvDraft: vi.fn(),
+}));
+vi.mock("@/app/actions/cv-finalisation", () => ({
+  prepareCvFinalisation: vi.fn(), approveCvFinalisation: vi.fn(),
 }));
 import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
 
@@ -133,6 +137,8 @@ it("shows evidence questions and actual unsupported wording with a guided finali
       busy: false,
       hasContent: true,
       content,
+      revision: 1,
+      baseHash: "saved-base",
     }),
   );
   expect(html).toContain("0/100");
@@ -147,7 +153,7 @@ it("shows evidence questions and actual unsupported wording with a guided finali
   expect(html).not.toContain("claim: section:");
   expect(html).toContain("Review findings");
   expect(html).toContain("Nothing further to add");
-  expect(html).toContain("Finalise with warnings");
+  expect(html).toContain("Review final PDF and warnings");
   expect(html).not.toContain("Skip review and finalise anyway");
   expect(html).not.toContain("Your input needed");
   expect(html).toContain("<em>Owned a £10m budget</em>");
@@ -166,9 +172,12 @@ it("never displays a stale score as a current assessment", () => {
       busy: false,
       hasContent: true,
       content,
+      revision: 1,
+      baseHash: "saved-base",
     }),
   );
   expect(html).toContain("Check saved CV");
+  expect(html).toContain("Review final PDF and warnings");
   expect(html).not.toContain("/100");
 });
 
@@ -183,7 +192,18 @@ it("gives a finalised CV with a stale assessment a truthful PDF or recovery stat
   expect(missing).not.toContain("Assessment required");
 });
 
-it("retains finalisation for supported current assessments only", () => {
+it("shows intentional unchecked approval and a direct saved-PDF download", () => {
+  const html = renderToStaticMarkup(createElement(CvAssessmentPanel, {
+    id: "test", assessment: null, current: false, finalised: true, busy: false,
+    hasContent: true, content, hasFinalPdf: true, approvalMode: "unchecked",
+  }));
+  expect(html).toContain("CV finalised · Not checked");
+  expect(html).toContain('href="/api/cv/test/pdf"');
+  expect(html).toContain("Download saved PDF");
+  expect(html).not.toContain("no longer has a current assessment");
+});
+
+it("offers a measured final PDF review for ready saved wording, regardless of Check state", () => {
   const description = "Own a budget";
   const rubric = rubricFixture(description);
   const review = reviewFixture({
@@ -211,14 +231,15 @@ it("retains finalisation for supported current assessments only", () => {
         busy,
         hasContent: true,
         content,
+        revision: 1,
+        baseHash: "saved-base",
       }),
     );
-  expect(render(true, false)).toContain("Finalise this CV");
-  expect(render(false, false)).not.toContain("Finalise this CV");
-  expect(render(true, true)).not.toContain("Finalise this CV");
-  // The default limit is three pages; a CV whose theme allows two is gated at two.
-  expect(render(true, false, 3)).toContain("Finalise this CV");
-  expect(render(true, false, 4)).toContain("Finalise with warnings");
+  expect(render(true, false)).toContain("Review final PDF and warnings");
+  expect(render(false, false)).toContain("Review final PDF and warnings");
+  expect(render(true, true)).not.toContain("Review final PDF and warnings");
+  // Page and factual warnings are measured at the approval step, not guessed from a stale review.
+  expect(render(true, false, 4)).toContain("Review final PDF and warnings");
 });
 
 it("offers an explicit page-warning choice and explains hard assessment obstacles", () => {
@@ -248,10 +269,11 @@ it("offers an explicit page-warning choice and explains hard assessment obstacle
       busy: false,
       hasContent: true,
       content,
+      revision: 1,
+      baseHash: "saved-base",
     }),
   );
-  expect(overPages).toContain("Finalise with warnings");
-  expect(overPages).toContain("4 pages against your chosen 3-page limit");
+  expect(overPages).toContain("Review final PDF and warnings");
 
   // A stale assessment reaches the panel before any table does: the same sentence, beside the
   // control that clears it.

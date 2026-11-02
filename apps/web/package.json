@@ -12,6 +12,7 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
+    "@col/ai": "workspace:*",
     "@col/core": "workspace:*",
     "@col/db": "workspace:*",
     "@col/worker": "workspace:*",

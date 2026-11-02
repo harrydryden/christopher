@@ -5,47 +5,47 @@ import type { EvaluatedRoutes } from "./stage-route-drift";
 /** The route each CV stage was graded at in the last committed evaluation report. */
 export const EVALUATED_ROUTES: EvaluatedRoutes = {
   "report": "docs/evaluations/cv-replay/report.json",
-  "promptSetVersion": "839f32787cdd",
+  "promptSetVersion": "f21a62396b80",
   "unverified": false,
-  "at": "2026-11-01T20:28:37.433Z",
+  "at": "2026-11-02T17:27:12.984Z",
   "routes": {
     "cv.author": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high",
       "defaultModel": "cvModel",
       "defaultEffort": "high"
     },
     "cv.improvement": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high",
       "defaultModel": "cvModel",
       "defaultEffort": "high"
     },
     "cv.planning": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high",
       "defaultModel": "cvModel",
       "defaultEffort": "high"
     },
     "cv.review": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high",
       "defaultModel": "cvModel",
       "defaultEffort": "high"
     },
     "cv.review_candidate": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high",
       "defaultModel": "cvModel",
       "defaultEffort": "high"
     },
     "cv.rubric": {
-      "model": "cvModel",
+      "model": "claude-fable-5-1",
       "resolvedModel": "claude-fable-5-1",
       "effort": "high",
       "defaultModel": "cvModel",

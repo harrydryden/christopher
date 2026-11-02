@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CvContent, CvLibrary } from "./cv";
-import { groupCvLibrary } from "./cv";
+import { cvReviewEvidenceLibrary } from "./cv";
 import type { CvRubric, CvTextItem } from "./cv-assessment";
 import { CV_REVIEW_VERSION, cvClaimItems, cvEvidenceItems, cvTextItems } from "./cv-assessment";
 import { canonicalJson } from "./cv-review";
@@ -17,7 +17,7 @@ export function cvSemanticAuditIdentity(input: {
   eligibleEvidence?: CvTextItem[];
   sourcePolicy?: string;
 }): string {
-  const fullLibraryEvidence = cvEvidenceItems(groupCvLibrary(input.library));
+  const fullLibraryEvidence = cvEvidenceItems(cvReviewEvidenceLibrary(input.library));
   return createHash("sha256").update(canonicalJson({
     reviewContractVersion: CV_REVIEW_VERSION,
     claims: cvClaimItems(input.content),

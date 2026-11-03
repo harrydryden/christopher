@@ -85,7 +85,7 @@ export const TASK_TYPES = TASK_TYPE_NAMES;
 export const NAME_SUGGESTION_STATUSES = ["pending", "applied", "dismissed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
 export const USER_ROLES = ["admin", "member"] as const;
-export const AUTH_PROVIDERS = ["google"] as const;
+export const AUTH_PROVIDERS = ["google", "linkedin"] as const;
 export const AUTH_TOKEN_PURPOSES = ["password_reset", "email_verification"] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 export const BILLING_PLANS = ["free", "search", "intensive"] as const;
@@ -134,6 +134,35 @@ export const authAccounts = pgTable(
   ],
 );
 
+/** One browser-bound, single-use LinkedIn OIDC round trip and its short-lived linking decision. */
+export const linkedinAuthTransactions = pgTable("linkedin_auth_transactions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  stateHash: text("state_hash").notNull().unique(),
+  nonceHash: text("nonce_hash").notNull(),
+  browserHash: text("browser_hash").notNull(),
+  intent: text("intent", { enum: ["sign_in", "link"] }).notNull(),
+  pendingKind: text("pending_kind", { enum: ["link_required", "verify_email", "create_account", "recovery_required"] }),
+  initiatingUserId: uuid("initiating_user_id").references(() => users.id, { onDelete: "cascade" }),
+  targetUserId: uuid("target_user_id").references(() => users.id, { onDelete: "cascade" }),
+  initiatingSessionId: uuid("initiating_session_id"),
+  nextPath: text("next_path").notNull().default("/"),
+  subject: text("subject"),
+  providerEmail: text("provider_email"),
+  providerEmailVerified: boolean("provider_email_verified").notNull().default(false),
+  name: text("name"),
+  chosenEmail: text("chosen_email"),
+  emailTokenHash: text("email_token_hash"),
+  appEmailVerifiedAt: ts("app_email_verified_at"),
+  callbackUsedAt: ts("callback_used_at"),
+  verifiedAt: ts("verified_at"),
+  completedAt: ts("completed_at"),
+  expiresAt: ts("expires_at").notNull(),
+  createdAt: tsNow("created_at"),
+}, t => [
+  index("linkedin_auth_transactions_expires_idx").on(t.expiresAt),
+  index("linkedin_auth_transactions_subject_idx").on(t.subject),
+]);
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -144,6 +173,7 @@ export const sessions = pgTable(
     lastSeenAt: tsNow("last_seen_at"),
     userAgent: text("user_agent"),
     ipAddress: text("ip_address"),
+    authProvider: text("auth_provider", { enum: ["password", "google", "linkedin"] }),
   },
   (t) => [index("sessions_user_idx").on(t.userId), index("sessions_expires_idx").on(t.expiresAt)],
 );

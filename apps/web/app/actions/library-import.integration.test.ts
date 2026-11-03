@@ -214,7 +214,10 @@ it("stores a LinkedIn PDF as an upload and recognises identical bytes imported a
   });
   const uploaded = () => new File([new Uint8Array(pdf)], "linkedin-profile.pdf", { type: "application/pdf" });
 
-  expect(await importLibraryDocument(form({ kind: "linkedin", file: uploaded() }))).toMatchObject({ ok: true });
+  expect(await importLibraryDocument(form({ kind: "linkedin", file: uploaded() })))
+    .toMatchObject({ ok: false, error: expect.stringContaining("your own LinkedIn profile") });
+  expect(await imports()).toHaveLength(0);
+  expect(await importLibraryDocument(form({ kind: "linkedin", file: uploaded(), ownProfile: "yes" }))).toMatchObject({ ok: true });
   const [row] = await imports();
   expect(row).toMatchObject({ kind: "linkedin", filename: "linkedin-profile.pdf", sourceMime: "application/pdf", url: null });
   expect(row!.sourceBytes!.length).toBe(pdf.length);
@@ -232,7 +235,7 @@ it("stores a LinkedIn PDF as an upload and recognises identical bytes imported a
   });
   const cvUpload = () => new File([new Uint8Array(cvPdf)], "earlier-cv.pdf", { type: "application/pdf" });
   expect(await importLibraryDocument(form({ kind: "cv", file: cvUpload() }))).toMatchObject({ ok: true });
-  expect(await importLibraryDocument(form({ kind: "linkedin", file: cvUpload() })))
+  expect(await importLibraryDocument(form({ kind: "linkedin", file: cvUpload(), ownProfile: "yes" })))
     .toMatchObject({ ok: true, message: expect.stringContaining("already imported") });
   expect((await imports()).map(item => item.kind).sort()).toEqual(["cv", "linkedin"]);
   expect(await tasks()).toHaveLength(2);

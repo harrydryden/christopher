@@ -92,6 +92,8 @@ const RULES: Array<[table: string, statement: (limit: number) => SQL]> = [
   // Sign-in bookkeeping: throttling rows, expired sessions and spent links are short-lived.
   ["login_attempts", n => sql`delete from login_attempts where id in (select id from login_attempts where at < now() - interval '1 day' limit ${n})`],
   ["sessions", n => sql`delete from sessions where id in (select id from sessions where expires_at < now() limit ${n})`],
+  // Pending LinkedIn sign-in/link decisions can contain transient identity and email proof data.
+  ["linkedin_auth_transactions", n => sql`delete from linkedin_auth_transactions where id in (select id from linkedin_auth_transactions where expires_at < now() limit ${n})`],
   ["auth_tokens", n => sql`delete from auth_tokens where id in (select id from auth_tokens where expires_at < now() - interval '1 day' limit ${n})`],
   ["auth_tokens", n => sql`delete from auth_tokens where id in (select id from auth_tokens where used_at < now() - interval '1 day' limit ${n})`],
 ];

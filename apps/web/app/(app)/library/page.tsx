@@ -21,10 +21,11 @@ export const dynamic = "force-dynamic";
 const NEED_LIMIT = 300;
 
 export default async function LibraryPage({ searchParams }: {
-  searchParams: Promise<{ need?: string; job?: string; return?: string }>;
+  searchParams: Promise<{ need?: string; job?: string; return?: string; onboarding?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
+  const openLinkedIn = params.onboarding === "linkedin";
   const library = await getOwnCvLibrary(user.id);
   const [evidence, writing, signature, imports, openDrafts] = await Promise.all([
     getLibraryEvidence(user.id, library),
@@ -56,7 +57,7 @@ export default async function LibraryPage({ searchParams }: {
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Experience" />
       {!library && <p className="ds-prose max-w-3xl text-16">Start with a CV or career document if you have one. You can also add a job below and build your Experience a question at a time.</p>}
-      {!library && <LibraryImportCard />}
+      {!library && <LibraryImportCard openLinkedIn={openLinkedIn} />}
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
       {importProgress && <LibraryImportPoller pending={reading} signature={importProgress.signature} />}
       <CvLibraryEditor
@@ -74,7 +75,7 @@ export default async function LibraryPage({ searchParams }: {
       {evidence.evaluating && library && (
         <LibraryEvidencePoller version={library.version} signature={signature} />
       )}
-      {library && <details id="library-import-panel" className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 text-muted">Import another document</summary><div className="mt-3"><LibraryImportCard showTitle={false} /></div></details>}
+      {library && <details id="library-import-panel" open={openLinkedIn} className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 text-muted">Import another document</summary><div className="mt-3"><LibraryImportCard showTitle={false} openLinkedIn={openLinkedIn} /></div></details>}
       <details className="border-t border-line-muted pt-3">
         <summary className="cursor-pointer text-14 text-muted">Writing preferences</summary>
         <div className="mt-3"><Card>

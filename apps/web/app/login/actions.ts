@@ -42,7 +42,7 @@ export async function login(formData: FormData): Promise<void> {
   await releaseRateLimitReservations(reservation!.filter(({ key }) => key === addressKey));
   await clearAttempts(pairKey);
   await clearAttempts(emailKey);
-  await startSession(result.user.id);
+  await startSession(result.user.id, undefined, "password");
   redirect(next);
 }
 

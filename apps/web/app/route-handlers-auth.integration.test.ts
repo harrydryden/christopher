@@ -71,6 +71,8 @@ const ROUTES: Record<string, Access> = {
   "api/work-status/route.ts": "session",
   "auth/google/callback/route.ts": { public: "Completes Google sign-in; the signed state cookie and Google's answer are the credential." },
   "auth/google/route.ts": { public: "Starts Google sign-in, before there is any session." },
+  "auth/linkedin/callback/route.ts": { public: "Completes LinkedIn sign-in using one-use state and browser-bound cookies before a session exists." },
+  "auth/linkedin/route.ts": { public: "Starts LinkedIn sign-in before there is a session; linking requires an existing account session." },
   "share/[token]/comments/route.ts": { public: "A reviewer holding a share link has no account; the live share token is the credential." },
 };
 

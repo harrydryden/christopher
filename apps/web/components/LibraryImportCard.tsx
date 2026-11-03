@@ -13,7 +13,7 @@ import { importLibraryDocument } from "@/app/actions/library-import";
  * Each says what is expected of it in one sentence, because the refusals behind them are specific
  * and a person should not have to discover a five-megabyte cap by hitting it.
  */
-export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean }) {
+export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { showTitle?: boolean; openLinkedIn?: boolean }) {
   return (
     <Card title={showTitle ? "Import a document" : undefined}>
       <div className="grid gap-2">
@@ -21,7 +21,7 @@ export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean })
           Choose one source. Nothing is added to Experience until you review and confirm it.
         </p>
 
-        <details id="library-import-cv" name="library-import-source" open={showTitle} className="border-t border-line-muted pt-2">
+        <details id="library-import-cv" name="library-import-source" open={showTitle && !openLinkedIn} className="border-t border-line-muted pt-2">
           <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">CV or career document</summary>
           <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
@@ -37,15 +37,16 @@ export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean })
           </div>
         </details>
 
-        <details id="library-import-linkedin" name="library-import-source" className="border-t border-line-muted pt-2">
+        <details id="library-import-linkedin" name="library-import-source" open={openLinkedIn} className="border-t border-line-muted pt-2">
           <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">LinkedIn PDF export</summary>
           <div className="grid gap-2 pb-4">
+          <p className="text-13 text-muted">Upload only your own profile. This is a dated export, not a check of your live LinkedIn page.</p>
           <ol className="list-decimal space-y-1 pl-5 text-12 text-muted">
             <li>On a desktop, open your own LinkedIn profile.</li>
             <li>Choose More or Resources → Save to PDF.</li>
             <li>Upload that PDF here (up to 5 MB).</li>
           </ol>
-          <p className="text-12 text-muted">Save to PDF is unavailable for some members and in the mobile app. If you cannot export a PDF, paste your profile text below instead. A LinkedIn link alone does not read your profile.</p>
+          <p className="text-12 text-muted">Save to PDF is unavailable for some members and in the mobile app. If you cannot export a PDF, paste text from your own profile below instead. A LinkedIn link alone does not read your profile.</p>
           <p className="text-12 text-muted">You can import a CV or other career document alongside a LinkedIn export, one upload at a time. Review the suggested entries before adding them to Experience.</p>
           <a href="https://www.linkedin.com/help/linkedin/answer/a541960" target="_blank" rel="noopener noreferrer" className="w-fit text-12 underline">LinkedIn’s PDF export help</a>
           <LibraryImportForm action={importLibraryDocument} submitLabel="Import LinkedIn PDF" pendingLabel="Uploading…">
@@ -54,6 +55,8 @@ export function LibraryImportCard({ showTitle = true }: { showTitle?: boolean })
               LinkedIn PDF
               <input id="library-linkedin-pdf" type="file" name="file" required accept="application/pdf,.pdf" className={`${inputClass} mt-1.5`} />
             </label>
+            <label className="flex min-h-11 items-center gap-2 text-13"><input type="checkbox" name="ownProfile" value="yes" required />
+              This is an export of my own LinkedIn profile.</label>
           </LibraryImportForm>
           </div>
         </details>

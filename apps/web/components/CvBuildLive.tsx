@@ -162,7 +162,13 @@ export function CvBuildLive({
           state = step.state;
           next = step.next;
           if (step.reload) {
-            // The build screen holds no edits to lose, so a stuck soft refresh is recovered whole.
+            // A context workspace can hold unsaved wording in another mounted mode.
+            // Keep it intact and offer a deliberate reload if soft refresh cannot settle.
+            if (document.querySelector('[data-cv-mode-dirty="true"]')) {
+              setConnectionIssue(true);
+              startTransition(() => router.refresh());
+              return FIRST_POLL_MS;
+            }
             window.location.reload();
             return null;
           }

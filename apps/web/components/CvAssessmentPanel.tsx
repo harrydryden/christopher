@@ -43,6 +43,7 @@ export function CvAssessmentPanel({
   comments = [],
   initialFindingId = null,
   reviewDecision = null,
+  checkSuccessHash = "cv-panel-content",
 }: {
   id: string;
   revision?: number;
@@ -78,6 +79,7 @@ export function CvAssessmentPanel({
   comments?: CvCommentInput[];
   initialFindingId?: string | null;
   reviewDecision?: CvReviewDecision | null;
+  checkSuccessHash?: string;
 }) {
   if (continuationDraftId) return <section className="space-y-3 border border-line-muted p-4" aria-labelledby="cv-match-title">
     <h2 id="cv-match-title" className="text-14 font-semibold">Job match assessment</h2>
@@ -110,7 +112,7 @@ export function CvAssessmentPanel({
         {!busy && !finalised && (
           <>
             <fieldset disabled={!!blocked} className="min-w-0">
-              <CvCheckForm id={id} hasContent={hasContent} />
+              <CvCheckForm id={id} hasContent={hasContent} successHash={checkSuccessHash} />
               {hasContent && <p className="mt-2 text-12 text-muted">Check assesses this exact saved wording. It does not rewrite or shorten it.</p>}
             </fieldset>
             {blocked && <p role="status" className="text-14 text-warn">{blocked}</p>}

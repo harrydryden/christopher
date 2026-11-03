@@ -1,6 +1,6 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { CV_PROMPT_IDS, PROMPTS, promptSetVersion, resolveRoute, routedModel } from "@col/ai/prompt-registry";
 import { CV_REVIEW_VERSION, type CvJobSource } from "@col/core/cv-assessment";
@@ -14,9 +14,11 @@ import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvRefinedResultKey, 
 import { CvContentSchema, CvLibrarySchema, CvThemeSchema, DEFAULT_CV_THEME, groupCvLibrary, isKnownModel, modelForCallSite,
   type CvContent, type CvLibrary } from "@col/core";
 import { canonicalJson, cvAssessmentCurrent, validateCvRubric } from "@col/core/cv-review";
+import { cvPreviewRefinementRebase, type CvRefinementRebaseItem } from "@col/core/cv-refinement-rebase";
 import { appendCvRefinement, currentCvRefinements, attachCvAutoBaselineDraft, claimCvAutoBaseline, cvApplicationContexts, cvAutoBaselines,
   cvContextDescriptions, cvDrafts, jobs, companies, userJobs, users, nextCvRevision, reserveCvCredit,
   resolveCvApplicationContext } from "@col/db";
+import type { Db } from "@col/db";
 import { cvTailoringPlans, saveCvTailoringPlan } from "@col/db";
 import { updateCvContextDescription } from "@col/db";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
@@ -104,6 +106,110 @@ export type AutoCvResult = { ok: true; status: "ready" | "queued" | "failed" | "
   | { ok: false; error: string };
 
 export type CvRefinementResult = { ok: true; version: number } | { ok: false; error: string };
+export type CvRebasePreviewResult = { ok: true; version: number; toDescriptionVersionId: string;
+  previewKey: string; items: CvRefinementRebaseItem[] } | { ok: false; error: string };
+export type CvRebaseApplyResult = { ok: true; version: number; rebasedIds: string[];
+  conflicts: Extract<CvRefinementRebaseItem, { status: "conflict" }>[] } | { ok: false; error: string };
+
+type CvTx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+async function cvRebaseSnapshot(tx: CvTx, input: { userId: string; contextId: string;
+  expectedVersion: number; fromBaselineId: string; toBaselineId: string }) {
+  const [context] = await tx.select().from(cvApplicationContexts).where(and(
+    eq(cvApplicationContexts.id, input.contextId), eq(cvApplicationContexts.userId, input.userId))).for("update");
+  if (!context?.currentDescriptionVersionId || context.refinementsVersion !== input.expectedVersion)
+    throw new UserFacingError("These refinements changed. Reload this application before rebasing.");
+  const [from, to] = await Promise.all([input.fromBaselineId, input.toBaselineId].map(id =>
+    tx.select().from(cvAutoBaselines).where(and(eq(cvAutoBaselines.id, id),
+      eq(cvAutoBaselines.userId, input.userId), eq(cvAutoBaselines.contextId, input.contextId),
+      eq(cvAutoBaselines.status, "ready"))).limit(1).then(rows => rows[0])));
+  if (!from?.content || !from.editingTargets || !from.librarySnapshot ||
+      !to?.content || !to.editingTargets || !to.librarySnapshot)
+    throw new UserFacingError("Choose two saved Auto results in this application to review the source change.");
+  if (to.descriptionVersionId !== context.currentDescriptionVersionId)
+    throw new UserFacingError("The destination Auto result uses an older role description. Update Auto first.");
+  const active = await currentCvRefinements(tx, input.userId, input.contextId);
+  const items = cvPreviewRefinementRebase({ from: { id: from.id,
+    descriptionVersionId: from.descriptionVersionId, content: from.content,
+    targets: from.editingTargets, library: from.librarySnapshot,
+    rubric: from.assessment?.rubric ?? null },
+  to: { id: to.id, descriptionVersionId: to.descriptionVersionId, content: to.content,
+    targets: to.editingTargets, library: to.librarySnapshot, rubric: to.assessment?.rubric ?? null },
+  refinements: active });
+  const previewKey = createHash("sha256").update(canonicalJson({ contextId: context.id,
+    currentDescriptionVersionId: context.currentDescriptionVersionId,
+    refinementsVersion: context.refinementsVersion,
+    from: { id: from.id, inputKey: from.inputKey, content: from.content,
+      editingTargets: from.editingTargets, librarySnapshot: from.librarySnapshot,
+      rubric: from.assessment?.rubric ?? null },
+    to: { id: to.id, inputKey: to.inputKey, content: to.content,
+      editingTargets: to.editingTargets, librarySnapshot: to.librarySnapshot,
+      rubric: to.assessment?.rubric ?? null }, active, items })).digest("hex");
+  return { context, to, active, items, previewKey };
+}
+
+/** Review exact anchors before choosing which remembered rules to carry to a newer Auto source. */
+export async function previewCvRefinementRebase(contextId: string, expectedVersion: number,
+  fromBaselineId: string, toBaselineId: string): Promise<CvRebasePreviewResult> {
+  const user = await requireUser();
+  try {
+    if (![contextId, fromBaselineId, toBaselineId].every(id => uuid.test(id)) ||
+        fromBaselineId === toBaselineId || !Number.isInteger(expectedVersion) || expectedVersion < 0)
+      throw new UserFacingError("Choose distinct saved Auto results and reload this application.");
+    const snapshot = await db().transaction(tx => cvRebaseSnapshot(tx, {
+      userId: user.id, contextId, expectedVersion, fromBaselineId, toBaselineId }));
+    return { ok: true, version: snapshot.context.refinementsVersion,
+      toDescriptionVersionId: snapshot.to.descriptionVersionId,
+      previewKey: snapshot.previewKey, items: snapshot.items };
+  } catch (error) {
+    const result = actionError(error, "Could not review these refinements. Please try again.");
+    return { ok: false, error: result.ok ? "Could not review these refinements." : result.error };
+  }
+}
+
+/** The preview is advisory; the account, sources, overlay version and exact mapping are rechecked under lock. */
+export async function applyCvRefinementRebase(contextId: string, expectedVersion: number,
+  fromBaselineId: string, toBaselineId: string, expectedPreviewKey: string,
+  acceptedIds: string[]): Promise<CvRebaseApplyResult> {
+  const user = await requireUser();
+  try {
+    if (![contextId, fromBaselineId, toBaselineId].every(id => uuid.test(id)) ||
+        fromBaselineId === toBaselineId || !Number.isInteger(expectedVersion) || expectedVersion < 0 ||
+        !/^[a-f0-9]{64}$/.test(expectedPreviewKey) || !Array.isArray(acceptedIds) ||
+        acceptedIds.some(id => !uuid.test(id)) || new Set(acceptedIds).size !== acceptedIds.length)
+      throw new UserFacingError("Reload the source review before carrying these refinements forward.");
+    const result = await db().transaction(async tx => {
+      const snapshot = await cvRebaseSnapshot(tx, { userId: user.id, contextId,
+        expectedVersion, fromBaselineId, toBaselineId });
+      if (snapshot.previewKey !== expectedPreviewKey)
+        throw new UserFacingError("The source review changed. Preview these refinements again.");
+      const compatible = new Map(snapshot.items.filter((item): item is Extract<CvRefinementRebaseItem,
+        { status: "compatible" }> => item.status === "compatible").map(item => [item.id, item]));
+      if (acceptedIds.some(id => !compatible.has(id)))
+        throw new UserFacingError("Only exact compatible refinements can be carried forward. Review the conflicts.");
+      let version = expectedVersion;
+      for (const id of acceptedIds) {
+        const prior = snapshot.active.find(row => row.id === id)!;
+        const mapped = compatible.get(id)!;
+        const saved = await appendCvRefinement(tx, { userId: user.id, contextId, expectedVersion: version,
+          refinement: CvRefinementSchema.parse({ ...prior, version: prior.version + 1,
+            target: mapped.target, ...(mapped.structured ? { structured: mapped.structured } : {}),
+            dependencies: { descriptionVersionId: snapshot.to.descriptionVersionId,
+              sourceIds: mapped.sourceIds, sourceHash: mapped.sourceHash,
+              originBaselineId: snapshot.to.id } }) });
+        version = saved.version;
+      }
+      return { version, rebasedIds: acceptedIds,
+        conflicts: snapshot.items.filter((item): item is Extract<CvRefinementRebaseItem,
+          { status: "conflict" }> => item.status === "conflict") };
+    });
+    revalidatePath(`/cv/context/${contextId}`);
+    return { ok: true, ...result };
+  } catch (error) {
+    const result = actionError(error, "Could not carry these refinements forward. Please try again.");
+    return { ok: false, error: result.ok ? "Could not carry these refinements forward." : result.error };
+  }
+}
 
 type RefinementInput = { id?: string; kind: CvRefinementV1["kind"]; target: CvRefinementV1["target"];
   text?: string; structured?: CvRefinementV1["structured"]; order: number;
@@ -189,7 +295,8 @@ export async function saveCvRefinement(contextId: string, expectedVersion: numbe
         order: input.order, kind: input.kind, target: input.target,
         ...(input.text !== undefined ? { text: input.text } : {}),
         ...(input.structured !== undefined ? { structured: input.structured } : {}),
-        dependencies: { descriptionVersionId: context.currentDescriptionVersionId, ...dependencies }, reset: false });
+        dependencies: { descriptionVersionId: context.currentDescriptionVersionId, ...dependencies,
+          originBaselineId: (baseline ?? retained)?.id ?? null }, reset: false });
       return appendCvRefinement(tx, { userId: user.id, contextId, expectedVersion, refinement: row });
     });
     revalidatePath("/cv");
@@ -337,8 +444,8 @@ export async function saveManualCvEdition(draftId: string, expectedRevision: num
       if (!source || source.editingMode !== "manual" || !source.contextId || source.status !== "ready" ||
         source.revision !== expectedRevision)
         throw new UserFacingError("This Manual CV changed. Reload it before saving.");
-      if (!context || source.contextId !== context.id || context.selectedKind !== "draft" || context.selectedId !== source.id ||
-        context.currentDescriptionVersionId !== source.descriptionVersionId)
+      // Manual wording stays pinned to its saved advert even when this context gains a newer JD.
+      if (!context || source.contextId !== context.id || context.selectedKind !== "draft" || context.selectedId !== source.id)
         throw new UserFacingError("The selected application changed. Reload it before saving.");
       if (source.content && source.editingTargets && !rawTargets)
         throw new UserFacingError("Reload this Manual CV to preserve its item targets before saving.");

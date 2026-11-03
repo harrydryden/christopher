@@ -34,6 +34,7 @@ export async function getOwnCvWorkspace(userId: string, contextId: string,
       eq(cvContextDescriptions.id, context.currentDescriptionVersionId),
       eq(cvContextDescriptions.contextId, contextId), eq(cvContextDescriptions.userId, userId))).limit(1) : Promise.resolve([]),
     baselineCursor === "end" ? Promise.resolve([]) : db().select({ id: cvAutoBaselines.id, status: cvAutoBaselines.status, sourceDraftId: cvAutoBaselines.sourceDraftId,
+      descriptionVersionId: cvAutoBaselines.descriptionVersionId,
       createdAt: cvAutoBaselines.createdAt, publishedAt: cvAutoBaselines.publishedAt })
       .from(cvAutoBaselines).where(and(eq(cvAutoBaselines.contextId, contextId), eq(cvAutoBaselines.userId, userId),
         baselineCursor ? or(lt(cvAutoBaselines.createdAt, baselineCursor.createdAt),

@@ -155,6 +155,25 @@ it("keeps backing off over a failure that a later reading can recover from", asy
   expect(router.refresh).not.toHaveBeenCalled();
 });
 
+it("keeps an unsaved mode buffer mounted when finished work needs a hard-reload fallback", async () => {
+  const first = reading([wire(1, "load_inputs", "done")]);
+  const finished = { ...first, active: false, live: false, status: "ready" as const,
+    version: "ready:::finished" };
+  const fetch = vi.fn<(url: string) => Promise<Response>>().mockResolvedValue(ok(finished));
+  vi.stubGlobal("fetch", fetch);
+  const dirty = document.createElement("textarea"); dirty.dataset.cvModeDirty = "true"; dirty.value = "Unsaved Manual wording";
+  document.body.append(dirty);
+  try {
+    act(() => root.render(<CvBuildLive id="draft-1" mode="build" initial={first}
+      nowMs={T0 + 60_000} timeZone="UTC" versionLabel="V1" />));
+    await advance(FIRST_POLL_MS * 4);
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(dirty.isConnected).toBe(true);
+    expect(dirty.value).toBe("Unsaved Manual wording");
+    expect(router.refresh).toHaveBeenCalled();
+  } finally { dirty.remove(); }
+});
+
 it("keeps the live stage visible while the detailed narrative is closed", async () => {
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
   act(() => root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([wire(1, "load_inputs", "done")])}

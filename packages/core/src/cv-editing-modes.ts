@@ -102,7 +102,7 @@ export const CvRefinementSchema = z.object({
     z.object({ kind: z.literal("item_order"), sectionIds: z.array(uuid).max(20), itemIds: z.record(uuid, z.array(uuid).max(100)) }),
   ]).optional(),
   dependencies: z.object({ descriptionVersionId: uuid, sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
-    sourceIds: z.array(z.string().min(1).max(220)).max(100) }),
+    sourceIds: z.array(z.string().min(1).max(220)).max(100), originBaselineId: uuid.nullable().optional() }),
   reset: z.boolean().default(false),
 }).superRefine((row, ctx) => {
   if (row.kind !== "structured" && !row.reset && !row.text?.trim())

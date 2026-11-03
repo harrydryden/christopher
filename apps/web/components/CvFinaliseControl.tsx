@@ -14,8 +14,8 @@ export function CvFinaliseControl({ id, revision, baseHash }: { id: string; revi
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const dirty = () => [...document.querySelectorAll<HTMLElement>('[data-cv-editor-dirty="true"]')]
-    .some(editor => editor.dataset.cvEditorId === id);
+  const dirty = () => [...document.querySelectorAll<HTMLElement>('[data-cv-editor-dirty="true"], [data-cv-mode-dirty="true"]')]
+    .some(editor => editor.dataset.cvEditorId === id || editor.dataset.cvModeEditorId === id);
 
   async function prepare() {
     if (pending) return;

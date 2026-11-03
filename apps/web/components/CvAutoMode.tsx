@@ -3,23 +3,19 @@
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { openCvAutoEdition, openOrClaimAutoCv } from "@/app/actions/cv-editing";
-import { CvSelectEdition } from "./CvSelectEdition";
-import { CvFinaliseControl } from "./CvFinaliseControl";
-import { CvCheckForm } from "./CvCheckForm";
 
 type Baseline = { id: string; status: "queued" | "ready" | "failed"; sourceDraftId: string | null;
   rendererCurrent?: boolean };
 
-export function CvAutoMode({ contextId, selectedBaseline, baselines, summary }: {
+export function CvAutoMode({ contextId, selectedBaseline, summary, knownLibraryDrift = false, knownRoleDrift = false }: {
   contextId: string; selectedBaseline: Baseline | null;
-  baselines: Array<Baseline & { publishedAt: string | null }>;
   summary: ReactNode;
+  knownLibraryDrift?: boolean; knownRoleDrift?: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [opened, setOpened] = useState<{ baselineId: string; id: string; revision: number; baseHash: string } | null>(null);
   async function update() {
     if (pending) return;
     if (document.querySelector('[data-cv-mode-dirty="true"]') &&
@@ -46,9 +42,7 @@ export function CvAutoMode({ contextId, selectedBaseline, baselines, summary }: 
       const result = await openCvAutoEdition(contextId, selectedBaseline.id);
       if (!result.ok) setError(result.error);
       else {
-        setOpened({ baselineId: selectedBaseline.id, id: result.draftId,
-          revision: result.revision, baseHash: result.baseHash });
-        setNotice("Review this saved wording. Check is optional before final approval."); router.refresh();
+        setNotice("This saved Auto CV is selected. Feedback and final approval are below; Check is optional."); router.refresh();
       }
     } catch { setError("Could not open this Auto edition. Please try again."); }
     finally { setPending(false); }
@@ -64,26 +58,19 @@ export function CvAutoMode({ contextId, selectedBaseline, baselines, summary }: 
         href={`/api/cv/baseline/${selectedBaseline.id}/pdf`}>Open selected Auto PDF</a>
         : <p className="text-12 text-warn">This Auto PDF used an earlier layout. Update Auto or fork a new edition to review it with the current layout.</p>}
       <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending}
-        onClick={useSavedBaseline}>Review and finalise this Auto CV · free</button>
-      {opened?.baselineId === selectedBaseline.id && <div className="space-y-3 border-t border-line-muted pt-3">
-        <CvCheckForm id={opened.id} hasContent />
-        <CvFinaliseControl id={opened.id} revision={opened.revision} baseHash={opened.baseHash} />
-      </div>}
+        onClick={useSavedBaseline}>Select Auto for Feedback and approval · free</button>
     </div> : selectedBaseline?.status === "queued" ? <p role="status">Auto is building. Your selected edition will not change when it finishes.</p>
       : <p>No ready Auto result is selected for this application.</p>}
+    {(knownLibraryDrift || knownRoleDrift) && <p role="status" className="border border-warn p-3 text-12 text-warn">
+      {knownRoleDrift && "The saved role description has changed. "}
+      {knownLibraryDrift && "Your Experience has changed. "}
+      Update Auto only when you want a new result from the current inputs; the selected saved CV stays available.
+    </p>}
     <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending} onClick={update}>
       {pending ? "Checking current inputs…" : selectedBaseline ? "Update Auto from current inputs" : "Create Auto CV"}
     </button>
     <p className="text-12 text-muted">A saved result is free; generating a new Auto CV uses one CV credit. Refine and Manual edits stay separate.</p>
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert" className="text-danger">{error}</p>}
-    {baselines.some(row => row.id !== selectedBaseline?.id) && <details><summary className="cursor-pointer">Other Auto results</summary>
-      <ul className="mt-2 space-y-2">{baselines.filter(row => row.id !== selectedBaseline?.id).map(row => <li key={row.id}>
-        <CvSelectEdition contextId={contextId} kind="baseline" id={row.id} label="Select this Auto result" />
-        {row.status === "ready" ? <a className="underline" href={`/api/cv/baseline/${row.id}/pdf`} target="_blank" rel="noopener noreferrer">Open saved Auto PDF</a>
-          : <span>{row.status === "queued" ? "Building" : "Failed"}</span>}
-        {row.publishedAt && <span className="ml-2 text-12 text-muted">{new Date(row.publishedAt).toLocaleDateString("en-GB")}</span>}
-      </li>)}</ul>
-    </details>}
   </div>;
 }

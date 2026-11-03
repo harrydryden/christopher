@@ -130,15 +130,16 @@ it("retains a hidden instruction and the selected bullet through the exact-save 
 it("keeps an unsaved section order while an exact summary save selects its child", async () => {
   vi.mocked(saveAndUpdateCvExactRefinement).mockResolvedValue({ ok: true, version: 2,
     draftId: "child", revision: 2, charged: false });
+  const summaryId = "c551e23a-a966-474c-81a8-7f7a3fd0dfd7";
   const content = { name: "Alex", contact: "alex@example.test", summary: "Old summary", gaps: [],
     sections: [{ entryId: "first", kind: "experience", heading: "First", bullets: ["One"] },
       { entryId: "second", kind: "experience", heading: "Second", bullets: ["Two"] }] } as CvContent;
-  const targets: CvEditingTargets = { version: 1, summaryId: existing.target.id,
+  const targets: CvEditingTargets = { version: 1, summaryId,
     sections: [{ entryId: "first", sectionId: "4b1fa6b2-bc7e-4657-b02f-a91fcce78625",
       bulletIds: ["5f8e019a-8e9b-4226-9e21-b8ae476f81d9"], skillIds: [] },
     { entryId: "second", sectionId: "22770533-cd85-45bb-b02e-b44f3c4627e3",
       bulletIds: ["41f5c41d-860f-4e75-b7f5-fd3bcb66589d"], skillIds: [] }] };
-  const props = { contextId: "context", targets: [{ type: "summary" as const, id: existing.target.id,
+  const props = { contextId: "context", targets: [{ type: "summary" as const, id: summaryId,
     label: "Summary", sourceText: "Old summary" }], refinements: [] as CvRefinementV1[],
     sourceContent: content, sourceTargets: targets };
   act(() => root.render(<CvRefineMode {...props} initialVersion={1}

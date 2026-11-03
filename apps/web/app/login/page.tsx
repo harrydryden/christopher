@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { login } from "./actions";
 import { googleConfigured } from "@/lib/google";
-import { AuthDivider, AuthShell, GoogleButton } from "@/components/AuthShell";
+import { linkedinConfigured } from "@/lib/linkedin";
+import { AuthDivider, AuthShell, GoogleButton, LinkedInButton } from "@/components/AuthShell";
 import { Button } from "@/components/Button";
 import { Field, Input } from "@/components/Field";
 import { sanitizeNextPath, sessionSecret } from "@/lib/session";
@@ -16,7 +17,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   google_state: "The Google sign-in round trip did not complete. Try again.",
   google_failed: "Google sign-in failed. Try again, or use your email and password.",
   google_unverified: "Google has not verified that email address, so it cannot be used to sign in.",
-  closed: "Registration is by invitation on this deployment, so that Google account cannot create one.",
+  linkedin_not_configured: "LinkedIn sign-in is unavailable here. Use your email and password or another sign-in method.",
+  linkedin_state: "The LinkedIn sign-in did not complete. Try again, or use another sign-in method.",
+  linkedin_failed: "LinkedIn sign-in failed. Try again, or use your email and password.",
+  linkedin_cancelled: "LinkedIn sign-in was cancelled. You can try again or use another sign-in method.",
+  linkedin_link_login: "Sign in to your account before linking LinkedIn from Account.",
+  closed: "Registration is by invitation on this deployment, so that account cannot create one.",
   unconfirmed: "This account is waiting for its email address to be confirmed. Use the link we sent, or request a new one from the sign-up page.",
   signed_out: "You have been signed out.",
 };
@@ -31,6 +37,7 @@ export default async function LoginPage({
   const next = sanitizeNextPath(sp.next);
   const error = sp.error ? (ERROR_MESSAGES[sp.error] ?? "Something went wrong. Try again.") : null;
   const google = googleConfigured();
+  const linkedin = linkedinConfigured();
 
   return (
     <AuthShell
@@ -53,9 +60,13 @@ export default async function LoginPage({
           {google && (
             <>
               <GoogleButton next={next} />
-              <AuthDivider />
             </>
           )}
+          {linkedin && <div className={google ? "mt-2" : undefined}>
+            <LinkedInButton next={next} />
+            <p className="mt-2 text-13 text-muted">Signing in does not import your profile or connections.</p>
+          </div>}
+          {(google || linkedin) && <AuthDivider />}
           <form action={login} className="flex flex-col gap-3">
             <input type="hidden" name="next" value={next} />
             <Field label="Email" htmlFor="email">

@@ -133,6 +133,9 @@ async function prepareImport(
     if ("error" in checked) return checked;
     return { input: { userId, kind, url: checked.url } };
   }
+  if (kind === "linkedin" && form.get("ownProfile") !== "yes") {
+    return { error: "Confirm that this is an export of your own LinkedIn profile before uploading." };
+  }
   const file = form.get("file");
   if (!(file instanceof File) || !file.size) return { error: "Choose a PDF or Word document to upload." };
   if (file.size > LIBRARY_IMPORT_MAX_BYTES) {
@@ -144,7 +147,9 @@ async function prepareImport(
     return { error: `That file is larger than ${MEGABYTES}. Upload a smaller export, or paste the text instead.` };
   }
   if (!uploadKind(bytes, file.type)) {
-    return { error: "Course of Life reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead." };
+    return { error: kind === "linkedin"
+      ? "Upload a PDF of your own profile, or paste your profile text. Do not upload a whole LinkedIn data archive."
+      : "Course of Life reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead." };
   }
   return {
     input: {

@@ -68,6 +68,10 @@ const nextConfig: NextConfig = {
       // A share link's URL is its credential: no page it links to may learn it, not even its origin.
       // Listed after the rule above, which Next lets it override.
       { source: "/share/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+      { source: "/auth/linkedin/:path*", headers: [
+        { key: "Referrer-Policy", value: "no-referrer" },
+        { key: "Cache-Control", value: "private, no-store" },
+      ] },
     ];
   },
   outputFileTracingRoot: path.resolve(__dirname, "../.."),

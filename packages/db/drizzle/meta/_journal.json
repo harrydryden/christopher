@@ -484,6 +484,13 @@
       "when": 1793620806000,
       "tag": "0070_baseline_plan",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1793620807000,
+      "tag": "0071_linkedin_oidc",
+      "breakpoints": true
     }
   ]
 }

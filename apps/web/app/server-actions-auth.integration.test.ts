@@ -153,6 +153,14 @@ const GATES: Record<string, Record<string, Gate>> = {
     resynthesizeNow: "verified", resynthesizeNowSetting: "verified", rescoreAllRoles: "verified", rescoreAllRolesSetting: "verified",
     acceptReasonTag: "user", acceptReasonTagSetting: "user",
   },
+  "actions/linkedin.ts": {
+    getLinkedInPendingView: { public: "The browser-bound pending cookie identifies an uncompleted sign-in; no account session exists yet." },
+    beginLinkedInEmailVerification: { public: "An unsigned person must prove an email before creating an account; the browser-bound pending transaction and rate limits constrain it." },
+    completeLinkedInEmailVerification: { public: "The single-use email token and same-browser pending cookie are the credentials." },
+    createLinkedInAccount: { public: "Explicit account creation follows a verified provider identity and app email decision in the pending transaction." },
+    completeLinkedInLink: "user",
+    unlinkLinkedIn: "user",
+  },
   "actions/scores.ts": { retryFailedScore: "verified" },
   "actions/library-import.ts": {
     importLibraryDocument: "verified", acceptLibraryImport: "user", dismissLibraryImport: "user", retryLibraryImport: "verified",

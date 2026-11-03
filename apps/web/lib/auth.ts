@@ -97,14 +97,14 @@ export async function clientAddress(): Promise<string> {
 }
 
 /** Create a session row for `userId` and set the cookie that names it. */
-export async function startSession(userId: string, ttlSeconds = DEFAULT_SESSION_TTL_SECONDS): Promise<string> {
+export async function startSession(userId: string, ttlSeconds = DEFAULT_SESSION_TTL_SECONDS, authProvider?: "password" | "google" | "linkedin"): Promise<string> {
   const secret = sessionSecret();
   if (!secret) throw new Error("SESSION_SECRET is not set");
   const h = await headers();
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
   const [session] = await db()
     .insert(sessions)
-    .values({ userId, expiresAt, userAgent: h.get("user-agent")?.slice(0, 300) ?? null, ipAddress: (await clientAddress()).slice(0, 100) })
+    .values({ userId, expiresAt, authProvider: authProvider ?? null, userAgent: h.get("user-agent")?.slice(0, 300) ?? null, ipAddress: (await clientAddress()).slice(0, 100) })
     .returning({ id: sessions.id });
   await db().update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
   const value = await createSessionCookieValue(secret, session!.id, expiresAt);

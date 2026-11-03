@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     const { accessToken } = await exchangeGoogleCode({ code, codeVerifier: remembered.verifier, redirectUri: `${appOrigin(request)}/auth/google/callback` });
     const profile = await fetchGoogleProfile(accessToken);
     const { user } = await signInWithGoogle(profile);
-    await startSession(user.id);
+    await startSession(user.id, undefined, "google");
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     console.error(JSON.stringify({ event: "google_sign_in_failed", error: message.slice(0, 300) }));

@@ -47,6 +47,18 @@ export function GoogleButton({ next, label = "Continue with Google" }: { next?: 
   );
 }
 
+/** Authentication only. Profile and connections imports are separate choices after sign-in. */
+export function LinkedInButton({ next, label = "Continue with LinkedIn", intent = "sign_in" }: {
+  next?: string; label?: string; intent?: "sign_in" | "link";
+}) {
+  const search = new URLSearchParams({ intent });
+  if (next && next !== "/") search.set("next", next);
+  return <a href={`/auth/linkedin?${search.toString()}`}
+    className="ds-pixel ds-press inline-flex min-h-11 w-full items-center justify-center border-2 border-line bg-raised px-4 py-2 text-13 text-fg no-underline hover:bg-fg hover:text-bg">
+    {label}
+  </a>;
+}
+
 export function AuthDivider() {
   return (
     <div className="my-4 flex items-center gap-3 text-12 text-muted" aria-hidden="true">

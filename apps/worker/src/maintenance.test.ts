@@ -19,7 +19,7 @@ beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
 beforeEach(async () => {
   await db.execute(sql`truncate tasks, companies, career_sources, jobs, job_events, scans, discovery_runs, sessions, login_attempts,
-    auth_tokens, ai_reservations, verification_cache, worker_events restart identity cascade`);
+    auth_tokens, linkedin_auth_transactions, ai_reservations, verification_cache, worker_events restart identity cascade`);
   await db.execute(sql`delete from settings where key = 'internal:lastMaintenance'`);
 });
 
@@ -194,6 +194,9 @@ describe("sign-in bookkeeping and short-lived caches", () => {
   it("go once they have expired, and stay while they are live", async () => {
     const user = await ensureTestUser(db, "maintenance@example.com");
     await db.execute(sql`insert into sessions (user_id, expires_at) values (${user.id}, now() - interval '1 minute'), (${user.id}, now() + interval '1 day')`);
+    await db.execute(sql`insert into linkedin_auth_transactions (state_hash, nonce_hash, browser_hash, intent, subject, provider_email, email_token_hash, expires_at) values
+      ('expired-li', 'expired-nonce', 'expired-browser', 'sign_in', 'expired-subject', 'expired@example.test', 'expired-token', now() - interval '1 minute'),
+      ('live-li', 'live-nonce', 'live-browser', 'link', 'live-subject', 'live@example.test', 'live-token', now() + interval '1 hour')`);
     await db.execute(sql`insert into login_attempts (key, at) values ('old', now() - interval '25 hours'), ('recent', now() - interval '1 hour')`);
     await db.execute(sql`insert into auth_tokens (user_id, purpose, token_hash, expires_at, used_at) values
       (${user.id}, 'password_reset', 'expired', now() - interval '2 days', null),
@@ -206,6 +209,8 @@ describe("sign-in bookkeeping and short-lived caches", () => {
     await maintainHistory(deps);
 
     expect(await count(sql`select 1 from sessions`)).toBe(1);
+    expect((await db.execute(sql`select subject, provider_email, email_token_hash from linkedin_auth_transactions`)).rows)
+      .toEqual([{ subject: "live-subject", provider_email: "live@example.test", email_token_hash: "live-token" }]);
     expect((await db.execute(sql`select key from login_attempts`)).rows).toEqual([{ key: "recent" }]);
     expect((await db.execute(sql`select token_hash from auth_tokens`)).rows).toEqual([{ token_hash: "live" }]);
     // A hold that expired minutes ago is left for the reservation sweep; only the long-dead one goes.

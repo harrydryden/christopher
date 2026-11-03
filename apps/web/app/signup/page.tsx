@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { resendConfirmation, signup } from "@/app/login/actions";
 import { googleConfigured } from "@/lib/google";
+import { linkedinConfigured } from "@/lib/linkedin";
 import { emailConfigured } from "@/lib/email";
 import { getSystemSettings } from "@/lib/settings";
-import { AuthDivider, AuthShell, GoogleButton } from "@/components/AuthShell";
+import { AuthDivider, AuthShell, GoogleButton, LinkedInButton } from "@/components/AuthShell";
 import { Button } from "@/components/Button";
 import { Field, Input } from "@/components/Field";
 import { sanitizeNextPath } from "@/lib/session";
@@ -38,6 +39,8 @@ export default async function SignupPage({
   const next = sanitizeNextPath(sp.next);
   const error = sp.error ? (ERROR_MESSAGES[sp.error] ?? "Something went wrong. Try again.") : null;
   const open = (await getSystemSettings()).registrationOpen;
+  const google = googleConfigured();
+  const linkedin = linkedinConfigured();
 
   if (sp.pending) {
     return (
@@ -72,12 +75,12 @@ export default async function SignupPage({
         Start on Free: monitor up to 25 active companies and build your first 3 tailored CVs. You can choose a plan or buy more CV credits later in Account.
       </p>
       {!open && <p className="mb-3 border-2 border-warn px-3 py-2 text-13 text-warn" role="status">{CLOSED_NOTICE}</p>}
-      {googleConfigured() && (
-        <>
-          <GoogleButton next={next} label="Sign up with Google" />
-          <AuthDivider />
-        </>
-      )}
+      {google && <GoogleButton next={next} label="Sign up with Google" />}
+      {linkedin && <div className={google ? "mt-2" : undefined}>
+        <LinkedInButton next={next} label="Sign up with LinkedIn" />
+        <p className="mt-2 text-13 text-muted">This signs you in only. Importing a profile or connections is a separate choice.</p>
+      </div>}
+      {(google || linkedin) && <AuthDivider />}
       <form action={signup} className="flex flex-col gap-3">
         <input type="hidden" name="next" value={next} />
         <Field label="Name" htmlFor="name" hint="Optional.">

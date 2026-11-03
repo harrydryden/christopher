@@ -5,11 +5,13 @@ import { Card } from "@/components/Card";
 import { inputClass, labelClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { BillingOverview } from "@/components/BillingOverview";
+import { LinkedInDisconnectControl } from "@/components/LinkedInDisconnectControl";
 import { SettingsForm } from "@/components/SettingsForm";
 import { linkedProviders } from "@/lib/accounts";
 import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
 import { googleConfigured } from "@/lib/google";
+import { linkedinConfigured } from "@/lib/linkedin";
 import { MIN_PASSWORD_LENGTH } from "@col/core";
 import { getBillingSummary } from "@/lib/billing/service";
 import { addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout } from "@/app/actions/billing";
@@ -112,6 +114,19 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
               : googleConfigured()
                 ? <span className="text-muted">not linked. <a href="/auth/google?next=%2Faccount" className="text-fg underline">Link a Google account</a> (it must use this email address).</span>
                 : <span className="text-muted">not configured on this deployment</span>}
+          </li>
+          <li className="space-y-2">
+            <div>LinkedIn: {providers.some(p => p.provider === "linkedin")
+              ? <Badge tone="green">linked</Badge>
+              : linkedinConfigured()
+                ? user.emailVerifiedAt
+                  ? <span className="text-muted">not linked. <a href="/auth/linkedin?intent=link&next=%2Faccount" className="text-fg underline">Link LinkedIn account</a></span>
+                  : <span className="text-muted">confirm your account email before linking</span>
+                : <span className="text-muted">not configured on this deployment</span>}</div>
+            {providers.some(p => p.provider === "linkedin")
+              ? <LinkedInDisconnectControl canDisconnect={!!user.passwordHash || (googleConfigured() && providers.some(p => p.provider === "google"))} />
+              : linkedinConfigured() && user.emailVerifiedAt &&
+                <p className="text-12 text-muted">You’ll confirm access to this account before linking.</p>}
           </li>
         </ul>
       </Card>

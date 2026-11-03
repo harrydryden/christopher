@@ -66,3 +66,18 @@ it("uses the retained Auto baseline ID and its own priority view after producer 
     priorities: [{ text: "Auto role priority" }] } });
   expect(mocks.baselineView).toHaveBeenCalledWith(expect.objectContaining({ id: baseline.id }));
 });
+
+it("compares a chained exact result with its verified immediate Refine parent", async () => {
+  const generated = { ...parent, editingMode: "refine", content: { ...content,
+    summary: "Instruction-generated summary" } } as unknown as Draft;
+  const exactChild = { ...result, refinementOriginKind: "baseline", autoBaselineId: id(20),
+    parentId: generated.id, refinementSourceContent: generated.content } as unknown as Draft;
+  mocks.parent = generated;
+  mocks.targeting.mockReset().mockResolvedValue({ draftId: generated.id,
+    priorities: [{ text: "Parent role priority" }] });
+  mocks.baselineView.mockClear();
+  expect(await cvComparisonSourceForOwnedDraft(parent.userId, parent.contextId!, exactChild))
+    .toMatchObject({ provenance: "exact", sourceTargeting: { draftId: generated.id,
+      priorities: [{ text: "Parent role priority" }] } });
+  expect(mocks.baselineView).not.toHaveBeenCalled();
+});

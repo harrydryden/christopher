@@ -45,7 +45,7 @@ The tables describe the intended contract, including existing behaviour that mus
 | Prepare an application / Auto | Sources changed | What changed and an explicit update action | Update → new retained baseline | Retain old baselines and all Manual editions |
 | Prepare an application / Auto | Failed | Recoverable message and saved editions | Retry when supported | No fabricated successful result; existing credit/refund rules apply |
 | Tailor this role / Refine | Unmodified item | CV wording in context | Edit wording or give an instruction | The action states whether it is exact text or generation |
-| Tailor this role / Refine | Remembered change | Visible marker at the item, with reset | Apply saved choices | Scope is this application only; no implicit global learning |
+| Tailor this role / Refine | Remembered change | Visible marker at the item, with reset | Save and update CV for exact changes; explicitly generate for instructions | Scope is this application only; no implicit global learning |
 | Tailor this role / Refine | Source changed | Compatible choices and explicit conflicts | Review/update bindings, then apply | Never attach by array position or silently accept changed evidence |
 | Tailor this role / Refine | Reset | Baseline wording/choice restored | Continue editing | Reset one/all leaves Experience and saved editions intact |
 | Finish wording / Manual | Unsaved | Current text plus unsaved state | Save this version | Mode switches preserve the buffer; navigation guards against loss |
@@ -78,8 +78,8 @@ CV consolidation and navigation/import contracts are part of this follow-up. A r
 Automated browser checks must exercise user decisions, not merely the presence of headings:
 
 1. Open a saved Auto CV twice: identify the same version and observe no new task/credit.
-2. Edit a visible summary, remember it for the role, apply it, then reset only that change. Other remembered choices and Experience must survive.
-3. Change the role description/evidence; inspect compatible refinements and conflicts before rebuilding. Confirm that no old target is attached to a new item silently.
+2. Edit a visible, prefilled summary and save it once. The current saved CV must contain the edit without a separate Apply step or model call. Forget only that change for future builds; the current wording, other remembered choices and Experience must survive.
+3. Change the role description/evidence and follow the guided update from the current CV. Review compatible refinements and conflicts after the new source is ready, without selecting internal source/destination IDs in the normal path. Confirm that no old target is attached to a new item silently.
 4. Compare results with a removed experience, reordered skills, changed Essential criterion and font/page choice. Each change must be visible in the comparison.
 5. Change Layout through one shared entry point; its persistence follows the selected mode. No disabled duplicate control sends the person elsewhere.
 6. Type Manual wording, visit other modes and return. Save without generating. Rebuild separately and recover the saved Manual version.
@@ -93,3 +93,33 @@ Browser checks establish functional completion and recoverability, not human com
 ## Evidence and release boundary
 
 Record exact automated journeys and remaining exceptions in ADR 0005. Report measured local/hosted latency as observations, not general speed promises. Keep frontend bundle budgets and no-generation-on-save assertions as release gates. Real-user validation, production migration and deployment are separate activities and must be reported honestly when they have not occurred.
+
+
+## Approved simplification pass after PR 134
+
+Functional correctness is necessary but does not establish an intuitive journey. This pass retains the three editing modes and their persistence guarantees while reducing the decisions needed for common tasks. The following journeys are implemented and covered by the automated verification recorded in ADR 0005; human comprehension remains untested.
+
+| Task | Previous user work | Required simplified journey |
+| --- | --- | --- |
+| Change exact wording | Find item → type/copy wording → save refinement → apply refinements | Open prefilled item → edit → Save and update CV; confirm the saved CV changed |
+| Keep a writing instruction | Save instruction, with its application state inferred from other controls | Save instruction → explicit paid generation when wanted; never charge from an exact Save |
+| Know which CV will be approved | Reconcile active mode, selected edition, remembered changes and approval panel | Current saved CV identity and state remain explicit; primary action follows the active unsaved work or next review step |
+| Update after new evidence/role | Update Auto → select source/destination → preview mappings → accept → apply | Update Auto → review source changes → carry the compatible set once → explicitly apply or generate remaining changes; advanced source selection remains secondary |
+| Find an older result | Infer differences from repeated Auto labels and dates | Recognisable mode, version, time and source context, with a clear current marker |
+| Recover edits after a source changes | Copy wording or reselect an earlier source manually | Restore original saved edition directly and continue with the retained wording; copying remains an optional fallback |
+
+Count meaningful decisions and required actions, not only clicks: moving a button or collapsing a panel does not remove a conceptual step. Measure a fresh CV and a realistic long CV on desktop and phone. Avoid introducing automatic paid generation, automatic evidence promotion or silent source acceptance to reduce apparent steps.
+
+The production-browser fixture verifies two successive exact saves using one remembered rule, no redundant Apply step, recovery of dirty wording after selecting a different source, one compatible-set confirmation with real conflicts retained, unchanged final PDF bytes, and keyboard access at 390 px without horizontal overflow or browser errors. It uses synthetic content with two sections, so it does not establish long-document comprehension or production latency. A local run measured the exact save at 112 ms and Manual save at 48 ms; neither queued model work or consumed a new CV credit.
+
+### Human comprehension check still required
+
+Ask representative users to complete these tasks without narrating the interface or explaining the modes:
+
+1. Build a CV for the supplied role, then locate the document they would send.
+2. Change one summary sentence and verify it appears in their saved CV.
+3. Keep a role-specific preference, then make an independent final wording edit. Predict which survives a rebuild.
+4. Update Experience and produce an updated CV while keeping a previous final version recoverable.
+5. Resolve one changed-source refinement, reset another, and finalise despite an acknowledged warning.
+
+Record completion without help, wrong turns, help requests, time to first usable CV, whether an unintended build/credit occurs, and whether the participant correctly identifies the current final document and the scope of each edit. Analyse errors individually rather than presenting a small sample as a population success rate. Automated browser acceptance and local timings must remain separate from these human observations. No participants or results are claimed by this document.

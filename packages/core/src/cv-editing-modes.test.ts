@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CvContentSchema, CvLibrarySchema } from "./cv";
 import { cvApplyExactLocks, cvApplyGeneratedExactLocks, cvAutoInputKey, cvCarryEditingTargets, cvEditingTargetsFor,
-  cvProjectRefinements, cvRefinementDependencies, cvRefinedResultKey,
+  cvProjectRefinements, cvProjectOneExactWording, cvRefinementDependencies, cvRefinedResultKey,
   validateCvEditingTargets, validateCvEditingTargetTransition, type CvAutoInputV1 } from "./cv-editing-modes";
 
 const library = CvLibrarySchema.parse({ name: "Ada", contact: "London", profile: "Supported operations delivery",
@@ -17,6 +17,29 @@ const input: CvAutoInputV1 = { version: 1, contextId: "00000000-0000-4000-8000-0
   contracts: { promptSet: "p1", review: "r1", fit: "f1", render: "v1" } };
 
 describe("CV editing identities", () => {
+  it("projects one stable exact edit without reverting generated wording or other citations and signposts", () => {
+    let n = 100;
+    const generated = CvContentSchema.parse({ ...content, summary: "Generated instruction wording",
+      sections: [{ ...content.sections[0]!, bullets: ["Generated first result", "Generated second result"],
+        bulletSignposts: ["Impact", "Delivery"] }] });
+    const targets = cvEditingTargetsFor(generated, () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`);
+    const updated = cvProjectOneExactWording({ content: generated, targets,
+      target: { type: "bullet", id: targets.sections[0]!.bulletIds[1]! }, text: "My exact second result" });
+    expect(updated.summary).toBe("Generated instruction wording");
+    expect(updated.sections[0]!.bullets).toEqual(["Generated first result", "My exact second result"]);
+    expect(updated.sections[0]!.bulletSources).toEqual(generated.sections[0]!.bulletSources);
+    expect(updated.sections[0]!.bulletSignposts).toEqual(["Impact", "Delivery"]);
+    expect(generated.sections[0]!.bullets[1]).toBe("Generated second result");
+    expect(cvProjectOneExactWording({ content: generated, targets,
+      target: { type: "section", id: targets.sections[0]!.sectionId }, text: "My own role heading" })
+      .sections[0]!.heading).toBe("My own role heading");
+    expect(cvProjectOneExactWording({ content: generated, targets,
+      target: { type: "summary", id: targets.summaryId }, text: "My exact summary" }).summarySources)
+      .toEqual([]);
+    expect(() => cvProjectOneExactWording({ content: generated, targets,
+      target: { type: "bullet", id: "00000000-0000-4000-8000-000000000999" }, text: "Wrong item" }))
+      .toThrow("item changed");
+  });
   it("ignores object-key order but invalidates Auto on source, role, preference and contract changes", () => {
     const key = cvAutoInputKey(input);
     const reloaded = JSON.parse(JSON.stringify(input));

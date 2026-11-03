@@ -32,6 +32,15 @@ export async function cvComparisonSourceForOwnedDraft(userId: string, contextId:
   const unavailable = { sourceTargeting: null, provenance: "unavailable" as const };
   if (result.userId !== userId || result.contextId !== contextId || result.editingMode !== "refine")
     return unavailable;
+  // A later exact edit compares with the edition the person actually edited. Its
+  // Auto baseline remains the factual dependency authority, but may have older prose.
+  if (result.parentId) {
+    const [parent] = await db().select().from(cvDrafts).where(and(
+      eq(cvDrafts.id, result.parentId), eq(cvDrafts.userId, userId),
+      eq(cvDrafts.contextId, contextId))).limit(1);
+    if (parent && cvComparisonSourceMatches(result, parent))
+      return { provenance: "exact", sourceTargeting: await cvTargetingViewForOwnedDraft(userId, parent) };
+  }
   if (result.refinementOriginKind === "baseline" && result.autoBaselineId) {
     const [baseline] = await db().select().from(cvAutoBaselines).where(and(
       eq(cvAutoBaselines.id, result.autoBaselineId), eq(cvAutoBaselines.userId, userId),
@@ -41,14 +50,6 @@ export async function cvComparisonSourceForOwnedDraft(userId: string, contextId:
     return { provenance: "exact", sourceTargeting: cvBaselineTargetingView({ id: baseline.id,
       content: CvContentSchema.parse(baseline.content), library: baseline.librarySnapshot,
       assessment: baseline.assessment, plan: baseline.tailoringPlan, snapshot: baseline.inputSnapshot }) };
-  }
-  if (result.refinementOriginKind === "manual" && result.parentId) {
-    const [parent] = await db().select().from(cvDrafts).where(and(
-      eq(cvDrafts.id, result.parentId), eq(cvDrafts.userId, userId),
-      eq(cvDrafts.contextId, contextId))).limit(1);
-    if (!parent || parent.editingMode !== "manual" || !cvComparisonSourceMatches(result, parent))
-      return unavailable;
-    return { provenance: "exact", sourceTargeting: await cvTargetingViewForOwnedDraft(userId, parent) };
   }
   return unavailable;
 }

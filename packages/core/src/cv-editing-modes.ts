@@ -117,6 +117,40 @@ export const CvRefinementSchema = z.object({
 export type CvRefinementV1 = z.infer<typeof CvRefinementSchema>;
 export type CvRefinementConflict = { id: string; targetId?: string; reason: "missing_target" | "changed_source" | "changed_role" | "cannot_fit" | "duplicate_target" };
 
+/** One free exact edit changes only its stable target on the selected saved edition. */
+export function cvProjectOneExactWording(input: { content: CvContent; targets: CvEditingTargets;
+  target: { type: "summary" | "section" | "bullet" | "skill"; id: string }; text: string }): CvContent {
+  const targets = validateCvEditingTargets(input.content, input.targets);
+  if (!input.text.trim()) throw new Error("Give this CV item wording before saving it.");
+  const content = structuredClone(input.content);
+  if (input.target.type === "summary" && input.target.id === targets.summaryId) {
+    content.summary = input.text;
+    content.summarySources = [];
+    return CvContentSchema.parse(content);
+  }
+  for (let index = 0; index < targets.sections.length; index++) {
+    const ids = targets.sections[index]!;
+    const section = content.sections[index]!;
+    if (input.target.type === "section" && input.target.id === ids.sectionId) {
+      content.sections[index] = { ...section, heading: input.text };
+      return CvContentSchema.parse(content);
+    }
+    const bullet = ids.bulletIds.indexOf(input.target.id);
+    if (input.target.type === "bullet" && bullet >= 0) {
+      content.sections[index] = { ...section,
+        bullets: section.bullets.map((value, position) => position === bullet ? input.text : value) };
+      return CvContentSchema.parse(content);
+    }
+    const skill = ids.skillIds.indexOf(input.target.id);
+    if (input.target.type === "skill" && skill >= 0 && section.skillItems) {
+      content.sections[index] = { ...section,
+        skillItems: section.skillItems.map((value, position) => position === skill ? input.text : value) };
+      return CvContentSchema.parse(content);
+    }
+  }
+  throw new Error("This CV item changed. Reload the edition before saving wording.");
+}
+
 /** Apply approved wording literally. A moved/changed source is a conflict, never a fuzzy match. */
 export function cvApplyExactLocks(input: { content: CvContent; targets: CvEditingTargets;
   refinements: CvRefinementV1[]; descriptionVersionId: string; sourceHash: string; library?: CvLibrary;

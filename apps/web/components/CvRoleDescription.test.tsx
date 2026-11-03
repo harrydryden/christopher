@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { CvRefinementV1 } from "@col/core/cv-editing-modes";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -24,6 +25,9 @@ const props = { contextId: a, descriptionVersionId: b, description: "Original ro
     { id: c, status: "ready" as const, descriptionVersionId: a, roleVersion: 1 },
     { id: d, status: "ready" as const, descriptionVersionId: b, roleVersion: 2 },
   ] };
+const rebaseProps = { ...props, refinements: [{ id: a, version: 1, order: 0, kind: "exact_wording",
+  target: { type: "summary", id: b }, text: "A saved edit", reset: false,
+  dependencies: { descriptionVersionId: a, sourceHash: "a".repeat(64), sourceIds: [], originBaselineId: c } }] as CvRefinementV1[] };
 beforeEach(() => { vi.clearAllMocks(); container = document.createElement("div"); document.body.append(container);
   root = createRoot(container); });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
@@ -48,7 +52,7 @@ it("adopts a clean externally updated role but retains dirty wording and refuses
 });
 
 it("gives the role textarea and rebase selects exact explicit labels in server markup", () => {
-  const html = renderToStaticMarkup(<CvRoleDescription {...props} />);
+  const html = renderToStaticMarkup(<CvRoleDescription {...rebaseProps} />);
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const label = [...parsed.querySelectorAll("label")].find(row => row.textContent === "Role description for this application")!;
   const field = parsed.querySelector("textarea")!;
@@ -82,15 +86,15 @@ it("applies only explicitly selected compatible rules using the exact preview ke
       { id: d, status: "conflict", reason: "changed_source" },
     ] });
   vi.mocked(applyCvRefinementRebase).mockResolvedValue({ ok: true, version: 3, rebasedIds: [a], conflicts: [] });
-  act(() => root.render(<CvRoleDescription {...props} />));
+  act(() => root.render(<CvRoleDescription {...rebaseProps} />));
   await act(async () => { [...container.querySelectorAll<HTMLButtonElement>("button")]
-    .find(button => button.textContent === "Preview remembered changes")!.click(); });
+    .find(button => button.textContent === "Review source changes")!.click(); });
   expect(previewCvRefinementRebase).toHaveBeenCalledWith(a, 2, c, d);
-  expect(container.textContent).toContain("Already current");
+  expect(container.textContent).toContain("1 compatible remembered changes");
+  expect(container.textContent).toContain("1 already current");
   expect(container.textContent).toContain("Needs a new decision");
-  const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  act(() => checkbox.click());
+  expect(container.querySelector('input[type="checkbox"]')).toBeNull();
   await act(async () => { [...container.querySelectorAll<HTMLButtonElement>("button")]
-    .find(button => button.textContent?.includes("Apply selected compatible changes"))!.click(); });
+    .find(button => button.textContent?.includes("Carry compatible changes"))!.click(); });
   expect(applyCvRefinementRebase).toHaveBeenCalledWith(a, 2, c, d, "a".repeat(64), [a]);
 });

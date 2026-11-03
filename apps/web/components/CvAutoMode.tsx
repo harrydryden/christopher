@@ -1,15 +1,14 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { openCvAutoEdition, openOrClaimAutoCv } from "@/app/actions/cv-editing";
 
 type Baseline = { id: string; status: "queued" | "ready" | "failed"; sourceDraftId: string | null;
   rendererCurrent?: boolean };
 
-export function CvAutoMode({ contextId, selectedBaseline, summary, knownLibraryDrift = false, knownRoleDrift = false }: {
+export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = false, knownRoleDrift = false }: {
   contextId: string; selectedBaseline: Baseline | null;
-  summary: ReactNode;
   knownLibraryDrift?: boolean; knownRoleDrift?: boolean;
 }) {
   const router = useRouter();
@@ -53,10 +52,8 @@ export function CvAutoMode({ contextId, selectedBaseline, summary, knownLibraryD
       <p className="text-12 text-muted">Build from Experience and this role. Reopening the saved result is free.</p>
     </div>
     {selectedBaseline?.status === "ready" ? <div className="space-y-3 border border-line-muted p-3">
-      {summary}
-      {selectedBaseline.rendererCurrent !== false ? <a className="inline-flex min-h-11 items-center underline" target="_blank" rel="noopener noreferrer"
-        href={`/api/cv/baseline/${selectedBaseline.id}/pdf`}>Open selected Auto PDF</a>
-        : <p className="text-12 text-warn">This Auto PDF used an earlier layout. Update Auto or fork a new edition to review it with the current layout.</p>}
+      <p>The selected Auto result is available in Current CV.</p>
+      {selectedBaseline.rendererCurrent === false && <p className="text-12 text-warn">This Auto PDF used an earlier layout. Update Auto or fork a new edition to review it with the current layout.</p>}
       <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending}
         onClick={useSavedBaseline}>Select Auto for Feedback and approval · free</button>
     </div> : selectedBaseline?.status === "queued" ? <p role="status">Auto is building. Your selected edition will not change when it finishes.</p>

@@ -117,7 +117,7 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/cv-targeting.ts": { confirmCvTargetingPriorities: "verified", reviseFailedCvTargeting: "verified" },
   "actions/cv-editing.ts": {
     createCvApplicationContext: "user", updateCvApplicationDescription: "user",
-    saveCvRefinement: "user", resetCvRefinement: "user", previewCvRefinementRebase: "user",
+    saveCvRefinement: "user", saveAndUpdateCvExactRefinement: "user", resetCvRefinement: "user", previewCvRefinementRebase: "user",
     applyCvRefinementRebase: "user", createManualCvEdition: "user",
     saveManualCvEdition: "user", selectCvEdition: "user", openCvAutoEdition: "user",
     openOrClaimAutoCv: "user", retryFailedAutoCv: "verified", generateRefinedCv: "verified",

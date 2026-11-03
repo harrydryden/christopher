@@ -12,9 +12,9 @@ type Preview = Extract<CvRebasePreviewResult, { ok: true }>;
 
 /** Updating an advert never rewrites a selected edition or silently rebinds a remembered rule. */
 export function CvRoleDescription({ contextId, descriptionVersionId, description, version,
-  baselines, initialFrom, refinementVersion, refinements }: {
+  baselines, initialFrom, originBaselineIds = initialFrom ? [initialFrom] : [], refinementVersion, refinements }: {
   contextId: string; descriptionVersionId: string | null; description: string; version: number;
-  baselines: Baseline[]; initialFrom: string | null; refinementVersion: number;
+  baselines: Baseline[]; initialFrom: string | null; originBaselineIds?: string[]; refinementVersion: number;
   refinements: CvRefinementV1[];
 }) {
   const router = useRouter();
@@ -28,10 +28,10 @@ export function CvRoleDescription({ contextId, descriptionVersionId, description
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [from, setFrom] = useState(initialFrom ?? "");
+  const [from, setFrom] = useState(originBaselineIds.length === 1 ? originBaselineIds[0]! : "");
   const [to, setTo] = useState("");
+  const [advanced, setAdvanced] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [accepted, setAccepted] = useState<string[]>([]);
   const dirty = text !== baseText;
   const stale = baseId !== descriptionVersionId && awaitingId !== descriptionVersionId;
   useEffect(() => {
@@ -42,7 +42,8 @@ export function CvRoleDescription({ contextId, descriptionVersionId, description
     }
   }, [descriptionVersionId, description, dirty, awaitingId]);
   const eligibleTo = baselines.filter(row => row.status === "ready" && row.descriptionVersionId === descriptionVersionId);
-  const selectedTo = eligibleTo.some(row => row.id === to) ? to : eligibleTo.find(row => row.id !== from)?.id || "";
+  const selectedTo = eligibleTo.some(row => row.id === to) ? to
+    : eligibleTo.length === 1 && eligibleTo[0]!.id !== from ? eligibleTo[0]!.id : "";
   const currentPreview = preview && preview.version === refinementVersion && !stale ? preview : null;
   async function saveDescription() {
     if (pending || !baseId || !dirty || stale) return;
@@ -56,8 +57,11 @@ export function CvRoleDescription({ contextId, descriptionVersionId, description
     finally { setPending(false); }
   }
   async function inspect() {
-    if (pending || !from || !selectedTo || from === selectedTo) return;
-    setPending(true); setError(null); setNotice(null); setPreview(null); setAccepted([]);
+    if (pending) return;
+    if (!from || !selectedTo || from === selectedTo) {
+      setAdvanced(true); setError("Choose the saved Auto source and current result before reviewing changes."); return;
+    }
+    setPending(true); setError(null); setNotice(null); setPreview(null);
     try {
       const result = await previewCvRefinementRebase(contextId, refinementVersion, from, selectedTo);
       if (!result.ok) setError(result.error);
@@ -66,14 +70,15 @@ export function CvRoleDescription({ contextId, descriptionVersionId, description
     finally { setPending(false); }
   }
   async function apply() {
-    if (pending || !currentPreview || !accepted.length) return;
+    const compatibleIds = currentPreview?.items.filter(item => item.status === "compatible").map(item => item.id) ?? [];
+    if (pending || !currentPreview || !compatibleIds.length) return;
     setPending(true); setError(null); setNotice(null);
     try {
       const result = await applyCvRefinementRebase(contextId, currentPreview.version, from, selectedTo,
-        currentPreview.previewKey, accepted);
+        currentPreview.previewKey, compatibleIds);
       if (!result.ok) { setError(result.error); setPreview(null); }
       else { setNotice(`${result.rebasedIds.length} remembered ${result.rebasedIds.length === 1 ? "change" : "changes"} carried to the newer Auto source. Saved CVs remain unchanged until you apply the refinements.`);
-        setAccepted([]); setPreview(null); router.refresh(); }
+        setPreview(null); router.refresh(); }
     } catch { setError("Could not carry the selected changes. Preview them again."); setPreview(null); }
     finally { setPending(false); }
   }
@@ -87,8 +92,15 @@ export function CvRoleDescription({ contextId, descriptionVersionId, description
       <button type="button" className="min-h-11 border border-line-muted px-4" disabled={!dirty || stale || pending || !!awaitingId || !text.trim()}
         onClick={saveDescription}>{pending ? "Saving…" : "Update saved role description · free"}</button>
       <p className="text-12 text-muted">Changing the description leaves saved CVs and remembered choices intact. Review any source changes before carrying rules forward.</p>
-      {baselines.filter(row => row.status === "ready").length > 1 && <fieldset className="space-y-3 border-t border-line-muted pt-3">
+      {refinements.length > 0 && baselines.filter(row => row.status === "ready").length > 1 && <fieldset className="space-y-3 border-t border-line-muted pt-3">
         <legend className="font-medium">Carry remembered changes to a newer Auto result</legend>
+        <p className="text-12 text-muted">Review exact compatible choices before carrying them to the current role source. Saved CVs do not change until you apply them.</p>
+        <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || !eligibleTo.length}
+          onClick={inspect}>Review source changes</button>
+        {!eligibleTo.length && <p className="text-12 text-muted">Update Auto for the current role description before reviewing remembered changes.</p>}
+        <details open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
+          <summary className="cursor-pointer">Choose a different saved source</summary>
+          <div className="mt-2 space-y-2">
         <label htmlFor={fromSelectId} className="block">From saved Auto result</label>
         <select id={fromSelectId} className="min-h-11 w-full border border-line-muted bg-raised px-3"
           value={from} onChange={event => { setFrom(event.target.value); setPreview(null); }}>
@@ -102,24 +114,23 @@ export function CvRoleDescription({ contextId, descriptionVersionId, description
           <option value="">Choose destination</option>{eligibleTo.map(row => <option key={row.id} value={row.id}>Saved Auto result
             {row.publishedAt ? ` · ${new Date(row.publishedAt).toLocaleDateString("en-GB")}` : ""}
             {row.roleVersion ? ` · role version ${row.roleVersion}` : ""}</option>)}</select>
-        {!eligibleTo.length && <p className="text-12 text-muted">Update Auto for the current role description before previewing a rebase.</p>}
-        <button type="button" className="min-h-11 border border-line-muted px-4" disabled={!from || !selectedTo || from === selectedTo || pending}
-          onClick={inspect}>Preview remembered changes</button>
-        {currentPreview && <div className="space-y-2"><p className="font-medium">Review each remembered change</p>
-          {currentPreview.items.map(item => { const rule = refinements.find(row => row.id === item.id);
+          </div>
+        </details>
+        {currentPreview && <div className="space-y-2">
+          <p className="font-medium">{currentPreview.items.filter(item => item.status === "compatible").length} compatible remembered changes</p>
+          {currentPreview.items.some(item => item.status === "current") &&
+            <p>{currentPreview.items.filter(item => item.status === "current").length} already current on this source.</p>}
+          {currentPreview.items.filter(item => item.status === "conflict").map(item => { const rule = refinements.find(row => row.id === item.id);
             const label = rule?.text?.slice(0, 150) || (rule?.structured?.kind === "appearance" ? "Layout choice"
               : rule?.structured?.kind === "targeting" ? "Role priorities and evidence choice"
                 : rule?.structured?.kind === "item_order" ? "Section and skill order" : "Remembered wording");
             return <div key={item.id} className="border border-line-muted p-2">
-            {item.status === "compatible" ? <label className="flex min-h-11 items-center gap-2"><input type="checkbox"
-              checked={accepted.includes(item.id)} onChange={event => setAccepted(previous => event.target.checked
-                ? [...previous, item.id] : previous.filter(id => id !== item.id))} />
-              Carry: {label}</label>
-              : <p>{item.status === "current" ? "Already current" : `Needs a new decision: ${item.reason.replaceAll("_", " ")}`} · {label}</p>}
-            {item.status === "conflict" && <a className="inline-flex min-h-11 items-center underline" href="#cv-mode-refine">Edit or reset this in Refine</a>}
+            <p>Needs a new decision: {item.reason.replaceAll("_", " ")} · {label}</p>
+            <a className="inline-flex min-h-11 items-center underline" href="#cv-mode-refine">Edit or reset this in Refine</a>
           </div>; })}
-          <button type="button" className="min-h-11 border border-line-muted px-4" disabled={!accepted.length || pending}
-            onClick={apply}>Apply selected compatible changes · free</button>
+          {currentPreview.items.some(item => item.status === "compatible") &&
+            <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending}
+              onClick={apply}>Carry compatible changes · free</button>}
         </div>}
       </fieldset>}
       {notice && <p role="status">{notice}</p>}{error && <p role="alert" className="text-danger">{error}</p>}

@@ -8,7 +8,7 @@ import { cvSemanticAuditIdentity } from "@col/core/cv-semantic-audit";
 import { CvTargetingBriefSchema, cvRankedPriorityChoices } from "@col/core/cv-targeting";
 import { cvTargetingRubricKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvRefinedResultKey, cvProjectRefinements, cvRefinementSourceIdentity,
-  cvRefinementDependencies, cvEditingTargetsFor,
+  cvRefinementDependencies, cvEditingTargetsFor, cvProjectOneExactWording,
   validateCvEditingTargetTransition, CvRefinementSchema,
   type CvAutoInputV1, type CvRefinementV1, type CvEditingTargets } from "@col/core/cv-editing-modes";
 import { CvContentSchema, CvLibrarySchema, CvThemeSchema, DEFAULT_CV_THEME, groupCvLibrary, isKnownModel, modelForCallSite,
@@ -304,6 +304,145 @@ export async function saveCvRefinement(contextId: string, expectedVersion: numbe
   } catch (error) {
     const result = actionError(error, "Could not save this refinement. Please try again.");
     return { ok: false, error: result.ok ? "Could not save this refinement." : result.error };
+  }
+}
+
+/** Save one exact edit and show it on a new ready edition, with no model call or CV credit. */
+export async function saveAndUpdateCvExactRefinement(contextId: string, expectedOverlayVersion: number,
+  source: { kind: "baseline" | "draft"; id: string; revision?: number },
+  input: { id?: string; target: { type: "summary" | "section" | "bullet" | "skill"; id: string };
+    text: string; order: number; requestKey: string }): Promise<
+  { ok: true; version: number; draftId: string; revision: number; charged: false } | { ok: false; error: string }> {
+  const user = await requireUser();
+  try {
+    if (!uuid.test(contextId) || !uuid.test(source.id) || !uuid.test(input.target.id) ||
+      !uuid.test(input.requestKey) || (input.id && !uuid.test(input.id)) ||
+      !Number.isInteger(expectedOverlayVersion) || expectedOverlayVersion < 0 ||
+      !Number.isInteger(input.order) || input.order < 0 || !input.text.trim() ||
+      (source.kind === "draft" && (!Number.isInteger(source.revision) || source.revision! < 1)))
+      throw new UserFacingError("Reload this CV before saving its exact wording.");
+    const requestPrefix = `exact:${input.requestKey}:`;
+    const requestIdentity = requestPrefix + createHash("sha256").update(canonicalJson({
+      contextId, expectedOverlayVersion, source, target: input.target, text: input.text,
+      order: input.order, refinementId: input.id ?? null,
+    })).digest("hex");
+    const outcome = await db().transaction(async tx => {
+      const [context] = await tx.select().from(cvApplicationContexts).where(and(
+        eq(cvApplicationContexts.id, contextId), eq(cvApplicationContexts.userId, user.id))).for("update");
+      if (!context) throw new UserFacingError("This application is unavailable.");
+      const [priorResult] = await tx.select().from(cvDrafts).where(and(eq(cvDrafts.userId, user.id),
+        eq(cvDrafts.contextId, contextId), sql`${cvDrafts.refinedResultKey} like ${requestPrefix + "%"}`)).limit(1);
+      if (priorResult) {
+        if (priorResult.refinedResultKey !== requestIdentity)
+          throw new UserFacingError("This save request was already used for different wording. Reload this CV.");
+        if (context.selectedKind !== "draft" || context.selectedId !== priorResult.id ||
+          context.refinementsVersion !== expectedOverlayVersion + 1)
+          throw new UserFacingError("The selected CV changed since this save. Reload before continuing.");
+        return { version: context.refinementsVersion, draftId: priorResult.id,
+          revision: priorResult.revision };
+      }
+      if (context.refinementsVersion !== expectedOverlayVersion ||
+        context.selectedKind !== source.kind || context.selectedId !== source.id ||
+        !context.currentDescriptionVersionId)
+        throw new UserFacingError("The selected CV or its refinements changed. Reload before saving.");
+      const [baseline] = source.kind === "baseline" ? await tx.select().from(cvAutoBaselines).where(and(
+        eq(cvAutoBaselines.id, source.id), eq(cvAutoBaselines.userId, user.id),
+        eq(cvAutoBaselines.contextId, contextId), eq(cvAutoBaselines.status, "ready"))) : [];
+      const [sourceDraft] = source.kind === "draft" ? await tx.select().from(cvDrafts).where(and(
+        eq(cvDrafts.id, source.id), eq(cvDrafts.userId, user.id),
+        eq(cvDrafts.contextId, contextId))).for("update") : [];
+      if (sourceDraft && (sourceDraft.status !== "ready" || sourceDraft.revision !== source.revision))
+        throw new UserFacingError("This saved CV changed. Reload before saving wording.");
+      const activeDraftId = sourceDraft?.id ?? baseline?.sourceDraftId;
+      if (activeDraftId) {
+        const activeTask = await tx.execute<{ active: boolean }>(sql`select exists (
+          select 1 from tasks where payload->>'draftId' = ${activeDraftId}
+            and status in ('queued', 'running')
+        ) as active`);
+        if (activeTask.rows[0]?.active)
+          throw new UserFacingError("Wait for this CV's current work to finish before updating its wording.");
+      }
+      const [retainedBaseline] = sourceDraft?.autoBaselineId ? await tx.select().from(cvAutoBaselines).where(and(
+        eq(cvAutoBaselines.id, sourceDraft.autoBaselineId), eq(cvAutoBaselines.userId, user.id),
+        eq(cvAutoBaselines.contextId, contextId), eq(cvAutoBaselines.status, "ready"))) : [];
+      if (sourceDraft?.autoBaselineId && !retainedBaseline)
+        throw new UserFacingError("This CV's original Auto source is unavailable.");
+      const authority = baseline ?? retainedBaseline ?? sourceDraft;
+      const sourceContent = baseline?.content ?? sourceDraft?.content;
+      const sourceTargets = baseline?.editingTargets ?? sourceDraft?.editingTargets;
+      const library = baseline?.librarySnapshot ?? sourceDraft?.librarySnapshot;
+      const descriptionVersionId = baseline?.descriptionVersionId ?? sourceDraft?.descriptionVersionId;
+      if (!authority || !sourceContent || !sourceTargets || !library ||
+        !descriptionVersionId || descriptionVersionId !== context.currentDescriptionVersionId ||
+        !authority.content || !authority.editingTargets || !authority.librarySnapshot ||
+        !hasRefinementTarget(authority.editingTargets, input.target) ||
+        !hasRefinementTarget(sourceTargets, input.target))
+        throw new UserFacingError("This CV item or role changed. Reload before saving wording.");
+      const [description] = await tx.select().from(cvContextDescriptions).where(and(
+        eq(cvContextDescriptions.id, descriptionVersionId), eq(cvContextDescriptions.contextId, contextId),
+        eq(cvContextDescriptions.userId, user.id))).limit(1);
+      if (!description) throw new UserFacingError("The saved role description is unavailable.");
+      let projected: CvContent;
+      try { projected = cvProjectOneExactWording({ content: sourceContent, targets: sourceTargets,
+        target: input.target, text: input.text }); }
+      catch (error) { throw new UserFacingError((error as Error).message); }
+      if (canonicalJson(projected) === canonicalJson(sourceContent))
+        throw new UserFacingError("This wording already matches the selected CV.");
+      const active = await currentCvRefinements(tx, user.id, contextId, true);
+      const onTarget = active.filter(row => row.kind === "exact_wording" &&
+        row.target.type === input.target.type && row.target.id === input.target.id);
+      if (onTarget.length > 1 || (input.id && onTarget.some(row => row.id !== input.id)))
+        throw new UserFacingError("This item has conflicting exact edits. Review them before saving.");
+      const existing = input.id ? active.find(row => row.id === input.id) : onTarget[0];
+      if (input.id && (!existing || existing.kind !== "exact_wording" ||
+        existing.target.type !== input.target.type || existing.target.id !== input.target.id))
+        throw new UserFacingError("This exact edit changed. Reload before saving.");
+      const dependencies = cvRefinementDependencies({ content: authority.content,
+        targets: authority.editingTargets, library: authority.librarySnapshot,
+        descriptionVersionId, target: input.target });
+      const row = CvRefinementSchema.parse({ id: existing?.id ?? randomUUID(),
+        version: (existing?.version ?? 0) + 1, order: input.order, kind: "exact_wording",
+        target: input.target, text: input.text, dependencies: {
+          descriptionVersionId, ...dependencies, originBaselineId: baseline?.id ?? retainedBaseline?.id ?? null },
+        reset: false });
+      const saved = await appendCvRefinement(tx, { userId: user.id, contextId,
+        expectedVersion: expectedOverlayVersion, refinement: row });
+      const refinements = [...active.filter(item => item.id !== row.id), row];
+      const revision = await nextCvRevision(tx, { userId: user.id, companyName: context.companyName,
+        jobTitle: context.jobTitle, contextId });
+      const rubricCheckpoint = cvRevisionRubricCheckpoint(baseline ? {
+        jobDescription: description.text, assessment: baseline.assessment } : sourceDraft!, description.text);
+      const [child] = await tx.insert(cvDrafts).values({ userId: user.id, contextId,
+        descriptionVersionId, editingMode: "refine", parentId: sourceDraft?.id ?? null,
+        autoBaselineId: baseline?.id ?? retainedBaseline?.id ?? null,
+        jobId: context.jobId, jobTitle: context.jobTitle, companyName: context.companyName,
+        jobDescription: description.text, jobSource: description.source,
+        libraryVersion: sourceDraft?.libraryVersion ?? 1, librarySnapshot: library,
+        model: sourceDraft?.model ?? baseline!.inputSnapshot.routes["cv.author"]?.model ?? "manual",
+        revision, status: "ready", content: projected, editingTargets: sourceTargets,
+        refinementSnapshot: refinements, refinedResultKey: requestIdentity,
+        appliedRefinements: [...(sourceDraft?.appliedRefinements ?? []).filter(item => item.id !== row.id),
+          { id: row.id, version: row.version }],
+        refinementSourceContent: sourceContent, refinementSourceTargets: sourceTargets,
+        refinementEngineContract: sourceDraft?.refinementEngineContract ?? baseline?.engineContract ?? null,
+        refinementOriginKind: baseline || retainedBaseline ? "baseline" : "manual",
+        targetingBrief: sourceDraft?.targetingBrief ?? null,
+        buildCheckpoint: rubricCheckpoint, semanticAuditCache: sourceDraft?.semanticAuditCache ?? null,
+        assessment: null,
+      }).returning({ id: cvDrafts.id });
+      const plan = baseline?.tailoringPlan ?? (sourceDraft ? (await tx.select({ plan: cvTailoringPlans.plan })
+        .from(cvTailoringPlans).where(and(eq(cvTailoringPlans.draftId, sourceDraft.id),
+          eq(cvTailoringPlans.userId, user.id))).limit(1))[0]?.plan : null);
+      if (plan) await saveCvTailoringPlan(tx, child!.id, user.id, plan);
+      await tx.update(cvApplicationContexts).set({ selectedKind: "draft", selectedId: child!.id })
+        .where(and(eq(cvApplicationContexts.id, contextId), eq(cvApplicationContexts.userId, user.id)));
+      return { version: saved.version, draftId: child!.id, revision };
+    });
+    revalidatePath("/cv");
+    return { ok: true, ...outcome, charged: false };
+  } catch (error) {
+    const result = actionError(error, "Could not save and update this CV. Please try again.");
+    return { ok: false, error: result.ok ? "Could not save and update this CV." : result.error };
   }
 }
 

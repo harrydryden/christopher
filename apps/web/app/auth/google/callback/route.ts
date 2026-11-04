@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { signInWithGoogle } from "@/lib/accounts";
-import { startSession } from "@/lib/auth";
+import { clientAddress, startSessionFromProof } from "@/lib/auth";
 import { appOrigin, exchangeGoogleCode, fetchGoogleProfile, googleConfigured } from "@/lib/google";
+import { LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
 import { LEGACY_OAUTH_COOKIE_NAMES, OAUTH_COOKIE_NAME, oauthCookieValue, readSignedValue, sanitizeNextPath, sessionSecret } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -20,16 +21,22 @@ export async function GET(request: Request) {
   const state = url.searchParams.get("state");
   if (!remembered || !code || !state || state !== remembered.state || !remembered.verifier) return fail("google_state");
   if (url.searchParams.get("error")) return fail("google_failed");
+  const address = await clientAddress();
+  const reservation = await reserveRateLimits([{ key: `login:ip:${address}`, limit: LIMITS.loginAddress }]);
+  if (!reservation) return fail("rate_limited");
 
   try {
     const { accessToken } = await exchangeGoogleCode({ code, codeVerifier: remembered.verifier, redirectUri: `${appOrigin(request)}/auth/google/callback` });
     const profile = await fetchGoogleProfile(accessToken);
     const { user } = await signInWithGoogle(profile);
-    await startSession(user.id, undefined, "google");
+    if (!(await startSessionFromProof({ userId: user.id, proof: { provider: "google", subject: profile.sub } }))) {
+      throw new Error("Google identity changed during sign-in");
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     console.error(JSON.stringify({ event: "google_sign_in_failed", error: message.slice(0, 300) }));
     return fail(/not verified/.test(message) ? "google_unverified" : /Registration is closed/.test(message) ? "closed" : "google_failed");
   }
+  await releaseRateLimitReservations(reservation).catch(() => undefined);
   return NextResponse.redirect(new URL(sanitizeNextPath(remembered.next), request.url));
 }

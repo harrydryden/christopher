@@ -20,18 +20,25 @@ vi.mock("@/lib/google", async (original) => ({
   fetchGoogleProfile: vi.fn(async () => ({ sub: "google-1", email: "member@example.com", emailVerified: true })),
 }));
 vi.mock("@/lib/accounts", () => ({ signInWithGoogle: vi.fn(async () => ({ user: { id: "user-1" } })) }));
-vi.mock("@/lib/auth", () => ({ startSession: vi.fn(async () => "session-1") }));
+vi.mock("@/lib/auth", () => ({ clientAddress: vi.fn(async () => "test-ip"), startSessionFromProof: vi.fn(async () => "session-1") }));
+vi.mock("@/lib/rate-limit", () => ({
+  LIMITS: { loginAddress: { max: 30, windowMs: 15 * 60_000 } },
+  reserveRateLimits: vi.fn(async () => [{ id: "attempt-1", key: "login:ip:test-ip" }]),
+  releaseRateLimitReservations: vi.fn(async () => undefined),
+}));
 
 import { GET as start } from "../route";
 import { GET as callback } from "./route";
 import { LEGACY_OAUTH_COOKIE_NAMES, OAUTH_COOKIE_NAME } from "@/lib/session";
+import { exchangeGoogleCode } from "@/lib/google";
+import { releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
 
 beforeAll(() => {
   process.env.SESSION_SECRET = "google-callback-test-secret";
   process.env.GOOGLE_CLIENT_ID = "client-id";
   process.env.GOOGLE_CLIENT_SECRET = "client-secret";
 });
-beforeEach(() => jar.clear());
+beforeEach(() => { jar.clear(); vi.clearAllMocks(); });
 
 /** Start at `/auth/google?next=<encoded>`, then come back from Google with the state it was given. */
 async function roundTrip(encodedNext: string): Promise<string | null> {
@@ -63,4 +70,25 @@ it("completes a sign-in started before the rename, under the AVA cookie name, an
   const finished = await callback(new Request(`https://app.example/auth/google/callback?code=code&state=${state}`));
   expect(finished.headers.get("location")).toBe("https://app.example/roles");
   expect(jar.has(legacyName)).toBe(false);
+});
+
+it("reserves the shared login address quota only after a valid signed state and releases success", async () => {
+  const invalid = await callback(new Request("https://app.example/auth/google/callback?code=code&state=bad"));
+  expect(invalid.headers.get("location")).toContain("google_state");
+  expect(reserveRateLimits).not.toHaveBeenCalled();
+  expect(exchangeGoogleCode).not.toHaveBeenCalled();
+  expect(await roundTrip(encodeURIComponent("/roles"))).toBe("https://app.example/roles");
+  expect(reserveRateLimits).toHaveBeenCalledWith([{ key: "login:ip:test-ip", limit: { max: 30, windowMs: 15 * 60_000 } }]);
+  expect(releaseRateLimitReservations).toHaveBeenCalledWith([{ id: "attempt-1", key: "login:ip:test-ip" }]);
+});
+
+it("keeps a valid-state failed exchange counted and refuses an exhausted address", async () => {
+  vi.mocked(exchangeGoogleCode).mockRejectedValueOnce(new Error("exchange failed"));
+  const first = await roundTrip(encodeURIComponent("/roles"));
+  expect(first).toContain("google_failed");
+  expect(releaseRateLimitReservations).not.toHaveBeenCalled();
+  vi.mocked(reserveRateLimits).mockResolvedValueOnce(null);
+  const blocked = await roundTrip(encodeURIComponent("/roles"));
+  expect(blocked).toContain("rate_limited");
+  expect(exchangeGoogleCode).toHaveBeenCalledTimes(1);
 });

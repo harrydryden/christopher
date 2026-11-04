@@ -22,12 +22,12 @@ vi.mock("@/lib/linkedin-auth", async original => ({
   ...(await original<typeof import("@/lib/linkedin-auth")>()),
   settleLinkedInIdentity: vi.fn(async () => ({ kind: "signed_in", user: { id: "user-1" }, next: "/account" })),
 }));
-vi.mock("@/lib/auth", () => ({ getCurrentUser: vi.fn(async () => null), startSession: vi.fn(async () => "session") }));
+vi.mock("@/lib/auth", () => ({ getCurrentUser: vi.fn(async () => null), startSessionFromProof: vi.fn(async () => "session") }));
 
 import { GET } from "./route";
 import { exchangeLinkedInCode } from "@/lib/linkedin";
 import { LINKEDIN_COOKIE, startLinkedInTransaction } from "@/lib/linkedin-auth";
-import { startSession } from "@/lib/auth";
+import { startSessionFromProof } from "@/lib/auth";
 
 let pool: ReturnType<typeof createTestDb>["pool"];
 beforeAll(async () => {
@@ -41,6 +41,7 @@ beforeEach(async () => {
   await database.execute(sql`truncate linkedin_auth_transactions restart identity cascade`);
   jar.clear();
   vi.clearAllMocks();
+  vi.mocked(startSessionFromProof).mockResolvedValue("session");
   process.env.APP_URL = "http://col.test";
   process.env.LINKEDIN_CLIENT_ID = "test-client";
   process.env.LINKEDIN_CLIENT_SECRET = "test-secret";
@@ -62,14 +63,14 @@ it("exchanges once only after a valid claim; replay cannot call the provider aga
   expect(first.headers.get("cache-control")).toContain("no-store");
   expect(first.headers.get("referrer-policy")).toBe("no-referrer");
   expect(exchangeLinkedInCode).toHaveBeenCalledTimes(1);
-  expect(startSession).toHaveBeenCalledTimes(1);
+  expect(startSessionFromProof).toHaveBeenCalledTimes(1);
 
   const replay = await callback(flow.state);
   expect(error(replay)).toBe("linkedin_state");
   expect(replay.headers.get("cache-control")).toContain("no-store");
   expect(replay.headers.get("referrer-policy")).toBe("no-referrer");
   expect(exchangeLinkedInCode).toHaveBeenCalledTimes(1);
-  expect(startSession).toHaveBeenCalledTimes(1);
+  expect(startSessionFromProof).toHaveBeenCalledTimes(1);
 });
 
 it("refuses a different browser and an expired transaction before provider exchange", async () => {
@@ -88,6 +89,14 @@ it("consumes a cancelled state without exchanging or signing in", async () => {
   const flow = await started();
   expect(error(await callback(flow.state, "error=user_cancelled_login"))).toBe("linkedin_cancelled");
   expect(exchangeLinkedInCode).not.toHaveBeenCalled();
-  expect(startSession).not.toHaveBeenCalled();
+  expect(startSessionFromProof).not.toHaveBeenCalled();
   expect(error(await callback(flow.state))).toBe("linkedin_state");
+});
+
+
+it("does not publish a session if the linked identity was removed during the callback", async () => {
+  const flow = await started();
+  vi.mocked(startSessionFromProof).mockResolvedValue(null);
+  expect(error(await callback(flow.state))).toBe("linkedin_failed");
+  expect(startSessionFromProof).toHaveBeenCalledWith({ userId: "user-1", proof: { provider: "linkedin", subject: "subject" } });
 });

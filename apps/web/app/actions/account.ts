@@ -7,9 +7,10 @@ import { z } from "zod";
 import { MAX_ACCOUNT_AI_BUDGET_USD, passwordProblem } from "@col/core";
 import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "@col/db/schema";
 import { grantAdminCvGift, isPlaceholderEmail } from "@col/db";
-import { changePassword as changeStoredPassword, deleteAccount, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
+import { changePassword as changeStoredPassword, deleteAccount, sendVerificationEmail } from "@/lib/accounts";
+import { issueAuthToken } from "@/lib/auth-tokens";
 import { emailLinkOrigin } from "@/lib/origin";
-import { clientAddress, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
+import { clientAddress, endOtherSessions, endSession, getCurrentUser, requireAdmin, requireUser, startSessionFromProof } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { clearAttempts, LIMITS, reserveRateLimits } from "@/lib/rate-limit";
 import { setUserSetting } from "@/lib/settings";
@@ -24,18 +25,30 @@ export async function changePassword(_prev: ActionResult, form: FormData): Promi
   // The cheap checks first, so a typo in the new password costs no attempt.
   const problem = passwordProblem(next);
   if (problem) return fail(problem);
-  // Only a current password is worth guessing; an account that never had one has nothing to find.
+  // Both old-password guesses and first-password attempts are expensive credential changes.
+  // Keep the cheap typo checks above this shared per-account limit.
   const attemptKey = `password-change:user:${current.user.id}`;
-  if (current.user.passwordHash && !(await reserveRateLimits([{ key: attemptKey, limit: LIMITS.passwordChange }]))) {
+  if (!(await reserveRateLimits([{ key: attemptKey, limit: LIMITS.passwordChange }]))) {
     return fail("Too many attempts. Try again in 15 minutes.");
   }
+  let changed: Awaited<ReturnType<typeof changeStoredPassword>>;
   try {
-    // Every other browser signed in with the old password is signed out in the same commit.
-    await changeStoredPassword(current.user, String(form.get("currentPassword") ?? ""), next, current.sessionId);
+    // The password and revocation of every old session commit together.
+    changed = await changeStoredPassword(current.user, String(form.get("currentPassword") ?? ""), next, current.sessionId);
   } catch (error) {
     return actionError(error, "Could not change the password. Please try again.");
   }
   await clearAttempts(attemptKey);
+  try {
+    const replacement = await startSessionFromProof({ userId: changed.user.id,
+      proof: { provider: "password", expectedPasswordHash: changed.passwordHashProven } });
+    if (!replacement) throw new Error("Replacement session could not be issued");
+  } catch {
+    // The change has committed; the old cookie now names a revoked session. Give a clear
+    // recovery path if a concurrent credential change or cookie failure prevents replacement.
+    await endSession().catch(() => undefined);
+    return fail("Password changed. Please sign in again with your new password.");
+  }
   revalidatePath("/account");
   return ok();
 }
@@ -84,18 +97,20 @@ export async function updateProfile(_prev: ActionResult, form: FormData): Promis
  * each observe the other, and leave the deployment with no administrator at all.
  */
 export async function setUserRole(userId: string, role: UserRole): Promise<void> {
-  await requireAdmin();
+  const actor = await requireAdmin();
   const id = zUuid().parse(userId);
   if (role !== "admin" && role !== "member") throw new UserFacingError("Unknown role.");
   await db().transaction(async (tx) => {
-    if (role !== "admin") {
-      const administrators = await tx.select({ id: users.id }).from(users)
-        .where(and(eq(users.role, "admin"), sql`${users.claimedAt} is not null`))
-        .orderBy(asc(users.id))
-        .for("update");
-      if (administrators.some((row) => row.id === id) && administrators.length === 1) {
-        throw new UserFacingError("You are the only administrator. Make someone else an administrator first.");
-      }
+    // Match account deletion and gifting: decide from locked rows, never the actor's earlier
+    // session snapshot. A concurrent demotion must revoke this authority before the write.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+    const administrators = await tx.select({ id: users.id }).from(users)
+      .where(and(eq(users.role, "admin"), sql`${users.claimedAt} is not null`))
+      .orderBy(asc(users.id))
+      .for("update");
+    if (!administrators.some((row) => row.id === actor.id)) throw new UserFacingError("You are no longer an administrator.");
+    if (role !== "admin" && administrators.some((row) => row.id === id) && administrators.length === 1) {
+      throw new UserFacingError("You are the only administrator. Make someone else an administrator first.");
     }
     await tx.update(users).set({ role }).where(eq(users.id, id));
   });
@@ -112,13 +127,27 @@ export async function deleteUser(userId: string): Promise<void> {
 
 /** Administrators: a single-use reset link to hand to someone when email delivery is not set up. It also completes a pending confirmation. */
 export async function createResetLink(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  await requireAdmin();
+  const actor = await requireAdmin();
   const id = zUuid().parse(String(form.get("userId") ?? ""));
-  const [target] = await db().select({ email: users.email }).from(users).where(eq(users.id, id));
-  if (!target || isPlaceholderEmail(target.email)) return fail("No such account.");
   const origin = await emailLinkOrigin();
   if (!origin) return fail("Set APP_URL to this deployment's public origin so links can be built.");
-  return { ok: true, message: await issueResetLink(id, origin) };
+  try {
+    const token = await issueAuthToken(id, "password_reset", new Date(), async tx => {
+      // The account score fence is already held by issueAuthToken. Match role changes and
+      // deletion before checking the actor and issuing the link in one commit.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+      const accounts = await tx.select({ id: users.id, email: users.email, role: users.role, claimedAt: users.claimedAt })
+        .from(users).where(inArray(users.id, [actor.id, id])).orderBy(asc(users.id)).for("share");
+      const operator = accounts.find(row => row.id === actor.id);
+      if (operator?.role !== "admin" || !operator.claimedAt) throw new UserFacingError("You are no longer an administrator.");
+      const target = accounts.find(row => row.id === id);
+      if (!target || isPlaceholderEmail(target.email)) throw new UserFacingError("No such account.");
+    });
+    return { ok: true, message: `${origin}/reset-password?token=${token}` };
+  } catch (error) {
+    if (error instanceof UserFacingError && error.message === "No such account.") return fail(error.message);
+    throw error;
+  }
 }
 
 /**

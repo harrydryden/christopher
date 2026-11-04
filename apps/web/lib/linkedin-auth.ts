@@ -1,8 +1,9 @@
 /** Account-owned, browser-bound LinkedIn sign-in state. No provider access token is retained. */
 import { randomBytes } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { authAccounts, linkedinAuthTransactions, sessions, users, type User } from "@col/db/schema";
+import { authAccounts, linkedinAuthTransactions, sessions, settings, users, type User } from "@col/db/schema";
 import { ensureFreeEntitlement, isEntitledEmail, normaliseEmail, seedTagVocabulary, type Db } from "@col/db";
+import { resolveSystemSettings } from "@col/core";
 import { emailProblem, registrationAllowed } from "./accounts";
 import { equalHash, sha256, type LinkedInIdentity } from "./linkedin";
 import { sanitizeNextPath } from "./session";
@@ -13,6 +14,14 @@ export const LINKEDIN_PENDING_MS = 60 * 60_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function random(): string { return randomBytes(32).toString("base64url"); }
+
+/** Reuse the held connection: asking the global pool from a transaction can deadlock it. */
+async function registrationAllowedIn(database: Pick<Db, "select">, email: string): Promise<boolean> {
+  if (isEntitledEmail(email)) return true;
+  const rows = await database.select({ key: settings.key, value: settings.value }).from(settings)
+    .where(eq(settings.key, "registrationOpen"));
+  return resolveSystemSettings(rows).registrationOpen;
+}
 
 export function parseLinkedInCookie(value: string | undefined): { id: string; secret: string } | null {
   if (!value) return null;
@@ -108,7 +117,7 @@ export async function readLinkedInPending(database: Db, cookie: string | undefin
 }
 
 /** A provider subject is linked only after a fresh, verified, account-owned reauthentication. */
-export async function completeLinkedInLinkIn(database: Db, input: { cookie?: string; userId: string; sessionId: string; passwordProven: boolean; now?: Date }) {
+export async function completeLinkedInLinkIn(database: Db, input: { cookie?: string; userId: string; sessionId: string; passwordHashProven?: string; now?: Date }) {
   const now = input.now ?? new Date();
   return database.transaction(async tx => {
     // Match createUser/subject-claim order: global identity fence before a pending or user row lock.
@@ -116,10 +125,11 @@ export async function completeLinkedInLinkIn(database: Db, input: { cookie?: str
     const pending = await lockedPending(tx as unknown as Db, input.cookie, now);
     if (!pending || !["link_required", "create_account", "verify_email", "recovery_required"].includes(pending.pendingKind ?? "") || !pending.subject || !pending.verifiedAt || pending.completedAt) throw new Error("LinkedIn link expired");
     if (pending.targetUserId && pending.targetUserId !== input.userId) throw new Error("Sign in to the intended account first");
-    const [session] = await tx.select().from(sessions).where(and(eq(sessions.id, input.sessionId), eq(sessions.userId, input.userId), gt(sessions.expiresAt, now))).limit(1);
     const [user] = await tx.select().from(users).where(eq(users.id, input.userId)).for("update").limit(1);
+    const [session] = await tx.select().from(sessions).where(and(eq(sessions.id, input.sessionId), eq(sessions.userId, input.userId), gt(sessions.expiresAt, now))).limit(1);
     if (!session || !user || !user.claimedAt || !user.emailVerifiedAt) throw new Error("Verify the account email before linking LinkedIn");
-    if (!input.passwordProven && ((session.authProvider !== "google" && session.authProvider !== "password") || session.id === pending.initiatingSessionId || session.createdAt.getTime() <= pending.verifiedAt.getTime() || now.getTime() - session.createdAt.getTime() > LINKEDIN_FLOW_MS)) throw new Error("Sign in again with the existing account before linking LinkedIn");
+    if (input.passwordHashProven && input.passwordHashProven !== user.passwordHash) throw new Error("Sign in again with the existing account before linking LinkedIn");
+    if (!input.passwordHashProven && ((session.authProvider !== "google" && session.authProvider !== "password") || session.id === pending.initiatingSessionId || session.createdAt.getTime() <= pending.verifiedAt.getTime() || now.getTime() - session.createdAt.getTime() > LINKEDIN_FLOW_MS)) throw new Error("Sign in again with the existing account before linking LinkedIn");
     const [existing] = await tx.select().from(authAccounts)
       .where(and(eq(authAccounts.provider, "linkedin"), eq(authAccounts.providerAccountId, pending.subject))).limit(1);
     if (existing && existing.userId !== input.userId) throw new Error("That LinkedIn account is linked elsewhere");
@@ -165,7 +175,7 @@ export async function completeLinkedInEmailProofIn(database: Db, input: { cookie
         expiresAt: new Date(now.getTime() + LINKEDIN_PENDING_MS) }).where(eq(linkedinAuthTransactions.id, pending.id));
       return { kind: "link_required" as const };
     }
-    if (isEntitledEmail(email) || !(await registrationAllowed(email))) {
+    if (isEntitledEmail(email) || !(await registrationAllowedIn(tx as unknown as Db, email))) {
       await tx.update(linkedinAuthTransactions).set({ pendingKind: "recovery_required", chosenEmail: null }).where(eq(linkedinAuthTransactions.id, pending.id));
       return { kind: "recovery_required" as const };
     }
@@ -191,12 +201,12 @@ export async function createLinkedInAccountIn(database: Db, cookie: string | und
       await tx.update(linkedinAuthTransactions).set({ pendingKind: "link_required", targetUserId: existingEmail.id }).where(eq(linkedinAuthTransactions.id, pending.id));
       return { kind: "link_required" as const };
     }
-    if (isEntitledEmail(email) || !(await registrationAllowed(email))) throw new Error("This address needs the ordinary account route");
+    if (isEntitledEmail(email) || !(await registrationAllowedIn(tx as unknown as Db, email))) throw new Error("This address needs the ordinary account route");
     const [user] = await tx.insert(users).values({ email, name: pending.name, role: "member", emailVerifiedAt: now, claimedAt: now, lastLoginAt: now, createdAt: now }).returning();
     await seedTagVocabulary(tx, user!.id);
     await ensureFreeEntitlement(tx, user!.id);
     await tx.insert(authAccounts).values({ userId: user!.id, provider: "linkedin", providerAccountId: pending.subject, email, name: pending.name });
     await tx.update(linkedinAuthTransactions).set(cleared()).where(eq(linkedinAuthTransactions.id, pending.id));
-    return { kind: "signed_in" as const, user: user!, next: pending.nextPath === "/" ? "/library?onboarding=linkedin#library-import-linkedin" : pending.nextPath };
+    return { kind: "signed_in" as const, user: user!, subject: pending.subject, next: pending.nextPath === "/" ? "/library?onboarding=linkedin#library-import-linkedin" : pending.nextPath };
   });
 }

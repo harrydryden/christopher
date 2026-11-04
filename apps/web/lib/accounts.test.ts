@@ -7,6 +7,7 @@ import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, completeAccountCla
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
+import { hashPassword } from "@col/core";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
@@ -131,13 +132,26 @@ describe("who may register and what they get", () => {
   it("lets a signed-in member confirm with one click and stay a member", async () => {
     const { user } = await registerWithPassword({ email: "bob@example.com", password: PASSWORD });
     const token = await confirmationToken(user.id);
-    const done = await confirmEmailWithToken(token, { sessionUserId: user.id });
+    const [session] = await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000), authProvider: "password" }).returning();
+    const done = await confirmEmailWithToken(token, { sessionUserId: user.id, sessionId: session!.id });
     expect(done.status).toBe("done");
     if (done.status === "done") {
       expect(done.user.role).toBe("member");
       expect(done.user.emailVerifiedAt).not.toBeNull();
     }
-    expect(await confirmEmailWithToken(token, { sessionUserId: user.id })).toEqual({ status: "invalid" });
+    expect(await confirmEmailWithToken(token, { sessionUserId: user.id, sessionId: session!.id })).toEqual({ status: "invalid" });
+  });
+
+  it("refuses a confirmation from a session revoked after the page loaded", async () => {
+    const { user } = await registerWithPassword({ email: "revoked-confirm@example.com", password: PASSWORD });
+    const token = await confirmationToken(user.id);
+    const [session] = await database.insert(schema.sessions).values({ userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000), authProvider: "password" }).returning();
+    await database.delete(schema.sessions).where(eq(schema.sessions.id, session!.id));
+    expect(await confirmEmailWithToken(token, { sessionUserId: user.id, sessionId: session!.id })).toEqual({ status: "password" });
+    expect(await peekAuthToken(token, "email_verification")).toEqual({ userId: user.id });
+    const [stored] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(stored!.emailVerifiedAt).toBeNull();
   });
 
   it("recovers saved decisions and shortlisted scoring once, with bounded reason fan-out", async () => {
@@ -157,7 +171,7 @@ describe("who may register and what they get", () => {
     expect(await taskTypesFor(user.id)).toEqual([]);
 
     const token = await confirmationToken(user.id);
-    expect((await confirmEmailWithToken(token, { sessionUserId: user.id })).status).toBe("done");
+    expect((await confirmEmailWithToken(token, { password: PASSWORD })).status).toBe("done");
     expect(await taskTypesFor(user.id)).toEqual(["rescore_all", "resume_reason_tags", "synthesize_profile"]);
     await database.execute(sql`delete from tasks`);
     await completeAccountClaim(database, user.id, { adminEmails: [OWNER] });
@@ -266,7 +280,7 @@ describe("who may register and what they get", () => {
     await database.execute(sql`alter table tasks add constraint reject_atomic_claim check (type <> 'synthesize_profile') not valid`);
     try {
       if (channel === "confirmation")
-        await expect(confirmEmailWithToken(token, { sessionUserId: user.id })).rejects.toThrow();
+        await expect(confirmEmailWithToken(token, { password: PASSWORD })).rejects.toThrow();
       else await expect(resetPasswordWithToken(token, nextPassword)).rejects.toThrow();
       expect(await peekAuthToken(token, channel === "confirmation" ? "email_verification" : "password_reset"))
         .toEqual({ userId: user.id });
@@ -279,7 +293,7 @@ describe("who may register and what they get", () => {
       await database.execute(sql`alter table tasks drop constraint reject_atomic_claim`);
     }
     if (channel === "confirmation")
-      expect((await confirmEmailWithToken(token, { sessionUserId: user.id })).status).toBe("done");
+      expect((await confirmEmailWithToken(token, { password: PASSWORD })).status).toBe("done");
     else {
       expect((await resetPasswordWithToken(token, nextPassword))?.emailVerifiedAt).not.toBeNull();
       expect(await sessionsFor(user.id)).toHaveLength(0);
@@ -389,7 +403,7 @@ describe("who may register and what they get", () => {
     expect((await authenticateWithPassword("g@example.com", PASSWORD)).status).toBe("invalid");
   });
 
-  it("requires the current password to change it, unless the account never had one", async () => {
+  it("requires the current password or a fresh linked provider session to enrol one", async () => {
     const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
     await expect(changePassword(user, "not the password", "another fine password")).rejects.toThrow(/current password/);
     await expect(changePassword(user, PASSWORD, "short")).rejects.toThrow(/at least/);
@@ -397,7 +411,20 @@ describe("who may register and what they get", () => {
     expect((await authenticateWithPassword("ada@example.com", "another fine password")).status).toBe("ok");
     await openRegistration();
     const { user: google } = await signInWithGoogle({ sub: "google-1", email: "g@example.com", emailVerified: true });
-    await changePassword(google, "", "a password for google user");
+    vi.stubEnv("GOOGLE_CLIENT_ID", "test-client");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "test-secret");
+    const [fresh] = await database.insert(schema.sessions).values({ userId: google.id,
+      expiresAt: new Date(Date.now() + 60_000), authProvider: "google" }).returning();
+    await expect(changePassword(google, "", "a password for google user")).rejects.toThrow(/Sign in again/);
+    const [legacy] = await database.insert(schema.sessions).values({ userId: google.id,
+      expiresAt: new Date(Date.now() + 60_000) }).returning();
+    await expect(changePassword(google, "", "a password for google user", legacy!.id)).rejects.toThrow(/Sign in again/);
+    await database.update(schema.sessions).set({ createdAt: new Date(Date.now() - 11 * 60_000) })
+      .where(eq(schema.sessions.id, fresh!.id));
+    await expect(changePassword(google, "", "a password for google user", fresh!.id)).rejects.toThrow(/Sign in again/);
+    await database.update(schema.sessions).set({ createdAt: new Date() }).where(eq(schema.sessions.id, fresh!.id));
+    await changePassword(google, "", "a password for google user", fresh!.id);
+    vi.unstubAllEnvs();
     expect((await authenticateWithPassword("g@example.com", "a password for google user")).status).toBe("ok");
   });
 });
@@ -475,6 +502,7 @@ describe("Google sign-in", () => {
 
   it("takes over an unverified password account for the proven owner of the address", async () => {
     const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
+    const oldReset = await issueAuthToken(user.id, "password_reset");
     await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000) });
     const linked = await signInWithGoogle({ sub: "google-ada", email: "ada@example.com", emailVerified: true });
     expect(linked.created).toBe(false);
@@ -484,7 +512,73 @@ describe("Google sign-in", () => {
     expect(stored!.emailVerifiedAt).not.toBeNull();
     expect(await sessionsFor(user.id)).toHaveLength(0);
     expect((await authenticateWithPassword("ada@example.com", PASSWORD)).status).toBe("invalid");
+    expect(await resetPasswordWithToken(oldReset, "an attacker password again")).toBeNull();
     expect(await database.select().from(schema.authAccounts)).toMatchObject([{ userId: user.id, provider: "google", providerAccountId: "google-ada" }]);
+  });
+
+  it("does not restore a revoked unverified password from a stale change request", async () => {
+    const { user } = await registerWithPassword({ email: "stale-change@example.com", password: PASSWORD });
+    await signInWithGoogle({ sub: "google-stale-change", email: user.email, emailVerified: true });
+    await expect(changePassword(user, PASSWORD, "a different valid password"))
+      .rejects.toThrow(/account changed/i);
+    const [stored] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(stored!.passwordHash).toBeNull();
+    expect((await authenticateWithPassword(user.email, PASSWORD)).status).toBe("invalid");
+  });
+
+  it("does not rehash an old password over a concurrent reset", async () => {
+    const { user } = await registerWithPassword({ email: "rehash-reset@example.com", password: PASSWORD });
+    const replacement = "replacement password after reset";
+    const replacementHash = await hashPassword(replacement);
+    vi.stubEnv("COL_SCRYPT_N", "32768");
+    let release!: () => void;
+    let locked!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { locked = resolve; });
+    const reset = database.transaction(async tx => {
+      await tx.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.id, user.id)).for("update");
+      locked();
+      await hold;
+      await tx.update(schema.users).set({ passwordHash: replacementHash }).where(eq(schema.users.id, user.id));
+    });
+    await ready;
+    const signingIn = authenticateWithPassword(user.email, PASSWORD);
+    try {
+      let waiting = false;
+      for (let attempt = 0; attempt < 150 && !waiting; attempt++) {
+        const status = await database.execute<{ waiting: boolean }>(sql`select exists (
+          select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'
+            and query ilike '%update%users%'
+        ) as waiting`);
+        waiting = status.rows[0]?.waiting === true;
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      expect(waiting).toBe(true);
+    } finally {
+      release();
+      await reset;
+      vi.unstubAllEnvs();
+    }
+    expect((await signingIn).status).toBe("invalid");
+    expect((await authenticateWithPassword(user.email, replacement)).status).toBe("ok");
+  });
+
+  it("binds concurrent Google callbacks to the subject rather than their different email snapshots", async () => {
+    const first = await registerWithPassword({ email: "google-subject-a@example.com", password: PASSWORD });
+    const second = await registerWithPassword({ email: "google-subject-b@example.com", password: PASSWORD });
+    await database.update(schema.users).set({ emailVerifiedAt: new Date() })
+      .where(eq(schema.users.id, first.user.id));
+    await database.update(schema.users).set({ emailVerifiedAt: new Date() })
+      .where(eq(schema.users.id, second.user.id));
+    const results = await Promise.all([
+      signInWithGoogle({ sub: "shared-google-subject", email: first.user.email, emailVerified: true }),
+      signInWithGoogle({ sub: "shared-google-subject", email: second.user.email, emailVerified: true }),
+    ]);
+    expect(results[0]!.user.id).toBe(results[1]!.user.id);
+    const links = await database.select().from(schema.authAccounts)
+      .where(eq(schema.authAccounts.providerAccountId, "shared-google-subject"));
+    expect(links).toHaveLength(1);
+    expect(links[0]!.userId).toBe(results[0]!.user.id);
   });
 
   it("links to a verified password account without touching its password or sessions", async () => {
@@ -547,10 +641,12 @@ describe("single-use links", () => {
       const confirmation = await confirmationToken(user.id);
       expect(confirmation).not.toBe("");
 
-      await changePassword(user, PASSWORD, "another fine password", kept!.id);
+      const changed = await changePassword(user, PASSWORD, "another fine password", kept!.id);
+      expect(changed.user.passwordHash).toBe(changed.passwordHashProven);
+      expect(changed.passwordHashProven).not.toBe(user.passwordHash);
       expect(await resetPasswordWithToken(reset, "the attacker's password")).toBeNull();
       expect((await confirmEmailWithToken(confirmation, { password: "another fine password" })).status).toBe("invalid");
-      expect((await sessionsFor(user.id)).map(row => row.id)).toEqual([kept!.id]);
+      expect(await sessionsFor(user.id)).toHaveLength(0);
       expect((await authenticateWithPassword("ada@example.com", "another fine password")).status).toBe("ok");
     } finally {
       log.mockRestore();

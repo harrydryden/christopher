@@ -8,10 +8,12 @@ import type { LinkedInIdentity } from "./linkedin";
 
 const client = createTestDb();
 const database: Db = client.db;
-vi.mock("@/lib/db", () => ({ db: () => database }));
+let requestDatabase: Db = database;
+vi.mock("@/lib/db", () => ({ db: () => requestDatabase }));
 beforeAll(() => runMigrations(database));
 afterAll(() => client.pool.end());
 beforeEach(async () => {
+  requestDatabase = database;
   process.env.ADMIN_EMAILS = "owner@example.com";
   await database.execute(sql`truncate users, settings, login_attempts restart identity cascade`);
 });
@@ -56,17 +58,17 @@ it("keeps matching email and closed registration on explicit verified account li
   const pending = await readLinkedInPending(database, started.cookie);
   expect(pending?.targetUserId).toBe(existing.user.id);
   const [session] = await database.insert(schema.sessions).values({ userId: existing.user.id, expiresAt: new Date(Date.now() + 60_000), authProvider: "password", createdAt: new Date(Date.now() - 30_000) }).returning();
-  await expect(completeLinkedInLinkIn(database, { cookie: started.cookie, userId: existing.user.id, sessionId: session!.id, passwordProven: false })).rejects.toThrow(/Sign in again/);
-  const done = await completeLinkedInLinkIn(database, { cookie: started.cookie, userId: existing.user.id, sessionId: session!.id, passwordProven: true });
+  await expect(completeLinkedInLinkIn(database, { cookie: started.cookie, userId: existing.user.id, sessionId: session!.id, passwordHashProven: undefined })).rejects.toThrow(/Sign in again/);
+  const done = await completeLinkedInLinkIn(database, { cookie: started.cookie, userId: existing.user.id, sessionId: session!.id, passwordHashProven: "hash" });
   expect(done.userId).toBe(existing.user.id);
   expect(await linked("pairwise-2")).toHaveLength(1);
-  await expect(completeLinkedInLinkIn(database, { cookie: started.cookie, userId: existing.user.id, sessionId: session!.id, passwordProven: true })).rejects.toThrow(/expired/);
+  await expect(completeLinkedInLinkIn(database, { cookie: started.cookie, userId: existing.user.id, sessionId: session!.id, passwordHashProven: "hash" })).rejects.toThrow(/expired/);
 
   // The LinkedIn email can differ from an owned account, even while new registration is closed.
   const other = await beginAndVerify({ sub: "pairwise-3", email: "different@example.com" });
   expect(other.result.kind).toBe("recovery_required");
   const [fresh] = await database.insert(schema.sessions).values({ userId: existing.user.id, expiresAt: new Date(Date.now() + 60_000), authProvider: "google", createdAt: new Date(Date.now() + 1_000) }).returning();
-  await completeLinkedInLinkIn(database, { cookie: other.started.cookie, userId: existing.user.id, sessionId: fresh!.id, passwordProven: false });
+  await completeLinkedInLinkIn(database, { cookie: other.started.cookie, userId: existing.user.id, sessionId: fresh!.id, passwordHashProven: undefined });
   expect(await linked("pairwise-3")).toHaveLength(1);
 });
 
@@ -88,7 +90,7 @@ it("never links an unverified password account, even with a fresh password proof
   const [session] = await database.insert(schema.sessions).values({ userId: attacker.user.id, expiresAt: new Date(Date.now() + 60_000), authProvider: "password" }).returning();
   const { started, result } = await beginAndVerify({ sub: "pairwise-5", email: "victim@example.com" });
   expect(result.kind).toBe("link_required");
-  await expect(completeLinkedInLinkIn(database, { cookie: started.cookie, userId: attacker.user.id, sessionId: session!.id, passwordProven: true })).rejects.toThrow(/Verify the account email/);
+  await expect(completeLinkedInLinkIn(database, { cookie: started.cookie, userId: attacker.user.id, sessionId: session!.id, passwordHashProven: "hash" })).rejects.toThrow(/Verify the account email/);
   expect(await linked("pairwise-5")).toHaveLength(0);
 });
 
@@ -136,13 +138,13 @@ it("requires a different, freshly authenticated alternate session for linking", 
   const existing = await createUser(database, { email: "confirmed@example.com", emailVerified: true });
   const [old] = await database.insert(schema.sessions).values({ userId: existing.user.id, expiresAt: new Date(Date.now() + 60_000), authProvider: "google", createdAt: new Date(Date.now() - 60_000) }).returning();
   const pending = await beginAndVerify({ sub: "pairwise-fresh", email: "confirmed@example.com", intent: "link", userId: existing.user.id, sessionId: old!.id });
-  await expect(completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: old!.id, passwordProven: false })).rejects.toThrow(/Sign in again/);
+  await expect(completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: old!.id, passwordHashProven: undefined })).rejects.toThrow(/Sign in again/);
   const verifiedAt = (await readLinkedInPending(database, pending.started.cookie))!.verifiedAt!;
   const [equal] = await database.insert(schema.sessions).values({ userId: existing.user.id, expiresAt: new Date(Date.now() + 3_600_000), authProvider: "google", createdAt: verifiedAt }).returning();
-  await expect(completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: equal!.id, passwordProven: false })).rejects.toThrow(/Sign in again/);
+  await expect(completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: equal!.id, passwordHashProven: undefined })).rejects.toThrow(/Sign in again/);
   const [fresh] = await database.insert(schema.sessions).values({ userId: existing.user.id, expiresAt: new Date(Date.now() + 3_600_000), authProvider: "google", createdAt: new Date(verifiedAt.getTime() + 1_000) }).returning();
-  await expect(completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: fresh!.id, passwordProven: false, now: new Date(verifiedAt.getTime() + 11 * 60_000) })).rejects.toThrow(/Sign in again/);
-  expect((await completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: fresh!.id, passwordProven: false, now: new Date(verifiedAt.getTime() + 2_000) })).userId).toBe(existing.user.id);
+  await expect(completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: fresh!.id, passwordHashProven: undefined, now: new Date(verifiedAt.getTime() + 11 * 60_000) })).rejects.toThrow(/Sign in again/);
+  expect((await completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: fresh!.id, passwordHashProven: undefined, now: new Date(verifiedAt.getTime() + 2_000) })).userId).toBe(existing.user.id);
 });
 
 it("sends a new account with no deep destination to the guided Library import", async () => {
@@ -160,7 +162,36 @@ it("lets a missing-email member link to an existing verified account after fresh
   const pending = await beginAndVerify({ sub: "pairwise-no-email", email: null });
   expect(pending.result.kind).toBe("verify_email");
   const [session] = await database.insert(schema.sessions).values({ userId: existing.user.id, expiresAt: new Date(Date.now() + 60_000), authProvider: "password", createdAt: new Date(Date.now() + 1_000) }).returning();
-  const linkedResult = await completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: session!.id, passwordProven: false });
+  const linkedResult = await completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: existing.user.id, sessionId: session!.id, passwordHashProven: undefined });
   expect(linkedResult.userId).toBe(existing.user.id);
   expect(await linked("pairwise-no-email")).toHaveLength(1);
+});
+
+
+it("rechecks password proof against the locked account before linking", async () => {
+  const owner = await createUser(database, { email: "rotated@example.com", emailVerified: true, passwordHash: "old-hash" });
+  const pending = await beginAndVerify({ sub: "stale-proof", email: owner.user.email });
+  const [session] = await database.insert(schema.sessions).values({ userId: owner.user.id, authProvider: "password", expiresAt: new Date(Date.now() + 60_000) }).returning();
+  // Model a credential mutation after the action verified its request's original user snapshot.
+  await database.update(schema.users).set({ passwordHash: "new-hash" }).where(eq(schema.users.id, owner.user.id));
+  await expect(completeLinkedInLinkIn(database, { cookie: pending.started.cookie, userId: owner.user.id,
+    sessionId: session!.id, passwordHashProven: "old-hash" })).rejects.toThrow(/Sign in again/);
+  expect(await linked("stale-proof")).toHaveLength(0);
+});
+
+it("completes email proof and concurrent registrations with a one-connection pool", async () => {
+  await database.insert(schema.settings).values({ key: "registrationOpen", value: true });
+  const pending = await Promise.all([0, 1, 2].map(i => beginAndVerify({ sub: `single-pool-${i}`, email: `single-${i}@example.com` })));
+  const missing = await beginAndVerify({ sub: "single-pool-email", email: null });
+  const proof = await beginLinkedInEmailProofIn(database, { cookie: missing.started.cookie, email: "one-pool-email@example.com" });
+  const narrow = createTestDb({ max: 1, idleInTransactionTimeoutMs: 1_500, statementTimeoutMs: 2_000 });
+  requestDatabase = narrow.db;
+  try {
+    expect((await completeLinkedInEmailProofIn(narrow.db, { cookie: missing.started.cookie, token: proof.token })).kind).toBe("create_account");
+    const results = await Promise.all(pending.map(flow => createLinkedInAccountIn(narrow.db, flow.started.cookie)));
+    expect(results.every(result => result.kind === "signed_in")).toBe(true);
+  } finally {
+    requestDatabase = database;
+    await narrow.pool.end();
+  }
 });

@@ -53,6 +53,8 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
     getBillingSummary(user.id),
     getCompanyCapacityQuote(user.id).catch(() => null),
   ]);
+  const canReauthenticateWithGoogle = googleConfigured() && providers.some(p => p.provider === "google");
+  const canReauthenticateWithLinkedIn = linkedinConfigured() && providers.some(p => p.provider === "linkedin");
   const labelClassName = "flex flex-col gap-1.5 text-14";
 
   return (
@@ -91,7 +93,17 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
               <input name="currentPassword" type="password" required autoComplete="current-password" className={`max-w-sm ${inputClass}`} />
             </label>
           ) : (
-            <p className="text-14 text-muted">A password lets you sign in with your email as well as Google.</p>
+            <div className="space-y-2 text-14 text-muted">
+              <p>A password lets you sign in with your email. Setting your first one needs a recent sign-in to this account.</p>
+              {user.emailVerifiedAt ? <>
+                {(canReauthenticateWithGoogle || canReauthenticateWithLinkedIn) && <p>If this sign-in is over ten minutes old, sign in again here, then return to set your password:</p>}
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {canReauthenticateWithGoogle && <a href="/auth/google?next=%2Faccount" className="inline-flex min-h-11 items-center text-fg underline">Sign in again with Google</a>}
+                  {canReauthenticateWithLinkedIn && <a href="/auth/linkedin?intent=sign_in&next=%2Faccount" className="inline-flex min-h-11 items-center text-fg underline">Sign in again with LinkedIn</a>}
+                </div>
+                {!canReauthenticateWithGoogle && !canReauthenticateWithLinkedIn && <p>Neither linked sign-in method is available here. <a href="/forgot-password" className="text-fg underline">Use email password reset</a> to set a password.</p>}
+              </> : <p>Confirm this account's email before setting a password.</p>}
+            </div>
           )}
           <label className={labelClassName}>
             <span className={labelClass}>New password</span>

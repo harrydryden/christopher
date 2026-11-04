@@ -2,6 +2,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { authTokens, type AuthToken } from "@col/db/schema";
+import { lockAccountScoreInput, type Db } from "@col/db";
 import { db } from "./db";
 
 export type TokenPurpose = AuthToken["purpose"];
@@ -17,9 +18,16 @@ export function hashToken(raw: string): string {
 }
 
 /** Issue a fresh token for `userId`, invalidating earlier unused ones for the same purpose. */
-export async function issueAuthToken(userId: string, purpose: TokenPurpose, now: Date = new Date()): Promise<string> {
+export async function issueAuthToken(userId: string, purpose: TokenPurpose, now: Date = new Date(),
+  authorise?: (writer: Db) => Promise<void>): Promise<string> {
   const raw = randomBytes(32).toString("base64url");
   await db().transaction(async (tx) => {
+    // Serialise issuance with password changes, resets and other issuers for this account.
+    // Without the fence, two empty-table updates can each insert a live token.
+    await lockAccountScoreInput(tx as unknown as Db, userId, "exclusive");
+    // Administrative issuers may check the actor under their own global account lock here;
+    // that check and token insertion then commit or roll back together.
+    if (authorise) await authorise(tx as unknown as Db);
     await tx.update(authTokens).set({ usedAt: now }).where(and(eq(authTokens.userId, userId), eq(authTokens.purpose, purpose), isNull(authTokens.usedAt)));
     await tx.insert(authTokens).values({ userId, purpose, tokenHash: hashToken(raw), expiresAt: new Date(now.getTime() + TOKEN_TTL_MS[purpose]) });
   });

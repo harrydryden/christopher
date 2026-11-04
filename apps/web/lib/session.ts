@@ -69,7 +69,8 @@ function toBase64Url(bytes: Uint8Array): string {
 
 function fromBase64Url(value: string): string {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
-  return atob(base64);
+  const binary = atob(base64);
+  return new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)));
 }
 
 async function hmac(secret: string, message: string): Promise<string> {
@@ -167,7 +168,7 @@ export async function readSignedValue(value: string | undefined | null, secret: 
 /** Whether the cookie should be marked Secure. Skip only for plain localhost development. */
 export function isSecureHost(host: string | null | undefined): boolean {
   if (!host) return true;
-  const hostname = host.split(":")[0] ?? host;
+  const hostname = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.split(":")[0] ?? host;
   return hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1";
 }
 

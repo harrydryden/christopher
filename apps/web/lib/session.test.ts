@@ -146,7 +146,15 @@ describe("redirect targets", () => {
   it("marks cookies secure everywhere except plain localhost", () => {
     expect(isSecureHost("localhost:3000")).toBe(false);
     expect(isSecureHost("127.0.0.1")).toBe(false);
+    expect(isSecureHost("[::1]:3000")).toBe(false);
     expect(isSecureHost("col.example")).toBe(true);
     expect(isSecureHost(null)).toBe(true);
   });
+});
+
+
+it("preserves non-ASCII return paths across the signed OAuth cookie", async () => {
+  const payload = { state: "test-state", verifier: "test-verifier", next: "/?title=Directeur général&location=東京" };
+  const value = await createSignedValue(secret, payload, 60);
+  expect(await readSignedValue(value, secret)).toEqual(payload);
 });

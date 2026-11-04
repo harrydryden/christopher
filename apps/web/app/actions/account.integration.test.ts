@@ -7,7 +7,7 @@ import { createDb, createUser, schema, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
-import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS } from "@/lib/session";
+import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, readSessionCookie } from "@/lib/session";
 import { hashPassword, verifyPassword } from "@col/core";
 
 let database: Db;
@@ -16,7 +16,11 @@ let session: string | undefined;
 
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({
-  cookies: async () => ({ get: () => (session ? { value: session } : undefined) }),
+  cookies: async () => ({
+    get: () => (session ? { value: session } : undefined),
+    set: (_name: string, value: string) => { session = value; },
+    delete: () => { session = undefined; },
+  }),
   headers: async () => new Headers({ host: "col.test", "x-forwarded-for": "198.51.100.30" }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -128,13 +132,34 @@ it("spends no attempt on a new password that fails the cheap checks", async () =
   expect(await database.select().from(schema.loginAttempts)).toHaveLength(0);
 });
 
-it("changes the password, clears its attempts and signs every other browser out", async () => {
+it("limits first-password attempts from an old passwordless session before another costly hash", async () => {
+  const { user } = await signIn("passwordless@example.com", true);
+  for (let i = 0; i < LIMITS.passwordChange.max; i++) {
+    expect(await changePassword({ ok: true }, passwordForm("", "a brand new password")))
+      .toEqual({ ok: false, error: "Sign in again with Google or LinkedIn before setting your first password." });
+  }
+  expect(await changePassword({ ok: true }, passwordForm("", "a brand new password")))
+    .toEqual({ ok: false, error: "Too many attempts. Try again in 15 minutes." });
+  expect(await database.select().from(schema.loginAttempts).where(eq(schema.loginAttempts.key, `password-change:user:${user.id}`)))
+    .toHaveLength(LIMITS.passwordChange.max);
+  expect(await changePassword({ ok: true }, passwordForm("", "short")))
+    .toEqual({ ok: false, error: "Use at least 10 characters." });
+});
+
+it("changes the password, revokes every old session and publishes a new one", async () => {
   const { user, sessionId } = await signIn("changer@example.com", true, PASSWORD);
+  const oldCookie = session;
   await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000) });
   expect(await changePassword({ ok: true }, passwordForm("wrong guess", "a brand new password"))).toMatchObject({ ok: false });
+  expect(session).toBe(oldCookie);
+  expect(await database.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId))).toHaveLength(1);
   expect(await changePassword({ ok: true }, passwordForm(PASSWORD, "a brand new password"))).toEqual({ ok: true });
   expect(await verifyPassword("a brand new password", await storedHash(user.id))).toBe(true);
   expect(await database.select().from(schema.loginAttempts)).toHaveLength(0);
   const left = await database.select().from(schema.sessions).where(eq(schema.sessions.userId, user.id));
-  expect(left.map(row => row.id)).toEqual([sessionId]);
+  expect(left).toHaveLength(1);
+  expect(left[0]!.id).not.toBe(sessionId);
+  expect(session).not.toBe(oldCookie);
+  expect(await readSessionCookie(session, process.env.SESSION_SECRET!)).toMatchObject({ sessionId: left[0]!.id });
+  expect(await database.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId))).toHaveLength(0);
 });

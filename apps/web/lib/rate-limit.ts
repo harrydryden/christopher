@@ -2,7 +2,7 @@
  * Sign-in throttling backed by the database, so every instance of the interface shares one view
  * of the attempts. Keys are `login:email:<address>`, `login:ip:<address>` and so on.
  */
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { loginAttempts } from "@col/db/schema";
 import { db } from "./db";
 
@@ -69,11 +69,15 @@ export async function reserveRateLimits(
     for (const [key] of ordered) {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 731409))`);
     }
-    for (const [key, limit] of ordered) {
-      const [row] = await tx.select({ n: sql<number>`count(*)::int` }).from(loginAttempts)
-        .where(and(eq(loginAttempts.key, key), gt(loginAttempts.at, new Date(now.getTime() - limit.windowMs))));
-      if ((row?.n ?? 0) >= limit.max) return null;
-    }
+    // The locks above still protect each key. Evaluate every independent window in one
+    // indexed statement, avoiding a network round trip per quota on the sign-in path.
+    const windows = sql.join(ordered.map(([key, limit]) => sql`(${key}::text, ${new Date(now.getTime() - limit.windowMs)}::timestamptz, ${limit.max}::int)`), sql`, `);
+    const blocked = await tx.execute<{ key: string }>(sql`
+      with windows(key, since, maximum) as (values ${windows})
+      select w.key from windows w
+      where (select count(*) from ${loginAttempts} a where a.key = w.key and a.at > w.since) >= w.maximum
+      limit 1`);
+    if (blocked.rows.length) return null;
     return tx.insert(loginAttempts).values(ordered.map(([key]) => ({ key, at: now })))
       .returning({ id: loginAttempts.id, key: loginAttempts.key });
   });

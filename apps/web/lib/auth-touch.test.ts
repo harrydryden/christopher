@@ -6,8 +6,10 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local col_test database).
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { schema } from "@col/db";
+import { createUser, schema } from "@col/db";
+import { hashPassword } from "@col/core";
 import { runMigrations } from "@col/db/migrate";
 import { signInTestUser } from "@/test/auth";
 import { createTestDb } from "@/test/db";
@@ -20,12 +22,12 @@ const after = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db", () => ({ db: () => db }));
 vi.mock("next/headers", () => ({
-  cookies: async () => ({ get: () => (cookie ? { value: cookie } : undefined) }),
+  cookies: async () => ({ get: () => (cookie ? { value: cookie } : undefined), set: (_name: string, value: string) => { cookie = value; } }),
   headers: async () => new Headers(),
 }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after }));
 
-import { getCurrentUser } from "./auth";
+import { getCurrentUser, startSessionFromProof } from "./auth";
 
 const HOURS_AGO = (hours: number) => new Date(Date.now() - hours * 3_600_000);
 
@@ -70,4 +72,24 @@ it("still records the touch outside a request, where after() refuses", async () 
   const id = await sessionSeen(3);
   await getCurrentUser();
   await vi.waitFor(async () => expect((await lastSeen(id)).getTime()).toBeGreaterThan(Date.now() - 60_000));
+});
+
+it("refuses a password or provider proof revoked before session publication", async () => {
+  const oldHash = await hashPassword("original long password");
+  const { user } = await createUser(db, { email: `proof-revoked-${randomUUID()}@example.com`, emailVerified: true, passwordHash: oldHash });
+  await db.update(schema.users).set({ passwordHash: await hashPassword("replacement long password") })
+    .where(eq(schema.users.id, user.id));
+  expect(await startSessionFromProof({ userId: user.id, proof: { provider: "password", expectedPasswordHash: oldHash } })).toBeNull();
+  expect(await startSessionFromProof({ userId: user.id, proof: { provider: "google", subject: "removed-subject" } })).toBeNull();
+  expect(await db.select().from(schema.sessions).where(eq(schema.sessions.userId, user.id))).toHaveLength(0);
+});
+
+it("publishes a session only for the exact live Google subject", async () => {
+  const { user } = await createUser(db, { email: `proof-google-${randomUUID()}@example.com`, emailVerified: true });
+  await db.insert(schema.authAccounts).values({ userId: user.id, provider: "google", providerAccountId: "current-subject" });
+  const sessionId = await startSessionFromProof({ userId: user.id,
+    proof: { provider: "google", subject: "current-subject" } });
+  expect(sessionId).toBeTruthy();
+  const [stored] = await db.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId!));
+  expect(stored).toMatchObject({ userId: user.id, authProvider: "google" });
 });

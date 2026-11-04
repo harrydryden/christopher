@@ -6,14 +6,14 @@ import { and, eq, gt, sql } from "drizzle-orm";
 import { authAccounts, sessions, users } from "@col/db/schema";
 import { normaliseEmail } from "@col/db";
 import { verifyPassword } from "@col/core";
-import { clientAddress, getCurrentUser, requireUser, startSession } from "@/lib/auth";
+import { clientAddress, getCurrentUser, startSessionFromProof } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { linkedinConfigured } from "@/lib/linkedin";
 import { beginLinkedInEmailProofIn, completeLinkedInEmailProofIn, completeLinkedInLinkIn, createLinkedInAccountIn, LINKEDIN_COOKIE, readLinkedInPending } from "@/lib/linkedin-auth";
 import { emailLinkOrigin } from "@/lib/origin";
 import { LIMITS, reserveRateLimits } from "@/lib/rate-limit";
-import { actionError, fail, type ActionResult } from "@/lib/validation";
+import { actionError, fail, UserFacingError, type ActionResult } from "@/lib/validation";
 import { emailProblem } from "@/lib/accounts";
 
 async function pendingCookie() { return (await cookies()).get(LINKEDIN_COOKIE)?.value; }
@@ -27,9 +27,8 @@ export async function getLinkedInPendingView(): Promise<{ status: "link_required
 
 /** An existing account is proved by a fresh password check or a fresh alternate-provider session. */
 export async function completeLinkedInLink(form: FormData): Promise<ActionResult> {
-  await requireUser();
   const current = await getCurrentUser();
-  if (!current) return fail("Sign in to the existing account before linking LinkedIn.");
+  if (!current) throw new UserFacingError("Unauthorised");
   const password = String(form.get("password") ?? "");
   let passwordProven = false;
   if (password) {
@@ -43,7 +42,7 @@ export async function completeLinkedInLink(form: FormData): Promise<ActionResult
     if (!passwordProven) return fail("That password is not right.");
   }
   try {
-    const result = await completeLinkedInLinkIn(db(), { cookie: await pendingCookie(), userId: current.user.id, sessionId: current.sessionId, passwordProven });
+    const result = await completeLinkedInLinkIn(db(), { cookie: await pendingCookie(), userId: current.user.id, sessionId: current.sessionId, passwordHashProven: passwordProven ? current.user.passwordHash! : undefined });
     (await cookies()).delete(LINKEDIN_COOKIE);
     return { ok: true, message: "LinkedIn is linked to this account.", nextSnapshot: { href: result.next } };
   } catch (error) {
@@ -62,8 +61,8 @@ export async function beginLinkedInEmailVerification(form: FormData): Promise<Ac
   const address = await clientAddress();
   if (!await reserveRateLimits([
     { key: `linkedin:email:pair:${email}:${address}`, limit: LIMITS.resetEmail },
-    { key: `linkedin:email:address:${email}`, limit: LIMITS.resetEmail },
-    { key: `linkedin:email:ip:${address}`, limit: LIMITS.resetAddress },
+    { key: `reset:email:${email}`, limit: LIMITS.resetEmail },
+    { key: `reset:ip:${address}`, limit: LIMITS.resetAddress },
   ])) return fail("Too many attempts. Try again later.");
   try {
     const { token } = await beginLinkedInEmailProofIn(db(), { cookie: await pendingCookie(), email });
@@ -97,16 +96,17 @@ export async function createLinkedInAccount(): Promise<ActionResult> {
     return actionError(error, "Could not create the account. Restart LinkedIn sign-in or use an existing account.", "linkedin_account_create_failed");
   }
   if (result.kind === "link_required") return { ok: true, message: "That address now has an account. Sign in to it and explicitly link LinkedIn." };
-  await startSession(result.user.id, undefined, "linkedin");
+  const sessionId = await startSessionFromProof({ userId: result.user.id, proof: { provider: "linkedin", subject: result.subject } });
+  if (!sessionId) return fail("Sign-in changed while completing this account. Sign in again.");
   (await cookies()).delete(LINKEDIN_COOKIE);
   redirect(result.next);
 }
 
 /** Disconnect only after a fresh alternate-method sign-in, and only while another usable method remains. */
 export async function unlinkLinkedIn(): Promise<ActionResult> {
-  const current = await requireUser();
   const session = await getCurrentUser();
-  if (!session) return fail("Sign in again before disconnecting LinkedIn.");
+  if (!session) throw new UserFacingError("Unauthorised");
+  const current = session.user;
   const now = new Date();
   try {
     return await db().transaction(async tx => {

@@ -6,7 +6,7 @@
  * role and taking over the migrated owner's data. Proof is a Google sign-in Google has verified, the
  * confirmation link completed with the account's password, or a reset link used to set a password.
  */
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, lockAccountScoreInput, normaliseEmail, promoteIfEntitled, type CreateUserResult, type Db } from "@col/db";
 import { authAccounts, authTokens, billingAccounts, cvVersions, sessions, users, type User } from "@col/db/schema";
 import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@col/core";
@@ -14,6 +14,8 @@ import { consumeAuthTokenIn, issueAuthToken, peekAuthToken } from "./auth-tokens
 import { db } from "./db";
 import { sendEmail } from "./email";
 import type { GoogleProfile } from "./google";
+import { googleAuthoritativeEmail, googleConfigured } from "./google";
+import { linkedinConfigured } from "./linkedin";
 import { getSystemSettings } from "./settings";
 import { UserFacingError } from "./validation";
 
@@ -67,7 +69,7 @@ export async function registerWithPassword(input: { email: string; password: str
   return createUser(db(), { email: input.email, name: input.name?.trim().slice(0, 200) || null, passwordHash }, { adminEmails: adminEmails() });
 }
 
-export type PasswordSignIn = { status: "ok"; user: User } | { status: "unconfirmed" } | { status: "invalid" };
+export type PasswordSignIn = { status: "ok"; user: User; passwordHashProven: string } | { status: "unconfirmed" } | { status: "invalid" };
 
 /** Check a password. An unclaimed row (an administrator address that has not confirmed yet) cannot sign in even with the right password. */
 export async function authenticateWithPassword(email: string, password: string): Promise<PasswordSignIn> {
@@ -78,21 +80,28 @@ export async function authenticateWithPassword(email: string, password: string):
   if (!user.claimedAt) return { status: "unconfirmed" };
   let current = user;
   if (needsRehash(user.passwordHash)) {
-    const [rehashed] = await db().update(users).set({ passwordHash: await hashPassword(password) }).where(eq(users.id, user.id)).returning();
-    current = rehashed ?? current;
+    const replacement = await hashPassword(password);
+    const [rehashed] = await db().update(users).set({ passwordHash: replacement })
+      .where(and(eq(users.id, user.id), eq(users.passwordHash, user.passwordHash))).returning();
+    if (!rehashed) return { status: "invalid" };
+    current = rehashed;
   }
-  return { status: "ok", user: await promoteIfEntitled(db(), current, adminEmails()) };
+  return { status: "ok", user: await promoteIfEntitled(db(), current, adminEmails()), passwordHashProven: current.passwordHash! };
 }
 
 /**
- * Sign in with a Google identity. A known Google account signs in. Otherwise Google must have
- * verified the address; then a row waiting for confirmation is completed (its unproven password
- * dropped), an existing account is linked (an unverified password account is taken over the same
- * way, since nobody proved that address before), and anything else creates an account, subject to
- * the registration policy.
+ * A known Google subject signs in. For a new subject, Google's email claim can create or claim an
+ * account only when Google hosts the mailbox. An external Google address may link to an existing,
+ * app-verified account only after a recent live sign-in to that same account.
  */
-export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: User; created: boolean }> {
+export class GoogleEmailProofError extends Error {
+  constructor() { super("Sign in to your existing account before linking this Google address."); }
+}
+
+export async function signInWithGoogle(profile: GoogleProfile, proof?: { userId: string; sessionId: string }): Promise<{ user: User; created: boolean }> {
   const email = normaliseEmail(profile.email);
+  const authoritative = googleAuthoritativeEmail(profile);
+  const mayRepairLinked = (account: User) => !!account.emailVerifiedAt || (authoritative && normaliseEmail(account.email) === email);
   const [linked] = await db()
     .select({ user: users })
     .from(authAccounts)
@@ -100,6 +109,7 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
     .where(and(eq(authAccounts.provider, "google"), eq(authAccounts.providerAccountId, profile.sub)))
     .limit(1);
   if (linked) {
+    if (!mayRepairLinked(linked.user)) throw new GoogleEmailProofError();
     // Linking and claiming are separate transactions. If the claim's saved-work enqueue rolled
     // back after the link was inserted, a verified Google sign-in must retry that claim.
     if (!linked.user.emailVerifiedAt && profile.emailVerified) {
@@ -109,30 +119,73 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
     }
     return { user: await promoteIfEntitled(db(), linked.user, adminEmails()), created: false };
   }
-  if (!profile.emailVerified) throw new Error("Google has not verified this email address, so it cannot be used to sign in.");
+  if (profile.emailVerified !== true) throw new Error("Google has not verified this email address, so it cannot be used to sign in.");
   if (emailProblem(email)) throw new Error("Google returned an unusable email address.");
-
-  const [existing] = await db().select().from(users).where(eq(users.email, email)).limit(1);
-  if (existing) {
-    await db().transaction(async (tx) => {
-      await lockAccountScoreInput(tx as unknown as Db, existing.id, "exclusive");
-      const [current] = await tx.select({ emailVerifiedAt: users.emailVerifiedAt, passwordHash: users.passwordHash })
-        .from(users).where(eq(users.id, existing.id)).for("update");
-      if (!current) throw new Error("This account cannot sign in.");
-      if (!current.emailVerifiedAt && current.passwordHash) {
-        await tx.update(users).set({ passwordHash: null }).where(eq(users.id, existing.id));
-        await tx.delete(sessions).where(eq(sessions.userId, existing.id));
+  const mayRegister = authoritative ? await registrationAllowed(email) : false;
+  // The email lookup is only a lock hint. Once the score fence and the global users lock are held,
+  // re-read both the subject and email. A newly appearing email restarts with its own score fence.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const [hint] = await db().select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    const settled = await db().transaction(async tx => {
+      if (hint) await lockAccountScoreInput(tx as unknown as Db, hint.id, "exclusive");
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+      const [bySubject] = await tx.select({ user: users }).from(authAccounts)
+        .innerJoin(users, eq(users.id, authAccounts.userId))
+        .where(and(eq(authAccounts.provider, "google"), eq(authAccounts.providerAccountId, profile.sub))).limit(1);
+      if (bySubject) {
+        if (!mayRepairLinked(bySubject.user)) throw new GoogleEmailProofError();
+        return { kind: "linked" as const, user: bySubject.user };
       }
-      await tx.insert(authAccounts).values({ userId: existing.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null }).onConflictDoNothing();
+      const [byEmail] = await tx.select().from(users).where(eq(users.email, email)).limit(1);
+      if (byEmail?.id !== hint?.id) return { kind: "retry" as const };
+      if (byEmail) {
+        const [current] = await tx.select({ emailVerifiedAt: users.emailVerifiedAt, passwordHash: users.passwordHash, claimedAt: users.claimedAt })
+          .from(users).where(eq(users.id, byEmail.id)).for("update");
+        if (!current) throw new Error("This account cannot sign in.");
+        if (!authoritative) {
+          if (!proof || proof.userId !== byEmail.id || !current.claimedAt || !current.emailVerifiedAt) throw new GoogleEmailProofError();
+          const [session] = await tx.select({ authProvider: sessions.authProvider, createdAt: sessions.createdAt })
+            .from(sessions).where(and(eq(sessions.id, proof.sessionId), eq(sessions.userId, byEmail.id), sql`${sessions.expiresAt} > now()`)).limit(1);
+          if (!session || Date.now() - session.createdAt.getTime() > 10 * 60_000 || session.createdAt.getTime() > Date.now()) throw new GoogleEmailProofError();
+          const provider = session.authProvider;
+          if (provider === "password") {
+            if (!current.passwordHash) throw new GoogleEmailProofError();
+          } else if (provider === "google" || provider === "linkedin") {
+            if (!(provider === "google" ? googleConfigured() : linkedinConfigured())) throw new GoogleEmailProofError();
+            const [existingLink] = await tx.select({ id: authAccounts.id }).from(authAccounts)
+              .where(and(eq(authAccounts.userId, byEmail.id), eq(authAccounts.provider, provider))).limit(1);
+            if (!existingLink) throw new GoogleEmailProofError();
+          } else throw new GoogleEmailProofError();
+        }
+        if (!current.emailVerifiedAt && current.passwordHash) {
+          await tx.update(users).set({ passwordHash: null }).where(eq(users.id, byEmail.id));
+          await tx.delete(sessions).where(eq(sessions.userId, byEmail.id));
+          await tx.update(authTokens).set({ usedAt: new Date() }).where(and(eq(authTokens.userId, byEmail.id), isNull(authTokens.usedAt)));
+        }
+        await tx.insert(authAccounts).values({ userId: byEmail.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null });
+        return { kind: "existing" as const, userId: byEmail.id };
+      }
+      if (!authoritative) throw new GoogleEmailProofError();
+      if (!mayRegister) throw new Error("Registration is closed on this deployment.");
+      const { user } = await createUser(tx as unknown as Db, { email, name: profile.name ?? null, emailVerified: true }, { adminEmails: adminEmails() });
+      await tx.insert(authAccounts).values({ userId: user.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null });
+      return { kind: "created" as const, user };
     });
-    const user = await completeAccountClaim(db(), existing.id, { adminEmails: adminEmails() });
+    if (settled.kind === "retry") continue;
+    if (settled.kind === "created") return { user: settled.user, created: true };
+    if (settled.kind === "linked") {
+      if (!settled.user.emailVerifiedAt) {
+        const claimed = await completeAccountClaim(db(), settled.user.id, { adminEmails: adminEmails() });
+        if (!claimed) throw new Error("This account cannot sign in.");
+        return { user: claimed, created: false };
+      }
+      return { user: await promoteIfEntitled(db(), settled.user, adminEmails()), created: false };
+    }
+    const user = await completeAccountClaim(db(), settled.userId, { adminEmails: adminEmails() });
     if (!user) throw new Error("This account cannot sign in.");
     return { user, created: false };
   }
-  if (!(await registrationAllowed(email))) throw new Error("Registration is closed on this deployment.");
-  const { user } = await createUser(db(), { email, name: profile.name ?? null, emailVerified: true }, { adminEmails: adminEmails() });
-  await db().insert(authAccounts).values({ userId: user.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null }).onConflictDoNothing();
-  return { user, created: true };
+  throw new Error("This account changed during sign-in. Please try again.");
 }
 
 export async function linkedProviders(userId: string) {
@@ -142,23 +195,42 @@ export async function linkedProviders(userId: string) {
 /**
  * Set or change the password. The current one is required whenever the account already has one.
  *
- * The new hash, the end of every outstanding reset and confirmation link, and (given the session to
- * keep) the end of every other session land in one transaction: a reset link requested by whoever
- * briefly had the mailbox must not outlive the change, and no browser signed in with the old
- * password survives a change that half-happened.
+ * The new hash and the end of every outstanding link and old session land in one transaction.
+ * The caller uses the returned proven hash to publish a replacement session after the commit.
  */
-export async function changePassword(user: User, currentPassword: string, nextPassword: string, keepSessionId?: string): Promise<void> {
+export async function changePassword(user: User, currentPassword: string, nextPassword: string, currentSessionId?: string): Promise<{ user: User; passwordHashProven: string }> {
   if (user.passwordHash) {
     if (!(await verifyPassword(currentPassword, user.passwordHash))) throw new Error("The current password is not right.");
   }
   const problem = passwordProblem(nextPassword);
   if (problem) throw new Error(problem);
   const passwordHash = await hashPassword(nextPassword);
-  await db().transaction(async (tx) => {
+  return db().transaction(async (tx) => {
     await lockAccountScoreInput(tx as unknown as Db, user.id, "exclusive");
-    await tx.update(users).set({ passwordHash }).where(eq(users.id, user.id));
+    const [current] = await tx.select({ passwordHash: users.passwordHash, claimedAt: users.claimedAt, emailVerifiedAt: users.emailVerifiedAt })
+      .from(users).where(eq(users.id, user.id)).for("update");
+    if (!current?.claimedAt || current.passwordHash !== user.passwordHash) throw new Error("The account changed. Sign in again before changing the password.");
+    let active: { id: string; authProvider: "password" | "google" | "linkedin" | null; createdAt: Date } | undefined;
+    if (currentSessionId) {
+      [active] = await tx.select({ id: sessions.id, authProvider: sessions.authProvider, createdAt: sessions.createdAt }).from(sessions)
+        .where(and(eq(sessions.id, currentSessionId), eq(sessions.userId, user.id), sql`${sessions.expiresAt} > now()`)).limit(1);
+      if (!active) throw new Error("The session has ended. Sign in again before changing the password.");
+    }
+    if (!current.passwordHash) {
+      const provider = active?.authProvider;
+      const configured = provider === "google" ? googleConfigured() : provider === "linkedin" ? linkedinConfigured() : false;
+      if (!current.emailVerifiedAt || !active || !configured || Date.now() - active.createdAt.getTime() > 10 * 60_000) {
+        throw new UserFacingError("Sign in again with Google or LinkedIn before setting your first password.");
+      }
+      if (provider !== "google" && provider !== "linkedin") throw new UserFacingError("Sign in again with Google or LinkedIn before setting your first password.");
+      const [link] = await tx.select({ id: authAccounts.id }).from(authAccounts)
+        .where(and(eq(authAccounts.userId, user.id), eq(authAccounts.provider, provider))).limit(1);
+      if (!link) throw new UserFacingError("Sign in again with Google or LinkedIn before setting your first password.");
+    }
+    const [updated] = await tx.update(users).set({ passwordHash }).where(eq(users.id, user.id)).returning();
     await tx.update(authTokens).set({ usedAt: new Date() }).where(and(eq(authTokens.userId, user.id), isNull(authTokens.usedAt)));
-    if (keepSessionId) await tx.delete(sessions).where(and(eq(sessions.userId, user.id), ne(sessions.id, keepSessionId)));
+    await tx.delete(sessions).where(eq(sessions.userId, user.id));
+    return { user: updated!, passwordHashProven: passwordHash };
   });
 }
 
@@ -189,6 +261,7 @@ export async function resetPasswordWithToken(token: string, password: string): P
     if (!user) throw new Error("This account cannot be claimed.");
     // Claim takes ava:users before updating this row, the same order as registration.
     const [updated] = await tx.update(users).set({ passwordHash }).where(eq(users.id, user.id)).returning();
+    await tx.update(authTokens).set({ usedAt: new Date() }).where(and(eq(authTokens.userId, user.id), isNull(authTokens.usedAt)));
     // Whoever held the old password is signed out everywhere, in the same commit as the reset.
     await tx.delete(sessions).where(eq(sessions.userId, user.id));
     return updated ?? user;
@@ -229,29 +302,35 @@ export type EmailConfirmation = { status: "done"; user: User } | { status: "inva
  * one who set the password, so either a session for that account or the password is required. That
  * is what stops a stranger registering your address and having you confirm it for them.
  */
-export async function confirmEmailWithToken(token: string, proof: { sessionUserId?: string | null; password?: string }): Promise<EmailConfirmation> {
+export async function confirmEmailWithToken(token: string, proof: { sessionUserId?: string | null; sessionId?: string | null; password?: string }): Promise<EmailConfirmation> {
   const preview = await previewVerification(token);
   if (!preview) return { status: "invalid" };
-  if (proof.sessionUserId !== preview.userId) {
+  const sessionProof = proof.sessionUserId === preview.userId && !!proof.sessionId;
+  let passwordHashProven: string | null = null;
+  if (!sessionProof) {
     const [user] = await db().select().from(users).where(eq(users.id, preview.userId)).limit(1);
     const hash = user?.passwordHash ?? (await decoy());
     const ok = await verifyPassword(proof.password ?? "", hash);
     if (!user?.passwordHash || !ok) return { status: "password" };
+    passwordHashProven = user.passwordHash;
   }
   return db().transaction(async tx => {
     await lockAccountScoreInput(tx as unknown as Db, preview.userId, "exclusive");
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+    const [current] = await tx.select({ passwordHash: users.passwordHash }).from(users)
+      .where(eq(users.id, preview.userId)).for("update");
+    if (!current) return { status: "invalid" };
+    if (sessionProof) {
+      const [live] = await tx.select({ id: sessions.id }).from(sessions)
+        .where(and(eq(sessions.id, proof.sessionId!), eq(sessions.userId, preview.userId), sql`${sessions.expiresAt} > now()`)).limit(1);
+      if (!live) return { status: "password" };
+    } else if (!passwordHashProven || current.passwordHash !== passwordHashProven) return { status: "password" };
     const consumed = await consumeAuthTokenIn(tx, token, "email_verification");
     if (!consumed || consumed.userId !== preview.userId) return { status: "invalid" };
     const user = await completeAccountClaim(tx as unknown as Db, consumed.userId, { adminEmails: adminEmails() });
     if (!user) throw new Error("This account cannot be claimed.");
     return { status: "done", user };
   });
-}
-
-/** A reset link an administrator can hand to someone when email delivery is not set up. Works once, for an hour. */
-export async function issueResetLink(userId: string, origin: string): Promise<string> {
-  const token = await issueAuthToken(userId, "password_reset");
-  return `${origin}/reset-password?token=${token}`;
 }
 
 /**

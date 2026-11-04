@@ -17,6 +17,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   google_state: "The Google sign-in round trip did not complete. Try again.",
   google_failed: "Google sign-in failed. Try again, or use your email and password.",
   google_unverified: "Google has not verified that email address, so it cannot be used to sign in.",
+  google_email_proof: "We could not confirm this email through Google. Sign in to your existing account with a password or another linked method, confirm its email if needed, then link Google from Account. If you are new, create an account with email and confirm it first.",
   linkedin_not_configured: "LinkedIn sign-in is unavailable here. Use your email and password or another sign-in method.",
   linkedin_state: "The LinkedIn sign-in did not complete. Try again, or use another sign-in method.",
   linkedin_failed: "LinkedIn sign-in failed. Try again, or use your email and password.",
@@ -34,7 +35,7 @@ export default async function LoginPage({
 }) {
   const sp = await searchParams;
   const hasSecret = !!sessionSecret();
-  const next = sanitizeNextPath(sp.next);
+  const next = sp.error === "google_email_proof" && !sp.next ? "/account" : sanitizeNextPath(sp.next);
   const error = sp.error ? (ERROR_MESSAGES[sp.error] ?? "Something went wrong. Try again.") : null;
   const google = googleConfigured();
   const linkedin = linkedinConfigured();

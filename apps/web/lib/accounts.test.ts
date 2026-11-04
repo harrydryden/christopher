@@ -7,6 +7,7 @@ import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, completeAccountCla
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
+import { hashPassword } from "@col/core";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
@@ -131,13 +132,26 @@ describe("who may register and what they get", () => {
   it("lets a signed-in member confirm with one click and stay a member", async () => {
     const { user } = await registerWithPassword({ email: "bob@example.com", password: PASSWORD });
     const token = await confirmationToken(user.id);
-    const done = await confirmEmailWithToken(token, { sessionUserId: user.id });
+    const [session] = await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000), authProvider: "password" }).returning();
+    const done = await confirmEmailWithToken(token, { sessionUserId: user.id, sessionId: session!.id });
     expect(done.status).toBe("done");
     if (done.status === "done") {
       expect(done.user.role).toBe("member");
       expect(done.user.emailVerifiedAt).not.toBeNull();
     }
-    expect(await confirmEmailWithToken(token, { sessionUserId: user.id })).toEqual({ status: "invalid" });
+    expect(await confirmEmailWithToken(token, { sessionUserId: user.id, sessionId: session!.id })).toEqual({ status: "invalid" });
+  });
+
+  it("refuses a confirmation from a session revoked after the page loaded", async () => {
+    const { user } = await registerWithPassword({ email: "revoked-confirm@example.com", password: PASSWORD });
+    const token = await confirmationToken(user.id);
+    const [session] = await database.insert(schema.sessions).values({ userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000), authProvider: "password" }).returning();
+    await database.delete(schema.sessions).where(eq(schema.sessions.id, session!.id));
+    expect(await confirmEmailWithToken(token, { sessionUserId: user.id, sessionId: session!.id })).toEqual({ status: "password" });
+    expect(await peekAuthToken(token, "email_verification")).toEqual({ userId: user.id });
+    const [stored] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(stored!.emailVerifiedAt).toBeNull();
   });
 
   it("recovers saved decisions and shortlisted scoring once, with bounded reason fan-out", async () => {
@@ -157,7 +171,7 @@ describe("who may register and what they get", () => {
     expect(await taskTypesFor(user.id)).toEqual([]);
 
     const token = await confirmationToken(user.id);
-    expect((await confirmEmailWithToken(token, { sessionUserId: user.id })).status).toBe("done");
+    expect((await confirmEmailWithToken(token, { password: PASSWORD })).status).toBe("done");
     expect(await taskTypesFor(user.id)).toEqual(["rescore_all", "resume_reason_tags", "synthesize_profile"]);
     await database.execute(sql`delete from tasks`);
     await completeAccountClaim(database, user.id, { adminEmails: [OWNER] });
@@ -172,7 +186,7 @@ describe("who may register and what they get", () => {
       const token = await issueAuthToken(user.id, "password_reset");
       expect((await resetPasswordWithToken(token, PASSWORD))?.id).toBe(user.id);
     } else {
-      expect((await signInWithGoogle({ sub: "claim-seed-google", email: user.email, emailVerified: true })).user.id).toBe(user.id);
+      expect((await signInWithGoogle({ sub: "claim-seed-google", email: user.email, emailVerified: true, hostedDomain: "example.com" })).user.id).toBe(user.id);
     }
     expect(await taskTypesFor(user.id)).toEqual(["synthesize_profile"]);
   });
@@ -199,7 +213,7 @@ describe("who may register and what they get", () => {
     await openRegistration();
     const { user } = await registerWithPassword({ email: "google-claim-retry@example.com", password: PASSWORD });
     await database.insert(schema.userSettings).values({ userId: user.id, key: "seedProfile", value: "Operations leader" });
-    const profile = { sub: "google-claim-retry", email: user.email, emailVerified: true };
+    const profile = { sub: "google-claim-retry", email: user.email, emailVerified: true, hostedDomain: "example.com" };
     await database.execute(sql`alter table tasks add constraint reject_google_resume check (type <> 'synthesize_profile') not valid`);
     try {
       await expect(signInWithGoogle(profile)).rejects.toThrow();
@@ -233,7 +247,7 @@ describe("who may register and what they get", () => {
       await held;
     });
     await lockReady;
-    const linking = signInWithGoogle({ sub: "google-reset-race", email: user.email, emailVerified: true });
+    const linking = signInWithGoogle({ sub: "google-reset-race", email: user.email, emailVerified: true, hostedDomain: "example.com" });
     try {
       let waiting = false;
       for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
@@ -266,7 +280,7 @@ describe("who may register and what they get", () => {
     await database.execute(sql`alter table tasks add constraint reject_atomic_claim check (type <> 'synthesize_profile') not valid`);
     try {
       if (channel === "confirmation")
-        await expect(confirmEmailWithToken(token, { sessionUserId: user.id })).rejects.toThrow();
+        await expect(confirmEmailWithToken(token, { password: PASSWORD })).rejects.toThrow();
       else await expect(resetPasswordWithToken(token, nextPassword)).rejects.toThrow();
       expect(await peekAuthToken(token, channel === "confirmation" ? "email_verification" : "password_reset"))
         .toEqual({ userId: user.id });
@@ -279,7 +293,7 @@ describe("who may register and what they get", () => {
       await database.execute(sql`alter table tasks drop constraint reject_atomic_claim`);
     }
     if (channel === "confirmation")
-      expect((await confirmEmailWithToken(token, { sessionUserId: user.id })).status).toBe("done");
+      expect((await confirmEmailWithToken(token, { password: PASSWORD })).status).toBe("done");
     else {
       expect((await resetPasswordWithToken(token, nextPassword))?.emailVerifiedAt).not.toBeNull();
       expect(await sessionsFor(user.id)).toHaveLength(0);
@@ -385,19 +399,32 @@ describe("who may register and what they get", () => {
     expect((await authenticateWithPassword("ada@example.com", "wrong password here")).status).toBe("invalid");
     expect((await authenticateWithPassword("nobody@example.com", PASSWORD)).status).toBe("invalid");
     await openRegistration();
-    await signInWithGoogle({ sub: "google-1", email: "g@example.com", emailVerified: true });
+    await signInWithGoogle({ sub: "google-1", email: "g@example.com", emailVerified: true, hostedDomain: "example.com" });
     expect((await authenticateWithPassword("g@example.com", PASSWORD)).status).toBe("invalid");
   });
 
-  it("requires the current password to change it, unless the account never had one", async () => {
+  it("requires the current password or a fresh linked provider session to enrol one", async () => {
     const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
     await expect(changePassword(user, "not the password", "another fine password")).rejects.toThrow(/current password/);
     await expect(changePassword(user, PASSWORD, "short")).rejects.toThrow(/at least/);
     await changePassword(user, PASSWORD, "another fine password");
     expect((await authenticateWithPassword("ada@example.com", "another fine password")).status).toBe("ok");
     await openRegistration();
-    const { user: google } = await signInWithGoogle({ sub: "google-1", email: "g@example.com", emailVerified: true });
-    await changePassword(google, "", "a password for google user");
+    const { user: google } = await signInWithGoogle({ sub: "google-1", email: "g@example.com", emailVerified: true, hostedDomain: "example.com" });
+    vi.stubEnv("GOOGLE_CLIENT_ID", "test-client");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "test-secret");
+    const [fresh] = await database.insert(schema.sessions).values({ userId: google.id,
+      expiresAt: new Date(Date.now() + 60_000), authProvider: "google" }).returning();
+    await expect(changePassword(google, "", "a password for google user")).rejects.toThrow(/Sign in again/);
+    const [legacy] = await database.insert(schema.sessions).values({ userId: google.id,
+      expiresAt: new Date(Date.now() + 60_000) }).returning();
+    await expect(changePassword(google, "", "a password for google user", legacy!.id)).rejects.toThrow(/Sign in again/);
+    await database.update(schema.sessions).set({ createdAt: new Date(Date.now() - 11 * 60_000) })
+      .where(eq(schema.sessions.id, fresh!.id));
+    await expect(changePassword(google, "", "a password for google user", fresh!.id)).rejects.toThrow(/Sign in again/);
+    await database.update(schema.sessions).set({ createdAt: new Date() }).where(eq(schema.sessions.id, fresh!.id));
+    await changePassword(google, "", "a password for google user", fresh!.id);
+    vi.unstubAllEnvs();
     expect((await authenticateWithPassword("g@example.com", "a password for google user")).status).toBe("ok");
   });
 });
@@ -440,7 +467,7 @@ describe("the migrated owner", () => {
     const attacker = await registerWithPassword({ email: OWNER, password: "attackers password 1" });
     expect(attacker.pending).toBe(true);
     expect((await authenticateWithPassword(OWNER, "attackers password 1")).status).toBe("unconfirmed");
-    const owner = await signInWithGoogle({ sub: "google-owner", email: OWNER, emailVerified: true });
+    const owner = await signInWithGoogle({ sub: "google-owner", email: OWNER, emailVerified: true, hostedDomain: "example.com" });
     expect(owner.created).toBe(false);
     expect(owner.user).toMatchObject({ id: BOOTSTRAP_USER_ID, email: OWNER, role: "admin" });
     expect(owner.user.claimedAt).not.toBeNull();
@@ -450,7 +477,7 @@ describe("the migrated owner", () => {
 
   it("is claimed at once by a verified Google sign-in of an administrator address", async () => {
     await bootstrapWithData();
-    const owner = await signInWithGoogle({ sub: "google-owner", email: OWNER, emailVerified: true, name: "Owner" });
+    const owner = await signInWithGoogle({ sub: "google-owner", email: OWNER, emailVerified: true, hostedDomain: "example.com", name: "Owner" });
     expect(owner.created).toBe(true);
     expect(owner.user).toMatchObject({ id: BOOTSTRAP_USER_ID, email: OWNER, role: "admin", name: "Owner" });
     expect(owner.user.claimedAt).not.toBeNull();
@@ -458,11 +485,62 @@ describe("the migrated owner", () => {
 });
 
 describe("Google sign-in", () => {
+  it("does not create or claim an account from an external verified email without hosted authority", async () => {
+    await openRegistration();
+    await expect(signInWithGoogle({ sub: "external-new", email: "new@outside.example", emailVerified: true }))
+      .rejects.toThrow(/Sign in to your existing account/);
+    const pendingAdmin = await registerWithPassword({ email: OWNER, password: PASSWORD });
+    await expect(signInWithGoogle({ sub: "external-admin", email: OWNER, emailVerified: true }))
+      .rejects.toThrow(/Sign in to your existing account/);
+    const [stored] = await database.select().from(schema.users).where(eq(schema.users.id, pendingAdmin.user.id));
+    expect(stored).toMatchObject({ role: "member", claimedAt: null, emailVerifiedAt: null });
+    expect(await database.select().from(schema.authAccounts)).toHaveLength(0);
+  });
+
+  it("links an external Google subject only after a fresh live session for the same verified account", async () => {
+    const owner = await registerWithPassword({ email: "external-owner@example.com", password: PASSWORD });
+    const foreign = await registerWithPassword({ email: "foreign-proof@example.com", password: PASSWORD });
+    const [session] = await database.insert(schema.sessions).values({ userId: owner.user.id,
+      expiresAt: new Date(Date.now() + 60_000), authProvider: "password" }).returning();
+    const [foreignSession] = await database.insert(schema.sessions).values({ userId: foreign.user.id,
+      expiresAt: new Date(Date.now() + 60_000), authProvider: "password" }).returning();
+    const profile = { sub: "external-sub", email: owner.user.email, emailVerified: true };
+    await expect(signInWithGoogle(profile, { userId: owner.user.id, sessionId: session!.id }))
+      .rejects.toThrow(/Sign in to your existing account/);
+    await database.update(schema.users).set({ emailVerifiedAt: new Date() })
+      .where(eq(schema.users.id, owner.user.id));
+    await expect(signInWithGoogle(profile)).rejects.toThrow(/Sign in to your existing account/);
+    await expect(signInWithGoogle(profile, { userId: foreign.user.id, sessionId: foreignSession!.id }))
+      .rejects.toThrow(/Sign in to your existing account/);
+    await expect(signInWithGoogle(profile, { userId: owner.user.id, sessionId: foreignSession!.id }))
+      .rejects.toThrow(/Sign in to your existing account/);
+    await database.update(schema.sessions).set({ createdAt: new Date(Date.now() - 11 * 60_000) })
+      .where(eq(schema.sessions.id, session!.id));
+    await expect(signInWithGoogle(profile, { userId: owner.user.id, sessionId: session!.id }))
+      .rejects.toThrow(/Sign in to your existing account/);
+    await database.update(schema.sessions).set({ createdAt: new Date() }).where(eq(schema.sessions.id, session!.id));
+    expect((await signInWithGoogle(profile, { userId: owner.user.id, sessionId: session!.id })).user.id).toBe(owner.user.id);
+    // The linked subject remains the account identity even when its external address later changes.
+    expect((await signInWithGoogle({ sub: profile.sub, email: "changed@outside.example", emailVerified: false })).user.id).toBe(owner.user.id);
+  });
+
+  it("does not repair an unverified linked account from a changed Google email", async () => {
+    const owner = await registerWithPassword({ email: "original@example.com", password: PASSWORD });
+    await database.insert(schema.authAccounts).values({ userId: owner.user.id,
+      provider: "google", providerAccountId: "legacy-linked-sub" });
+    await expect(signInWithGoogle({ sub: "legacy-linked-sub", email: "different@example.com",
+      emailVerified: true, hostedDomain: "example.com" })).rejects.toThrow(/Sign in to your existing account/);
+    const [before] = await database.select().from(schema.users).where(eq(schema.users.id, owner.user.id));
+    expect(before!.emailVerifiedAt).toBeNull();
+    expect((await signInWithGoogle({ sub: "legacy-linked-sub", email: owner.user.email,
+      emailVerified: true, hostedDomain: "example.com" })).user.emailVerifiedAt).not.toBeNull();
+  });
+
   it("respects closed registration, creates members, re-uses links and refuses unverified emails", async () => {
-    await expect(signInWithGoogle({ sub: "google-1", email: "new@example.com", emailVerified: true })).rejects.toThrow(/closed/);
+    await expect(signInWithGoogle({ sub: "google-1", email: "new@example.com", emailVerified: true, hostedDomain: "example.com" })).rejects.toThrow(/closed/);
     expect(await database.select().from(schema.users)).toHaveLength(0);
     await openRegistration();
-    const first = await signInWithGoogle({ sub: "google-1", email: "New@Example.com", emailVerified: true, name: "New Person" });
+    const first = await signInWithGoogle({ sub: "google-1", email: "New@Example.com", emailVerified: true, hostedDomain: "example.com", name: "New Person" });
     expect(first.created).toBe(true);
     expect(first.user).toMatchObject({ email: "new@example.com", role: "member", name: "New Person" });
     expect(first.user.emailVerifiedAt).not.toBeNull();
@@ -475,8 +553,9 @@ describe("Google sign-in", () => {
 
   it("takes over an unverified password account for the proven owner of the address", async () => {
     const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
+    const oldReset = await issueAuthToken(user.id, "password_reset");
     await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000) });
-    const linked = await signInWithGoogle({ sub: "google-ada", email: "ada@example.com", emailVerified: true });
+    const linked = await signInWithGoogle({ sub: "google-ada", email: "ada@example.com", emailVerified: true, hostedDomain: "example.com" });
     expect(linked.created).toBe(false);
     expect(linked.user.id).toBe(user.id);
     const [stored] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
@@ -484,14 +563,80 @@ describe("Google sign-in", () => {
     expect(stored!.emailVerifiedAt).not.toBeNull();
     expect(await sessionsFor(user.id)).toHaveLength(0);
     expect((await authenticateWithPassword("ada@example.com", PASSWORD)).status).toBe("invalid");
+    expect(await resetPasswordWithToken(oldReset, "an attacker password again")).toBeNull();
     expect(await database.select().from(schema.authAccounts)).toMatchObject([{ userId: user.id, provider: "google", providerAccountId: "google-ada" }]);
+  });
+
+  it("does not restore a revoked unverified password from a stale change request", async () => {
+    const { user } = await registerWithPassword({ email: "stale-change@example.com", password: PASSWORD });
+    await signInWithGoogle({ sub: "google-stale-change", email: user.email, emailVerified: true, hostedDomain: "example.com" });
+    await expect(changePassword(user, PASSWORD, "a different valid password"))
+      .rejects.toThrow(/account changed/i);
+    const [stored] = await database.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(stored!.passwordHash).toBeNull();
+    expect((await authenticateWithPassword(user.email, PASSWORD)).status).toBe("invalid");
+  });
+
+  it("does not rehash an old password over a concurrent reset", async () => {
+    const { user } = await registerWithPassword({ email: "rehash-reset@example.com", password: PASSWORD });
+    const replacement = "replacement password after reset";
+    const replacementHash = await hashPassword(replacement);
+    vi.stubEnv("COL_SCRYPT_N", "32768");
+    let release!: () => void;
+    let locked!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { locked = resolve; });
+    const reset = database.transaction(async tx => {
+      await tx.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.id, user.id)).for("update");
+      locked();
+      await hold;
+      await tx.update(schema.users).set({ passwordHash: replacementHash }).where(eq(schema.users.id, user.id));
+    });
+    await ready;
+    const signingIn = authenticateWithPassword(user.email, PASSWORD);
+    try {
+      let waiting = false;
+      for (let attempt = 0; attempt < 150 && !waiting; attempt++) {
+        const status = await database.execute<{ waiting: boolean }>(sql`select exists (
+          select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'
+            and query ilike '%update%users%'
+        ) as waiting`);
+        waiting = status.rows[0]?.waiting === true;
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      expect(waiting).toBe(true);
+    } finally {
+      release();
+      await reset;
+      vi.unstubAllEnvs();
+    }
+    expect((await signingIn).status).toBe("invalid");
+    expect((await authenticateWithPassword(user.email, replacement)).status).toBe("ok");
+  });
+
+  it("binds concurrent Google callbacks to the subject rather than their different email snapshots", async () => {
+    const first = await registerWithPassword({ email: "google-subject-a@example.com", password: PASSWORD });
+    const second = await registerWithPassword({ email: "google-subject-b@example.com", password: PASSWORD });
+    await database.update(schema.users).set({ emailVerifiedAt: new Date() })
+      .where(eq(schema.users.id, first.user.id));
+    await database.update(schema.users).set({ emailVerifiedAt: new Date() })
+      .where(eq(schema.users.id, second.user.id));
+    const results = await Promise.all([
+      signInWithGoogle({ sub: "shared-google-subject", email: first.user.email, emailVerified: true, hostedDomain: "example.com" }),
+      signInWithGoogle({ sub: "shared-google-subject", email: second.user.email, emailVerified: true, hostedDomain: "example.com" }),
+    ]);
+    expect(results[0]!.user.id).toBe(results[1]!.user.id);
+    const links = await database.select().from(schema.authAccounts)
+      .where(eq(schema.authAccounts.providerAccountId, "shared-google-subject"));
+    expect(links).toHaveLength(1);
+    expect(links[0]!.userId).toBe(results[0]!.user.id);
   });
 
   it("links to a verified password account without touching its password or sessions", async () => {
     const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
     await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
     await database.insert(schema.sessions).values({ userId: user.id, expiresAt: new Date(Date.now() + 60_000) });
-    const linked = await signInWithGoogle({ sub: "google-ada", email: "ada@example.com", emailVerified: true });
+    const linked = await signInWithGoogle({ sub: "google-ada", email: "ada@example.com", emailVerified: true, hostedDomain: "example.com" });
     expect(linked.user.id).toBe(user.id);
     expect((await authenticateWithPassword("ada@example.com", PASSWORD)).status).toBe("ok");
     expect(await sessionsFor(user.id)).toHaveLength(1);
@@ -547,10 +692,12 @@ describe("single-use links", () => {
       const confirmation = await confirmationToken(user.id);
       expect(confirmation).not.toBe("");
 
-      await changePassword(user, PASSWORD, "another fine password", kept!.id);
+      const changed = await changePassword(user, PASSWORD, "another fine password", kept!.id);
+      expect(changed.user.passwordHash).toBe(changed.passwordHashProven);
+      expect(changed.passwordHashProven).not.toBe(user.passwordHash);
       expect(await resetPasswordWithToken(reset, "the attacker's password")).toBeNull();
       expect((await confirmEmailWithToken(confirmation, { password: "another fine password" })).status).toBe("invalid");
-      expect((await sessionsFor(user.id)).map(row => row.id)).toEqual([kept!.id]);
+      expect(await sessionsFor(user.id)).toHaveLength(0);
       expect((await authenticateWithPassword("ada@example.com", "another fine password")).status).toBe("ok");
     } finally {
       log.mockRestore();

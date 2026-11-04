@@ -7,7 +7,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { and, eq, gt, ne } from "drizzle-orm";
-import { sessions, users, type User } from "@col/db/schema";
+import { authAccounts, sessions, users, type User } from "@col/db/schema";
 import { db } from "./db";
 import {
   createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, isSecureHost, LEGACY_SESSION_COOKIE_NAMES, readSessionCookie,
@@ -96,26 +96,49 @@ export async function clientAddress(): Promise<string> {
   return forwarded || h.get("x-real-ip") || "unknown";
 }
 
-/** Create a session row for `userId` and set the cookie that names it. */
-export async function startSession(userId: string, ttlSeconds = DEFAULT_SESSION_TTL_SECONDS, authProvider?: "password" | "google" | "linkedin"): Promise<string> {
-  const secret = sessionSecret();
-  if (!secret) throw new Error("SESSION_SECRET is not set");
-  const h = await headers();
-  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
-  const [session] = await db()
-    .insert(sessions)
-    .values({ userId, expiresAt, authProvider: authProvider ?? null, userAgent: h.get("user-agent")?.slice(0, 300) ?? null, ipAddress: (await clientAddress()).slice(0, 100) })
-    .returning({ id: sessions.id });
-  await db().update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
-  const value = await createSessionCookieValue(secret, session!.id, expiresAt);
+async function setSessionCookie(secret: string, sessionId: string, expiresAt: Date, ttlSeconds: number, host: string | null): Promise<void> {
+  const value = await createSessionCookieValue(secret, sessionId, expiresAt);
   (await cookies()).set(SESSION_COOKIE_NAME, value, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secure: isSecureHost(h.get("host")),
+    secure: isSecureHost(host),
     maxAge: ttlSeconds,
   });
-  return session!.id;
+}
+
+export type SessionProof =
+  | { provider: "password"; expectedPasswordHash: string }
+  | { provider: "google" | "linkedin"; subject: string };
+
+/** A stale password or removed provider link cannot issue a fresh session after its revocation. */
+export async function startSessionFromProof(input: { userId: string; proof: SessionProof; ttlSeconds?: number }): Promise<string | null> {
+  const secret = sessionSecret();
+  if (!secret) throw new Error("SESSION_SECRET is not set");
+  const h = await headers();
+  const ttlSeconds = input.ttlSeconds ?? DEFAULT_SESSION_TTL_SECONDS;
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  const ipAddress = (await clientAddress()).slice(0, 100);
+  const sessionId = await db().transaction(async tx => {
+    const [user] = await tx.select({ id: users.id, claimedAt: users.claimedAt, passwordHash: users.passwordHash })
+      .from(users).where(eq(users.id, input.userId)).for("update");
+    if (!user?.claimedAt) return null;
+    if (input.proof.provider === "password") {
+      if (!user.passwordHash || user.passwordHash !== input.proof.expectedPasswordHash) return null;
+    } else {
+      const [linked] = await tx.select({ id: authAccounts.id }).from(authAccounts)
+        .where(and(eq(authAccounts.userId, user.id), eq(authAccounts.provider, input.proof.provider),
+          eq(authAccounts.providerAccountId, input.proof.subject))).limit(1);
+      if (!linked) return null;
+    }
+    const [session] = await tx.insert(sessions).values({ userId: user.id, expiresAt, authProvider: input.proof.provider,
+      userAgent: h.get("user-agent")?.slice(0, 300) ?? null, ipAddress }).returning({ id: sessions.id });
+    await tx.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
+    return session?.id ?? null;
+  });
+  if (!sessionId) return null;
+  await setSessionCookie(secret, sessionId, expiresAt, ttlSeconds, h.get("host"));
+  return sessionId;
 }
 
 /** Delete the current session row and clear its cookie, under the current name and every legacy one. */

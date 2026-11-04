@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { normaliseEmail } from "@col/db";
 import { authenticateWithPassword, emailProblem, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail } from "@/lib/accounts";
-import { clientAddress, endSession, startSession } from "@/lib/auth";
+import { clientAddress, endSession, startSessionFromProof } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailLinkOrigin, withParams } from "@/lib/origin";
 import { clearAttempts, LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
@@ -42,7 +42,8 @@ export async function login(formData: FormData): Promise<void> {
   await releaseRateLimitReservations(reservation!.filter(({ key }) => key === addressKey));
   await clearAttempts(pairKey);
   await clearAttempts(emailKey);
-  await startSession(result.user.id, undefined, "password");
+  if (!(await startSessionFromProof({ userId: result.user.id,
+    proof: { provider: "password", expectedPasswordHash: result.passwordHashProven } }))) back("invalid");
   redirect(next);
 }
 
@@ -64,10 +65,12 @@ export async function signup(formData: FormData): Promise<void> {
 
   let userId: string;
   let pending: boolean;
+  let registeredPasswordHash: string | null;
   try {
     const result = await registerWithPassword({ email, name, password });
     userId = result.user.id;
     pending = result.pending;
+    registeredPasswordHash = result.user.passwordHash;
     await sendVerificationEmail(result.user, await emailLinkOrigin());
   } catch (error) {
     if (error instanceof Error && /already exists/.test(error.message)) back("exists");
@@ -75,7 +78,8 @@ export async function signup(formData: FormData): Promise<void> {
   }
   // An administrator address signs in only once its confirmation link has been completed.
   if (pending!) redirect(withParams("/signup", { pending: "1", email }));
-  await startSession(userId!);
+  if (!registeredPasswordHash! || !(await startSessionFromProof({ userId: userId!,
+    proof: { provider: "password", expectedPasswordHash: registeredPasswordHash! } }))) back("invalid_email");
   redirect(next);
 }
 
@@ -142,6 +146,7 @@ export async function resetPassword(formData: FormData): Promise<void> {
   if (password !== confirm) back("mismatch");
   const user = await resetPasswordWithToken(token, password);
   if (!user) back("invalid_token");
-  await startSession(user!.id);
+  if (!user!.passwordHash || !(await startSessionFromProof({ userId: user!.id,
+    proof: { provider: "password", expectedPasswordHash: user!.passwordHash } }))) back("invalid_token");
   redirect("/account?reset=1");
 }

@@ -14,14 +14,14 @@ vi.mock("@/lib/auth", () => ({
   getCurrentUser: async () => current,
   requireUser: async () => { if (!current) throw new Error("Unauthorised"); return current.user; },
   clientAddress: async () => "198.51.100.20",
-  startSession: vi.fn(async () => "new-session"),
+  startSessionFromProof: vi.fn(async () => "new-session"),
 }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: (name: string) => jar.has(name) ? { value: jar.get(name)! } : undefined, delete: (name: string) => jar.delete(name) }),
   headers: async () => new Headers({ host: "col.test" }),
 }));
 
-import { completeLinkedInLink, unlinkLinkedIn } from "./linkedin";
+import { beginLinkedInEmailVerification, completeLinkedInLink, unlinkLinkedIn } from "./linkedin";
 import { LINKEDIN_COOKIE, claimLinkedInCallback, settleLinkedInIdentity, startLinkedInTransaction } from "@/lib/linkedin-auth";
 
 beforeAll(() => runMigrations(database));
@@ -93,4 +93,17 @@ it("requires configured Google as a usable alternative and only unlinks the owne
   const remaining = await database.select().from(schema.authAccounts);
   expect(remaining.map(row => `${row.provider}:${row.providerAccountId}`).sort()).toEqual(["google:google-owner", "linkedin:other-subject"]);
   expect(await database.select().from(schema.sessions).where(eq(schema.sessions.id, googleSession!.id))).toHaveLength(1);
+});
+
+
+it("shares the mailbox email quota with password reset and account confirmation", async () => {
+  const flow = await startLinkedInTransaction(database, { intent: "sign_in", next: "/library" });
+  jar.set(LINKEDIN_COOKIE, flow.cookie);
+  await claimLinkedInCallback(database, { cookie: flow.cookie, state: flow.state });
+  await settleLinkedInIdentity(database, flow.cookie, { issuer: "https://www.linkedin.com/oauth", sub: "mail-quota", email: null, emailVerified: false, name: null });
+  await database.insert(schema.loginAttempts).values(Array.from({ length: 3 }, () => ({ key: "reset:email:shared@example.com" })));
+  const form = new FormData(); form.set("email", "Shared@Example.com");
+  expect(await beginLinkedInEmailVerification(form)).toMatchObject({ ok: false, error: "Too many attempts. Try again later." });
+  const pending = await database.select().from(schema.linkedinAuthTransactions);
+  expect(pending[0]?.emailTokenHash).toBeNull();
 });

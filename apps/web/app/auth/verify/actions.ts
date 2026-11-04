@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { confirmEmailWithToken } from "@/lib/accounts";
-import { clientAddress, getCurrentUser, startSession } from "@/lib/auth";
+import { clientAddress, getCurrentUser, startSessionFromProof } from "@/lib/auth";
 import { withParams } from "@/lib/origin";
 import { LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
 
@@ -15,7 +15,7 @@ export async function confirmEmail(formData: FormData): Promise<void> {
   const reservation = await reserveRateLimits([{ key: `verify:ip:${address}`, limit: LIMITS.loginAddress }]);
   if (!reservation) back("rate_limited");
   const current = await getCurrentUser();
-  const result = await confirmEmailWithToken(token, { sessionUserId: current?.user.id ?? null, password });
+  const result = await confirmEmailWithToken(token, { sessionUserId: current?.user.id ?? null, sessionId: current?.sessionId ?? null, password });
   if (result.status === "password") {
     back("password");
   }
@@ -24,6 +24,9 @@ export async function confirmEmail(formData: FormData): Promise<void> {
     back("invalid");
     return;
   }
-  if (current?.user.id !== result.user.id) await startSession(result.user.id);
+  if (current?.user.id !== result.user.id) {
+    if (!result.user.passwordHash || !(await startSessionFromProof({ userId: result.user.id,
+      proof: { provider: "password", expectedPasswordHash: result.user.passwordHash } }))) back("invalid");
+  }
   redirect("/account?verify=done");
 }

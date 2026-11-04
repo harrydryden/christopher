@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { db } from "@/lib/db";
-import { getCurrentUser, startSession } from "@/lib/auth";
+import { getCurrentUser, startSessionFromProof } from "@/lib/auth";
 import { exchangeLinkedInCode, linkedinConfigured, verifyLinkedInIdToken } from "@/lib/linkedin";
 import { claimLinkedInCallback, LINKEDIN_COOKIE, settleLinkedInIdentity } from "@/lib/linkedin-auth";
 
@@ -34,7 +34,8 @@ export async function GET(request: Request) {
     const identity = await verifyLinkedInIdToken(await exchangeLinkedInCode(code), claimed.nonceHash);
     const settled = await settleLinkedInIdentity(db(), cookie, identity);
     if (settled.kind === "signed_in") {
-      await startSession(settled.user.id, undefined, "linkedin");
+      const sessionId = await startSessionFromProof({ userId: settled.user.id, proof: { provider: "linkedin", subject: identity.sub } });
+      if (!sessionId) return fail("linkedin_failed");
       jar.delete(LINKEDIN_COOKIE);
       return secureRedirect(settled.next);
     }

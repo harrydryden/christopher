@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { exchangeGoogleCode, fetchGoogleProfile, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL } from "./google";
+import { exchangeGoogleCode, fetchGoogleProfile, googleAuthoritativeEmail, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL } from "./google";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -36,4 +36,21 @@ it("accepts a small verified profile and rejects a redirected token response", a
   vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 302, headers: { location: "https://elsewhere.example" } })));
   await expect(exchangeGoogleCode({ code: "code", codeVerifier: "verifier", redirectUri: "https://app.example/callback" }))
     .rejects.toThrow(/could not complete/);
+});
+
+it("treats only Google-hosted, verified addresses as authoritative", () => {
+  expect(googleAuthoritativeEmail({ sub: "one", email: "person@gmail.com", emailVerified: true })).toBe(true);
+  expect(googleAuthoritativeEmail({ sub: "two", email: "person@example.com", emailVerified: true, hostedDomain: "example.com" })).toBe(true);
+  expect(googleAuthoritativeEmail({ sub: "three", email: "person@example.com", emailVerified: true })).toBe(false);
+  expect(googleAuthoritativeEmail({ sub: "four", email: "person@gmail.com", emailVerified: false })).toBe(false);
+  expect(googleAuthoritativeEmail({ sub: "five", email: "person@example.com", emailVerified: true, hostedDomain: "bad domain" })).toBe(false);
+});
+
+it("reads only a valid hosted-domain claim from userinfo", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ sub: "stable-sub", email: "person@example.com",
+    email_verified: true, hd: "Example.COM" }))));
+  expect(await fetchGoogleProfile("access-token")).toMatchObject({ hostedDomain: "example.com" });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ sub: "stable-sub", email: "person@example.com",
+    email_verified: true, hd: "bad domain" }))));
+  await expect(fetchGoogleProfile("access-token")).rejects.toThrow(/usable account identity/);
 });

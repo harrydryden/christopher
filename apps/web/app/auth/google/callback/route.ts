@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { signInWithGoogle } from "@/lib/accounts";
-import { clientAddress, startSessionFromProof } from "@/lib/auth";
+import { GoogleEmailProofError, signInWithGoogle } from "@/lib/accounts";
+import { clientAddress, getCurrentUser, startSessionFromProof } from "@/lib/auth";
 import { appOrigin, exchangeGoogleCode, fetchGoogleProfile, googleConfigured } from "@/lib/google";
 import { LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
 import { LEGACY_OAUTH_COOKIE_NAMES, OAUTH_COOKIE_NAME, oauthCookieValue, readSignedValue, sanitizeNextPath, sessionSecret } from "@/lib/session";
@@ -28,14 +28,15 @@ export async function GET(request: Request) {
   try {
     const { accessToken } = await exchangeGoogleCode({ code, codeVerifier: remembered.verifier, redirectUri: `${appOrigin(request)}/auth/google/callback` });
     const profile = await fetchGoogleProfile(accessToken);
-    const { user } = await signInWithGoogle(profile);
+    const current = await getCurrentUser();
+    const { user } = await signInWithGoogle(profile, current ? { userId: current.user.id, sessionId: current.sessionId } : undefined);
     if (!(await startSessionFromProof({ userId: user.id, proof: { provider: "google", subject: profile.sub } }))) {
       throw new Error("Google identity changed during sign-in");
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     console.error(JSON.stringify({ event: "google_sign_in_failed", error: message.slice(0, 300) }));
-    return fail(/not verified/.test(message) ? "google_unverified" : /Registration is closed/.test(message) ? "closed" : "google_failed");
+    return fail(error instanceof GoogleEmailProofError ? "google_email_proof" : /not verified/.test(message) ? "google_unverified" : /Registration is closed/.test(message) ? "closed" : "google_failed");
   }
   await releaseRateLimitReservations(reservation).catch(() => undefined);
   return NextResponse.redirect(new URL(sanitizeNextPath(remembered.next), request.url));

@@ -52,7 +52,17 @@ export interface GoogleProfile {
   sub: string;
   email: string;
   emailVerified: boolean;
+  hostedDomain?: string;
   name?: string;
+}
+
+const HOSTED_DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+/** Google can prove an address remains owned only when it hosts that mailbox or Workspace domain. */
+export function googleAuthoritativeEmail(profile: GoogleProfile): boolean {
+  if (profile.emailVerified !== true) return false;
+  return profile.email.trim().toLowerCase().endsWith("@gmail.com") ||
+    (!!profile.hostedDomain && HOSTED_DOMAIN_RE.test(profile.hostedDomain));
 }
 
 const GOOGLE_RESPONSE_LIMIT = 65_536;
@@ -108,13 +118,15 @@ export async function fetchGoogleProfile(accessToken: string): Promise<GooglePro
     signal: AbortSignal.timeout(8_000), cache: "no-store", redirect: "error" });
   const json = await googleJson(response);
   if (typeof json.sub !== "string" || typeof json.email !== "string" || !json.sub.trim() || json.sub.length > 300 ||
-    !json.email.trim() || json.email.length > 254 || (typeof json.name === "string" && json.name.length > 200)) {
+    !json.email.trim() || json.email.length > 254 || (typeof json.name === "string" && json.name.length > 200) ||
+    (json.hd !== undefined && (typeof json.hd !== "string" || !HOSTED_DOMAIN_RE.test(json.hd)))) {
     throw new Error("Google returned no usable account identity");
   }
   return {
     sub: json.sub,
     email: json.email,
     emailVerified: json.email_verified === true || json.email_verified === "true",
+    hostedDomain: typeof json.hd === "string" ? json.hd.toLowerCase() : undefined,
     name: typeof json.name === "string" ? json.name : undefined,
   };
 }

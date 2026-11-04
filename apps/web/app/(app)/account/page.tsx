@@ -124,7 +124,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
             Google: {providers.some(p => p.provider === "google")
               ? <Badge tone="green">linked{providers.find(p => p.provider === "google")?.email ? ` (${providers.find(p => p.provider === "google")!.email})` : ""}</Badge>
               : googleConfigured()
-                ? <span className="text-muted">not linked. <a href="/auth/google?next=%2Faccount" className="text-fg underline">Link a Google account</a> (it must use this email address).</span>
+                ? <span className="text-muted">not linked. <a href="/auth/google?next=%2Faccount" className="text-fg underline">Link a Google account</a> (using this email). If asked, confirm your account email and sign in again with your password or another linked method, then retry here.</span>
                 : <span className="text-muted">not configured on this deployment</span>}
           </li>
           <li className="space-y-2">

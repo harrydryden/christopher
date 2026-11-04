@@ -19,8 +19,8 @@ vi.mock("@/lib/google", async (original) => ({
   exchangeGoogleCode: vi.fn(async () => ({ accessToken: "access-token" })),
   fetchGoogleProfile: vi.fn(async () => ({ sub: "google-1", email: "member@example.com", emailVerified: true })),
 }));
-vi.mock("@/lib/accounts", () => ({ signInWithGoogle: vi.fn(async () => ({ user: { id: "user-1" } })) }));
-vi.mock("@/lib/auth", () => ({ clientAddress: vi.fn(async () => "test-ip"), startSessionFromProof: vi.fn(async () => "session-1") }));
+vi.mock("@/lib/accounts", () => ({ GoogleEmailProofError: class GoogleEmailProofError extends Error {}, signInWithGoogle: vi.fn(async () => ({ user: { id: "user-1" } })) }));
+vi.mock("@/lib/auth", () => ({ clientAddress: vi.fn(async () => "test-ip"), getCurrentUser: vi.fn(async () => null), startSessionFromProof: vi.fn(async () => "session-1") }));
 vi.mock("@/lib/rate-limit", () => ({
   LIMITS: { loginAddress: { max: 30, windowMs: 15 * 60_000 } },
   reserveRateLimits: vi.fn(async () => [{ id: "attempt-1", key: "login:ip:test-ip" }]),
@@ -32,6 +32,8 @@ import { GET as callback } from "./route";
 import { LEGACY_OAUTH_COOKIE_NAMES, OAUTH_COOKIE_NAME } from "@/lib/session";
 import { exchangeGoogleCode } from "@/lib/google";
 import { releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
+import { GoogleEmailProofError, signInWithGoogle } from "@/lib/accounts";
+import { getCurrentUser } from "@/lib/auth";
 
 beforeAll(() => {
   process.env.SESSION_SECRET = "google-callback-test-secret";
@@ -91,4 +93,13 @@ it("keeps a valid-state failed exchange counted and refuses an exhausted address
   const blocked = await roundTrip(encodeURIComponent("/roles"));
   expect(blocked).toContain("rate_limited");
   expect(exchangeGoogleCode).toHaveBeenCalledTimes(1);
+});
+
+it("passes the current session as an account-link proof and maps refusal to guidance", async () => {
+  vi.mocked(getCurrentUser).mockResolvedValueOnce({ user: { id: "user-1" }, sessionId: "live-session" } as Awaited<ReturnType<typeof getCurrentUser>>);
+  expect(await roundTrip(encodeURIComponent("/account"))).toBe("https://app.example/account");
+  expect(signInWithGoogle).toHaveBeenCalledWith(expect.objectContaining({ sub: "google-1" }),
+    { userId: "user-1", sessionId: "live-session" });
+  vi.mocked(signInWithGoogle).mockRejectedValueOnce(new GoogleEmailProofError());
+  expect(await roundTrip(encodeURIComponent("/account"))).toBe("https://app.example/login?error=google_email_proof");
 });

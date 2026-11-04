@@ -14,7 +14,7 @@ import { consumeAuthTokenIn, issueAuthToken, peekAuthToken } from "./auth-tokens
 import { db } from "./db";
 import { sendEmail } from "./email";
 import type { GoogleProfile } from "./google";
-import { googleConfigured } from "./google";
+import { googleAuthoritativeEmail, googleConfigured } from "./google";
 import { linkedinConfigured } from "./linkedin";
 import { getSystemSettings } from "./settings";
 import { UserFacingError } from "./validation";
@@ -90,14 +90,18 @@ export async function authenticateWithPassword(email: string, password: string):
 }
 
 /**
- * Sign in with a Google identity. A known Google account signs in. Otherwise Google must have
- * verified the address; then a row waiting for confirmation is completed (its unproven password
- * dropped), an existing account is linked (an unverified password account is taken over the same
- * way, since nobody proved that address before), and anything else creates an account, subject to
- * the registration policy.
+ * A known Google subject signs in. For a new subject, Google's email claim can create or claim an
+ * account only when Google hosts the mailbox. An external Google address may link to an existing,
+ * app-verified account only after a recent live sign-in to that same account.
  */
-export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: User; created: boolean }> {
+export class GoogleEmailProofError extends Error {
+  constructor() { super("Sign in to your existing account before linking this Google address."); }
+}
+
+export async function signInWithGoogle(profile: GoogleProfile, proof?: { userId: string; sessionId: string }): Promise<{ user: User; created: boolean }> {
   const email = normaliseEmail(profile.email);
+  const authoritative = googleAuthoritativeEmail(profile);
+  const mayRepairLinked = (account: User) => !!account.emailVerifiedAt || (authoritative && normaliseEmail(account.email) === email);
   const [linked] = await db()
     .select({ user: users })
     .from(authAccounts)
@@ -105,6 +109,7 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
     .where(and(eq(authAccounts.provider, "google"), eq(authAccounts.providerAccountId, profile.sub)))
     .limit(1);
   if (linked) {
+    if (!mayRepairLinked(linked.user)) throw new GoogleEmailProofError();
     // Linking and claiming are separate transactions. If the claim's saved-work enqueue rolled
     // back after the link was inserted, a verified Google sign-in must retry that claim.
     if (!linked.user.emailVerifiedAt && profile.emailVerified) {
@@ -114,9 +119,9 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
     }
     return { user: await promoteIfEntitled(db(), linked.user, adminEmails()), created: false };
   }
-  if (!profile.emailVerified) throw new Error("Google has not verified this email address, so it cannot be used to sign in.");
+  if (profile.emailVerified !== true) throw new Error("Google has not verified this email address, so it cannot be used to sign in.");
   if (emailProblem(email)) throw new Error("Google returned an unusable email address.");
-  const mayRegister = await registrationAllowed(email);
+  const mayRegister = authoritative ? await registrationAllowed(email) : false;
   // The email lookup is only a lock hint. Once the score fence and the global users lock are held,
   // re-read both the subject and email. A newly appearing email restarts with its own score fence.
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -127,13 +132,31 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
       const [bySubject] = await tx.select({ user: users }).from(authAccounts)
         .innerJoin(users, eq(users.id, authAccounts.userId))
         .where(and(eq(authAccounts.provider, "google"), eq(authAccounts.providerAccountId, profile.sub))).limit(1);
-      if (bySubject) return { kind: "linked" as const, user: bySubject.user };
+      if (bySubject) {
+        if (!mayRepairLinked(bySubject.user)) throw new GoogleEmailProofError();
+        return { kind: "linked" as const, user: bySubject.user };
+      }
       const [byEmail] = await tx.select().from(users).where(eq(users.email, email)).limit(1);
       if (byEmail?.id !== hint?.id) return { kind: "retry" as const };
       if (byEmail) {
-        const [current] = await tx.select({ emailVerifiedAt: users.emailVerifiedAt, passwordHash: users.passwordHash })
+        const [current] = await tx.select({ emailVerifiedAt: users.emailVerifiedAt, passwordHash: users.passwordHash, claimedAt: users.claimedAt })
           .from(users).where(eq(users.id, byEmail.id)).for("update");
         if (!current) throw new Error("This account cannot sign in.");
+        if (!authoritative) {
+          if (!proof || proof.userId !== byEmail.id || !current.claimedAt || !current.emailVerifiedAt) throw new GoogleEmailProofError();
+          const [session] = await tx.select({ authProvider: sessions.authProvider, createdAt: sessions.createdAt })
+            .from(sessions).where(and(eq(sessions.id, proof.sessionId), eq(sessions.userId, byEmail.id), sql`${sessions.expiresAt} > now()`)).limit(1);
+          if (!session || Date.now() - session.createdAt.getTime() > 10 * 60_000 || session.createdAt.getTime() > Date.now()) throw new GoogleEmailProofError();
+          const provider = session.authProvider;
+          if (provider === "password") {
+            if (!current.passwordHash) throw new GoogleEmailProofError();
+          } else if (provider === "google" || provider === "linkedin") {
+            if (!(provider === "google" ? googleConfigured() : linkedinConfigured())) throw new GoogleEmailProofError();
+            const [existingLink] = await tx.select({ id: authAccounts.id }).from(authAccounts)
+              .where(and(eq(authAccounts.userId, byEmail.id), eq(authAccounts.provider, provider))).limit(1);
+            if (!existingLink) throw new GoogleEmailProofError();
+          } else throw new GoogleEmailProofError();
+        }
         if (!current.emailVerifiedAt && current.passwordHash) {
           await tx.update(users).set({ passwordHash: null }).where(eq(users.id, byEmail.id));
           await tx.delete(sessions).where(eq(sessions.userId, byEmail.id));
@@ -142,6 +165,7 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
         await tx.insert(authAccounts).values({ userId: byEmail.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null });
         return { kind: "existing" as const, userId: byEmail.id };
       }
+      if (!authoritative) throw new GoogleEmailProofError();
       if (!mayRegister) throw new Error("Registration is closed on this deployment.");
       const { user } = await createUser(tx as unknown as Db, { email, name: profile.name ?? null, emailVerified: true }, { adminEmails: adminEmails() });
       await tx.insert(authAccounts).values({ userId: user.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null });
@@ -149,7 +173,14 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
     });
     if (settled.kind === "retry") continue;
     if (settled.kind === "created") return { user: settled.user, created: true };
-    if (settled.kind === "linked") return { user: await promoteIfEntitled(db(), settled.user, adminEmails()), created: false };
+    if (settled.kind === "linked") {
+      if (!settled.user.emailVerifiedAt) {
+        const claimed = await completeAccountClaim(db(), settled.user.id, { adminEmails: adminEmails() });
+        if (!claimed) throw new Error("This account cannot sign in.");
+        return { user: claimed, created: false };
+      }
+      return { user: await promoteIfEntitled(db(), settled.user, adminEmails()), created: false };
+    }
     const user = await completeAccountClaim(db(), settled.userId, { adminEmails: adminEmails() });
     if (!user) throw new Error("This account cannot sign in.");
     return { user, created: false };

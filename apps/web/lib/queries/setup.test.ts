@@ -160,7 +160,10 @@ it("distinguishes queued discovery, partial results and a complete empty scan wi
   const [task] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, status: "queued" }).returning();
   const pending = await setupStatus(user.id);
   expect(pending.monitoring).toMatchObject({ attentionCompanies: 0, pendingCompanies: 1, workerState: "stopped" });
-  expect(buildSetupChecklist(pending).notice).toMatchObject({ state: "monitoring-paused", href: "/health" });
+  // Confirmation is the actionable first step, even while company discovery is queued.
+  expect(buildSetupChecklist(pending).notice).toMatchObject({ state: "email", href: "/account" });
+  await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
+  expect(buildSetupChecklist(await setupStatus(user.id)).notice).toMatchObject({ state: "monitoring-paused", href: "/health" });
   await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, task!.id));
   const [source] = await database.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://watch.example/jobs" }).returning();
   await database.insert(schema.scans).values({ sourceId: source!.id, status: "partial", startedAt: new Date("2026-09-29T08:00:00Z"), finishedAt: new Date("2026-09-29T08:01:00Z") });

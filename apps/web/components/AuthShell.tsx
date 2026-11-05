@@ -10,14 +10,16 @@ import { Card } from "@/components/Card";
 export function AuthShell({ title, children, footer }: { title?: string; children: ReactNode; footer?: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      <header className="ds-on-brand flex flex-col items-center justify-center gap-3 px-4 py-8 md:w-2/5 md:shrink-0">
-        <h1 className="flex flex-col items-center gap-4 text-brand-ink" aria-label="Course of Life">
-          <Mark size={72} />
-          <Wordmark size={64} />
+      <header className="ds-on-brand flex items-center justify-center gap-3 px-4 py-4 md:w-2/5 md:shrink-0 md:flex-col md:py-8">
+        <h1 className="flex items-center gap-3 text-brand-ink md:flex-col md:gap-4" aria-label="Course of Life">
+          <Mark size={48} className="md:hidden" />
+          <Mark size={72} className="hidden md:block" />
+          <Wordmark size={32} className="md:hidden" />
+          <Wordmark size={64} className="hidden md:block" />
         </h1>
-        <p className="text-14 text-brand-ink-muted">Find your path.</p>
+        <p className="hidden text-14 text-brand-ink-muted md:block">Find your path.</p>
       </header>
-      <main className="flex flex-1 items-center justify-center px-4 py-8">
+      <main className="flex flex-1 items-start justify-center px-4 py-6 md:items-center md:py-8">
         <div className="w-full max-w-sm">
           <Card raised title={title} bodyClassName="p-4">
             {children}

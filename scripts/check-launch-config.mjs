@@ -1,5 +1,6 @@
 /** Offline launch configuration check. Never prints a credential or contacts a provider. */
 import { pathToFileURL } from "node:url";
+import { isIP } from "node:net";
 
 const PRICE_NAMES = [
   "STRIPE_PRICE_SEARCH_MONTHLY", "STRIPE_PRICE_INTENSIVE_MONTHLY",
@@ -8,6 +9,7 @@ const PRICE_NAMES = [
 ];
 const present = (env, name) => Boolean(env[name]?.trim());
 const exampleDomain = /(^|\.)(example\.(com|net|org)|example|invalid|test|localhost|local)$/i;
+const publicMailbox = (value) => /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(value) && !exampleDomain.test(value.split("@")[1]);
 
 export function launchConfigFindings(env = process.env, { surface = "web", mode = "live" } = {}) {
   if (!["web", "worker"].includes(surface)) throw new Error("surface must be web or worker");
@@ -38,7 +40,7 @@ export function launchConfigFindings(env = process.env, { surface = "web", mode 
     try {
       const url = new URL(env.APP_URL);
       if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.pathname !== "/" ||
-        url.search || url.hash || exampleDomain.test(url.hostname)) throw new Error();
+        url.search || url.hash || isIP(url.hostname.replace(/^\[|\]$/g, "")) || !url.hostname.includes(".") || exampleDomain.test(url.hostname)) throw new Error();
     } catch { errors.push("APP_URL must be a public HTTPS origin"); }
   }
   if (surface === "worker" && present(env, "SCRAPER_CONTACT_EMAIL")) {
@@ -63,7 +65,20 @@ export function launchConfigFindings(env = process.env, { surface = "web", mode 
   }
 
   if (surface === "web") {
-    if (!present(env, "ADMIN_EMAILS")) attention.push("ADMIN_EMAILS is unset; the built-in administrator address will apply");
+    // A launch must deliberately name its privileged accounts, not inherit a source-code default.
+    if (!present(env, "ADMIN_EMAILS")) errors.push("ADMIN_EMAILS must explicitly name the production administrators");
+    else if (env.ADMIN_EMAILS.split(",").some(value => !publicMailbox(value.trim()))) errors.push("ADMIN_EMAILS must contain valid, non-example email addresses separated by commas");
+    if (present(env, "EMAIL_FROM")) {
+      const sender = env.EMAIL_FROM.trim();
+      const mailbox = sender.includes("<") ? /^[^<>\r\n]+<([^<>]+)>$/.exec(sender)?.[1] : sender;
+      if (!mailbox || !publicMailbox(mailbox)) errors.push("EMAIL_FROM must contain a valid, non-example sender email address");
+    }
+    for (const provider of ["GOOGLE", "LINKEDIN"]) {
+      const id = `${provider}_CLIENT_ID`;
+      const secret = `${provider}_CLIENT_SECRET`;
+      if (present(env, id) !== present(env, secret)) errors.push(`${id} and ${secret} must both be set, or both omitted`);
+      if (present(env, id) && present(env, secret)) attention.push(`Verify the ${provider} app approval, exact APP_URL callback and a hosted sign-in/link round trip; this offline check cannot validate provider credentials`);
+    }
     if (env.AUTH_EMAIL_LOG === "1") errors.push("AUTH_EMAIL_LOG=1 exposes confirmation and reset links in production logs");
     attention.push("Verify Stripe Price amounts, currency, tax settings, webhook subscriptions and Customer Portal configuration in Stripe; this offline check cannot inspect them");
   }

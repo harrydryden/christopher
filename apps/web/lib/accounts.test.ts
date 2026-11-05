@@ -30,6 +30,9 @@ beforeEach(async () => {
   process.env.ADMIN_EMAILS = OWNER;
   delete process.env.RESEND_API_KEY;
   await database.execute(sql`truncate users, login_attempts, companies, settings restart identity cascade`);
+  // Most account lifecycle cases begin with registration open; the two policy cases close it
+  // explicitly to test that boundary rather than relying on an implicit fixture state.
+  await openRegistration();
 });
 
 /** Email is not configured in tests, so the link lands in the log. */
@@ -42,7 +45,8 @@ function tokenFromLog(log: { mock: { calls: unknown[][] } }, path: string): stri
 const sessionsFor = (userId: string) => database.select().from(schema.sessions).where(eq(schema.sessions.userId, userId));
 const taskTypesFor = async (userId: string) => (await database.execute<{ type: string }>(sql`select type from tasks
   where payload->>'userId' = ${userId} order by type`)).rows.map(row => row.type);
-const openRegistration = () => database.insert(schema.settings).values({ key: "registrationOpen", value: true });
+const openRegistration = () => database.insert(schema.settings).values({ key: "registrationOpen", value: true })
+  .onConflictDoUpdate({ target: schema.settings.key, set: { value: true } });
 async function confirmationToken(userId: string) {
   const log = vi.spyOn(console, "info").mockImplementation(() => {});
   try {
@@ -84,10 +88,30 @@ describe("who may register and what they get", () => {
   });
 
   it("keeps registration closed to everyone but administrator addresses until an administrator opens it", async () => {
+    await database.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "registrationOpen"));
     expect(await registrationAllowed(OWNER)).toBe(true);
     expect(await registrationAllowed("stranger@example.com")).toBe(false);
     await openRegistration();
     expect(await registrationAllowed("stranger@example.com")).toBe(true);
+  });
+
+  it("rechecks registration at the creation fence after hashing a password", async () => {
+    let release!: () => void;
+    let locked!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { locked = resolve; });
+    const closing = database.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+      await tx.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "registrationOpen"));
+      locked();
+      await gate;
+    });
+    await ready;
+    const registering = registerWithPassword({ email: "after-close@example.com", password: PASSWORD });
+    release();
+    await closing;
+    await expect(registering).rejects.toThrow(/Registration is closed/);
+    expect(await database.select().from(schema.users).where(eq(schema.users.email, "after-close@example.com"))).toHaveLength(0);
   });
 
   it("signs members in at once but makes an administrator address wait for confirmation", async () => {
@@ -537,6 +561,7 @@ describe("Google sign-in", () => {
   });
 
   it("respects closed registration, creates members, re-uses links and refuses unverified emails", async () => {
+    await database.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "registrationOpen"));
     await expect(signInWithGoogle({ sub: "google-1", email: "new@example.com", emailVerified: true, hostedDomain: "example.com" })).rejects.toThrow(/closed/);
     expect(await database.select().from(schema.users)).toHaveLength(0);
     await openRegistration();

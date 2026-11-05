@@ -149,6 +149,30 @@ it("checks the password before the registration rule, so a closed deployment doe
   expect(await attempt("stranger@example.com")).toContain("error=weak_password");
 });
 
+it("shows a truthful delivery failure to a newly registered member and retains a safe next path", async () => {
+  await database.insert(schema.settings).values({ key: "registrationOpen", value: true });
+  const form = new FormData();
+  form.set("email", "new-member@example.com");
+  form.set("name", "New Member");
+  form.set("password", "correct horse battery staple");
+  form.set("next", "/roles/add?from=welcome");
+  await expect(signup(form)).rejects.toThrow("redirect:/account?verify=delivery_failed&next=%2Froles%2Fadd%3Ffrom%3Dwelcome");
+  const members = await database.select().from(schema.users).where(eq(schema.users.email, "new-member@example.com"));
+  expect(members).toHaveLength(1);
+  expect((await database.select().from(schema.authTokens))).toHaveLength(1);
+});
+
+it("keeps a pending administrator's next path while reporting that no email was delivered", async () => {
+  process.env.ADMIN_EMAILS = "pending-owner@example.com";
+  const form = new FormData();
+  form.set("email", "pending-owner@example.com");
+  form.set("name", "Owner");
+  form.set("password", "correct horse battery staple");
+  form.set("next", "//evil.example");
+  await expect(signup(form)).rejects.toThrow("redirect:/signup?pending=1&email=pending-owner%40example.com&error=delivery_failed");
+  expect((await database.select().from(schema.users).where(eq(schema.users.email, "pending-owner@example.com")))[0]?.claimedAt).toBeNull();
+});
+
 it("after a correct password, sends a next path that would leave the site to the home page instead", async () => {
   await database.insert(schema.settings).values({ key: "registrationOpen", value: true });
   await registerWithPassword({ email: "member@example.com", password: "correct horse battery staple", name: "Member" });

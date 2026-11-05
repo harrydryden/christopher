@@ -9,11 +9,12 @@ import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "
 import { grantAdminCvGift, isPlaceholderEmail } from "@col/db";
 import { changePassword as changeStoredPassword, deleteAccount, sendVerificationEmail } from "@/lib/accounts";
 import { issueAuthToken } from "@/lib/auth-tokens";
-import { emailLinkOrigin } from "@/lib/origin";
+import { emailLinkOrigin, withParams } from "@/lib/origin";
 import { clientAddress, endOtherSessions, endSession, getCurrentUser, requireAdmin, requireUser, startSessionFromProof } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { clearAttempts, LIMITS, reserveRateLimits } from "@/lib/rate-limit";
 import { setUserSetting } from "@/lib/settings";
+import { sanitizeNextPath } from "@/lib/session";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
 export async function changePassword(_prev: ActionResult, form: FormData): Promise<ActionResult> {
@@ -66,18 +67,21 @@ export async function signOutEverywhere(): Promise<void> {
  * every other account's resets depend on. The address shares its budget with the public
  * confirmation and reset forms, so no path adds to what that mailbox receives.
  */
-export async function resendVerification(): Promise<void> {
+export async function resendVerification(form?: FormData): Promise<void> {
   const user = await requireUser();
   // Nothing would be sent, so no capacity is spent.
   if (user.emailVerifiedAt || isPlaceholderEmail(user.email)) return;
+  const submittedNext = form?.get("next");
+  const next = typeof submittedNext === "string" ? sanitizeNextPath(submittedNext) : undefined;
   const reserved = await reserveRateLimits([
     { key: `verify:user:${user.id}`, limit: LIMITS.resetEmail },
     { key: `reset:email:${user.email}`, limit: LIMITS.resetEmail },
     { key: `reset:ip:${await clientAddress()}`, limit: LIMITS.resetAddress },
   ]);
-  if (!reserved) redirect("/account?verify=rate_limited");
-  await sendVerificationEmail(user, await emailLinkOrigin());
+  if (!reserved) redirect(withParams("/account", { verify: "rate_limited", next: next && next !== "/" ? next : undefined }));
+  const delivery = await sendVerificationEmail(user, await emailLinkOrigin(), next);
   revalidatePath("/account");
+  redirect(withParams("/account", { verify: delivery.delivered ? "sent" : "delivery_failed", next: next && next !== "/" ? next : undefined }));
 }
 
 export async function updateProfile(_prev: ActionResult, form: FormData): Promise<ActionResult> {

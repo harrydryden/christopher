@@ -9,8 +9,10 @@ export function SetupChecklist({ checklist, variant }: { checklist: Checklist; v
   const monitoringStart = next?.id === "email" ? next : { href: checklist.notice.href, label: checklist.notice.action };
   return <section aria-label="Setup" className="mb-4 space-y-3 border-b-2 border-line-muted pb-4">
     {explanation && <div role="status" className="space-y-1">
-      <h2 className="text-16 font-semibold">{checklist.notice.title}</h2>
-      <p className="max-w-3xl text-14 text-muted">{checklist.notice.description}</p>
+      <h2 className="text-16 font-semibold">{firstUse ? "Choose how to begin" : checklist.notice.title}</h2>
+      <p className="max-w-3xl text-14 text-muted">{firstUse
+        ? "Follow companies to find roles, or add a role you already have. You can prepare your Experience whenever you need a CV."
+        : checklist.notice.description}</p>
       {!firstUse && <a href={checklist.notice.href} className="inline-flex min-h-11 items-center text-14 font-semibold underline">{checklist.notice.action}</a>}
     </div>}
     {firstUse && <div className="grid gap-2 sm:grid-cols-2">
@@ -23,12 +25,13 @@ export function SetupChecklist({ checklist, variant }: { checklist: Checklist; v
         <span className="text-12 text-muted">Add a job link or PDF.</span>
       </a>
     </div>}
+    {firstUse && <p className="text-13 text-muted">Already have a CV or career document? <a href="/library" className="text-fg underline">Prepare Experience</a>. You can also enter your work history there yourself.</p>}
     {!checklist.complete && <>
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      {!firstUse && <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-14"><span className="font-semibold">{explanation ? "Start here" : "Monitoring setup"}</span> · {checklist.summary}</p>
         {!explanation && <form action={dismissSetupChecklist}><button type="submit" className="min-h-11 px-2 text-13 text-muted underline">Hide setup</button></form>}
-      </div>
-      {next && <p className="text-14"><a href={next.href} className="font-semibold underline">{next.label}</a> · <span className="text-muted">{next.description}</span></p>}
+      </div>}
+      {!firstUse && next && <p className="text-14"><a href={next.href} className="font-semibold underline">{next.label}</a> · <span className="text-muted">{next.description}</span></p>}
       <details className="text-13 text-muted">
         <summary className="min-h-11 cursor-pointer py-3">All setup steps</summary>
         <ol className="grid gap-2 sm:grid-cols-2">

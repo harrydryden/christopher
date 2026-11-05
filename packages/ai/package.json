@@ -16,7 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.124.0",
     "@col/core": "workspace:*",
-    "zod": "4.5.4"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/node": "26.4.1",

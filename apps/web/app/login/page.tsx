@@ -3,18 +3,18 @@ import { login } from "./actions";
 import { googleConfigured } from "@/lib/google";
 import { linkedinConfigured } from "@/lib/linkedin";
 import { AuthDivider, AuthShell, GoogleButton, LinkedInButton } from "@/components/AuthShell";
-import { Button } from "@/components/Button";
+import { AuthSubmitButton } from "@/components/AuthSubmitButton";
 import { Field, Input } from "@/components/Field";
 import { sanitizeNextPath, sessionSecret } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  not_configured: "The server has no usable SESSION_SECRET yet (at least 32 random characters), so nobody can sign in. Set it and redeploy.",
+  not_configured: "Sign-in is temporarily unavailable. Please try again later.",
   rate_limited: "Too many attempts. Wait 15 minutes and try again.",
   invalid: "That email and password do not match.",
-  google_not_configured: "Google sign-in is not set up on this deployment.",
-  google_state: "The Google sign-in round trip did not complete. Try again.",
+  google_not_configured: "Google sign-in is currently unavailable. Use another sign-in method.",
+  google_state: "Google sign-in did not complete. Try again.",
   google_failed: "Google sign-in failed. Try again, or use your email and password.",
   google_unverified: "Google has not verified that email address, so it cannot be used to sign in.",
   google_email_proof: "We could not confirm this email through Google. Sign in to your existing account with a password or another linked method, confirm its email if needed, then link Google from Account. If you are new, create an account with email and confirm it first.",
@@ -23,8 +23,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   linkedin_failed: "LinkedIn sign-in failed. Try again, or use your email and password.",
   linkedin_cancelled: "LinkedIn sign-in was cancelled. You can try again or use another sign-in method.",
   linkedin_link_login: "Sign in to your account before linking LinkedIn from Account.",
-  closed: "Registration is by invitation on this deployment, so that account cannot create one.",
-  unconfirmed: "This account is waiting for its email address to be confirmed. Use the link we sent, or request a new one from the sign-up page.",
+  closed: "New account registration is currently closed. Use an existing account to sign in.",
+  unconfirmed: "This account needs email confirmation. Check your inbox or request a new link.",
   signed_out: "You have been signed out.",
 };
 
@@ -77,9 +77,10 @@ export default async function LoginPage({
               <Input id="password" name="password" type="password" required autoComplete="current-password" />
             </Field>
             {error && <p className="text-14 text-danger" role="alert">{error}</p>}
-            <Button type="submit" variant="primary" className="mt-1 w-full">
-              Sign in
-            </Button>
+            {sp.error === "unconfirmed" && <Link prefetch={false}
+              href={`/signup?pending=1${sp.email ? `&email=${encodeURIComponent(sp.email)}` : ""}${next !== "/" ? `&next=${encodeURIComponent(next)}` : ""}`}
+              className="text-13 underline">Send a new confirmation link</Link>}
+            <AuthSubmitButton label="Sign in" pendingLabel="Signing in…" />
           </form>
         </>
       )}

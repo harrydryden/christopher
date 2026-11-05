@@ -58,6 +58,10 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
       ? pipelineCompany(companyId).then(company => pipelineStageCounts(userId, company ? { company } : {}))
       : pipelineStageCounts(userId),
   ]);
+  // The Roles landing page already shows Setup for a new account. Keep the full workspace for
+  // every scoped or explicitly filtered visit, and as soon as a company or role exists.
+  if (!companyId && Object.keys(sp).length === 0 && Object.values(counts).every(count => count === 0)
+    && options.length === 0 && result.total === 0) return null;
   // "Shortlisted 12 · 3 applied": of the roles you chose to pursue, the ones actually sent.
   const applied = appliedRoleCount(stageCounts);
   // A row's archive notes are the review panel's, loaded when it expands (`roleDetails`), so the

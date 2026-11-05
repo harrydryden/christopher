@@ -30,3 +30,12 @@ it("preserves an explicit safe return path and rejects an external one", async (
     await LoginPage({ searchParams: Promise.resolve({ error: "google_email_proof", next: "https://example.net" }) })));
   expect(external).not.toContain("https://example.net");
 });
+
+it("offers a direct confirmation-link retry without dropping the return path", async () => {
+  const page = await LoginPage({ searchParams: Promise.resolve({
+    error: "unconfirmed", email: "person@example.test", next: "/roles/add",
+  }) });
+  const html = renderToStaticMarkup(createElement("main", null, page));
+  expect(html).toContain("Send a new confirmation link");
+  expect(html).toContain("/signup?pending=1&amp;email=person%40example.test&amp;next=%2Froles%2Fadd");
+});

@@ -16,6 +16,16 @@ it("refuses an API call without a session, uncached", async () => {
   expect(response.headers.get("cache-control")).toBe("private, no-store");
 });
 
+it("lets Stripe authenticate its webhook without a browser cookie, while protecting adjacent paths", async () => {
+  const response = await middleware(new NextRequest("https://col.test/api/webhooks/stripe", { method: "POST" }));
+  expect(response.headers.get("x-middleware-next")).toBe("1");
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  for (const path of ["/api/webhooks/stripe/other", "/api/webhooks/stripe-admin", "/api/webhooks/other"]) {
+    const adjacent = await middleware(new NextRequest(`https://col.test${path}`, { method: "POST" }));
+    expect(adjacent.status, path).toBe(401);
+  }
+});
+
 it("sends a page visit without a session to sign-in, remembering where it was going", async () => {
   const response = await middleware(new NextRequest("https://col.test/companies?page=2"));
   expect(response.headers.get("location")).toBe("https://col.test/login?next=%2Fcompanies%3Fpage%3D2");

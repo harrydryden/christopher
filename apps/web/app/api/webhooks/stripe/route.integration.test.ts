@@ -4,6 +4,8 @@ import { eq } from "drizzle-orm";
 import { createTestDb } from "@/test/db";
 import { ensureFreeEntitlement, getBillingSummary, grantCvCredits, schema, type Db } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
+import { NextRequest } from "next/server";
+import { middleware } from "@/middleware";
 
 let database: Db;
 let pool: ReturnType<typeof createTestDb>["pool"];
@@ -98,7 +100,11 @@ it("fulfils a paid CV top-up once when Stripe retries the event", async () => {
       type: "checkout.session.completed",
     });
     const { POST } = await import("./route");
-    expect((await POST(await signedRequest(payload))).status).toBe(200);
+    const request = await signedRequest(payload);
+    // Exercise the browser gate as well as the signature handler: real Stripe requests have
+    // no session cookie and previously never reached this otherwise-correct endpoint.
+    expect((await middleware(new NextRequest(request.clone()))).headers.get("x-middleware-next")).toBe("1");
+    expect((await POST(request)).status).toBe(200);
     expect((await POST(await signedRequest(payload))).status).toBe(200);
     expect((await getBillingSummary(database, id)).cv).toMatchObject({ available: 8, welcome: 3, purchased: 5 });
   } finally {

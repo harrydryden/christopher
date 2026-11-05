@@ -9,6 +9,7 @@ import { runMigrations } from "@col/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, readSessionCookie } from "@/lib/session";
 import { hashPassword, verifyPassword } from "@col/core";
+import { sendEmail } from "@/lib/email";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -79,7 +80,7 @@ it("sends the confirmation link again only as often as the public form would, th
   const { user } = await signIn("squatted@example.com", false);
   const results: string[] = [];
   for (let i = 0; i < LIMITS.resetEmail.max + 2; i++) results.push(await outcome(resendVerification()));
-  expect(results.filter(result => result === "sent")).toHaveLength(LIMITS.resetEmail.max);
+  expect(results.filter(result => result === "redirect:/account?verify=sent")).toHaveLength(LIMITS.resetEmail.max);
   expect(results.slice(LIMITS.resetEmail.max)).toEqual(["redirect:/account?verify=rate_limited", "redirect:/account?verify=rate_limited"]);
   expect(verificationMails()).toHaveLength(LIMITS.resetEmail.max);
   const rows = await database.select().from(schema.loginAttempts).where(eq(schema.loginAttempts.key, `reset:email:${user.email}`));
@@ -101,6 +102,21 @@ it("spends nothing for an address that is already confirmed", async () => {
   for (let i = 0; i < LIMITS.resetEmail.max + 2; i++) expect(await outcome(resendVerification())).toBe("sent");
   expect(sent).toHaveLength(0);
   expect(await database.select().from(schema.loginAttempts)).toHaveLength(0);
+});
+
+it("reports a failed authenticated confirmation delivery and keeps only a safe return path", async () => {
+  await signIn("delivery@example.com", false);
+  const form = new FormData();
+  form.set("next", "/roles/add");
+  vi.mocked(sendEmail).mockResolvedValueOnce({ delivered: false });
+  expect(await outcome(resendVerification(form)))
+    .toBe("redirect:/account?verify=delivery_failed&next=%2Froles%2Fadd");
+  form.set("next", "https://outside.example/steal");
+  expect(await outcome(resendVerification(form))).toBe("redirect:/account?verify=sent");
+  form.set("next", "/roles/add");
+  for (let i = 2; i < LIMITS.resetEmail.max; i++) await outcome(resendVerification(form));
+  expect(await outcome(resendVerification(form)))
+    .toBe("redirect:/account?verify=rate_limited&next=%2Froles%2Fadd");
 });
 
 const passwordForm = (currentPassword: string, password: string) => {

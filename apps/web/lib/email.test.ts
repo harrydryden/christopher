@@ -56,4 +56,16 @@ it("sends through the provider when one is configured, and logs nothing", async 
   expect(await sendEmail(mail)).toEqual({ delivered: true });
   expect(fetched).toHaveBeenCalledTimes(1);
   expect(logged()).toEqual([]);
+  expect(fetched.mock.calls[0]?.[1]).toMatchObject({ redirect: "error", signal: expect.any(AbortSignal) });
+});
+
+it("returns a safe failure when the transport rejects without logging its secret-bearing error", async () => {
+  vi.stubEnv("NODE_ENV", "production");
+  vi.stubEnv("RESEND_API_KEY", "re_test");
+  vi.stubEnv("EMAIL_FROM", "Course of Life <col@example.com>");
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("secret-token Bearer re_test"));
+  expect(await sendEmail(mail)).toEqual({ delivered: false });
+  expect(error).toHaveBeenCalledWith(JSON.stringify({ event: "email_send_failed", reason: "transport" }));
+  expect(JSON.stringify(error.mock.calls)).not.toContain("secret-token");
 });

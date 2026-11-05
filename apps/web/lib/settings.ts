@@ -44,6 +44,7 @@ export const getSettings = cache(async (): Promise<AppSettings> => getSettingsFo
 export async function setSystemSetting(key: keyof SystemSettings, value: unknown): Promise<void> {
   if (!isSystemSettingsKey(key)) throw new Error(`Not a system setting: ${key}`);
   await db().transaction(async tx => {
+    if (key === "registrationOpen") await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
     const changesA5Route = key === "defaultModel" || key === "modelOverrides" || key === "stageRoutes";
     if (changesA5Route)
       await lockScoreModelInput(tx as unknown as ReturnType<typeof db>, "exclusive");

@@ -50,11 +50,20 @@ describe("outcome-based setup", () => {
 
 describe("empty-result explanations", () => {
   it("distinguishes preferences, paused companies, waiting and successful empty views", () => {
-    expect(monitoringNotice(NOTHING).state).toBe("preferences");
-    expect(monitoringNotice({ ...NOTHING, gateChosen: true })).toMatchObject({ state: "no-companies", href: "/suggestions" });
-    expect(monitoringNotice({ ...NOTHING, gateChosen: true, companiesFollowed: 2 })).toMatchObject({ state: "no-companies", href: "/companies" });
+    const confirmed = { ...NOTHING, emailConfirmed: true };
+    expect(monitoringNotice(confirmed).state).toBe("preferences");
+    expect(monitoringNotice({ ...confirmed, gateChosen: true })).toMatchObject({ state: "no-companies", href: "/suggestions" });
+    expect(monitoringNotice({ ...confirmed, gateChosen: true, companiesFollowed: 2 })).toMatchObject({ state: "no-companies", href: "/companies" });
     expect(monitoringNotice(WATCHING).state).toBe("waiting");
     expect(monitoringNotice(COMPLETE)).toMatchObject({ state: "complete", title: "Your companies have been checked" });
+  });
+
+  it("agrees with the next action when email confirmation still blocks work", () => {
+    for (const facts of [NOTHING, { ...COMPLETE, emailConfirmed: false }]) {
+      const checklist = buildSetupChecklist(facts);
+      expect(checklist.notice).toMatchObject({ state: "email", href: "/account", action: "Confirm your email" });
+      expect(checklist.nextStep?.href).toBe(checklist.notice.href);
+    }
   });
 
   it("does not imply all companies succeeded when only the first has been checked", () => {

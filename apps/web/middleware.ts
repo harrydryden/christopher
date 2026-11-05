@@ -27,6 +27,13 @@ export const config = {
 };
 
 export async function middleware(req: NextRequest) {
+  // Stripe has no browser session. Only this exact endpoint delegates authentication to
+  // its raw-body signature check; sibling webhook/API paths remain session protected.
+  if (req.nextUrl.pathname === "/api/webhooks/stripe") {
+    const response = NextResponse.next();
+    response.headers.set("cache-control", "private, no-store");
+    return response;
+  }
   // Never redirected to login, never cached: the token is the whole of the authentication, and
   // the page it buys is one revision of one CV.
   if (req.nextUrl.pathname.startsWith("/share/")) {

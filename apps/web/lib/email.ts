@@ -33,16 +33,20 @@ export async function sendEmail(mail: OutboundEmail): Promise<{ delivered: boole
   try {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(8_000),
       headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [mail.to], subject: mail.subject, text: mail.text }),
     });
+    await response.body?.cancel().catch(() => undefined);
     if (!response.ok) {
       console.error(JSON.stringify({ event: "email_send_failed", status: response.status, subject: mail.subject }));
       return { delivered: false };
     }
     return { delivered: true };
-  } catch (error) {
-    console.error(JSON.stringify({ event: "email_send_failed", error: error instanceof Error ? error.message : String(error) }));
+  } catch {
+    // Provider errors may contain request headers or the message body, including a live token.
+    console.error(JSON.stringify({ event: "email_send_failed", reason: "transport" }));
     return { delivered: false };
   }
 }

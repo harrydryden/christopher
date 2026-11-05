@@ -54,8 +54,8 @@ export async function registrationAllowed(email: string): Promise<boolean> {
   return (await getSystemSettings()).registrationOpen;
 }
 
-/** Read the policy after taking ava:users, the same fence the policy writer uses. */
-async function registrationAllowedIn(tx: Db, email: string): Promise<boolean> {
+/** Read current policy on the held connection after taking the policy writer's ava:users fence. */
+export async function registrationAllowedIn(tx: Pick<Db, "select">, email: string): Promise<boolean> {
   if (isAdminEmail(email)) return true;
   const rows = await tx.select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable)
     .where(eq(settingsTable.key, "registrationOpen"));

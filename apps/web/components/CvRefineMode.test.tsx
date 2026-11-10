@@ -311,3 +311,74 @@ it("updates an existing remembered item order by its stable rule ID", async () =
     id: rule.id, kind: "structured", structured: rule.structured,
   }));
 });
+
+it("saves a bullet title by the same target, keeps it on failure and clears it after the child arrives", async () => {
+  const bulletId = "2f43b6f0-e198-4cf6-b0fe-cb08a2760794";
+  const summary = { type: "summary" as const, id: existing.target.id, label: "Summary", sourceText: "Summary" };
+  const bullet = { type: "bullet" as const, id: bulletId, label: "Experience · bullet 1",
+    sourceText: "Reduced backlog by 20%", sourceSignpost: "Delivery", proseBullet: true, entryId: "role" };
+  vi.mocked(saveAndUpdateCvExactRefinement).mockResolvedValueOnce({ ok: false, error: "Please retry." })
+    .mockResolvedValueOnce({ ok: true, version: 2, draftId: "child", revision: 2, charged: false })
+    .mockResolvedValueOnce({ ok: true, version: 3, draftId: "next", revision: 3, charged: false });
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
+    source={{ kind: "baseline", id: "baseline", label: "Auto" }} targets={[summary, bullet]} refinements={[]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Edit wording" && button.closest("section")?.textContent?.includes("Experience · bullet 1"))!.click());
+  const title = container.querySelector<HTMLInputElement>('#cv-refine-bullet-title')!;
+  const body = container.querySelector<HTMLTextAreaElement>("textarea")!;
+  const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Save and update CV · free")!;
+  expect(title.value).toBe("Delivery");
+  expect(save.disabled).toBe(true);
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  act(() => { setter.call(title, "Impact"); title.dispatchEvent(new Event("input", { bubbles: true })); });
+  expect(save.disabled).toBe(false);
+  await act(async () => save.click());
+  expect(title.value).toBe("Impact");
+  expect(container.textContent).toContain("Please retry.");
+  await act(async () => save.click());
+  const calls = vi.mocked(saveAndUpdateCvExactRefinement).mock.calls;
+  expect(calls[0]?.[3]).toMatchObject({ target: { type: "bullet", id: bulletId },
+    text: "Reduced backlog by 20%", bulletSignpost: "Impact" });
+  expect(calls[0]?.[3].requestKey).toBe(calls[1]?.[3].requestKey);
+  expect(title.disabled).toBe(true);
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={2}
+    source={{ kind: "draft", id: "child", revision: 2, label: "Current", autoOrigin: true }}
+    targets={[summary, { ...bullet, sourceSignpost: "Impact" }]} refinements={[]} />));
+  expect(title.value).toBe("Impact");
+  expect(title.disabled).toBe(false);
+  act(() => { setter.call(title, ""); title.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => save.click());
+  expect(vi.mocked(saveAndUpdateCvExactRefinement).mock.calls[2]?.[3]).toMatchObject({
+    target: { type: "bullet", id: bulletId }, text: body.value, bulletSignpost: null,
+  });
+});
+
+it("retains an unsaved bullet title while its instruction is selected and the source changes", () => {
+  const bullet = { type: "bullet" as const, id: "2f43b6f0-e198-4cf6-b0fe-cb08a2760794",
+    label: "Experience bullet", sourceText: "Saved body", sourceSignpost: "Saved title", proseBullet: true };
+  const props = { contextId: "context", initialVersion: 1, targets: [bullet], refinements: [] as CvRefinementV1[] };
+  act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "first", label: "First" }} />));
+  const title = container.querySelector<HTMLInputElement>('#cv-refine-bullet-title')!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(title, "My title");
+    title.dispatchEvent(new Event("input", { bubbles: true })); });
+  act(() => [...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')][1]!.click());
+  act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "second", label: "Second" }} />));
+  expect(container.textContent).toContain("Restore original saved edition");
+  act(() => [...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')][0]!.click());
+  expect(container.querySelector<HTMLInputElement>('#cv-refine-bullet-title')?.value).toBe("My title");
+  expect(container.querySelector('[data-cv-mode-dirty="true"]')).not.toBeNull();
+});
+
+it("opens an unapplied remembered bullet with its saved title, not the source title", () => {
+  const bulletId = "2f43b6f0-e198-4cf6-b0fe-cb08a2760794";
+  const rule: CvRefinementV1 = { ...existing, target: { type: "bullet", id: bulletId },
+    text: "Remembered body", bulletSignpost: "Remembered title" };
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
+    source={{ kind: "baseline", id: "baseline", label: "Auto" }}
+    targets={[{ type: "bullet", id: bulletId, label: "Experience bullet", sourceText: "Source body",
+      sourceSignpost: "Source title", proseBullet: true }]} refinements={[rule]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Edit")!.click());
+  expect(container.querySelector<HTMLInputElement>('#cv-refine-bullet-title')?.value).toBe("Remembered title");
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Remembered body");
+});

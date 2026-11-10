@@ -11,7 +11,7 @@ import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvRefinedResultKey, 
   cvRefinementDependencies, cvEditingTargetsFor, cvProjectOneExactWording,
   validateCvEditingTargetTransition, CvRefinementSchema,
   type CvAutoInputV1, type CvRefinementV1, type CvEditingTargets } from "@col/core/cv-editing-modes";
-import { CvContentSchema, CvLibrarySchema, CvThemeSchema, DEFAULT_CV_THEME, groupCvLibrary, isKnownModel, modelForCallSite,
+import { BulletSignpostSchema, CvContentSchema, CvLibrarySchema, CvThemeSchema, DEFAULT_CV_THEME, groupCvLibrary, isKnownModel, modelForCallSite,
   type CvContent, type CvLibrary } from "@col/core";
 import { canonicalJson, cvAssessmentCurrent, validateCvRubric } from "@col/core/cv-review";
 import { cvPreviewRefinementRebase, type CvRefinementRebaseItem } from "@col/core/cv-refinement-rebase";
@@ -212,7 +212,7 @@ export async function applyCvRefinementRebase(contextId: string, expectedVersion
 }
 
 type RefinementInput = { id?: string; kind: CvRefinementV1["kind"]; target: CvRefinementV1["target"];
-  text?: string; structured?: CvRefinementV1["structured"]; order: number;
+  text?: string; bulletSignpost?: string | null; structured?: CvRefinementV1["structured"]; order: number;
   sourceKind: "baseline" | "draft"; sourceId: string };
 
 function hasRefinementTarget(targets: CvEditingTargets, target: CvRefinementV1["target"]): boolean {
@@ -294,6 +294,8 @@ export async function saveCvRefinement(contextId: string, expectedVersion: numbe
       const row = CvRefinementSchema.parse({ id: input.id ?? randomUUID(), version: (prior?.version ?? 0) + 1,
         order: input.order, kind: input.kind, target: input.target,
         ...(input.text !== undefined ? { text: input.text } : {}),
+        ...((input.bulletSignpost !== undefined ? input.bulletSignpost : prior?.bulletSignpost) !== undefined
+          ? { bulletSignpost: input.bulletSignpost !== undefined ? input.bulletSignpost : prior?.bulletSignpost } : {}),
         ...(input.structured !== undefined ? { structured: input.structured } : {}),
         dependencies: { descriptionVersionId: context.currentDescriptionVersionId, ...dependencies,
           originBaselineId: (baseline ?? retained)?.id ?? null }, reset: false });
@@ -311,7 +313,7 @@ export async function saveCvRefinement(contextId: string, expectedVersion: numbe
 export async function saveAndUpdateCvExactRefinement(contextId: string, expectedOverlayVersion: number,
   source: { kind: "baseline" | "draft"; id: string; revision?: number },
   input: { id?: string; target: { type: "summary" | "section" | "bullet" | "skill"; id: string };
-    text: string; order: number; requestKey: string }): Promise<
+    text: string; bulletSignpost?: string | null; order: number; requestKey: string }): Promise<
   { ok: true; version: number; draftId: string; revision: number; charged: false } | { ok: false; error: string }> {
   const user = await requireUser();
   try {
@@ -321,9 +323,15 @@ export async function saveAndUpdateCvExactRefinement(contextId: string, expected
       !Number.isInteger(input.order) || input.order < 0 || !input.text.trim() ||
       (source.kind === "draft" && (!Number.isInteger(source.revision) || source.revision! < 1)))
       throw new UserFacingError("Reload this CV before saving its exact wording.");
+    if (input.bulletSignpost !== undefined && input.target.type !== "bullet")
+      throw new UserFacingError("Only a bullet can have a title.");
+    const checkedSignpost = input.bulletSignpost === undefined ? undefined : BulletSignpostSchema.safeParse(input.bulletSignpost);
+    if (checkedSignpost && !checkedSignpost.success)
+      throw new UserFacingError("Keep the bullet title to one line and 60 characters.");
+    const bulletSignpost = checkedSignpost?.success ? checkedSignpost.data : undefined;
     const requestPrefix = `exact:${input.requestKey}:`;
     const requestIdentity = requestPrefix + createHash("sha256").update(canonicalJson({
-      contextId, expectedOverlayVersion, source, target: input.target, text: input.text,
+      contextId, expectedOverlayVersion, source, target: input.target, text: input.text, bulletSignpost,
       order: input.order, refinementId: input.id ?? null,
     })).digest("hex");
     const outcome = await db().transaction(async tx => {
@@ -384,7 +392,7 @@ export async function saveAndUpdateCvExactRefinement(contextId: string, expected
       if (!description) throw new UserFacingError("The saved role description is unavailable.");
       let projected: CvContent;
       try { projected = cvProjectOneExactWording({ content: sourceContent, targets: sourceTargets,
-        target: input.target, text: input.text }); }
+        target: input.target, text: input.text, bulletSignpost }); }
       catch (error) { throw new UserFacingError((error as Error).message); }
       if (canonicalJson(projected) === canonicalJson(sourceContent))
         throw new UserFacingError("This wording already matches the selected CV.");
@@ -402,7 +410,10 @@ export async function saveAndUpdateCvExactRefinement(contextId: string, expected
         descriptionVersionId, target: input.target });
       const row = CvRefinementSchema.parse({ id: existing?.id ?? randomUUID(),
         version: (existing?.version ?? 0) + 1, order: input.order, kind: "exact_wording",
-        target: input.target, text: input.text, dependencies: {
+        target: input.target, text: input.text,
+        ...((bulletSignpost !== undefined ? bulletSignpost : existing?.bulletSignpost) !== undefined
+          ? { bulletSignpost: bulletSignpost !== undefined ? bulletSignpost : existing?.bulletSignpost } : {}),
+        dependencies: {
           descriptionVersionId, ...dependencies, originBaselineId: baseline?.id ?? retainedBaseline?.id ?? null },
         reset: false });
       const saved = await appendCvRefinement(tx, { userId: user.id, contextId,

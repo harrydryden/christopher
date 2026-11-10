@@ -6,8 +6,8 @@ import { inputClass, labelClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { AuthSubmitButton } from "@/components/AuthSubmitButton";
 import { BillingOverview } from "@/components/BillingOverview";
-import { LinkedInDisconnectControl } from "@/components/LinkedInDisconnectControl";
 import { SettingsForm } from "@/components/SettingsForm";
+import { unlinkLinkedIn } from "@/app/actions/linkedin";
 import { linkedProviders } from "@/lib/accounts";
 import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
@@ -150,7 +150,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
                   : <span className="text-muted">confirm your account email before linking</span>
                 : <span className="text-muted">not configured on this deployment</span>}</div>
             {providers.some(p => p.provider === "linkedin")
-              ? <LinkedInDisconnectControl canDisconnect={!!user.passwordHash || (googleConfigured() && providers.some(p => p.provider === "google"))} />
+              ? !!user.passwordHash || canReauthenticateWithGoogle
+                ? <SettingsForm action={unlinkLinkedIn} submitLabel="Disconnect LinkedIn sign-in" pendingLabel="Disconnecting…" submitVariant="secondary" successMessage="LinkedIn sign-in disconnected. Your Experience and CVs are unchanged." />
+                : <p className="text-12 text-muted">Set a password or link another sign-in method before disconnecting LinkedIn.</p>
               : linkedinConfigured() && user.emailVerifiedAt &&
                 <p className="text-12 text-muted">You’ll confirm access to this account before linking.</p>}
           </li>

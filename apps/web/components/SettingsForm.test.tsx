@@ -141,6 +141,23 @@ it("resets unchanged fields after a confirmed save", async () => {
   expect(container.querySelector('[role="status"]')?.textContent).toBe("Saved.");
 });
 
+it("shows a custom pending label, keeps a refusal inline, and confirms a later success", async () => {
+  let finish!: (result: ActionResult) => void;
+  const action = vi.fn(() => new Promise<ActionResult>(resolve => { finish = resolve; }));
+  await act(async () => root.render(<SettingsForm action={action} submitLabel="Disconnect LinkedIn sign-in" pendingLabel="Disconnecting…" submitVariant="secondary" successMessage="LinkedIn sign-in disconnected. Your Experience and CVs are unchanged." />));
+  const button = container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  act(() => button.click());
+  expect(button.textContent).toBe("Disconnecting…");
+  expect(button.disabled).toBe(true);
+  await act(async () => finish({ ok: false, error: "Sign in again before disconnecting LinkedIn." }));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Sign in again before disconnecting LinkedIn.");
+  expect(container.querySelector('[role="status"]')).toBeNull();
+  act(() => button.click());
+  await act(async () => finish({ ok: true }));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("Experience and CVs are unchanged");
+});
+
 it("lets Next navigation signals reach the router", async () => {
   const redirect = Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/account;307;" });
   await render(async () => { throw redirect; });

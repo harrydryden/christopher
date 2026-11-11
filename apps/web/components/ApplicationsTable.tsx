@@ -487,8 +487,8 @@ export function ApplicationsTable({
     <div className="divide-y divide-line-faint border-2 border-line md:hidden" aria-label="Applications">
       {rows.map((row) => {
         return <article key={row.key} className="min-w-0 p-4">
-          <div className="flex min-w-0 items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
+          <div className="min-w-0">
+            <div className="min-w-0">
               {row.companyId ? <Link prefetch={false} href={`/companies/${row.companyId}`} className="inline-flex max-w-full items-center gap-1.5 text-13 text-muted underline">
                 <CompanyFavicon src={row.companyIcon?.src ?? null} domain={row.companyIcon?.domain} size={14} />
                 <span className="truncate">{row.companyName}</span>
@@ -496,7 +496,7 @@ export function ApplicationsTable({
               <button type="button" onClick={() => openUpdate(row.key)}
                 className="mt-1 block min-h-11 w-full text-left font-semibold leading-snug text-fg underline-offset-2 hover:underline">{row.jobTitle}</button>
             </div>
-            <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>
+            <div className="mt-1"><Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge></div>
           </div>
           {row.jobUrl && <a href={row.jobUrl} target="_blank" rel="noopener noreferrer" className="mt-1 block min-h-11 py-2 text-13 underline">View vacancy ↗</a>}
           {nextSteps[row.key] && <p className={`mt-2 text-13 ${nextSteps[row.key]!.overdue ? "text-warn" : "text-muted"}`}>{nextSteps[row.key]!.line}</p>}

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
@@ -7,24 +6,16 @@ import { resolve, join } from "node:path";
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
 const { chromium } = createRequire(new URL("../apps/worker/package.json", import.meta.url))("playwright");
 
-/** A browser answer must remain a review until the person confirms its exact saved wording. */
+/** A person's own career fact is usable after one save, with history and no model call. */
 export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, userId) {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-  const jobId = randomUUID();
-  const job = { id: jobId, company: "Evidence Smoke", jobTitle: "Service Lead", startDate: "2022-01", endDate: "", current: true };
-  const library = { name: "Evidence Smoke Candidate", contact: "London", profile: "", structuredExperience: true,
-    employment: [job], entries: [] };
   let browser;
   try {
-    const latest = await pool.query("select coalesce(max(version), 0)::integer as version from cv_libraries where user_id = $1", [userId]);
-    const baseVersion = latest.rows[0].version + 1;
-    await pool.query("insert into cv_libraries (user_id, version, content) values ($1, $2, $3)",
-      [userId, baseVersion, JSON.stringify(library)]);
     const before = await pool.query(`select
       (select count(*)::integer from ai_calls where user_id = $1) as calls,
       (select count(*)::integer from credit_ledger where user_id = $1) as credits,
-      (select count(*)::integer from tasks where type = 'draft_evidence' and payload->>'userId' = $1::text) as draft_tasks`, [userId]);
-
+      (select count(*)::integer from tasks where payload->>'userId' = $1::text) as tasks,
+      (select coalesce(max(version), 0)::integer from cv_libraries where user_id = $1) as version`, [userId]);
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const [name, value] = cookie.split("=");
@@ -32,103 +23,61 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
-    await page.goto(`${baseUrl}/library?job=${jobId}`);
-    const jobCard = page.locator(`section[data-job-id="${jobId}"]`);
-    const question = jobCard.getByRole("region", { name: "Evidence question" });
-    await question.getByText("What result did your work produce in this job, and what did you do to help achieve it?").waitFor();
-
-    // A rough answer survives an explicit skip and a full browser reload.
-    const rough = "I need to check the figures before describing the result.";
-    await question.getByRole("textbox", { name: "Your answer" }).fill(rough);
-    await question.getByRole("button", { name: "Nothing further" }).click();
-    await question.getByText("Nothing further for this question.").waitFor();
-    await page.reload();
-    await question.getByText("Nothing further for this question.").waitFor();
-    await question.getByRole("button", { name: "Return to this question" }).click();
-    assert.equal(await question.getByRole("textbox", { name: "Your answer" }).inputValue(), rough);
-
-    // The manual route opens a separate wording review. Editing it is a deliberate choice; the
-    // saved row must contain exactly that edit, rather than the rough answer or model output.
+    await page.goto(`${baseUrl}/library`);
+    const career = page.getByRole("region", { name: "Career record" });
+    await career.getByRole("textbox", { name: "Name or title", exact: true }).fill("Evidence Smoke Service Lead");
+    await career.getByRole("button", { name: "Add to Experience", exact: true }).click();
+    await career.getByRole("heading", { name: "Evidence Smoke Service Lead", exact: true }).waitFor();
+    const recordId = new URL(page.url()).searchParams.get("record");
+    assert.ok(recordId, "new work has a stable record identity");
+    const story = career.getByRole("textbox", { name: "Your original story", exact: true });
+    await story.fill("I coordinated the handover team during a service launch.");
+    await story.blur();
+    await career.getByRole("status").filter({ hasText: "Saved" }).waitFor();
     const answer = "I brought the handover team together and reduced missed requests.";
-    const exact = "Reduced missed requests by bringing the handover team together.";
-    await question.getByRole("textbox", { name: "Your answer" }).fill(answer);
-    await question.getByRole("button", { name: "Use my answer as written" }).click();
-    const wording = question.getByRole("textbox", { name: "Wording to save" });
-    assert.equal(await wording.inputValue(), answer);
-    await wording.fill(exact);
+    await career.getByRole("textbox", { name: "Add a detail", exact: true }).fill(answer);
+    const save = career.getByRole("button", { name: "Save detail · free", exact: true });
     const screenshotDir = process.env.SMOKE_SCREENSHOT_DIR ? resolve(process.env.SMOKE_SCREENSHOT_DIR) : null;
-    if (screenshotDir) {
-      await mkdir(screenshotDir, { recursive: true });
-      await page.screenshot({ path: join(screenshotDir, "evidence-review-desktop.png"), fullPage: true });
-    }
-    const confirm = question.getByRole("button", { name: "Confirm and save to Service Lead at Evidence Smoke" });
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 844 });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false,
-        `evidence review must fit a ${width}px phone viewport`);
-      assert.equal(await confirm.isVisible(), true, `the confirmation must be visible at ${width}px`);
-      const box = await confirm.boundingBox();
-      assert.ok(box && box.height >= 44 && box.width >= 44, `the confirmation needs a 44px target at ${width}px`);
-      if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `evidence-review-${width}.png`), fullPage: true });
+        `career fact capture must fit a ${width}px phone viewport`);
+      const box = await save.boundingBox();
+      assert.ok(box && box.height >= 44 && box.width >= 44, `Save detail needs a 44px target at ${width}px`);
+      if (screenshotDir) { await mkdir(screenshotDir, { recursive: true });
+        await page.screenshot({ path: join(screenshotDir, `evidence-direct-${width}.png`), fullPage: true }); }
     }
-    // The adjacent evidence guide uses a native disclosure and stays keyboard operable.
-    const guide = jobCard.locator("details").filter({ has: page.locator("summary", { hasText: "Evidence guide and scores" }) }).first();
-    const guideSummary = guide.locator("summary");
-    await guideSummary.focus();
-    await guideSummary.press("Enter");
-    assert.equal(await guide.getAttribute("open"), "", "Enter opens the evidence guide");
-    await guideSummary.press("Enter");
-    assert.equal(await guide.getAttribute("open"), null, "Enter closes the evidence guide");
     await page.setViewportSize({ width: 1280, height: 900 });
-    const beforeConfirm = await pool.query("select max(version)::integer as version from cv_libraries where user_id = $1", [userId]);
-    assert.equal(beforeConfirm.rows[0].version, baseVersion, "review must not save a row");
-    await confirm.click();
-    await page.getByText(exact, { exact: true }).waitFor();
-    await question.getByText("What challenge did you face in this job, and how did you work through it?").waitFor();
-
-    const saved = await pool.query("select version, content from cv_libraries where user_id = $1 order by version desc limit 1", [userId]);
-    assert.equal(saved.rows[0].version, baseVersion + 1);
-    const entry = saved.rows[0].content.entries.find(item => item.employmentId === jobId);
-    assert.ok(entry, "confirmed answer creates an Experience entry");
-    assert.equal(entry.details, exact);
-    assert.deepEqual(entry.confirmedResponsibilities, [exact]);
-    assert.deepEqual(entry.rowFacets?.[exact], ["outcome"]);
-    assert.equal(JSON.stringify(saved.rows[0].content).includes(answer), false, "the unconfirmed answer is not saved");
-    const accepted = await pool.query("select status, accepted_wording, accepted_version from evidence_drafts where user_id = $1 and input->>'questionId' = $2 order by updated_at desc limit 1",
-      [userId, `job:${jobId}:outcome`]);
-    assert.deepEqual(accepted.rows[0], { status: "accepted", accepted_wording: exact, accepted_version: baseVersion + 1 });
-
-    // The next default question advances from result to way of working, and its dismissal survives
-    // another reload. Returning leaves the question available without writing a new version.
-    await question.getByRole("button", { name: "Nothing further" }).click();
-    await question.getByText("Nothing further for this question.").waitFor();
+    await save.click();
+    await career.getByRole("textbox", { name: "Saved detail", exact: true }).waitFor();
+    const saved = await pool.query(`select text, status, provenance->>'kind' as provenance_kind
+      from career_assertions where user_id = $1 and subject_id = $2 and text = $3`, [userId, recordId, answer]);
+    assert.deepEqual(saved.rows, [{ text: answer, status: "usable", provenance_kind: "direct_user" }]);
+    assert.equal(await career.getByRole("button", { name: "Confirm all", exact: true }).count(), 0);
     await page.reload();
-    await question.getByText("Nothing further for this question.").waitFor();
-    await question.getByRole("button", { name: "Return to this question" }).click();
-    await question.getByRole("textbox", { name: "Your answer" }).waitFor();
+    assert.equal(await career.getByRole("textbox", { name: "Saved detail", exact: true }).inputValue(), answer);
     const final = await pool.query(`select
       (select count(*)::integer from ai_calls where user_id = $1) as calls,
       (select count(*)::integer from credit_ledger where user_id = $1) as credits,
-      (select count(*)::integer from tasks where type = 'draft_evidence' and payload->>'userId' = $1::text) as draft_tasks,
-      (select max(version)::integer from cv_libraries where user_id = $1) as version`, [userId]);
-    assert.equal(final.rows[0].calls, before.rows[0].calls, "manual confirmation must make no provider call");
-    assert.equal(final.rows[0].credits, before.rows[0].credits, "manual confirmation must spend no credits");
-    assert.equal(final.rows[0].draft_tasks, before.rows[0].draft_tasks, "manual confirmation must not queue model drafting");
-    assert.equal(final.rows[0].version, baseVersion + 1, "skipping and returning must not write Experience");
+      (select count(*)::integer from tasks where payload->>'userId' = $1::text) as tasks,
+      (select coalesce(max(version), 0)::integer from cv_libraries where user_id = $1) as version`, [userId]);
+    assert.equal(final.rows[0].calls, before.rows[0].calls, "direct capture makes no provider call");
+    assert.equal(final.rows[0].credits, before.rows[0].credits, "direct capture spends no credits");
+    assert.equal(final.rows[0].tasks, before.rows[0].tasks, "direct capture queues no model task");
+    assert.ok(final.rows[0].version > before.rows[0].version, "career facts publish a new Library compatibility version");
 
-    // Account keeps the plan readout first and its links reveal the matching native disclosures.
+    // Account keeps the plan readout first; links jump to the visible purchase and plan tasks.
     // The controls are inspected only; this smoke never starts a checkout.
     await page.goto(`${baseUrl}/account`);
     await page.getByRole("heading", { name: "Plan and credits" }).waitFor();
-    await page.getByRole("link", { name: "Top up CV credits", exact: true }).click();
-    const topUps = page.locator("details#top-ups");
+    await page.getByRole("link", { name: "Top up role credits", exact: true }).click();
+    const topUps = page.locator("section#top-ups");
     assert.equal(new URL(page.url()).hash, "#top-ups");
-    await page.waitForFunction(() => document.querySelector("details#top-ups")?.open === true);
-    assert.equal(await topUps.getAttribute("open"), "", "the top-up link opens its disclosure");
+    assert.equal(await topUps.getByRole("heading", { name: "Top up role credits" }).isVisible(), true);
+    assert.equal(await topUps.getByRole("button", { name: "Buy 5" }).isVisible(), true);
     await page.getByRole("link", { name: "Compare plans", exact: true }).click();
-    const plans = page.locator("details#plans");
-    await page.waitForFunction(() => document.querySelector("details#plans")?.open === true);
-    assert.equal(await plans.getAttribute("open"), "", "the compare link opens its disclosure");
+    const plans = page.locator("section#plans");
+    assert.equal(await plans.getByRole("heading", { name: "Compare plans" }).isVisible(), true);
     assert.match(await plans.locator("div.grid > div").first().innerText(), /Free[\s\S]*Current/, "the current plan appears first");
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, "account-plan-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -144,10 +93,10 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
       const availability = page.getByRole("group", { name: "Availability" });
       await availability.getByRole("checkbox", { name: "Newly opened" }).waitFor();
       assert.equal(await availability.isVisible(), true, `Availability stays visible at ${width}px`);
-      const filters = page.getByRole("button", { name: "Filters", exact: true });
-      await filters.click();
       assert.equal(await page.getByRole("textbox", { name: "Location" }).isVisible(), true,
-        `advanced role filters open at ${width}px`);
+        `role location stays visible at ${width}px`);
+      assert.equal(await page.getByRole("spinbutton", { name: "Min fit" }).isVisible(), true,
+        `minimum fit stays visible at ${width}px`);
       const sortWidth = await page.getByRole("combobox", { name: "Sort by" }).evaluate(element => element.getBoundingClientRect().width);
       assert.ok(sortWidth >= 160, `the Sort by value and chevron need 160px at ${width}px`);
       for (const name of ["Sort by", "Direction"]) {
@@ -164,10 +113,9 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
       assert.equal(await menu.evaluate(element => element === document.activeElement), true,
         "Escape returns focus to the menu button");
       if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `roles-filters-${width}.png`), fullPage: true });
-      await page.getByRole("button", { name: "Hide filters", exact: true }).click();
     }
     assert.deepEqual(errors, [], "browser console page errors");
-    console.log(`  evidence conversation: exact wording saved as version ${baseVersion + 1}; question advanced and skip resumed; account and phone controls checked`);
+    console.log("  career evidence: direct fact saved without confirmation or model work; account and phone controls checked");
   } finally {
     await browser?.close();
     await pool.end();

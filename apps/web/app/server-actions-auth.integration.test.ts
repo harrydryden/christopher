@@ -114,16 +114,21 @@ const GATES: Record<string, Record<string, Gate>> = {
     refreshCompanyProfile: "verified", unfollowCompany: "user", followCompany: "verified",
   },
   "actions/cv-share.ts": { createCvShareLink: "user", revokeCvShareLink: "user", resolveCvShareComment: "user" },
+  "actions/cv-about.ts": { saveCvAbout: "user" },
   "actions/cv-targeting.ts": { confirmCvTargetingPriorities: "verified", reviseFailedCvTargeting: "verified" },
   "actions/cv-editing.ts": {
     createCvApplicationContext: "user", updateCvApplicationDescription: "user",
     saveCvRefinement: "user", saveAndUpdateCvExactRefinement: "user", resetCvRefinement: "user", previewCvRefinementRebase: "user",
     applyCvRefinementRebase: "user", createManualCvEdition: "user",
     saveManualCvEdition: "user", selectCvEdition: "user", openCvAutoEdition: "user",
-    openOrClaimAutoCv: "user", retryFailedAutoCv: "verified", generateRefinedCv: "verified",
+    openOrClaimAutoCv: "user", readAutoCvSourceChoices: "user", retryFailedAutoCv: "verified", generateRefinedCv: "user",
   },
   "actions/cv-finalisation.ts": { prepareCvFinalisation: "user", approveCvFinalisation: "user" },
+  "actions/cv-history.ts": { readCvHistoryPage: "user" },
+  "actions/cv-inline-ai.ts": { requestCvInlineEdit: "verified", readCvInlineEdit: "user",
+    latestCvInlineEdit: "user", dismissCvInlineEdit: "user" },
   "actions/cv-pending-skills.ts": { decideCvPendingSkill: "verified" },
+  "actions/cv-skills.ts": { useCvSkillSuggestions: "user" },
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
     saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", requestCvSkillSuggestions: "verified", readCvSkillSuggestions: "verified", assessCvDraft: "verified",
@@ -175,6 +180,10 @@ const GATES: Record<string, Record<string, Gate>> = {
   },
   "actions/setup.ts": { dismissSetupChecklist: "user" },
   "actions/suggestions.ts": { acceptSuggestion: "verified", rejectSuggestion: "verified", findMoreSuggestions: "verified" },
+  "actions/recommendations.ts": { decideCatalogueRecommendation: "user" },
+  "actions/career.ts": { getCareerWorkspace: "user", saveCareerChange: "user", undoCareerChange: "user" },
+  "actions/career-review.ts": { getCareerReviewSummary: "user", listCareerReviewIssues: "user",
+    getCareerConflictDetail: "user", decideCareerConflict: "user" },
 };
 
 const classified = Object.entries(GATES).flatMap(([module, exports]) => Object.entries(exports).map(([name, gate]) => ({ module, name, gate })));

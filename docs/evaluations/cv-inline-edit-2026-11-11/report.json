@@ -1,0 +1,49 @@
+{
+  "kind": "cv-inline-edit-fixtures",
+  "at": "2026-11-11T18:49:28.632780+00:00",
+  "promptSetVersion": "1c2f007d32f7",
+  "unverified": true,
+  "promptVersions": {
+    "cv.inline_edit": "d3ffd0ce38",
+    "cv.inline_verify": "5dd810d90b"
+  },
+  "providerCalls": 0,
+  "scope": "Deterministic core tests, AI payload contract tests and real-database action/worker integration using mocked provider responses. No live model quality or production qualification claim.",
+  "verificationCheckpoints": [
+    {
+      "suite": "core",
+      "passed": 835,
+      "failed": 0,
+      "source": "Root-reported complete local suite; includes two new scoped selection/validation tests."
+    },
+    {
+      "suite": "ai",
+      "passed": 209,
+      "failed": 0,
+      "source": "Root-reported complete local suite; includes scoped payload and grammar context isolation."
+    },
+    {
+      "suite": "scoped action and worker integration",
+      "passed": 5,
+      "failed": 0,
+      "source": "apps/web/app/actions/cv-inline-ai.integration.test.ts; initial real-database checkpoint with mocked provider. Subsequent additions require their own recorded results."
+    }
+  ],
+  "coveredBehaviours": [
+    "Manual-first request and duplicate-intent reuse",
+    "Durable proposal settlement rather than acceptance charging",
+    "Foreign source/target refusal before reservation",
+    "Rejected suggestion releases charge",
+    "Cancellation fences late provider completion",
+    "Stale source and idempotent abandonment",
+    "Bounded selected Unicode span and field reconstruction",
+    "Separate scoped generation/verification payloads"
+  ],
+  "limitations": [
+    "No live provider responses were collected for either new prompt.",
+    "Mocked responses do not establish linguistic quality, factual-preservation accuracy or acceptance rate.",
+    "Existing full-CV live reports retain their original prompt hash and do not qualify these operations.",
+    "COL_EVAL_GATE_REQUIRE_VERIFIED=1 must remain unsatisfied for this registry until fresh qualifying live evidence is explicitly authorised and recorded."
+  ],
+  "releaseQualification": "pending_live_evaluation"
+}

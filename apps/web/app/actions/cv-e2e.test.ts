@@ -1,3 +1,4 @@
+import { saveCareerChange } from "./career";
 import { withCvEditBase } from "@/test/cv-form";
 /**
  * End-to-end test of the CV-builder pipeline.
@@ -13,7 +14,7 @@ import { withCvEditBase } from "@/test/cv-form";
  *   COL_DISABLE_BROWSER=1 pnpm test cv-e2e
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { consumeCvCredit, confirmCvTargetingPrioritiesForUser, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { consumeCvCredit, confirmCvTargetingPrioritiesForUser, createDb, grantCvCredits, reserveCvCredit, updateBillingAccount, schema, subscribeToCompany, type Db } from "@col/db";
 import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { randomUUID } from "node:crypto";
 import { createTestDb } from "@/test/db";
@@ -285,6 +286,8 @@ const aiCalls = () =>
 
 describe("the CV pipeline end to end, against a scripted model", () => {
   it("builds, edits, rebuilds, finalises and exports one CV through the real entry points", async () => {
+    // This journey deliberately performs multiple paid passes in one session.
+    await updateBillingAccount(database, user.id, { plan: "search" });
     const fake = createScriptedAiClient();
     const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
     const deps = {
@@ -386,6 +389,11 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(built.error).toBeNull();
     expect(built.status).toBe("ready");
     const content = built.content!;
+    // Entry IDs now belong to stable career records, rather than the imported Library row.
+    const headId = built.librarySnapshot.entries.find(entry => entry.heading.includes("Head of Operations"))!.id;
+    const managerId = built.librarySnapshot.entries.find(entry => entry.heading.includes("Operations Manager"))!.id;
+    const skillsId = built.librarySnapshot.entries.find(entry => entry.kind === "skill" && entry.heading === "Systems and tools")!.id;
+    const educationId = built.librarySnapshot.entries.find(entry => entry.kind === "education")!.id;
 
     // Every experience and education block is printed.
     const printed = content.sections.map((section) => section.entryId);
@@ -401,12 +409,12 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(content.name).toBe("Rowan Mercer");
     expect(content.theme?.maxPages).toBe(MAX_PAGES);
     // Skills are the exact stored labels, industries the exact stored descriptions.
-    const skills = content.sections.find((section) => section.entryId === "ev-skills")!;
+    const skills = content.sections.find((section) => section.entryId === skillsId)!;
     expect(skills.skillItems!.length).toBeGreaterThan(0);
     for (const label of skills.skillItems!)
       expect(libraryFixture().entries.find((e) => e.id === "ev-skills")!.skillItems).toContain(label);
-    const newest = content.sections.find((section) => section.entryId === "ev-northwind-head")!;
-    const older = content.sections.find((section) => section.entryId === "ev-northwind-manager")!;
+    const newest = content.sections.find((section) => section.entryId === headId)!;
+    const older = content.sections.find((section) => section.entryId === managerId)!;
     expect(newest.industryDescriptions!.length).toBeGreaterThan(0);
     for (const description of newest.industryDescriptions!)
       expect(["Healthcare", "Regulated services", "Software & SaaS"]).toContain(description);
@@ -457,7 +465,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
       assessment.rubric.requirements.map((item) => item.id),
     );
     expect(authored.writingBudget.blocks.map((block) => block.entryId)).toEqual(
-      expect.arrayContaining(["ev-northwind-head", "ev-education", "ev-skills"]),
+      expect.arrayContaining([headId, educationId, skillsId]),
     );
     expect(authored.library.stylePreferences).toBe(STYLE_PREFERENCES);
     expect(authored.library.preferredWording).toBe(PREFERRED_WORDING);
@@ -543,7 +551,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
 
     // 4. Save Direct Edits: the wording is kept, only the assessment is redone.
     const experienceIndex = content.sections.findIndex(
-      (section) => section.entryId === "ev-northwind-head",
+      (section) => section.entryId === headId,
     );
     const editedSummary =
       "Operations leader trusted with regulated healthcare delivery, supplier performance and the annual budget across a twelve-clinic portfolio.";
@@ -610,14 +618,12 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(storedWording).toContain(editedBullet);
     expect(storedWording).toContain(editedSummary);
 
-    // 5. Rebuild from Library: fresh writing from the latest evidence, same rubric.
-    const relibrary = new FormData();
-    relibrary.set(
-      "library",
-      JSON.stringify(libraryFixture([...NORTHWIND_HEAD, NEW_RESPONSIBILITY])),
-    );
-    relibrary.set("version", "1");
-    expect(await saveCvLibrary({ ok: true }, relibrary)).toEqual({ ok: true });
+    // 5. Add a factual detail through the career editor, then rebuild from its current snapshot.
+    const [careerHead] = await database.select().from(schema.careerHeads).where(eq(schema.careerHeads.userId, user.id));
+    expect(await saveCareerChange({ expectedRevision: careerHead!.revision, requestKey: randomUUID(),
+      operations: [{ type: "add_assertion", id: randomUUID(), subjectId: headId,
+        text: NEW_RESPONSIBILITY, publicText: null, facets: ["responsibility"], context: null }] }))
+      .toMatchObject({ ok: true });
 
     markCalls();
     const rebuild = new FormData();
@@ -674,7 +680,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     ).toBe(true);
     // The latest library and the remembered wording.
     expect(
-      rewritten.library.entries.find((entry) => entry.id === "ev-northwind-head")!.details,
+      rewritten.library.entries.find((entry) => entry.id === headId)!.details,
     ).toContain(NEW_RESPONSIBILITY);
     expect(rewritten.library.preferredWording).toContain(editedBullet);
     expect(rewritten.library.stylePreferences).toBe(STYLE_PREFERENCES);
@@ -727,7 +733,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     request.set("jobId", job.id);
     const refused = await requestCv({ ok: true }, request);
     expect(refused.ok).toBe(false);
-    expect((refused as { error: string }).error).toBe("You have no CV credits available. Add credits in Account to build this CV.");
+    expect((refused as { error: string }).error).toBe("You have no role credits available. Add one in Account to request AI help.");
 
     // Nothing was created for a build that was never admitted.
     expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);

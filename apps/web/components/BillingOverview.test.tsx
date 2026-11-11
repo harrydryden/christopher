@@ -15,7 +15,7 @@ describe("plan and credit readout", () => {
   it("links a compact, accessible balance to Account", () => {
     const html = renderToStaticMarkup(<PlanReadout billing={free} mobile />);
     expect(html).toContain('href="/account#plan-and-credits"');
-    expect(html).toContain("Free · 2 CV credits");
+    expect(html).toContain("Free · 2 role credits");
     expect(html).toContain("Open plan and credits");
   });
 
@@ -24,7 +24,7 @@ describe("plan and credit readout", () => {
     expect(html).toContain("4 available");
     expect(html).toContain("0 purchased · 2 gifted");
     expect(html).toContain("18 of 25 active");
-    expect(html).toContain("First 3 CVs");
+    expect(html).toContain("First 3 roles");
     expect(html).toContain("£5");
     expect(html).toContain("£9");
     expect(html).toContain("£15");

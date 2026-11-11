@@ -74,11 +74,12 @@ describe("employment history", () => {
     expect(migrated.employment).toHaveLength(3);
     expect(migrated.entries.at(-1)!.employmentId).toBe("spill");
   });
-  it("validates date ranges, duplicate jobs, broken links and non-experience links", () => {
+  it("validates dates and links while retaining separate parallel jobs with identical labels", () => {
     const migrated = migrateEmploymentHistory(legacy);
     const job = migrated.employment![0]!;
     for (const patch of [{ startDate: "2025-13" }, { startDate: "2025-06", endDate: "2025-05", current: false }, { endDate: "2025-12" }]) expect(EmploymentSchema.safeParse({ ...job, ...patch }).success).toBe(false);
-    expect(CvLibrarySchema.safeParse({ ...migrated, employment: [...migrated.employment!, { ...job, id: "new-id", company: " spill " }] }).success).toBe(false);
+    expect(CvLibrarySchema.safeParse({ ...migrated, employment: [...migrated.employment!, { ...job, id: "new-id", company: " spill " }] }).success).toBe(true);
+    expect(CvLibrarySchema.safeParse({ ...migrated, employment: [...migrated.employment!, job] }).success).toBe(false);
     expect(CvLibrarySchema.safeParse({ ...migrated, employment: [] }).success).toBe(false);
     expect(CvLibrarySchema.safeParse({ ...migrated, entries: migrated.entries.map(entry => ({ ...entry, employmentId: "spill" })) }).success).toBe(false);
   });
@@ -154,7 +155,7 @@ describe("evidence status", () => {
     const { groupCvLibrary, materialiseCv } = await import("./cv");
     expect(groupCvLibrary(library).entries.map(e => e.id)).toEqual(["active", "legacy"]);
     expect(() => materialiseCv(library, { summary: "Test", gaps: [], sections: [{ entryId: "archived", bullets: ["Must not appear"] }] })).toThrow();
-    expect(() => groupCvLibrary({ ...library, entries: [entry("archived", "inactive")] })).toThrow("Confirm at least one responsibility or outcome");
+    expect(() => groupCvLibrary({ ...library, entries: [entry("archived", "inactive")] })).toThrow("Add at least one work detail");
     expect(groupCvLibrary({ ...library, entries: [entry("legacy")] }).entries).toHaveLength(1);
   });
   it("retains removed blocks as inactive and allows explicit reactivation", async () => {
@@ -195,7 +196,7 @@ describe("responsibility confirmation", () => {
     const migrated = consolidateExperience({ ...library, entries: [legacy] });
     expect(migrated.entries[0]!.confirmedResponsibilities).toEqual([]);
     expect(eligibleCvEvidence(migrated.entries[0]!)).toBeUndefined();
-    expect(() => groupCvLibrary(migrated)).toThrow("Confirm at least one responsibility or outcome");
+    expect(() => groupCvLibrary(migrated)).toThrow("Add at least one work detail");
     expect(eligibleCvEvidence({ ...experience, confirmedResponsibilities: ["A removed statement"] })).toBeUndefined();
   });
   it("clears changed and removed rows without shifting confirmation to their replacements", async () => {

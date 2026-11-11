@@ -1,9 +1,5 @@
 // @vitest-environment jsdom
-/**
- * A company's Manage menu, in a browser: closed, a row carries nothing but the summary; opened, it
- * offers what the follow's status allows and calls the action with the row's company, asking first
- * where the action takes something away.
- */
+/** Named company management preserves ownership, confirmation and capacity recovery. */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -29,10 +25,9 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
-it("keeps a capacity refusal in the open menu with an Account recovery link", async () => {
+it("keeps a capacity refusal beside the controls with an Account recovery link", async () => {
   actions.resumeCompany.mockResolvedValue({ ok: false, error: "Free includes 25 active companies.", recovery: { href: "/account#plan-and-credits", label: "Manage company capacity" } });
   act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="paused" />));
-  await open();
   await act(async () => button("Resume scanning").click());
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Free includes 25");
   expect(container.querySelector('a[href="/account#plan-and-credits"]')?.textContent).toBe("Manage company capacity");
@@ -50,27 +45,18 @@ const button = (label: string) => {
   if (!found) throw new Error(`No button "${label}"`);
   return found;
 };
-async function open() {
-  const details = container.querySelector("details")!;
-  await act(async () => {
-    details.open = true;
-    details.dispatchEvent(new Event("toggle"));
-  });
-}
 
-it("renders only its summary until it is opened", async () => {
+it("links list rows to their company management destination without hidden controls", () => {
   act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" />));
-  expect(container.textContent).toBe("Manage");
+  expect(container.querySelector("details")).toBeNull();
+  expect(container.querySelector("a")?.getAttribute("href")).toBe(`/companies/${COMPANY}#manage`);
   expect(labels()).toEqual([]);
-  await open();
-  expect(labels()).toEqual(["Refresh", "Pause scanning", "Hide from my list", "Stop following"]);
 });
 
 it("calls the action with the row's company, and asks before taking the company away", async () => {
   const confirm = vi.fn(() => false);
   vi.stubGlobal("confirm", confirm);
-  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" />));
-  await open();
+  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" />));
   await act(async () => button("Pause scanning").click());
   expect(actions.pauseCompany).toHaveBeenCalledWith(COMPANY);
 
@@ -82,24 +68,14 @@ it("calls the action with the row's company, and asks before taking the company 
   expect(actions.archiveCompany).toHaveBeenCalledWith(COMPANY);
 });
 
-it("offers what the status allows, and holds Refresh for an unconfirmed account or a running discovery", async () => {
-  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="archived" extra="refresh" />));
-  await open();
-  // No Refresh for a follow that is not active, no Hide for one already hidden.
+it("offers status-specific controls and prevents unverified rediscovery", async () => {
+  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="archived" />));
   expect(labels()).toEqual(["Follow again", "Stop following"]);
   await act(async () => button("Follow again").click());
   expect(actions.resumeCompany).toHaveBeenCalledWith(COMPANY);
-
-  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" blockedReason="Confirm your email address first." />));
-  expect(button("Refresh").disabled).toBe(true);
-  expect(button("Refresh").title).toBe("Confirm your email address first.");
-  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" running />));
-  expect(button("Refreshing…").disabled).toBe(true);
-  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" running monitoringIssue="stopped" />));
-  expect(button("Waiting for monitoring").disabled).toBe(true);
-  expect(button("Waiting for monitoring").title).toContain("Monitoring must resume");
-  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="active" extra="refresh" running monitoringIssue="restarting" />));
-  expect(button("Monitoring restarting").disabled).toBe(true);
+  act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="paused" extra="rediscover" blockedReason="Confirm your email address first." />));
+  expect(button("Re-discover").disabled).toBe(true);
+  expect(button("Re-discover").title).toBe("Confirm your email address first.");
   act(() => root.render(<CompanyManageMenu companyId={COMPANY} companyName="Acme" status="paused" extra="rediscover" />));
   expect(labels()).toEqual(["Re-discover", "Resume scanning", "Hide from my list", "Stop following"]);
   await act(async () => button("Re-discover").click());

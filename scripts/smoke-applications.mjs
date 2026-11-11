@@ -42,11 +42,9 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
 
     const appliedRow = page.locator("tr").filter({ hasText: "Smoke applied role" }).first();
     await appliedRow.getByRole("button", { name: "Update", exact: true }).click();
-    const appliedDetailsId = await appliedRow.getByRole("button", { name: "Update", exact: true }).getAttribute("aria-controls");
-    assert.ok(appliedDetailsId);
-    const appliedDetails = page.locator(`[id="${appliedDetailsId}"]`);
-    const appliedForm = appliedDetails.locator("form").filter({ has: page.getByRole("button", { name: "Save update" }) });
-    await appliedForm.getByRole("button", { name: "Edit next step" }).click();
+    const appliedTask = page.getByRole("region", { name: "Application: Smoke applied role" });
+    await appliedTask.getByRole("button", { name: "Back to applications" }).waitFor();
+    const appliedForm = appliedTask.locator("form").filter({ has: page.getByRole("button", { name: "Save update" }) });
     await appliedForm.getByRole("textbox", { name: "Next step" }).fill("Email recruiter on Friday");
     await appliedForm.getByRole("button", { name: "Save update" }).click();
     const applied = await waitForRow(pool, appliedId, row => row.next_action === "Email recruiter on Friday");
@@ -57,11 +55,11 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
     assert.equal(applied.next_action_on, "2026-10-09", "the reminder date is retained");
     assert.equal(applied.history.length, 1, "editing a reminder does not invent a stage event");
 
+    await appliedTask.getByRole("button", { name: "Back to applications" }).click();
     const interviewRow = page.locator("tr").filter({ hasText: "Smoke interview role" }).first();
     await interviewRow.getByRole("button", { name: "Update", exact: true }).click();
-    const interviewDetailsId = await interviewRow.getByRole("button", { name: "Update", exact: true }).getAttribute("aria-controls");
-    assert.ok(interviewDetailsId);
-    const interviewForm = page.locator(`[id="${interviewDetailsId}"] form`);
+    const interviewTask = page.getByRole("region", { name: "Application: Smoke interview role" });
+    const interviewForm = interviewTask.locator("form");
     await interviewForm.locator('input[name="on"]').fill("2026-10-04");
     await interviewForm.getByRole("button", { name: "Save update" }).click();
     const interview = await waitForRow(pool, interviewId, row => row.history.at(-1)?.on === "2026-10-04");
@@ -89,14 +87,16 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
       const box = await update.boundingBox();
       assert.ok(box && box.height >= 44 && box.width >= 44, `Update needs a 44px target at ${width}px`);
       await update.click();
-      await appliedCard.getByRole("button", { name: "Edit next step" }).click();
-      await appliedCard.getByRole("textbox", { name: "Next step" }).fill(`Unsaved at ${width}px`);
+      const mobileTask = page.getByRole("region", { name: "Application: Smoke applied role" });
+      await mobileTask.getByRole("textbox", { name: "Next step" }).fill(`Unsaved at ${width}px`);
       page.once("dialog", dialog => dialog.dismiss());
-      await page.locator('[aria-label="Applications"] article').filter({ hasText: "Smoke interview role" }).first()
-        .locator("button").filter({ hasText: /^Update$/ }).click();
-      assert.equal(await appliedCard.getByRole("textbox", { name: "Next step" }).inputValue(), `Unsaved at ${width}px`,
-        "cancelling a row switch keeps the entered value");
-      assert.equal(await appliedCard.getByRole("button", { name: "Save update" }).isVisible(), true);
+      await mobileTask.getByRole("button", { name: "Back to applications" }).click();
+      assert.equal(await mobileTask.getByRole("textbox", { name: "Next step" }).inputValue(), `Unsaved at ${width}px`,
+        "cancelling a task exit keeps the entered value");
+      assert.equal(await mobileTask.getByRole("button", { name: "Save update" }).isVisible(), true);
+      page.once("dialog", dialog => dialog.accept());
+      await mobileTask.getByRole("button", { name: "Back to applications" }).click();
+      await page.locator('[aria-label="Applications"] article').filter({ hasText: "Smoke interview role" }).first().waitFor();
     }
     assert.deepEqual(errors, [], "applications browser flow has no page errors");
     console.log("  applications status and mobile flow passed");

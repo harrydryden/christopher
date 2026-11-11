@@ -1,6 +1,7 @@
 import { withCvEditBase } from "@/test/cv-form";
 import { createCvAssessment } from "@col/core/cv-review";
 import { renderCvPdfWithReport } from "@col/core/cv-pdf";
+import { cvTailoringEvidence } from "@col/core/cv-tailoring";
 import { cvEmploymentDisplay } from "@col/core/cv-employment-display";
 import {
   cvTextItems,
@@ -12,7 +13,7 @@ import {
   reviewFixture,
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, confirmCvTargetingPrioritiesForUser, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { createDb, confirmCvTargetingPrioritiesForUser, consumeCvCredit, reserveCvCredit, updateBillingAccount, schema, subscribeToCompany, type Db } from "@col/db";
 import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@col/core/cv";
@@ -614,30 +615,36 @@ describe("priority workflows", () => {
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
     const versions = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
     expect(versions[0]!.content).toEqual(oldContent);
-    expect(versions[1]!.content.employment).toEqual([{ id: "one", company: "Acme", jobTitle: "Director", startDate: "", endDate: "", current: false }]);
-    expect(versions[1]!.content.entries[0]!.employmentId).toBe("one");
-    expect(versions[1]!.content.entries[0]!.confirmedResponsibilities).toEqual([]);
+    const mappedJob = versions[1]!.content.employment![0]!;
+    expect(mappedJob).toMatchObject({ company: "Acme", jobTitle: "Director", startDate: "", endDate: "", current: false });
+    expect(versions[1]!.content.entries[0]!.employmentId).toBe(mappedJob.id);
+    expect(versions[1]!.content.entries[0]!.confirmedResponsibilities).toEqual(["Led a team"]);
+    expect(versions[1]!.content.careerProjection?.display[mappedJob.id]?.recordId).toBe(mappedJob.id);
     form.set("version", "2"); form.set("library", JSON.stringify({ ...versions[1]!.content, employment: [] }));
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
     expect(await database.select().from(schema.cvLibraries)).toHaveLength(2);
   });
-  it("saves a first job before evidence, then appends the exact reviewed answer once", async () => {
+  it("saves a first job before evidence, then captures the original factual answer once", async () => {
     const jobId = crypto.randomUUID();
     const content = { name: "Example", contact: "", profile: "", structuredExperience: true as const,
       employment: [{ id: jobId, company: "Example Company", jobTitle: "Operations lead", startDate: "2022", endDate: "", current: true }],
       entries: [] };
     const form = new FormData(); form.set("version", "0"); form.set("library", JSON.stringify(content));
     expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
-    const request = { source: "library", sourceId: null, questionId: `job:${jobId}:outcome`,
+    const [saved] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 1));
+    const destinationId = saved!.content.employment![0]!.id;
+    const request = { source: "library", sourceId: null, questionId: `job:${destinationId}:outcome`,
       question: "What result did your work produce?", answer: "I helped the team reduce handover time by around 20%.",
-      destination: { kind: "employment", id: jobId }, baseVersion: 1, facet: "outcome" };
-    const exact = "Helped the team reduce handover time by around 20%.";
+      destination: { kind: "employment", id: destinationId }, baseVersion: 1, facet: "outcome" };
+    const exact = request.answer;
     expect(await confirmEvidenceAnswerAsWritten(request, exact)).toEqual({ ok: true, version: 2 });
     expect(await confirmEvidenceAnswerAsWritten(request, exact)).toEqual({ ok: true, version: 2 });
     const versions = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
     expect(versions).toHaveLength(2);
     expect(versions[1]?.content.entries[0]?.details).toBe(exact);
     expect(versions[1]?.content.entries[0]?.confirmedResponsibilities).toEqual([exact]);
+    const facts = await database.select().from(schema.careerAssertions).where(eq(schema.careerAssertions.userId, user.id));
+    expect(facts.filter(fact => fact.text === exact)).toHaveLength(1);
     expect(await openEvidenceDrafts("library")).toEqual([]);
   });
   it("remembers Nothing further for a saved question without queuing a model call", async () => {
@@ -652,7 +659,7 @@ describe("priority workflows", () => {
     expect((await openEvidenceDrafts("library"))[0]).toMatchObject({ status: "dismissed", questionId: request.questionId });
     expect(await database.select().from(schema.tasks)).toHaveLength(0);
   });
-  it("preserves canonical comma skills for old callers and parses only explicitly edited skills", async () => {
+  it("preserves canonical comma skills on profile saves and refuses a second factual editor", async () => {
     const original = { name: "Test Candidate", contact: "London", profile: "Original bio", entries: [
       { id: "skills", kind: "skill" as const, status: "active" as const, heading: "Compliance", details: "Scope and evidence", skillItems: ["Governance, risk and compliance", "Reporting"] },
     ] };
@@ -663,15 +670,16 @@ describe("priority workflows", () => {
     expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
     const [afterBio] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 2));
     expect(afterBio!.content.entries[0]!.skillItems).toEqual(["Governance, risk and compliance", "Reporting"]);
+    const currentSkillId = afterBio!.content.entries.find(entry => entry.kind === "skill")!.id;
     form.set("version", "2");
-    form.set("editedSkillIds", JSON.stringify(["skills"]));
-    form.set("library", JSON.stringify({ ...afterBio!.content, entries: afterBio!.content.entries.map(entry => entry.id === "skills" ? { ...entry, skillItems: ["Governance, risk and compliance", "Reporting", "SQL; Python"] } : entry) }));
-    expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
-    const [afterSkill] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 3));
-    expect(afterSkill!.content.entries[0]!.skillItems).toEqual(["Governance, risk and compliance", "Reporting", "SQL", "Python"]);
-    expect(afterSkill!.content.entries[0]!.details).toBe("Scope and evidence");
+    form.set("editedSkillIds", JSON.stringify([currentSkillId]));
+    form.set("library", JSON.stringify({ ...afterBio!.content, entries: afterBio!.content.entries.map(entry => entry.id === currentSkillId ? { ...entry, skillItems: ["Governance, risk and compliance", "Reporting", "SQL; Python"] } : entry) }));
+    expect(await saveCvLibrary({ ok: true }, form)).toMatchObject({ ok: false, error: expect.stringContaining("Experience") });
+    expect(await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 3))).toHaveLength(0);
+    const [unchanged] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 2));
+    expect(unchanged!.content).toEqual(afterBio!.content);
   });
-  it("saves an explicitly split Library skill list and snapshots the six labels for a new CV", async () => {
+  it("seeds six ordered skill labels and snapshots them for a new CV", async () => {
     const { job } = await fixture();
     const combined = "Financial Planning & Analysis, P&L Management, Unit Economics, Product Operations, Customer Success, Customer Support";
     const labels = ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"];
@@ -684,13 +692,12 @@ describe("priority workflows", () => {
         { id: "skills", kind: "skill" as const, status: "active" as const, heading: "Commercial", details, skillItems: [combined] },
       ],
     };
-    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: original });
     const form = new FormData();
-    form.set("version", "1");
+    form.set("version", "0");
     form.set("editedSkillIds", JSON.stringify(["skills"]));
     form.set("library", JSON.stringify({ ...original, entries: original.entries.map(entry => entry.id === "skills" ? { ...entry, skillItems: labels } : entry) }));
     expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
-    const [saved] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 2));
+    const [saved] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 1));
     expect(saved!.content.entries[1]!.skillItems).toEqual(labels);
     expect(saved!.content.entries[1]!.details).toBe(details);
     const generate = new FormData();
@@ -698,23 +705,23 @@ describe("priority workflows", () => {
     generate.set("description", "Lead a commercial team, develop the annual operating plan and work with finance and customer leaders.");
     await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
     const [draft] = await database.select().from(schema.cvDrafts);
-    expect(draft!.libraryVersion).toBe(2);
-    expect(draft!.librarySnapshot.entries.find(entry => entry.id === "skills")?.skillItems).toEqual(labels);
-    expect(draft!.librarySnapshot.entries.find(entry => entry.id === "skills")?.details).toBe(details);
-    const [historical] = await database.select().from(schema.cvLibraries).where(eq(schema.cvLibraries.version, 1));
-    expect(historical!.content.entries[1]!.skillItems).toEqual([combined]);
+    expect(draft!.libraryVersion).toBe(1);
+    expect(draft!.librarySnapshot.entries.find(entry => entry.kind === "skill")?.skillItems).toEqual(labels);
+    expect(draft!.librarySnapshot.entries.find(entry => entry.kind === "skill")?.details).toBe(details);
+    expect(await database.select().from(schema.cvLibraries)).toHaveLength(1);
   });
-  it("does not queue a CV from unconfirmed experience", async () => {
+  it("uses previously saved user Experience without a second confirmation gate", async () => {
     const { job } = await fixture();
-    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: { name: "Test Candidate", contact: "London", profile: "", entries: [{ id: "one", kind: "experience", status: "active", heading: "Director · Acme", details: "An unconfirmed proposal" }] } });
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: { name: "Test Candidate", contact: "London", profile: "", entries: [{ id: "one", kind: "experience", status: "active", heading: "Director · Acme", details: "Led an operations team" }] } });
     const generate = new FormData(); generate.set("jobId", job.id);
-    const result = await requestCv({ ok: true }, generate);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Confirm at least one responsibility or outcome");
-    expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
-    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(0);
+    generate.set("description", "Lead the operations team and coordinate delivery with finance and commercial colleagues.");
+    await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
+    const [draft] = await database.select().from(schema.cvDrafts);
+    expect(draft!.librarySnapshot.entries[0]!.details).toContain("Led an operations team");
+    expect(draft!.careerVersion).toBeGreaterThan(0);
+    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
   });
-  it("saves confirmed gap answers as a new Library version and resumes in one child draft", async () => {
+  it("saves a factual gap answer without another confirmation and resumes in one child draft", async () => {
     const library = {
       name: "Test Candidate", contact: "London", profile: "Leader", structuredExperience: true as const,
       employment: [{ id: "job:1", company: "Acme", jobTitle: "Director", startDate: "2022", endDate: "", current: true }],
@@ -734,7 +741,6 @@ describe("priority workflows", () => {
     form.set("decision", "confirm");
     form.set("answer:q1", "Launched a new route to market with product and sales.");
     form.set("destination:q1", "employment:job:1");
-    form.set("confirmed:q1", "on");
     expect(await answerCvGapQuiz(parent!.id, { ok: true }, form)).toMatchObject({ ok: true, message: expect.stringMatching(/^cv-gap-destination:\/cv\//) });
     const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
     expect(libraries).toHaveLength(2);
@@ -744,7 +750,11 @@ describe("priority workflows", () => {
     const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent!.id));
     expect(storedParent).toMatchObject({ archivedAt: expect.any(Date), gapQuiz: { status: "answered", continuationDraftId: child!.id } });
     expect(child).toMatchObject({ status: "queued", libraryVersion: 2, buildCheckpoint: { tailoringEnabled: true, quizCompleted: true, rubric } });
-    expect(await database.select().from(schema.creditReservations)).toMatchObject([{ draftId: child!.id, status: "reserved" }]);
+    expect(child!.careerVersion).toBeGreaterThan(0);
+    expect(child!.careerSourceMap).toEqual(child!.librarySnapshot.careerProjection?.sourceMap);
+    expect(child!.careerDisplay).toEqual(child!.librarySnapshot.careerProjection?.display);
+    expect(child!.careerPresentation).toBe(child!.librarySnapshot.careerProjection?.presentation);
+    expect(await database.select().from(schema.cvAiUsage)).toMatchObject([{ sourceId: child!.id, status: "reserved" }]);
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${child!.id}`))).toHaveLength(1);
     // A replay returns the same continuation and does not write another Library version or task.
     expect(await answerCvGapQuiz(parent!.id, { ok: true }, form)).toEqual({ ok: true, message: `cv-gap-destination:/cv/${child!.id}` });
@@ -800,7 +810,7 @@ describe("priority workflows", () => {
   });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
-    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team\nAn unconfirmed proposal", confirmedResponsibilities: ["Led an operations team"] }] };
+    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team\nCoached colleagues", confirmedResponsibilities: ["Led an operations team"] }] };
     const form = new FormData(); form.set("library", JSON.stringify(content)); form.set("version", "0");
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
@@ -809,11 +819,16 @@ describe("priority workflows", () => {
     generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
     await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
     const [draft] = await database.select().from(schema.cvDrafts);
-    // `toMatchObject`, so a normalisation marker the library gains later (`facetedRows` and its
-    // like) does not fail a test about what the snapshot carries.
-    expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 }, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
+    expect(draft!.librarySnapshot).toMatchObject({ name: content.name, contact: content.contact, profile: content.profile,
+      theme: { ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 }, structuredExperience: true });
+    const projectedEntry = draft!.librarySnapshot.entries.find(entry => entry.kind === "experience")!;
+    expect(projectedEntry.details.split("\n")).toEqual(expect.arrayContaining(["Led an operations team", "Coached colleagues"]));
+    expect(draft!.careerSourceMap?.[`entry:${projectedEntry.id}:row:0`]?.assertionId).toBeTruthy();
+    expect(draft!.librarySnapshot.employment?.[0]).toMatchObject({ company: "Acme", jobTitle: "Director", startDate: "2023-08", current: true });
+    expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
-    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: ["entry:one:row:0"], sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [["entry:one:row:0"]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: [`entry:${projectedEntry.id}:row:0`], sections: [{ entryId: projectedEntry.id, kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [[`entry:${projectedEntry.id}:row:0`]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.transaction(tx => consumeCvCredit(tx, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
     await expect(saveWithBase(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
@@ -1419,23 +1434,32 @@ it("carries library styling through generation, revision, matching preview/downl
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.type, "generate_cv"));
+  const roleEntryId = draft!.librarySnapshot.entries.find(entry => entry.kind === "experience")!.id;
+  const skillEntryId = draft!.librarySnapshot.entries.find(entry => entry.kind === "skill")!.id;
+  const degreeEntryId = draft!.librarySnapshot.entries.find(entry => entry.kind === "education")!.id;
+  const evidence = cvTailoringEvidence(draft!.librarySnapshot);
+  const sourceFor = (entryId: string) => {
+    const source = evidence.find(row => row.entryId === entryId);
+    expect(source, `Projected evidence for ${entryId}`).toBeDefined();
+    return source!;
+  };
   const model = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({
     summary: "Operations leader with experience in planning and reporting.",
     summarySources: ["source:profile"],
     sections: [
       {
-        entryId: "role",
+        entryId: roleEntryId,
         industryDescriptions: ["Healthcare", "Software & SaaS"],
-        bullets: ["Led a team."],
-        bulletSources: [["entry:role:row:0"]],
+        bullets: [sourceFor(roleEntryId).text],
+        bulletSources: [[sourceFor(roleEntryId).id]],
       },
       {
-        entryId: "skills",
-        bullets: ["SQL and reporting"],
+        entryId: skillEntryId,
+        bullets: [sourceFor(skillEntryId).text],
         skillItems: ["SQL", "Financial planning"],
-        bulletSources: [["entry:skills:row:0"]],
+        bulletSources: [[sourceFor(skillEntryId).id]],
       },
-      { entryId: "degree", bullets: ["BSc Economics, Example University."], bulletSources: [["entry:degree:row:0"]] },
+      { entryId: degreeEntryId, bullets: [sourceFor(degreeEntryId).text], bulletSources: [[sourceFor(degreeEntryId).id]] },
     ],
     gaps: ["Review-only evidence gap"],
   });
@@ -1461,8 +1485,8 @@ it("carries library styling through generation, revision, matching preview/downl
     .select()
     .from(schema.cvDrafts)
     .where(eq(schema.cvDrafts.id, draft!.id));
-  expect(ready!.status).toBe("ready");
-  expect(ready!.content!.theme).toEqual({ ...DEFAULT_CV_THEME, maxPages: 2, bodySizePt: 12 });
+  expect(ready!.status, JSON.stringify({ error: ready!.error, failure: ready!.failure })).toBe("ready");
+  expect(ready!.content!.theme).toEqual({ ...DEFAULT_CV_THEME, experienceLayout: "chronological", maxPages: 2, bodySizePt: 12 });
   const edit = new FormData();
   edit.set("summary", ready!.content!.summary);
   edit.set(
@@ -1595,6 +1619,8 @@ it("queues a rebuild from unsaved draft edits without overwriting the source or 
 });
 
 it("assesses, improves with current evidence, finalises and exports through the real revision workflow", async () => {
+    // This journey deliberately performs multiple paid passes in one session.
+    await updateBillingAccount(database, user.id, { plan: "search" });
   const { AiEngine } = await import("../../../../packages/ai/src/index");
   const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
@@ -1649,25 +1675,28 @@ it("assesses, improves with current evidence, finalises and exports through the 
     .mockResolvedValue(rubric);
   const planner = vi
     .spyOn(AiEngine.prototype, "planCvTailoring")
-    .mockResolvedValue({
-      requirements: [
-        { requirementId: "r1", status: "demonstrated", evidence: [{ sourceId: "entry:role:row:0", quote: "Led operations" }], reason: "The role evidence directly supports this." },
-        { requirementId: "r2", status: "demonstrated", evidence: [{ sourceId: "entry:skills:skill:0", quote: "SQL" }], reason: "The individual skill directly supports this." },
-      ],
-      gapQuestions: [],
+    .mockImplementation(async ({ library: source }) => {
+      const roleId = source.entries.find(entry => entry.kind === "experience")!.id;
+      const skillId = source.entries.find(entry => entry.kind === "skill")!.id;
+      return { requirements: [
+        { requirementId: "r1", status: "demonstrated", evidence: [{ sourceId: `entry:${roleId}:row:0`, quote: "Led operations" }], reason: "The role evidence directly supports this." },
+        { requirementId: "r2", status: "demonstrated", evidence: [{ sourceId: `entry:${skillId}:skill:0`, quote: "SQL" }], reason: "The individual skill directly supports this." },
+      ], gapQuestions: [] };
     });
   let improvedWritten = false;
   const writer = vi
     .spyOn(AiEngine.prototype, "buildCv")
     .mockImplementation(async (input) => {
       if (input.improvements?.length) improvedWritten = true;
+      const roleId = input.library.entries.find(entry => entry.kind === "experience")!.id;
+      const skillId = input.library.entries.find(entry => entry.kind === "skill")!.id;
       return ({
       summary: "Operations leader",
       summarySources: ["source:profile"],
       sections: [
-        { entryId: "role", bullets: ["Led operations"], bulletSources: [["entry:role:row:0"]] },
+        { entryId: roleId, bullets: ["Led operations"], bulletSources: [[`entry:${roleId}:row:0`]] },
         ...(input.improvements?.length
-          ? [{ entryId: "skills", bullets: ["SQL"], skillItems: ["SQL"], bulletSources: [["entry:skills:row:0"]] }]
+          ? [{ entryId: skillId, bullets: ["SQL"], skillItems: ["SQL"], bulletSources: [[`entry:${skillId}:row:0`]] }]
           : []),
       ],
       gaps: [],
@@ -2036,7 +2065,7 @@ it("sends a second Generate to the build already running rather than starting an
   ]);
 });
 
-it("retries a page-limit failure against the Library and the settings as they are now", async () => {
+it("retries saved page-limit wording with current appearance while preserving its original evidence", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: rebuildLibrary });
   const snapshot = { ...rebuildLibrary, theme: { ...DEFAULT_CV_THEME, maxPages: 2 } };
   const failed = {
@@ -2067,10 +2096,11 @@ it("retries a page-limit failure against the Library and the settings as they ar
 
   expect(await assessCvDraft(draft!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [retried] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
-  // The frozen snapshot is why the retry could not have succeeded; it is the one thing replaced.
+  // Appearance may change; saved wording keeps the evidence its citations actually reference.
   expect(retried!.librarySnapshot.theme!.maxPages).toBe(4);
-  expect(retried!.librarySnapshot.profile).toBe("Operations leader");
-  expect(retried!.libraryVersion).toBe(2);
+  expect(retried!.librarySnapshot.profile).toBe(rebuildLibrary.profile);
+  expect(retried!.librarySnapshot.entries).toEqual(rebuildLibrary.entries);
+  expect(retried!.libraryVersion).toBe(1);
   expect(retried!.buildCheckpoint).toMatchObject({ tailoringEnabled: true });
   expect(retried!.buildCheckpoint).not.toHaveProperty("quizCompleted");
   expect(retried!.failure).toBeNull();

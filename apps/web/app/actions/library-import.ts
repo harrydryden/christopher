@@ -211,12 +211,12 @@ export async function acceptLibraryImport(importId: string, form: FormData): Pro
         }
         added = result.added;
         return result.library;
-      });
+      }, { review: false, careerOrigin: "document", careerSourceId: `library_import:${id}` });
       if (!(await resolveLibraryImport(tx as unknown as Db, user.id, id))) throw new UserFacingError("That import changed. Refresh the page.");
     });
     await pruneLibraryImports(db(), user.id);
     revalidate("/library", "/cv");
-    return said(`${addedSentence(added)} They arrive with their rows unconfirmed; confirm the ones you have checked.`);
+    return said(`${addedSentence(added)} The selected source-backed items are ready to use in Experience.`);
   } catch (error) {
     return actionError(error, "Those items could not be added. Reload the page and try again.");
   }

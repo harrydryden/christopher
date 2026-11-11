@@ -74,7 +74,7 @@ export function cvTailoringEvidence(library: CvLibrary): CvTailoringEvidenceItem
       ...evidenceRows(entry).filter(text => entry.kind !== "experience" || (entry.confirmedResponsibilities ?? []).includes(text))
         .map((text, row) => ({ id: `entry:${entry.id}:row:${row}`, text, entryId: entry.id, row })),
       ...(entry.skillItems ?? []).map((text, row) => ({ id: `entry:${entry.id}:skill:${row}`, text, entryId: entry.id, row })),
-    ]),
+    ].filter(source => library.careerProjection?.sourceMap[source.id]?.origin !== "accepted_suggestion")),
   ];
 }
 

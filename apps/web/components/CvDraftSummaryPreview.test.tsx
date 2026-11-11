@@ -59,11 +59,8 @@ it("opens an unchanged preview without rendering it again and rejects missing pa
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(container.querySelector<HTMLAnchorElement>('a[href="blob:cv-preview"]')?.textContent).toContain("Open current preview");
     expect(container.querySelector('iframe[title="Current CV PDF preview"]')).toBeNull();
-    const toggle = [...container.querySelectorAll("button")].find(button => button.textContent === "Show preview on this page")!;
-    await act(async () => toggle.click());
-    expect(container.querySelector('iframe[title="Current CV PDF preview"]')).not.toBeNull();
-    await act(async () => toggle.click());
-    expect(container.querySelector('iframe[title="Current CV PDF preview"]')).toBeNull();
+    expect(container.querySelector<HTMLAnchorElement>('a[href="blob:cv-preview"]')?.target).toBe("_blank");
+    expect(container.innerHTML).not.toContain("<details");
     await act(async () => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} />));
     expect(fetch).toHaveBeenCalledTimes(1);
     const summary = container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')!;

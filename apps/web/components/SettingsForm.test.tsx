@@ -56,6 +56,10 @@ it("retains every edit and shows validation errors inline", async () => {
   expect(field("location").value).toBe("Edinburgh");
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Enter at least one keyword.");
   expect(container.querySelector('[role="alert"] a')).toBeNull();
+  const alert = container.querySelector<HTMLElement>('[role="alert"]')!;
+  expect(document.activeElement).toBe(alert);
+  expect(container.querySelector('form')?.getAttribute('aria-describedby')).toBe(alert.id);
+  expect(container.querySelector('button[type="submit"]')?.getAttribute('aria-describedby')).toBe(alert.id);
 });
 
 it("keeps a conflicting draft and offers its exact recovery page in a new tab", async () => {
@@ -97,7 +101,7 @@ it("does not reset edits made while a confirmed save is pending", async () => {
   await act(async () => resolve({ ok: true }));
   expect(field("keyword").value).toBe("Analyst");
   expect(field("location").value).toBe("Edinburgh");
-  expect(container.querySelector('[role="status"]')).toBeNull();
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("You have unsaved changes.");
 });
 
 it("tracks edits on controls associated with the form from elsewhere in the page", async () => {
@@ -117,7 +121,7 @@ it("tracks edits on controls associated with the form from elsewhere in the page
   });
   await act(async () => resolve({ ok: true }));
   expect(summary.value).toBe("Edited while saving");
-  expect(container.querySelector('[role="status"]')).toBeNull();
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("You have unsaved changes.");
 });
 
 it("keeps an external submitter's intent and ignores another click while pending", async () => {
@@ -153,9 +157,20 @@ it("shows a custom pending label, keeps a refusal inline, and confirms a later s
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Sign in again before disconnecting LinkedIn.");
   expect(container.querySelector('[role="status"]')).toBeNull();
   act(() => button.click());
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.querySelector('form')?.getAttribute('aria-describedby')).toBeNull();
   await act(async () => finish({ ok: true }));
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(container.querySelector('[role="status"]')?.textContent).toContain("Experience and CVs are unchanged");
+});
+
+it("replaces a confirmed save notice when further changes have not been saved", async () => {
+  await render(async () => ({ ok: true }));
+  await act(async () => { edit("keyword", "Analyst"); submit(); });
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Saved.");
+  await act(async () => edit("keyword", "Director"));
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("You have unsaved changes.");
+  expect(field("keyword").value).toBe("Director");
 });
 
 it("lets Next navigation signals reach the router", async () => {

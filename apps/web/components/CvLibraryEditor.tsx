@@ -22,6 +22,7 @@ import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { CV_LIMITS, CV_SKILL_GUIDANCE, CV_SUPPORTING_GROUPS, cvSkillCharacterState } from "@col/core/cv-format";
 import { editedCvSkillEntryIds, normaliseSubmittedLibrarySkills, parseCvSkillList, splitCvLibrarySkillItem } from "@/lib/cv-skill-list";
+import { SkillTagPicker } from "./SkillTagPicker";
 
 const input = inputClass;
 const EvidenceConversation = dynamic(() => import("./EvidenceConversation").then(module => module.EvidenceConversation),
@@ -51,7 +52,7 @@ type Recovery = {
 };
 const conflictText = (value: unknown) => value === null ? "Removed in your draft" : typeof value === "string" ? value : JSON.stringify(value, null, 2) ?? "(empty)";
 
-export function CvLibraryEditor({ library, version: storedVersion, evidence = NO_EVIDENCE, need = null, job = null, openDrafts = [], returnTo = null, scopeId }: {
+export function CvLibraryEditor({ library, version: storedVersion, evidence = NO_EVIDENCE, need = null, job = null, openDrafts = [], returnTo = null, scopeId, careerManaged = false }: {
   /** Opened on the server (`openStoredLibrary`); the type is how that is required. */
   library: OpenedCvLibrary | null;
   version: number;
@@ -64,9 +65,12 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   openDrafts?: EvidenceDraftView[];
   returnTo?: string | null;
   scopeId: string;
+  /** The career record owns work history; this form then edits only contact and supporting blocks. */
+  careerManaged?: boolean;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<LibraryTab>("experience");
+  const [tab, setTab] = useState<LibraryTab>(careerManaged ? "intro" : "experience");
+  const shownTabs = careerManaged ? libraryTabs.filter(([id]) => id === "intro") : libraryTabs;
   const [guideOpen, setGuideOpen] = useState(false);
   // `library` arrives opened: the page ran `openStoredLibrary` on it in the same request (see
   // app/(app)/library/page.tsx), and opening is idempotent, so it is held as sent rather than
@@ -81,6 +85,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
    */
   const [version, setVersion] = useState(storedVersion);
   const [baseline, setBaseline] = useState<CvLibrary>(() => library ?? empty);
+  const [structuredSkillIds, setStructuredSkillIds] = useState<Set<string>>(() => new Set());
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [notice, setNotice] = useState("");
   const [recovery, setRecovery] = useState<Recovery | null>(null);
@@ -112,9 +117,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const baselineJson = useMemo(() => JSON.stringify(baseline), [baseline]);
   const dirty = serialised !== baselineJson;
   const editedSkillIds = editedCvSkillEntryIds(value, baseline);
-  const parsedSkillItems = (entry: CvLibrary["entries"][number]) => parseCvSkillList(
-    (entry.skillItems ?? []).join("\n"), baseline.entries.find(item => item.id === entry.id)?.skillItems ?? [],
-  );
+  const parsedSkillItems = (entry: CvLibrary["entries"][number]) => structuredSkillIds.has(entry.id)
+    ? (entry.skillItems ?? []).map(item => item.trim()).filter(Boolean)
+    : parseCvSkillList((entry.skillItems ?? []).join("\n"), baseline.entries.find(item => item.id === entry.id)?.skillItems ?? []);
   const invalidSkills = value.entries.some(entry => {
     if (entry.kind !== "skill" || !isActiveEvidence(entry)) return false;
     const items = parsedSkillItems(entry);
@@ -203,17 +208,18 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   // which is the one path that keeps both.
   useEffect(() => {
     if (dirty || recovery) return;
+    if (storedVersion < version) return;
     const stored = library ?? empty;
-    if (JSON.stringify(stored) === baselineJson) return;
+    if (JSON.stringify(stored) === baselineJson) { if (storedVersion > version) setVersion(storedVersion); return; }
     setValue(stored);
     setBaseline(stored);
     setVersion(storedVersion);
-  }, [library, storedVersion, dirty, baselineJson, recovery]);
+  }, [library, storedVersion, dirty, baselineJson, recovery, version]);
 
   useEffect(() => {
     if (opened.current) return;
     opened.current = true;
-    if (job) setTab("experience");
+    if (job && !careerManaged) setTab("experience");
   }, [job]);
 
   /**
@@ -400,14 +406,14 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const bar = dirty || unreviewed || rescoring || !!notice || !!refused || !!recovery;
   return <form action={action} onSubmit={event => {
     if (recoveryPending || invalidSkills) { event.preventDefault(); return; }
-    const incomplete = editableEmployment(value).find(item => !item.company.trim() || !item.jobTitle.trim());
+    const incomplete = !careerManaged && editableEmployment(value).find(item => !item.company.trim() || !item.jobTitle.trim());
     if (incomplete) {
       event.preventDefault();
       setTab("experience"); selectJob(incomplete.id); setDetailsJobId(incomplete.id);
       window.setTimeout(() => document.getElementById(`job-content-${incomplete.id}`)?.querySelector<HTMLInputElement>("input[required]:invalid")?.focus(), 0);
       return;
     }
-    const normalised = normaliseSubmittedLibrarySkills(value, editedSkillIds, baseline) as CvLibrary;
+    const normalised = normaliseSubmittedLibrarySkills(value, editedSkillIds.filter(id => !structuredSkillIds.has(id)), baseline) as CvLibrary;
     // The hidden JSON field must reflect the normalised labels in this very submit event, even
     // when Save is clicked before the textarea has blurred.
     flushSync(() => setValue(normalised));
@@ -420,8 +426,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         account's AI budget. */}
     {(dirty || !!notice || !!recovery) && <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b-2 border-line bg-bg py-3">
       {dirty && <>
-        <span className="text-14 font-semibold" aria-live="polite">Unsaved changes</span>
-        <button disabled={pending || recoveryPending || invalidSkills} className={buttonClass("primary")}>{pending ? "Saving…" : "Save Experience"}</button>
+        <span className="text-14 font-semibold" aria-live="polite">{careerManaged ? "Unsaved About you changes" : "Unsaved changes"}</span>
+        <button disabled={pending || recoveryPending || invalidSkills} className={buttonClass("primary")}>{pending ? "Saving…" : careerManaged ? "Save About you" : "Save Experience"}</button>
         <button type="button" disabled={pending} className={buttonClass("ghost")} onClick={discard}>Discard</button>
         {currentRefusal && !recovery && <span role="alert" className="text-14 text-danger">{state.error}</span>}
         {obsolete && <button type="button" className={buttonClass("secondary")} onClick={reloadAndKeep}>Reload and keep my text</button>}
@@ -430,13 +436,13 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     </div>}
     {recovery && <section className="space-y-3 border-2 border-warn p-4" aria-labelledby="library-recovery-title">
       <h2 id="library-recovery-title" ref={recoveryHeading} tabIndex={-1} className="text-16 font-semibold scroll-mt-32 focus:outline-2 focus:outline-offset-2 focus:outline-line">Keep your original Experience draft</h2>
-      <p className="text-14">Your complete local draft from before the reload is still here. Download or copy it, then choose the wording for each conflict. The latest saved version stays unchanged until you press Save Experience.</p>
+      <p className="text-14">Your complete local draft from before the reload is still here. Download or copy it, then choose the wording for each conflict. The latest saved version stays unchanged until you save.</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={buttonClass("secondary")} onClick={downloadOriginal}>Download original draft</button>
         <button type="button" className={buttonClass("ghost")} onClick={() => void copyOriginal()}>Copy original draft</button>
       </div>
       {copyMessage && <p role="status" className="text-12 text-muted">{copyMessage}</p>}
-      <details><summary className="cursor-pointer text-12 underline">Show original draft text</summary><textarea readOnly aria-label="Original unsaved Experience draft" className={`mt-2 w-full ${input}`} rows={8} value={JSON.stringify(recovery.original, null, 2)} /></details>
+      <section><h3 className="text-12 font-semibold">Original draft text</h3><textarea readOnly aria-label="Original unsaved Experience draft" className={`mt-2 w-full ${input}`} rows={8} value={JSON.stringify(recovery.original, null, 2)} /></section>
       {recovery.conflicts.map(conflict => <div key={conflict.key} className="space-y-2 border-t border-line-muted pt-3">
         <h3 className="text-14 font-semibold">{conflict.label}</h3>
         <div className="grid gap-2 md:grid-cols-2">
@@ -462,18 +468,18 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       <button type="button" className="text-12 underline" onClick={() => setNeedShown(false)}>Dismiss</button>
     </div>}
     {/* What a CV can be built from today, by the rule generation itself applies. */}
-    <p className={`text-14 ${readiness.ready ? "text-muted" : "text-warn"}`} role="status">{readiness.ready ? "Your confirmed evidence can be used in future CVs." : readiness.line.replace(/^Ready to build: no — /, "To build a CV, ")}</p>
+    {!careerManaged && <p className={`text-14 ${readiness.ready ? "text-muted" : "text-warn"}`} role="status">{readiness.ready ? "Your confirmed evidence can be used in future CVs." : readiness.line.replace(/^Ready to build: no — /, "To build a CV, ")}</p>}
     <input type="hidden" name="library" value={serialised} /><input type="hidden" name="version" value={version} /><input type="hidden" name="editedSkillIds" value={JSON.stringify(editedSkillIds)} />
     <div role="tablist" aria-label="Experience sections" className="flex flex-wrap gap-x-2 border-b border-line-muted">
-      {libraryTabs.map(([id, label]) => <button
+      {shownTabs.map(([id, label]) => <button
         key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
         aria-selected={tab === id} tabIndex={tab === id ? 0 : -1}
         className={`border-b-2 px-4 py-3 text-14 font-semibold ${tab === id ? 'border-line text-fg' : 'border-transparent text-muted hover:text-fg'}`}
         onClick={() => setTab(id)} onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
-          const index = libraryTabs.findIndex(([key]) => key === id);
-          const next = libraryTabs[event.key === 'Home' ? 0 : event.key === 'End' ? libraryTabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + libraryTabs.length) % libraryTabs.length]![0];
+          const index = shownTabs.findIndex(([key]) => key === id);
+          const next = shownTabs[event.key === 'Home' ? 0 : event.key === 'End' ? shownTabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + shownTabs.length) % shownTabs.length]![0];
           setTab(next);
           document.getElementById(`library-tab-${next}`)?.focus();
         }}>{label}</button>)}
@@ -498,7 +504,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       <textarea rows={4} className={`resize-y ${input}`} value={value.profile ?? ""} placeholder="Who you are and the work you do." onChange={e => setValue({ ...value, profile: e.target.value })} />
     </label>
     </div>
-    <div role="tabpanel" id="library-panel-experience" aria-labelledby="library-tab-experience" hidden={tab !== 'experience'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'experience')}>
+    {!careerManaged && <div role="tabpanel" id="library-panel-experience" aria-labelledby="library-tab-experience" hidden={tab !== 'experience'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'experience')}>
     <div className="space-y-2">
       <h2 className="ds-pixel text-12">Work history</h2>
       <p className="ds-prose text-14 text-muted">Keep the job details together with the work you can describe. Answer a question to review a draft, or edit rows directly.</p>
@@ -630,8 +636,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         </li>)}</ul>
       </div>
     </details>}
-    </div>
-    <div role="tabpanel" id="library-panel-education" aria-labelledby="library-tab-education" hidden={tab !== 'education'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'education')}>
+    </div>}
+    {!careerManaged && <div role="tabpanel" id="library-panel-education" aria-labelledby="library-tab-education" hidden={tab !== 'education'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'education')}>
     <h2 className="ds-pixel text-12">Education, training, skills and interests</h2>
     <CvLibrarySkillGuidance count={value.entries.filter(entry => entry.kind === "skill" && isActiveEvidence(entry)).flatMap(parsedSkillItems).length} />
     {value.entries.map((entry, i) => entry.kind === "experience" || !isActiveEvidence(entry) ? null : <fieldset key={entry.id} className="space-y-3 border-2 border-line-muted p-4">
@@ -641,9 +647,13 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       {entry.kind === "skill" && (() => {
         const parsed = parsedSkillItems(entry);
         return <><label className="grid gap-1.5"><span className={labelClass}>Individual skills</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => {
+          if (structuredSkillIds.has(entry.id)) return current;
           if (!editedCvSkillEntryIds(current, baseline).includes(entry.id)) return current;
           return normaliseSubmittedLibrarySkills(current, [entry.id], baseline) as CvLibrary;
-        })} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
+        })} value={entry.skillItems?.join("\n") ?? ""} onChange={e => {
+          setStructuredSkillIds(current => { const next = new Set(current); next.delete(entry.id); return next; });
+          setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) });
+        }} />
           <span className="block text-12 text-muted">These are compact CV skill pills, up to {CV_LIMITS.skillCharacters} characters each. Separate them with commas, semicolons or new lines. Use Details below for supporting context.</span>
           <span className="block text-12 text-muted">New CV builds use your latest saved Experience. Existing drafts keep the version they started with.</span>
           <span className={`block text-12 ${parsed.length > CV_SKILL_GUIDANCE.libraryPerSection ? "text-danger" : "text-muted"}`} aria-live="polite">{parsed.length}/{CV_SKILL_GUIDANCE.libraryPerSection} individual skills</span>
@@ -655,6 +665,15 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
               : null)}
           {parsed.length > CV_SKILL_GUIDANCE.libraryPerSection && <span className="block text-12 text-danger" role="alert">Keep up to {CV_SKILL_GUIDANCE.libraryPerSection} individual skills in this block.</span>}
         </label>
+          <SkillTagPicker label={`Choose skills for ${entry.heading || `evidence ${i + 1}`}`}
+            selected={entry.skillItems ?? []} choices={value.entries.filter(item => item.kind === "skill" && isActiveEvidence(item)).flatMap(item => item.skillItems ?? [])}
+            limit={CV_SKILL_GUIDANCE.libraryPerSection}
+            onAdd={label => { setStructuredSkillIds(current => new Set(current).add(entry.id));
+              setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id
+                ? { ...item, skillItems: [...(item.skillItems ?? []), label] } : item) })); }}
+            onRemove={index => { setStructuredSkillIds(current => new Set(current).add(entry.id));
+              setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id
+                ? { ...item, skillItems: (item.skillItems ?? []).filter((_, position) => position !== index) } : item) })); }} />
           {(entry.skillItems ?? []).map((item, itemIndex) => {
             const split = splitCvLibrarySkillItem(entry.skillItems ?? [], itemIndex);
             if (!split) return null;
@@ -678,15 +697,15 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       </div>
     </fieldset>)}
     <button type="button" className="mr-4 text-14 underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "active", heading: "", details: "" }] })}>Add education, training, skill or interest</button>
-    </div>
+    </div>}
     </fieldset>
-    <details className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 font-semibold">Review evidence</summary>
+    {!careerManaged && <details className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 font-semibold">Review evidence</summary>
       <div className="mt-3 space-y-3">
         {evidence.line && <p className="text-14 text-muted">{evidence.line}</p>}
         {(unreviewed || rescoring) && <div className="flex flex-wrap items-center gap-3 text-14"><span>{changedRows ? "Some rows changed since the last review." : "Some rows have not been reviewed yet."}</span><button type="button" disabled={rescoring || dirty} className={buttonClass("secondary")} onClick={() => startTransition(() => rescore(new FormData()))}>{rescoring ? "Reviewing…" : "Re-score evidence"}</button></div>}
         {refused && <p role="alert" className="text-14 text-danger">{refused}</p>}
         <details onToggle={event => setGuideOpen(event.currentTarget.open)}><summary className="cursor-pointer text-12 text-muted">How evidence is scored</summary>{guideOpen && <div className="mt-3"><EvidenceGuide /></div>}</details>
       </div>
-    </details>
+    </details>}
   </form>;
 }

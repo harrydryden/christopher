@@ -41,6 +41,7 @@ import Anthropic, {
 import { z } from "zod";
 import { BATCH_PRICE_MULTIPLIER, estimateBatchCostUsd, estimateCostUsd, estimateStage, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
 import { modelSupportsEffort } from "./model-capabilities";
+import type { CvInlineInput } from "@col/core/cv-inline-ai";
 import * as P from "./prompts";
 import type * as S from "./schemas";
 import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, outputFormat, resolveRoute, type Effort, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
@@ -2072,6 +2073,26 @@ export class AiEngine {
       // and this is the backstop for a row written before that cap existed.
       user: P.wrap("document", P.truncate(document, 40_000)),
       ...(input.model ? { model: input.model } : {}),
+    }, ref);
+  }
+
+  /** One bounded text replacement; does not call the whole-CV author or assessment. */
+  async editCvText(input: CvInlineInput, ref: Ref = {}): Promise<{ text: string } | null> {
+    return this.run<{ text: string }>(PROMPTS["cv.inline_edit"], {
+      user: P.wrap("edit_request", JSON.stringify({ operation: input.request.action,
+        target: input.request.target, selected_text: input.selection.selected, adjacent_text: input.surrounding,
+        maximum_replacement_length: Math.min(4000, input.maxFieldLength - input.request.text.length + input.selection.selected.length),
+        target_role: input.request.action === "inline_tailor" ? input.role : "",
+        permitted_evidence: input.request.action === "inline_tailor" ? input.evidence : [],
+        omitted_evidence_count: input.omittedEvidence })), model: input.model,
+    }, ref);
+  }
+
+  async verifyCvTextEdit(input: CvInlineInput, text: string, ref: Ref = {}): Promise<{ preservesFacts: boolean; followsAction: boolean } | null> {
+    return this.run<{ preservesFacts: boolean; followsAction: boolean }>(PROMPTS["cv.inline_verify"], {
+      user: P.wrap("edit_to_check", JSON.stringify({ operation: input.request.action,
+        original: input.selection.selected, proposed: text, adjacent_text: input.surrounding,
+        target_role: input.request.action === "inline_tailor" ? input.role : "" })), model: input.model,
     }, ref);
   }
 

@@ -20,7 +20,7 @@ vi.mock("@/lib/cv-review-edits", async importOriginal => {
 // The lazily loaded check, unreachable: `import("@col/core/cv")` rejects as a failed chunk would.
 vi.mock("@col/core/cv", () => { throw new Error("Failed to fetch dynamically imported module"); });
 
-import { CvDraftEditor } from "./CvDraftEditor";
+import { CvDraftEditor as RawCvDraftEditor } from "./CvDraftEditor";
 import { readCvSkillSuggestions, requestCvSkillSuggestions, saveCvDraft } from "@/app/actions/cv";
 import { cvReviewEditedContent } from "@/lib/cv-review-edits";
 
@@ -30,6 +30,9 @@ const content = {
   name: "Ada Lovelace", contact: "ada@example.com", summary: "Analyst.", gaps: [],
   sections: [{ entryId: "e-1", kind: "experience", heading: "Analyst, Engines Ltd", bullets: ["Wrote the first program."] }],
 } as unknown as CvContent;
+const skillQuote = { charge: "allowance" as const, units: 3, priceVersion: 1 };
+const CvDraftEditor = (props: React.ComponentProps<typeof RawCvDraftEditor>) =>
+  <RawCvDraftEditor skillQuote={skillQuote} {...props} />;
 
 let root: Root;
 let container: HTMLElement;
@@ -218,7 +221,7 @@ it("generates skills only on click using current CV edits and saves only selecte
   await act(async () => { generate.click(); generate.click(); });
   expect(requestCvSkillSuggestions).toHaveBeenCalledTimes(1);
   expect(requestCvSkillSuggestions).toHaveBeenCalledWith("cv-1", false, 7,
-    expect.objectContaining({ summary: "Updated analyst profile." }), 3);
+    expect.objectContaining({ summary: "Updated analyst profile." }), 3, skillQuote);
   await act(async () => resolveRequest({ ok: true, run: { id: "run-1", status: "ready", error: null,
     suggestions: [{ id: "proposal-1", category: "Leadership", label: "Team leadership", sourceId: "entry-1",
       evidenceQuote: "Led a team", roleQuote: "Lead a team" },

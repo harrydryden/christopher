@@ -7,7 +7,7 @@
  * Types come from `cv.ts` as type-only imports, which the compiler erases: at run time this module
  * depends on `cv-format` alone.
  */
-import { CV_SECTION_ORDER } from "./cv-format";
+import { cvDisplayGroups } from "./cv-format";
 import type { CvContent, CvLibrary, Employment } from "./cv";
 
 /** The one email shape the Library accepts; the schema refuses anything else. */
@@ -403,7 +403,5 @@ export function retainArchivedEvidence(previous: CvLibrary | undefined, next: Cv
 
 /** A shared display order keeps editing and PDF output aligned without changing stored IDs. */
 export function cvDisplaySections(content: CvContent) {
-  const order = CV_SECTION_ORDER;
-  return content.sections.map((section, index) => ({ section, index }))
-    .sort((a, b) => order[a.section.kind] - order[b.section.kind]);
+  return cvDisplayGroups(content).flatMap(group => group.sections);
 }

@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import { CareerRecommendations } from "@/components/CareerRecommendations";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { discoverySources, tasks } from "@col/db/schema";
@@ -52,14 +54,13 @@ function SuggestionCardContent({ row }: { row: SuggestionRow }) {
       {typeof verification?.matchingRoles === "number" && <Badge tone="blue" title="From a sample of roles, not a complete count. A company can be worth following without a current match.">{verification.matchingRoles} matches in sample</Badge>}
       {verification?.careersSource && <a href={verification.careersSource.url} target="_blank" rel="noreferrer" className="text-fg underline">Careers page ↗</a>}
     </div>
-    {suggestion.evidence && <details className="border-t border-line-faint pt-2 text-14">
-      <summary className="min-h-11 cursor-pointer py-2 font-medium underline">Why this company?</summary>
+    {suggestion.evidence && <section aria-label="Recommendation source" className="border-t border-line-faint pt-2 text-14">
       <div className="bg-sunken p-3">
         <p className="font-medium">Evidence from {suggestion.evidence.sourceName}</p>
         <div className="mt-2">{suggestion.evidence.url ? <a href={suggestion.evidence.url} target="_blank" rel="noreferrer" className="text-fg underline">{suggestion.evidence.title} ↗</a> : <p>{suggestion.evidence.title}</p>}
           <blockquote className="mt-2 border-l-2 border-line-muted pl-3 text-muted">“{suggestion.evidence.quote}”</blockquote></div>
       </div>
-    </details>}
+    </section>}
     {suggestion.rejectionReason && <p className="text-14 text-muted">Your reason: {suggestion.rejectionReason}</p>}
   </div>;
 }
@@ -109,10 +110,10 @@ function CatalogueBox({ userId, q, matches, domain, blockedReason }: { userId: s
       {domain && !listed && <AddCompanyHomepages userId={userId} homepage={q} domain={domain} blockedReason={blockedReason} />}
       {!matches.length && !domain && <p className="text-14 text-muted">No match for “{q}”. Paste its homepage to add it.</p>}
     </div>}
-    <details className="mt-4 border-t border-line-faint pt-4">
-      <summary className="min-h-11 cursor-pointer font-semibold underline">Add several company homepages</summary>
+    <section className="mt-4 border-t border-line-faint pt-4">
+      <h3 className="mb-2 font-semibold">Add company homepages</h3>
       <AddCompanyHomepages userId={userId} blockedReason={blockedReason} />
-    </details>
+    </section>
   </section>;
 }
 
@@ -185,6 +186,9 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
       {resolved.length ? <div className="space-y-4">{resolved.map(row => <div key={row.suggestion.id}><SuggestionCard row={row}/>{row.suggestion.resolvedAt && <p className="mt-1 text-12 text-muted">{row.suggestion.status === "expired" ? "Expired" : "Reviewed"} {relativeTime(row.suggestion.resolvedAt, now)}</p>}</div>)}</div> : <EmptyState title={q ? "No matching history" : "No review history yet"} description={q ? "Try another name." : "Companies you follow or dismiss appear here."}/>}
     </> : <>
       <CompanyCapacityReadout {...companyEntitlement} />
+      {!q && <Suspense fallback={<p role="status" className="mb-4 text-14 text-muted">Finding matches from your Experience…</p>}>
+        <CareerRecommendations userId={user.id} followBlocked={blockedReason}/>
+      </Suspense>}
       <CatalogueBox userId={user.id} q={q} matches={matches} domain={domain} blockedReason={blockedReason}/>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="ds-pixel text-12">Companies to review</h2>

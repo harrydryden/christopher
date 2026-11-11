@@ -36,6 +36,8 @@ export interface CanonicalEvidenceEntry {
   rows: CanonicalEvidenceRow[];
   /** A structured skill block's exact labels, each citable on its own. */
   skillItems?: CanonicalEvidenceRow[];
+  /** User-accepted derived tags remain selectable, but have no factual citation ID. */
+  displayOnlySkillLabelsNotEvidence?: string[];
 }
 
 export interface CanonicalEvidence {
@@ -62,6 +64,8 @@ export function canonicalEvidence(library: CvLibrary): CanonicalEvidence {
     };
     const employment = entry.employmentId ? library.employment?.find(job => job.id === entry.employmentId) : undefined;
     const skills = own.filter(source => source.id.includes(":skill:"));
+    const derivedLabels = (entry.skillItems ?? []).filter((_, index) =>
+      library.careerProjection?.sourceMap[`entry:${entry.id}:skill:${index}`]?.origin === "accepted_suggestion");
     return {
       id: entry.id,
       sourceId: `entry:${entry.id}`,
@@ -71,6 +75,7 @@ export function canonicalEvidence(library: CvLibrary): CanonicalEvidence {
       ...(entry.company ? { company: entry.company } : {}),
       rows: own.filter(source => source.id.includes(":row:")).map(row),
       ...(entry.skillItems ? { skillItems: skills.map(row) } : {}),
+      ...(derivedLabels.length ? { displayOnlySkillLabelsNotEvidence: derivedLabels } : {}),
     };
   });
   return {

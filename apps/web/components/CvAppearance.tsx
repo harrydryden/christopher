@@ -40,7 +40,7 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
             [
               ["primary", "Header and heading underlines"],
               ["background", "Page background"],
-              ["surface", theme.bodySizePt ? "Executive Summary card fill" : "Profile card fill"],
+              ["surface", "Profile card fill"],
               ["pill", "Skill and industry pill fill"],
             ] as const
           ).map(([key, label]) => (
@@ -93,10 +93,16 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
               ))}
             </select>
           </label>
-          <p className="text-12 text-muted sm:col-span-2 sm:self-end">
-            Save keeps your current wording. Check measures that exact saved CV;
-            it does not rewrite it. Preview shows the actual page count.
-          </p>
+          <label className="text-14">
+            Structure
+            <select aria-label="Structure" className={`mt-1 ${selectClass}`}
+              value={theme.experienceLayout ?? "chronological"}
+              onChange={event => change({ ...theme, experienceLayout: event.target.value as NonNullable<CvTheme["experienceLayout"]> })}>
+              <option value="chronological">Chronological</option>
+              <option value="project">Projects</option>
+              <option value="hybrid">Roles and projects</option>
+            </select>
+          </label>
         </div>
         <div className="mt-3 flex flex-wrap gap-4 text-14">
           <label>
@@ -107,24 +113,22 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
                 change({ ...theme, introPanel: e.target.checked })
               }
             />{" "}
-            {theme.bodySizePt ? "Executive Summary card" : "Profile card"}
+            Profile card
           </label>
         </div>
       </section>
       <div
         aria-label="Palette sample"
-        className="space-y-3 p-4"
+        className="space-y-2 p-4"
         style={{
           background: theme.background,
           color: cvForeground(theme.background),
           fontFamily: SAMPLE_FONT_FAMILY[theme.font],
         }}
       >
-        <p className="text-12 uppercase tracking-widest">
-          Palette sample · illustrative content
-        </p>
+        <p className="text-12 uppercase tracking-widest">Theme sample</p>
         <div
-          className="space-y-3 p-4"
+          className="space-y-1 p-3"
           style={{
             background: theme.primary,
             color: cvForeground(theme.primary),
@@ -132,73 +136,16 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
         >
           <strong className="text-16">Your name</strong>
           <p className="text-12">Email · Phone · Location · LinkedIn</p>
-          <div
-            className="p-3"
-            style={{
-              background: theme.introPanel ? theme.surface : theme.primary,
-              color: cvForeground(
-                theme.introPanel ? theme.surface : theme.primary,
-              ),
-            }}
-          >
-            <strong>{theme.bodySizePt ? "Executive Summary" : "Profile"}</strong>
-            <p className="mt-1 text-14">
-              A concise introduction to your experience and strengths.
-            </p>
-          </div>
         </div>
-        <p className="text-14 font-semibold">
-          <span
-            className="block pb-1"
-            style={{ borderBottom: `3px solid ${theme.primary}` }}
-          >
-            WORK EXPERIENCE
-          </span>
-        </p>
-        <p className="text-14 font-semibold">
-          Operations Director · Example Company
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {["Healthcare", "Software & SaaS"].map((industry) => (
-            <span
-              key={industry}
-              className="inline-flex items-center justify-center px-3 py-1 text-center text-12"
-              style={{
-                background: theme.pill,
-                color: cvForeground(theme.pill),
-              }}
-            >
-              {industry}
-            </span>
-          ))}
+        {theme.introPanel && <p className="p-2 text-13" style={{ background: theme.surface,
+          color: cvForeground(theme.surface) }}>Profile · A concise introduction.</p>}
+        <p className="border-b-[3px] pb-1 text-14 font-semibold" style={{ borderColor: theme.primary }}>Experience</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-14 font-semibold">Operations Director · Example Company</p>
+          <span className="inline-flex items-center px-3 py-1 text-12" style={{ background: theme.pill,
+            color: cvForeground(theme.pill) }}>Healthcare</span>
         </div>
-        <p className="text-14">
-          Led planning, reporting and delivery across teams.
-        </p>
-        <p
-          className="border-b-[3px] pb-1 text-14 font-semibold"
-          style={{ borderColor: theme.primary }}
-        >
-          EDUCATION AND SKILLS
-        </p>
-        <h4 className="text-14 font-semibold">Education</h4>
-        <p className="text-14 font-semibold">Degree · Example University</p>
-        <p className="text-14">• Graduated with distinction.</p>
-        <h4 className="text-14 font-semibold">Skills</h4>
-        <div className="flex flex-wrap gap-2">
-          {["Financial planning", "Team leadership", "SQL"].map((skill) => (
-            <span
-              key={skill}
-              className="inline-flex items-center justify-center px-3 py-1 text-center text-14"
-              style={{
-                background: theme.pill,
-                color: cvForeground(theme.pill),
-              }}
-            >
-              {skill}
-            </span>
-          ))}
-        </div>
+        <p className="text-13">Led planning and delivery.</p>
       </div>
     </fieldset>
   );

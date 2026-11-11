@@ -99,3 +99,27 @@ it("reopens review from an unchanged fragment and restores Evaluation when reval
     HTMLElement.prototype.scrollIntoView = originalScroll;
   }
 });
+
+it("opens Role details as a named task and returns to the same unsaved wording", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<CvWorkspace description={<p>Target role requirements</p>}>
+      <CvWorkspacePanel tab="content"><textarea aria-label="Draft wording" defaultValue="Saved wording" /></CvWorkspacePanel>
+    </CvWorkspace>));
+    const wording = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    wording.value = "My unsaved wording";
+    const tab = (name: string) => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === name)!;
+    act(() => tab("Role details").click());
+    expect(container.querySelector('#cv-job-description')?.hasAttribute("hidden")).toBe(false);
+    expect(wording.isConnected).toBe(true);
+    expect(wording.closest('[hidden]')).not.toBeNull();
+    // Re-selecting the task never collapses its contents.
+    act(() => tab("Role details").click());
+    expect(container.querySelector('#cv-job-description')?.hasAttribute("hidden")).toBe(false);
+    act(() => tab("Write").click());
+    expect(wording.value).toBe("My unsaved wording");
+    expect(wording.closest('[hidden]')).toBeNull();
+  } finally { act(() => root.unmount()); container.remove(); }
+});

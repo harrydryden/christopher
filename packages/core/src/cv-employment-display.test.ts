@@ -35,7 +35,7 @@ it("keeps a manually edited heading, rejects an unsupported descriptor, and neve
   expect(cvEmploymentDisplay(content, unknown).get("new")?.industry).toBeNull();
   expect(cvEmploymentDisplay(content, { ...library, employment: [] }).size).toBe(0);
   expect(cvManualHeadingWarnings(manual, library)).toEqual([{
-    id: "manual-heading:new", text: "This experience heading is manually worded and has not been verified against confirmed employment details.",
+    id: "manual-heading:new", text: "This role heading differs from saved Experience.",
   }]);
   expect(cvManualHeadingWarnings(content, library)).toEqual([]);
   expect(cvManualHeadingWarnings(content, { ...library, employment: [] })).toHaveLength(2);
@@ -58,6 +58,6 @@ it("marks a manually changed qualification heading without judging a skill categ
     { entryId: "skill", kind: "skill", heading: "Capabilities", bullets: ["SQL"], skillItems: ["SQL"] },
   ] } as CvContent;
   expect(cvManualHeadingWarnings(manual, source)).toEqual([{
-    id: "manual-heading:degree", text: "This qualification heading is manually worded and has not been verified against confirmed Experience.",
+    id: "manual-heading:degree", text: "This qualification heading differs from saved Experience.",
   }]);
 });

@@ -24,8 +24,8 @@ export function useCvContextLayout(mode: CvEditingMode, theme: CvTheme | null | 
   }, [register, mode, theme, !!remember, pending]);
 }
 
-export function CvContextLayout({ mode, children, chooseRefine }: {
-  mode: CvEditingMode; children: ReactNode; chooseRefine: () => void;
+export function CvContextLayout({ mode, children, chooseRefine, visible = true }: {
+  mode: CvEditingMode; children: ReactNode; chooseRefine: () => void; visible?: boolean;
 }) {
   const [registered, setRegistered] = useState<Partial<Record<CvEditingMode, Registration>>>({});
   const register = useCallback((key: CvEditingMode, next: Registration | null) => {
@@ -39,15 +39,15 @@ export function CvContextLayout({ mode, children, chooseRefine }: {
   const active = registered[mode] ?? null;
   return <LayoutContext.Provider value={register}>
     {children}
-    <details id="cv-context-layout" className="border border-line-muted p-4 text-14">
-      <summary className="cursor-pointer font-semibold">Layout and PDF</summary>
+    <section id="cv-context-layout" aria-labelledby="cv-layout-heading" hidden={!visible}
+      className="border border-line-muted p-4 text-14">
+      <h2 id="cv-layout-heading" tabIndex={-1} className="font-semibold">Layout</h2>
       {active ? <div className="mt-3 space-y-3">
         <fieldset disabled={active.pending}><CvAppearance value={active.theme} onChange={active.change} /></fieldset>
-        {mode === "manual" ? <p className="text-12 text-muted">Save Manual to keep this layout with its wording.</p>
-          : <button type="button" className="min-h-11 border border-line-muted px-4" disabled={active.pending}
+        {mode !== "manual" && <button type="button" className="min-h-11 border border-line-muted px-4" disabled={active.pending}
             onClick={active.remember}>Remember this layout for this role · free</button>}
-      </div> : <div className="mt-3 space-y-2"><p className="text-12 text-muted">Auto keeps its saved layout.</p>
+      </div> : <div className="mt-3">
         <button type="button" className="min-h-11 border border-line-muted px-4" onClick={chooseRefine}>Customise Layout in Refine</button></div>}
-    </details>
+    </section>
   </LayoutContext.Provider>;
 }

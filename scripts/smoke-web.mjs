@@ -9,6 +9,8 @@ import { verifyCvWorkspace } from "./smoke-cv.mjs";
 import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
 import { verifyApplicationsWorkspace } from "./smoke-applications.mjs";
 import { verifyEvidenceConversation } from "./smoke-evidence.mjs";
+import { verifyCareerRecommendations } from "./smoke-career-recommendations.mjs";
+import { verifyCareerReview } from "./smoke-career-review.mjs";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { disposableAdmin, startWeb } from "./lib/web.mjs";
@@ -37,7 +39,7 @@ const PAGES = [
   // The smoke account has no roles in either live tab, so Matched shows the first-use explanation.
   // The setup checklist explains the blank table: the smoke account has confirmed its address and
   // follows one company, and nothing else, so it reads "2 of 4 done" and cannot be hidden.
-  ["/", ["Roles", "Review matches from the companies you follow.", "Add a role · Link or PDF", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "All setup steps", "2 of 4 done"], "Matched"],
+  ["/", ["Roles", "Review matches from the companies you follow.", "Add a role · Link or PDF", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "2 of 4 done"], "Matched"],
   // The header carries the shared schedule: one scan a day for every follower.
   // Filters first: an account that has not chosen its gate is asked for it above the add form.
   ["/companies", ["Companies", "next scheduled scan", "Choose your filters first", "Roles to review", "Monitoring", "Manage"]],
@@ -48,6 +50,7 @@ const PAGES = [
   // The attention list and the resolution on the item the smoke company raises: no source yet.
   ["/health", ["Needs attention", "Needs you", "No careers page to scan", "Re-discover"]],
   ["/settings", ["Preferences", "What work are you looking for?", "Writing preferences are on the"]],
+  ["/settings/cv", ["Default CV appearance", "Back to Preferences"]],
   ["/account", ["Account", "Sign-in methods"]],
   ["/admin", ["Admin", "Registration", "Accounts"]],
   ["/admin/settings", ["System settings", "Schedule"]],
@@ -55,13 +58,11 @@ const PAGES = [
   ["/admin/health", ["Operations"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
-  ["/library", ["Experience", "About you", "Work history", "Education, training, skills and interests", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
-    "Experience", "Education, training, skills and interests", "Review evidence", "How evidence is scored",
+  ["/library", ["Experience", "Your records", "Import a document", "Writing preferences", "About you and contact",
     "Start from a document or page", "CV or career document", "LinkedIn PDF export", "Pasted text", "Your website or portfolio",
-    "Nothing is added to Experience until you review and confirm it.",
     "A LinkedIn link alone does not read your profile.",
     "Writing preferences", "Writing style", "Saved phrasing", "No Experience saved yet"]],
-  ["/applications", ["Applications", "Active", "Closed", "Due this week", "Stage breakdown", "What the stages mean"]],
+  ["/applications", ["Applications", "Active", "Closed", "Due this week", "Application stages", "Add a role"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
   ["/?view=auto-matched", ["Roles"], "Matched"],
   ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],
@@ -298,12 +299,17 @@ async function main() {
 
   try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`CV browser flow: ${error.stack ?? error.message}`); }
-  try { await verifyCvTailoringWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  try { await verifyCvTailoringWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId, SECRET); }
   catch (error) { failures.push(`CV tailoring browser flow: ${error.stack ?? error.message}`); }
   try { await verifyApplicationsWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`Applications browser flow: ${error.stack ?? error.message}`); }
   try { await verifyEvidenceConversation(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`Evidence conversation browser flow: ${error.stack ?? error.message}`); }
+
+  try { await verifyCareerRecommendations(`http://127.0.0.1:${PORT}`, DATABASE_URL, SECRET); }
+  catch (error) { failures.push(`Career recommendations browser flow: ${error.stack ?? error.message}`); }
+  try { await verifyCareerReview(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  catch (error) { failures.push(`Career review browser flow: ${error.stack ?? error.message}`); }
 
   // The disposable account takes its sessions, settings and drafts with it, and the throwaway
   // company takes its subscription.

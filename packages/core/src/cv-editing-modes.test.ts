@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CvContentSchema, CvLibrarySchema } from "./cv";
 import { cvApplyExactLocks, cvApplyGeneratedExactLocks, cvAutoInputKey, cvCarryEditingTargets, cvEditingTargetsFor,
   cvProjectRefinements, cvProjectOneExactWording, cvRefinementDependencies, cvRefinedResultKey,
-  validateCvEditingTargets, validateCvEditingTargetTransition, type CvAutoInputV1 } from "./cv-editing-modes";
+  validateCvEditingTargets, validateCvEditingTargetTransition, CvRefinementSchema, type CvAutoInputV1 } from "./cv-editing-modes";
 
 const library = CvLibrarySchema.parse({ name: "Ada", contact: "London", profile: "Supported operations delivery",
   entries: [{ id: "role", kind: "experience", heading: "Operations Manager", details: "Reduced backlog by 20%",
@@ -39,6 +39,50 @@ describe("CV editing identities", () => {
     expect(() => cvProjectOneExactWording({ content: generated, targets,
       target: { type: "bullet", id: "00000000-0000-4000-8000-000000000999" }, text: "Wrong item" }))
       .toThrow("item changed");
+  });
+
+  it("adds, changes, clears and preserves a bullet title without moving its citation", () => {
+    let n = 300;
+    const targets = cvEditingTargetsFor(content, () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`);
+    const target = { type: "bullet" as const, id: targets.sections[0]!.bulletIds[1]! };
+    const first = cvProjectOneExactWording({ content, targets, target, text: content.sections[0]!.bullets[1]!,
+      bulletSignpost: "  Service delivery  " });
+    expect(first.sections[0]!.bulletSignposts).toEqual([null, "Service delivery"]);
+    expect(first.sections[0]!.bulletSources).toEqual(content.sections[0]!.bulletSources);
+    const titleLock = CvRefinementSchema.parse({ id: "00000000-0000-4000-8000-000000000399",
+      version: 1, order: 0, kind: "exact_wording", target, text: content.sections[0]!.bullets[1],
+      bulletSignpost: "Service delivery", dependencies: { descriptionVersionId: input.descriptionVersionId,
+        sourceHash: "a".repeat(64), sourceIds: ["entry:role:row:0"] }, reset: false });
+    const locked = cvApplyExactLocks({ content, targets, refinements: [titleLock],
+      descriptionVersionId: input.descriptionVersionId, sourceHash: "a".repeat(64) });
+    expect(locked.conflicts).toEqual([]);
+    expect(locked.content.sections[0]!.bulletSources).toEqual(content.sections[0]!.bulletSources);
+    expect(locked.content.sections[0]!.bulletSignposts).toEqual([null, "Service delivery"]);
+    const bodyOnly = cvProjectOneExactWording({ content: first, targets, target, text: "Improved service delivery" });
+    expect(bodyOnly.sections[0]!.bulletSignposts).toEqual([null, "Service delivery"]);
+    const renamed = cvProjectOneExactWording({ content: bodyOnly, targets, target,
+      text: "Improved service delivery", bulletSignpost: "Operational impact" });
+    expect(renamed.sections[0]!.bulletSignposts).toEqual([null, "Operational impact"]);
+    const cleared = cvProjectOneExactWording({ content: renamed, targets, target,
+      text: "Improved service delivery", bulletSignpost: null });
+    expect(cleared.sections[0]!.bulletSignposts).toEqual([null, null]);
+    expect(() => cvProjectOneExactWording({ content, targets, target, text: "A", bulletSignpost: "x\ny" })).toThrow();
+  });
+
+  it("validates that only an exact bullet rule can carry a single-line title", () => {
+    const base = { id: "00000000-0000-4000-8000-000000000400", version: 1, order: 0,
+      kind: "exact_wording" as const, target: { type: "bullet" as const, id: "00000000-0000-4000-8000-000000000401" },
+      text: "Exact claim", dependencies: { descriptionVersionId: input.descriptionVersionId,
+        sourceHash: "a".repeat(64), sourceIds: [] }, reset: false };
+    expect(CvRefinementSchema.parse({ ...base, bulletSignpost: "  Results  " }).bulletSignpost).toBe("Results");
+    expect(CvRefinementSchema.parse(base).bulletSignpost).toBeUndefined();
+    for (const row of [
+      { ...base, target: { type: "section", id: base.target.id }, bulletSignpost: "Results" },
+      { ...base, kind: "instruction", bulletSignpost: "Results" },
+      { ...base, bulletSignpost: "bad\nline" },
+      { ...base, bulletSignpost: "x".repeat(61) },
+      { ...base, bulletSignpost: " " },
+    ]) expect(CvRefinementSchema.safeParse(row).success).toBe(false);
   });
   it("ignores object-key order but invalidates Auto on source, role, preference and contract changes", () => {
     const key = cvAutoInputKey(input);
@@ -138,20 +182,32 @@ describe("CV editing identities", () => {
       target: { type: "bullet", id: targets.sections[0]!.bulletIds[0] } });
     const lock = { id: "00000000-0000-4000-8000-000000000150", version: 1, order: 0,
       kind: "exact_wording" as const, target: { type: "bullet" as const, id: targets.sections[0]!.bulletIds[0] },
-      text: "A selected exact result", dependencies: { descriptionVersionId: input.descriptionVersionId, ...dependencies }, reset: false };
+      text: "A selected exact result", bulletSignpost: "Result", dependencies: { descriptionVersionId: input.descriptionVersionId, ...dependencies }, reset: false };
     const free = cvProjectRefinements({ content, targets, library, refinements: [lock],
       descriptionVersionId: input.descriptionVersionId, sourceHash: "a".repeat(64) });
     expect(free.conflicts).toEqual([]);
     expect(free.content.sections[0]!.bullets).toEqual([lock.text, "Reduced backlog by 20%"]);
+    expect(free.content.sections[0]!.bulletSignposts).toEqual(["Result", null]);
     const generated = CvContentSchema.parse({ ...content, sections: [{ ...content.sections[0]!,
       bullets: ["Reduced backlog by 20%"], bulletSources: [["entry:role:row:0"]] }] });
     const applied = cvApplyGeneratedExactLocks({ candidate: generated, source: content,
       sourceTargets: targets, library, refinements: [lock], descriptionVersionId: input.descriptionVersionId });
     expect(applied.conflicts).toEqual([]);
     expect(applied.content.sections[0]!.bullets).toEqual([lock.text]);
-    expect(cvApplyGeneratedExactLocks({ candidate: content, source: content,
-      sourceTargets: targets, library, refinements: [lock], descriptionVersionId: input.descriptionVersionId })
-      .conflicts[0]?.reason).toBe("missing_target");
+    expect(applied.content.sections[0]!.bulletSignposts).toEqual(["Result"]);
+    expect(cvProjectRefinements({ content, targets, library, refinements: [{ ...lock, version: 2, reset: true }],
+      descriptionVersionId: input.descriptionVersionId, sourceHash: "a".repeat(64) }).content).toEqual(content);
+    const titledGenerated = CvContentSchema.parse({ ...generated, sections: [{ ...generated.sections[0]!,
+      bulletSignposts: ["Former title"] }] });
+    const cleared = cvApplyGeneratedExactLocks({ candidate: titledGenerated, source: content,
+      sourceTargets: targets, library, refinements: [{ ...lock, bulletSignpost: null }],
+      descriptionVersionId: input.descriptionVersionId });
+    expect(cleared.conflicts).toEqual([]);
+    expect(cleared.content.sections[0]!.bulletSignposts).toEqual([null]);
+    const ambiguous = cvApplyGeneratedExactLocks({ candidate: content, source: content,
+      sourceTargets: targets, library, refinements: [lock], descriptionVersionId: input.descriptionVersionId });
+    expect(ambiguous.conflicts[0]?.reason).toBe("missing_target");
+    expect(ambiguous.content).toEqual(content);
   });
 
   it("carries a unique cited target across compatible baselines but not changed or ambiguous evidence", () => {
@@ -195,6 +251,7 @@ describe("CV editing identities", () => {
       version: 1, order: index, kind: "exact_wording" as const,
       target: { type: "bullet" as const, id: targets.sections[0]!.bulletIds[index] },
       text: index ? "Exact handoff result" : "Exact backlog result",
+      bulletSignpost: index ? "Handoff" : "Backlog",
       dependencies: { descriptionVersionId: input.descriptionVersionId,
         ...cvRefinementDependencies({ content: twoBullets, targets, library: twoRows,
           descriptionVersionId: input.descriptionVersionId,
@@ -206,6 +263,7 @@ describe("CV editing identities", () => {
       descriptionVersionId: input.descriptionVersionId });
     expect(result.conflicts).toEqual([]);
     expect(result.content.sections[0]!.bullets).toEqual(["Exact backlog result", "Exact handoff result", "A third supported claim"]);
+    expect(result.content.sections[0]!.bulletSignposts).toEqual(["Backlog", "Handoff", null]);
     expect(result.content.sections[0]!.bulletSources).toEqual(generated.sections[0]!.bulletSources);
   });
 });

@@ -223,7 +223,7 @@ it("does not spend an AI call when all experience rows are unconfirmed", async (
   expect(build).not.toHaveBeenCalled();
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("failed");
-  expect(saved!.error).toContain("Confirm at least one responsibility or outcome");
+  expect(saved!.error).toContain("Add at least one work detail");
 });
 it("rejects model claims referencing invented evidence", async () => {
   vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Leader", sections: [{ entryId: "fabricated", bullets: ["Piloted aircraft"] }], gaps: [] });
@@ -518,7 +518,8 @@ it("passes distinct stable instruction targets to the writer and applies one exa
         library, descriptionVersionId, target: { type, id } }) } });
   const bulletId = targets.sections[0]!.bulletIds[0]!;
   const sectionId = targets.sections[0]!.sectionId;
-  const refinements = [row("exact_wording", "bullet", bulletId, "Led a team", 0),
+  const refinements = [CvRefinementSchema.parse({ ...row("exact_wording", "bullet", bulletId, "Led a team", 0),
+    bulletSignpost: "Team leadership" }),
     row("instruction", "bullet", bulletId, "Keep the measurable team contribution concise", 1),
     row("instruction", "section", sectionId, "Emphasise delivery impact", 2)];
   const rubric = rubricFixture(draft.jobDescription);
@@ -545,7 +546,9 @@ it("passes distinct stable instruction targets to the writer and applies one exa
   await handleGenerateCv(task, deps);
   const [ready] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(ready?.status, ready?.error ?? "").toBe("ready");
+  expect(ready?.appliedRefinements).toEqual(refinements.map(row => ({ id: row.id, version: row.version })));
   expect(ready?.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+  expect(ready?.content?.sections[0]?.bulletSignposts).toEqual(["Team leadership"]);
   expect(author).toHaveBeenCalledWith(expect.objectContaining({ refinementInstructions: [
     expect.objectContaining({ target: `bullet:${bulletId}` }),
     expect.objectContaining({ target: `section:${sectionId}` }),

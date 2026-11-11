@@ -5,13 +5,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CvRefinementV1 } from "@col/core/cv-editing-modes";
 import type { CvContent } from "@col/core/cv";
+import { DEFAULT_CV_THEME } from "@col/core/cv";
 import type { CvEditingTargets } from "@col/core/cv-editing-modes";
 
 const router = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("@/app/actions/cv-editing", () => ({ saveCvRefinement: vi.fn(), saveAndUpdateCvExactRefinement: vi.fn(),
   resetCvRefinement: vi.fn(), generateRefinedCv: vi.fn() }));
-import { saveCvRefinement, saveAndUpdateCvExactRefinement } from "@/app/actions/cv-editing";
+vi.mock("@/app/actions/cv-inline-ai", () => ({ requestCvInlineEdit: vi.fn(), readCvInlineEdit: vi.fn(),
+  latestCvInlineEdit: vi.fn(async () => ({ ok: false, error: "No pending suggestion." })), dismissCvInlineEdit: vi.fn() }));
+import { generateRefinedCv, saveCvRefinement, saveAndUpdateCvExactRefinement } from "@/app/actions/cv-editing";
 import { CvRefineMode } from "./CvRefineMode";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,16 +27,19 @@ const existing: CvRefinementV1 = { id: "550d69d3-e692-424f-b2ea-5af851296fc9", v
   kind: "exact_wording", target: { type: "summary", id: "c551e23a-a966-474c-81a8-7f7a3fd0dfd7" },
   text: "I managed the service desk.", dependencies: { descriptionVersionId: "e7b5c130-b58b-4c48-b4f5-f1c4a968f45b",
     sourceHash: "a".repeat(64), sourceIds: [] }, reset: false };
+const fieldFor = (id: string) => container.querySelector<HTMLTextAreaElement>(`#cv-refine-direct-${id}`)!;
+const saveFor = (label: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+  button.textContent === `Save ${label} and update CV · free`)!;
 
-it("gives the prefilled wording an exact label in server-rendered markup", () => {
+it("gives the prefilled current document field an exact label in server-rendered markup", () => {
   const html = renderToStaticMarkup(<CvRefineMode contextId="context" initialVersion={1}
     source={{ kind: "baseline", id: "baseline", label: "Auto" }}
     targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Saved summary text" }]}
     refinements={[]} />);
   const parsed = new DOMParser().parseFromString(html, "text/html");
-  const label = [...parsed.querySelectorAll("label")].find(row => row.textContent === "Exact wording")!;
+  const label = [...parsed.querySelectorAll("label")].find(row => row.textContent === "Summary")!;
   expect(label).toBeTruthy();
-  expect(label.htmlFor).toBe("cv-refine-wording");
+  expect(label.htmlFor).toBe(`cv-refine-direct-${existing.target.id}`);
   expect(parsed.getElementById(label.htmlFor)?.tagName).toBe("TEXTAREA");
   expect(label.textContent).not.toContain("Saved summary text");
 });
@@ -44,14 +50,13 @@ it("edits an existing stable refinement rather than creating a duplicate target"
     source={{ kind: "baseline", id: "baseline", label: "Auto" }}
     targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Original Auto summary" }]}
     refinements={[existing]} />));
-  const edit = [...container.querySelectorAll("button")].find(button => button.textContent === "Edit")!;
-  act(() => edit.click());
-  expect(container.textContent).toContain("Original Auto summary");
-  const field = container.querySelector("textarea")!;
+  act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Remembered choices")!.click());
+  act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Edit")!.click());
+  const field = fieldFor(existing.target.id!);
   expect(field.value).toBe(existing.text);
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
   act(() => { setter?.call(field, "I led the service desk."); field.dispatchEvent(new Event("input", { bubbles: true })); });
-  const save = [...container.querySelectorAll("button")].find(button => button.textContent === "Save and update CV · free")!;
+  const save = saveFor("Summary");
   await act(async () => save.click());
   expect(saveAndUpdateCvExactRefinement).toHaveBeenCalledWith("context", 1,
     { kind: "baseline", id: "baseline", revision: undefined }, expect.objectContaining({
@@ -65,14 +70,12 @@ it("prefills the current summary and updates its remembered rule on a second one
   const target = { type: "summary" as const, id: existing.target.id, label: "Summary", sourceText: "Original Auto summary" };
   act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
     source={{ kind: "baseline", id: "baseline", label: "Auto" }} targets={[target]} refinements={[]} />));
-  const field = container.querySelector<HTMLTextAreaElement>("textarea")!;
-  const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Save and update CV · free")!;
+  const field = fieldFor(existing.target.id!);
   expect(field.value).toBe("Original Auto summary");
-  expect(save.disabled).toBe(true);
+  expect(saveFor("Summary")).toBeUndefined();
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
   act(() => { setter.call(field, "First exact summary"); field.dispatchEvent(new Event("input", { bubbles: true })); });
-  await act(async () => save.click());
+  await act(async () => saveFor("Summary").click());
   expect(container.textContent).toContain("CV updated. This wording is remembered for this role.");
   expect(field.disabled).toBe(true);
   expect(container.textContent).toContain("Updating the selected CV");
@@ -88,11 +91,38 @@ it("prefills the current summary and updates its remembered rule on a second one
   act(() => { setter.call(field, "Second exact summary"); field.dispatchEvent(new Event("input", { bubbles: true })); });
   vi.mocked(saveAndUpdateCvExactRefinement).mockResolvedValue({ ok: true, version: 3,
     draftId: "second-child", revision: 3, charged: false });
-  await act(async () => save.click());
+  await act(async () => saveFor("Summary").click());
   expect(saveAndUpdateCvExactRefinement).toHaveBeenLastCalledWith("context", 2,
     { kind: "draft", id: "first-child", revision: 2 }, expect.objectContaining({
       id: existing.id, target: existing.target, text: "Second exact summary", requestKey: expect.any(String),
     }));
+});
+
+it("edits visible document fields independently and retains another unsaved field through save handover", async () => {
+  const summary = { type: "summary" as const, id: existing.target.id!, label: "Summary", sourceText: "Saved summary" };
+  const heading = { type: "section" as const, id: "d4b3cb82-5675-454e-bcb3-faa53a4347a8",
+    label: "Work heading", sourceText: "Saved heading" };
+  vi.mocked(saveAndUpdateCvExactRefinement).mockResolvedValue({ ok: true, version: 2,
+    draftId: "child", revision: 2, charged: false });
+  const props = { contextId: "context", initialVersion: 1, targets: [summary, heading], refinements: [] as CvRefinementV1[] };
+  act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "baseline", label: "Auto" }} />));
+  expect(fieldFor(summary.id).value).toBe("Saved summary");
+  expect(fieldFor(heading.id).value).toBe("Saved heading");
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  act(() => { setter.call(fieldFor(summary.id), "Edited summary");
+    fieldFor(summary.id).dispatchEvent(new Event("input", { bubbles: true }));
+    setter.call(fieldFor(heading.id), "My unsaved heading");
+    fieldFor(heading.id).dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => saveFor("Summary").click());
+  expect(saveAndUpdateCvExactRefinement).toHaveBeenCalledWith("context", 1,
+    { kind: "baseline", id: "baseline", revision: undefined },
+    expect.objectContaining({ target: { type: "summary", id: summary.id }, text: "Edited summary" }));
+  act(() => root.render(<CvRefineMode {...props} initialVersion={2}
+    source={{ kind: "draft", id: "child", revision: 2, label: "Current CV", autoOrigin: true }}
+    targets={[{ ...summary, sourceText: "Edited summary" }, heading]} />));
+  expect(fieldFor(summary.id).value).toBe("Edited summary");
+  expect(fieldFor(heading.id).value).toBe("My unsaved heading");
+  expect(saveFor("Work heading").disabled).toBe(false);
 });
 
 it("retains a hidden instruction and the selected bullet through the exact-save handover", async () => {
@@ -103,27 +133,28 @@ it("retains a hidden instruction and the selected bullet through the exact-save 
     label: "Experience bullet", sourceText: "Bullet one" };
   act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
     source={{ kind: "baseline", id: "baseline", label: "Auto" }} targets={[summary, bullet]} refinements={[]} />));
-  const editBullet = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Edit wording" && button.closest("section")?.textContent?.includes("Experience bullet"))!;
-  act(() => editBullet.click());
-  const field = container.querySelector<HTMLTextAreaElement>("textarea")!;
+  const field = fieldFor(bullet.id);
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-  act(() => [...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')][1]!.click());
-  act(() => { setter.call(field, "Keep this hidden instruction"); field.dispatchEvent(new Event("input", { bubbles: true })); });
-  act(() => [...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')][0]!.click());
-  act(() => { setter.call(field, "Bullet two"); field.dispatchEvent(new Event("input", { bubbles: true })); });
-  const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Save and update CV · free")!;
-  await act(async () => save.click());
-  expect(field.disabled).toBe(true);
-  expect([...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')].every(input => input.disabled)).toBe(true);
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
+  const instruction = container.querySelector<HTMLTextAreaElement>("#cv-refine-wording")!;
+  act(() => { setter.call(instruction, "Keep this hidden instruction"); instruction.dispatchEvent(new Event("input", { bubbles: true })); });
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Edit document")!.click());
+  const currentBullet = fieldFor(bullet.id);
+  act(() => { setter.call(currentBullet, "Bullet two"); currentBullet.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => saveFor("Experience bullet").click());
+  expect(currentBullet.disabled).toBe(true);
+  expect([...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Refine tasks"] button')]
+    .every(button => button.disabled)).toBe(true);
   act(() => root.render(<CvRefineMode contextId="context" initialVersion={2}
     source={{ kind: "draft", id: "child", revision: 2, label: "Current", autoOrigin: true }}
     targets={[summary, { ...bullet, sourceText: "Bullet two" }]} refinements={[]} />));
-  expect(field.disabled).toBe(false);
-  expect(field.value).toBe("Bullet two");
-  act(() => [...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')][1]!.click());
-  expect(field.value).toBe("Keep this hidden instruction");
+  expect(fieldFor(bullet.id).disabled).toBe(false);
+  expect(fieldFor(bullet.id).value).toBe("Bullet two");
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
+  expect(container.querySelector<HTMLTextAreaElement>("#cv-refine-wording")?.value).toBe("Keep this hidden instruction");
   expect(container.querySelector('[data-cv-mode-dirty="true"]')).not.toBeNull();
 });
 
@@ -145,16 +176,15 @@ it("keeps an unsaved section order while an exact summary save selects its child
   act(() => root.render(<CvRefineMode {...props} initialVersion={1}
     source={{ kind: "baseline", id: "baseline", label: "Auto" }} />));
   act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Section and skill order")!.click());
+    button.textContent === "Order")!.click());
   act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
     button.getAttribute("aria-label") === "Move First down")!.click());
   act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Wording or instruction")!.click());
-  const field = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    button.textContent === "Edit document")!.click());
+  const field = fieldFor(summaryId);
   act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, "New summary");
     field.dispatchEvent(new Event("input", { bubbles: true })); });
-  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Save and update CV · free")!.click());
+  await act(async () => saveFor("Summary").click());
   act(() => root.render(<CvRefineMode {...props} initialVersion={2}
     source={{ kind: "draft", id: "child", revision: 2, label: "Current CV", autoOrigin: true }}
     sourceContent={{ ...content, summary: "New summary" }}
@@ -162,7 +192,7 @@ it("keeps an unsaved section order while an exact summary save selects its child
   expect(field.disabled).toBe(false);
   expect(container.querySelector('[data-cv-mode-dirty="true"]')).not.toBeNull();
   act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Section and skill order")!.click());
+    button.textContent === "Order")!.click());
   const rows = [...container.querySelectorAll("div.border.border-line-muted.p-2")].filter(row =>
     row.textContent?.includes("First") || row.textContent?.includes("Second"));
   expect(rows[0]?.textContent).toContain("Second");
@@ -175,16 +205,17 @@ it("keeps an unsaved exact buffer when instruction is selected and the source ch
   const field = container.querySelector<HTMLTextAreaElement>("textarea")!;
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
   act(() => { setter.call(field, "My unsaved exact wording"); field.dispatchEvent(new Event("input", { bubbles: true })); });
-  const instruction = [...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')][1]!;
+  const instruction = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!;
   act(() => instruction.click());
   expect(container.querySelector('[data-cv-mode-dirty="true"]')).not.toBeNull();
   act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "second", label: "Second" }} />));
   expect(container.textContent).toContain("Restore original saved edition");
-  const exact = [...container.querySelectorAll<HTMLInputElement>('input[type="radio"]')][0]!;
+  const exact = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Edit document")!;
   act(() => exact.click());
   expect(field.value).toBe("My unsaved exact wording");
-  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Save and update CV · free")?.disabled).toBe(true);
+  expect(saveFor("Summary").disabled).toBe(true);
 });
 
 it("keeps the same save intent and wording after a failed one-step request", async () => {
@@ -197,12 +228,10 @@ it("keeps the same save intent and wording after a failed one-step request", asy
   const field = container.querySelector<HTMLTextAreaElement>("textarea")!;
   act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, "Edited summary");
     field.dispatchEvent(new Event("input", { bubbles: true })); });
-  const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-    button.textContent === "Save and update CV · free")!;
-  await act(async () => save.click());
+  await act(async () => saveFor("Summary").click());
   expect(field.value).toBe("Edited summary");
   expect(container.textContent).toContain("Please try again.");
-  await act(async () => save.click());
+  await act(async () => saveFor("Summary").click());
   const calls = vi.mocked(saveAndUpdateCvExactRefinement).mock.calls;
   expect(calls).toHaveLength(2);
   expect(calls[0]?.[3].requestKey).toBe(calls[1]?.[3].requestKey);
@@ -216,7 +245,7 @@ it("does not offer another Apply after the exact rule is already in the selected
     refinements={[existing]} appliedRefinements={[{ id: existing.id, version: existing.version }]} />));
   expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(existing.text);
   expect(container.textContent).not.toContain("Apply saved refinements");
-  expect(container.textContent).toContain("Forget for future builds");
+  expect(container.textContent).toContain("Remembered for this role");
 });
 
 it("marks a changed source and blocks generation until the saved refinement is resolved", () => {
@@ -224,6 +253,8 @@ it("marks a changed source and blocks generation until the saved refinement is r
     source={{ kind: "baseline", id: "baseline", label: "Auto" }}
     targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Original Auto summary" }]}
     refinements={[existing]} conflicts={[{ id: existing.id, reason: "changed_source" }]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
   expect(container.textContent).toContain("Source evidence changed");
   const generate = [...container.querySelectorAll("button")].find(button => button.textContent === "Apply saved refinements · free")!;
   expect(generate.disabled).toBe(true);
@@ -235,13 +266,121 @@ it("offers free application of exact wording from a saved Auto-descended Refine 
     source={{ kind: "draft", id: "refine-edition", label: "selected saved edition", autoOrigin: true }}
     targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Saved summary" }]}
     refinements={[existing]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
   expect([...container.querySelectorAll("button")].find(button => button.textContent === "Apply saved refinements · free")).toBeTruthy();
-  expect(container.textContent).toContain("without generation or a CV credit");
+  expect(container.textContent).not.toContain("1 role credit");
   act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
     source={{ kind: "draft", id: "manual-edition", label: "Manual edition" }}
     targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Saved summary" }]}
     refinements={[existing]} />));
-  expect([...container.querySelectorAll("button")].find(button => button.textContent === "Generate CV with saved refinements")).toBeTruthy();
+  expect([...container.querySelectorAll("button")].find(button => button.textContent === "Apply saved refinements · free")).toBeTruthy();
+});
+
+it("quotes AI only for a pending instruction on a Manual-origin edition", () => {
+  const instruction = { ...existing, id: "d7ae0f34-16d5-4ed1-9ead-840928bd9eb7", kind: "instruction" as const,
+    text: "Make this more concise" };
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
+    source={{ kind: "draft", id: "manual-edition", label: "Manual edition" }}
+    targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Saved summary" }]}
+    refinements={[instruction]} wholeCvQuote={{ charge: "allowance", units: 8, priceVersion: 1 }} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
+  expect(container.textContent).toContain("Update CV from remembered choices");
+  expect(container.textContent).toContain("8 AI units");
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={2}
+    source={{ kind: "draft", id: "generated-edition", label: "Generated edition" }}
+    targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "AI wording" }]}
+    refinements={[instruction, { ...existing, id: "f519e441-d0f0-43bc-b428-8fcf51877abd", kind: "structured",
+      target: { type: "appearance" }, text: undefined, structured: { kind: "appearance", theme: DEFAULT_CV_THEME } }]}
+    appliedRefinements={[{ id: instruction.id, version: 1 }]} />));
+  expect(container.textContent).toContain("Apply saved refinements · free");
+  expect(container.textContent).not.toContain("8 AI units");
+});
+
+it("quotes reconstruction after one applied instruction is removed and another remains", () => {
+  const first = { ...existing, id: "d7ae0f34-16d5-4ed1-9ead-840928bd9eb7", kind: "instruction" as const,
+    text: "Make the summary concise" };
+  const second = { ...first, id: "a31c3d2c-e576-4503-af1d-0cf09b3490ae", order: 1,
+    text: "Emphasise the role" };
+  const common = { contextId: "context", initialVersion: 3,
+    source: { kind: "draft" as const, id: "generated-edition", label: "Generated edition" },
+    targets: [{ type: "summary" as const, id: existing.target.id, label: "Summary", sourceText: "AI wording" }],
+    appliedRefinements: [{ id: first.id, version: first.version }, { id: second.id, version: second.version }],
+    appliedSnapshot: [first, second],
+    wholeCvQuote: { charge: "allowance" as const, units: 8, priceVersion: 1 } };
+  act(() => root.render(<CvRefineMode {...common} refinements={[second]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
+  expect(container.textContent).toContain("Update CV from remembered choices");
+  expect(container.textContent).toContain("8 AI units");
+  expect(container.textContent).not.toContain("Apply saved refinements · free");
+  act(() => root.render(<CvRefineMode {...common} refinements={[]} />));
+  expect(container.textContent).toContain("Apply saved refinements · free");
+  expect(container.textContent).not.toContain("8 AI units");
+});
+
+it("keeps changed or forgotten applied layout and order choices free after authored wording", () => {
+  const instruction = { ...existing, id: "d7ae0f34-16d5-4ed1-9ead-840928bd9eb7",
+    kind: "instruction" as const, text: "Make this concise" };
+  const appearance = { ...existing, id: "13dab89b-23b4-4fd8-a531-c57088842886", kind: "structured" as const,
+    target: { type: "appearance" as const }, text: undefined,
+    structured: { kind: "appearance" as const, theme: DEFAULT_CV_THEME } };
+  const order = { ...appearance, id: "1728cf21-5a8e-4c0f-a4ce-9e94ed21913e", order: 2,
+    target: { type: "selection" as const },
+    structured: { kind: "item_order" as const, sectionIds: [], itemIds: {} } };
+  const props = { contextId: "context", initialVersion: 3,
+    source: { kind: "draft" as const, id: "generated-edition", label: "Generated edition" },
+    targets: [{ type: "summary" as const, id: existing.target.id, label: "Summary", sourceText: "AI wording" }],
+    appliedRefinements: [instruction, appearance, order].map(row => ({ id: row.id, version: row.version })),
+    appliedSnapshot: [instruction, appearance, order],
+    wholeCvQuote: { charge: "allowance" as const, units: 8, priceVersion: 1 } };
+  act(() => root.render(<CvRefineMode {...props} refinements={[instruction, { ...appearance,
+    version: 2, structured: { kind: "appearance", theme: { ...DEFAULT_CV_THEME, primary: "#225544" } } }]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
+  expect(container.textContent).toContain("Apply saved refinements · free");
+  expect(container.textContent).not.toContain("8 AI units");
+});
+
+it("keeps the Apply action visible in the Order task when a saved rule is unapplied", () => {
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
+    source={{ kind: "baseline", id: "baseline", label: "Auto" }}
+    targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Saved summary" }]}
+    refinements={[existing]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Order")!.click());
+  expect([...container.querySelectorAll("button")].find(button => button.textContent === "Apply saved refinements · free")).toBeTruthy();
+});
+
+it("holds Order and Layout edits until its own generated child replaces the selected CV", async () => {
+  vi.mocked(generateRefinedCv).mockResolvedValue({ ok: true, status: "ready", draftId: "generated-child", charged: false });
+  const props = { contextId: "context", initialVersion: 1,
+    source: { kind: "baseline" as const, id: "baseline", label: "Auto" },
+    targets: [{ type: "summary" as const, id: existing.target.id, label: "Summary", sourceText: "Saved summary" }],
+    refinements: [existing] };
+  act(() => root.render(<CvRefineMode {...props} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Order")!.click());
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Apply saved refinements · free")!.click());
+  expect(container.textContent).toContain("Updating the selected CV");
+  expect([...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Refine tasks"] button')].every(button => button.disabled)).toBe(true);
+  act(() => root.render(<CvRefineMode {...props} source={{ kind: "draft", id: "generated-child", revision: 4,
+    label: "Current CV", autoOrigin: true }} targets={[{ ...props.targets[0]!, sourceText: existing.text! }]} />));
+  expect(container.textContent).not.toContain("The selected edition changed while this refinement buffer was open");
+  expect(container.textContent).not.toContain("Updating the selected CV");
+  expect([...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Refine tasks"] button')].every(button => !button.disabled)).toBe(true);
+});
+
+it("does not wait for a handover when a cached Apply returns the already selected edition", async () => {
+  vi.mocked(generateRefinedCv).mockResolvedValue({ ok: true, status: "ready", draftId: "current", charged: false });
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
+    source={{ kind: "draft", id: "current", revision: 4, label: "Current CV", autoOrigin: true }}
+    targets={[{ type: "summary", id: existing.target.id, label: "Summary", sourceText: "Saved summary" }]}
+    refinements={[existing]} />));
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Apply saved refinements · free")!.click());
+  expect(container.textContent).not.toContain("Updating the selected CV");
+  expect([...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Refine tasks"] button')].every(button => !button.disabled)).toBe(true);
 });
 
 it("keeps a typed buffer on its original source when the selected edition refreshes", () => {
@@ -254,7 +393,7 @@ it("keeps a typed buffer on its original source when the selected edition refres
   act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "second", label: "Second Auto" }} />));
   expect(container.textContent).toContain("Your wording remains here for its original source");
   expect(container.querySelector("textarea")?.value).toBe("Keep this wording.");
-  expect([...container.querySelectorAll("button")].find(button => button.textContent === "Save and update CV · free")?.disabled).toBe(true);
+  expect(saveFor("Summary").disabled).toBe(true);
   act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "first", label: "First Auto" }} />));
   expect(container.textContent).not.toContain("selected edition changed");
   expect(container.querySelector("textarea")?.value).toBe("Keep this wording.");
@@ -275,11 +414,14 @@ it("shows a mirrored skill once in the contextual document while keeping its old
       { type: "skill", id: targets.sections[0]!.skillIds[0], label: "Operations · skill 1", sourceText: "Planning", entryId: "skill:ops" }]}
     refinements={[]} />));
   const contextual = [...container.querySelectorAll("section[data-cv-source-entry]")];
-  expect(contextual.find(row => row.textContent?.includes("Heading · Operations"))?.textContent)
+  expect(contextual.find(row => row.textContent?.includes("Heading"))?.textContent)
     .not.toContain("Operations · heading · Operations");
   expect(contextual.filter(row => row.textContent?.includes("Planning"))).toHaveLength(1);
   expect(contextual.some(row => row.textContent?.includes("Operations · skill 1"))).toBe(true);
-  const advanced = container.querySelector("details select")!;
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
+  const advanced = [...container.querySelectorAll("select")].find(select =>
+    select.closest("label")?.textContent?.includes("Choose saved target"))!;
   expect(advanced.textContent).toContain("Operations · bullet 1");
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
   act(() => { (advanced as HTMLSelectElement).value = "2"; advanced.dispatchEvent(new Event("change", { bubbles: true })); });
@@ -304,10 +446,82 @@ it("updates an existing remembered item order by its stable rule ID", async () =
     source={{ kind: "baseline", id: "baseline", label: "Auto" }} sourceContent={content} sourceTargets={targets}
     targets={[{ type: "summary", id: targets.summaryId, label: "Summary", sourceText: content.summary }]}
     refinements={[rule]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
   act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Edit this")!.click());
   const save = [...container.querySelectorAll("button")].find(button => button.textContent === "Update order · free")!;
   await act(async () => save.click());
   expect(saveCvRefinement).toHaveBeenCalledWith("context", 1, expect.objectContaining({
     id: rule.id, kind: "structured", structured: rule.structured,
   }));
+});
+
+it("saves a bullet title by the same target, keeps it on failure and clears it after the child arrives", async () => {
+  const bulletId = "2f43b6f0-e198-4cf6-b0fe-cb08a2760794";
+  const summary = { type: "summary" as const, id: existing.target.id, label: "Summary", sourceText: "Summary" };
+  const bullet = { type: "bullet" as const, id: bulletId, label: "Experience · bullet 1",
+    sourceText: "Reduced backlog by 20%", sourceSignpost: "Delivery", proseBullet: true, entryId: "role" };
+  vi.mocked(saveAndUpdateCvExactRefinement).mockResolvedValueOnce({ ok: false, error: "Please retry." })
+    .mockResolvedValueOnce({ ok: true, version: 2, draftId: "child", revision: 2, charged: false })
+    .mockResolvedValueOnce({ ok: true, version: 3, draftId: "next", revision: 3, charged: false });
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
+    source={{ kind: "baseline", id: "baseline", label: "Auto" }} targets={[summary, bullet]} refinements={[]} />));
+  const title = container.querySelector<HTMLInputElement>(`#cv-refine-title-${bulletId}`)!;
+  const body = fieldFor(bulletId);
+  expect(title.value).toBe("Delivery");
+  expect(saveFor(bullet.label)).toBeUndefined();
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  act(() => { setter.call(title, "Impact"); title.dispatchEvent(new Event("input", { bubbles: true })); });
+  expect(saveFor(bullet.label).disabled).toBe(false);
+  await act(async () => saveFor(bullet.label).click());
+  expect(title.value).toBe("Impact");
+  expect(container.textContent).toContain("Please retry.");
+  await act(async () => saveFor(bullet.label).click());
+  const calls = vi.mocked(saveAndUpdateCvExactRefinement).mock.calls;
+  expect(calls[0]?.[3]).toMatchObject({ target: { type: "bullet", id: bulletId },
+    text: "Reduced backlog by 20%", bulletSignpost: "Impact" });
+  expect(calls[0]?.[3].requestKey).toBe(calls[1]?.[3].requestKey);
+  expect(title.disabled).toBe(true);
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={2}
+    source={{ kind: "draft", id: "child", revision: 2, label: "Current", autoOrigin: true }}
+    targets={[summary, { ...bullet, sourceSignpost: "Impact" }]} refinements={[]} />));
+  expect(title.value).toBe("Impact");
+  expect(title.disabled).toBe(false);
+  act(() => { setter.call(title, ""); title.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => saveFor(bullet.label).click());
+  expect(vi.mocked(saveAndUpdateCvExactRefinement).mock.calls[2]?.[3]).toMatchObject({
+    target: { type: "bullet", id: bulletId }, text: body.value, bulletSignpost: null,
+  });
+});
+
+it("retains an unsaved bullet title while its instruction is selected and the source changes", () => {
+  const bullet = { type: "bullet" as const, id: "2f43b6f0-e198-4cf6-b0fe-cb08a2760794",
+    label: "Experience bullet", sourceText: "Saved body", sourceSignpost: "Saved title", proseBullet: true };
+  const props = { contextId: "context", initialVersion: 1, targets: [bullet], refinements: [] as CvRefinementV1[] };
+  act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "first", label: "First" }} />));
+  const title = container.querySelector<HTMLInputElement>(`#cv-refine-title-${bullet.id}`)!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(title, "My title");
+    title.dispatchEvent(new Event("input", { bubbles: true })); });
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Remembered choices")!.click());
+  act(() => root.render(<CvRefineMode {...props} source={{ kind: "baseline", id: "second", label: "Second" }} />));
+  expect(container.textContent).toContain("Restore original saved edition");
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Edit document")!.click());
+  expect(container.querySelector<HTMLInputElement>(`#cv-refine-title-${bullet.id}`)?.value).toBe("My title");
+  expect(container.querySelector('[data-cv-mode-dirty="true"]')).not.toBeNull();
+});
+
+it("opens an unapplied remembered bullet with its saved title, not the source title", () => {
+  const bulletId = "2f43b6f0-e198-4cf6-b0fe-cb08a2760794";
+  const rule: CvRefinementV1 = { ...existing, target: { type: "bullet", id: bulletId },
+    text: "Remembered body", bulletSignpost: "Remembered title" };
+  act(() => root.render(<CvRefineMode contextId="context" initialVersion={1}
+    source={{ kind: "baseline", id: "baseline", label: "Auto" }}
+    targets={[{ type: "bullet", id: bulletId, label: "Experience bullet", sourceText: "Source body",
+      sourceSignpost: "Source title", proseBullet: true }]} refinements={[rule]} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Remembered choices")!.click());
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Edit")!.click());
+  expect(container.querySelector<HTMLInputElement>(`#cv-refine-title-${bulletId}`)?.value).toBe("Remembered title");
+  expect(fieldFor(bulletId).value).toBe("Remembered body");
 });

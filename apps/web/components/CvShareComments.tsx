@@ -14,7 +14,6 @@ import type { CvContent } from "@col/core/cv";
 import { resolveCvShareComment } from "@/app/actions/cv-share";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
-import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvContentBlockLink } from "@/components/CvWorkspace";
 import { cvShareAnchorLabel } from "@/lib/cv-share";
 import { pluralize, relativeTime } from "@/lib/format";
@@ -43,10 +42,9 @@ export function CvShareComments({
       <p className="text-14">
         {openCount
           ? `${openCount} open ${pluralize(openCount, "note")} of ${comments.length}.`
-          : `All ${comments.length} ${pluralize(comments.length, "note")} resolved.`}{" "}
-        Notes are what a reader typed. Nothing here is sent to a model or added to Experience.
+          : `All ${comments.length} ${pluralize(comments.length, "note")} resolved.`}
       </p>
-      <CvDisclosure label={`comments (${comments.length})`}>
+      <div aria-label={`Reader comments (${comments.length})`}>
         <ul className="divide-y divide-line-muted border border-line-muted">
           {comments.map((comment) => (
             <li key={comment.id} className="space-y-2 p-3">
@@ -74,7 +72,7 @@ export function CvShareComments({
             </li>
           ))}
         </ul>
-      </CvDisclosure>
+      </div>
     </section>
   );
 }

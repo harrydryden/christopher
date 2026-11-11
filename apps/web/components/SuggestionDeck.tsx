@@ -278,18 +278,16 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
       {recovery && <a href={recovery.href} className="inline-flex min-h-11 items-center text-13 underline">{recovery.label}</a>}
       {notice && <p role="status" className="text-14 text-ok">{notice}</p>}
 
-      <details className="border-t border-line-muted pt-3">
-        <summary className="cursor-pointer py-1 text-12 text-muted underline">Dismiss with a reason…</summary>
+      <section className="border-t border-line-muted pt-3">
         <form
           className="mt-2 grid gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!reason.trim()) { setError("Give a brief reason, or swipe left to dismiss without one."); return; }
             decide("left");
           }}
         >
           <label className="grid gap-1.5">
-            <span className={labelClass}>Why not {current.name}?</span>
+            <span className={labelClass}>Reason for dismissing (optional)</span>
             <textarea
               name="reason"
               value={reason}
@@ -302,7 +300,7 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
           </label>
           <div><Button className="min-h-11" type="submit" size="sm" disabled={disabled || busyHere}>Dismiss</Button></div>
         </form>
-      </details>
+      </section>
     </section>
   );
 }

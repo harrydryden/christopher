@@ -3,12 +3,13 @@ export * from "./cv-writing-preferences";
 import { CV_LIMITS, CV_SKILL_GUIDANCE } from "./cv-format";
 export * from "./cv-format";
 import { z } from "zod";
+import { CareerCvChoiceOverrideSchema } from "./career-record";
 
 import { CvThemeSchema, DEFAULT_CV_THEME } from "./cv-theme";
 export * from "./cv-theme";
 import {
   CONTACT_LINE_LIMIT, EMAIL, EVIDENCE_FACETS, contactLine, companyForEntry, consolidateExperience,
-  eligibleCvEvidence, employmentCompanyGroups, employmentHeading, employmentKey, evidenceHeading,
+  eligibleCvEvidence, employmentCompanyGroups, employmentHeading, evidenceHeading,
   industryDescriptions, isActiveEvidence, normalise, responsibilityRows, type EvidenceFacet,
 } from "./cv-helpers";
 // The zod-free helpers, re-exported so every server caller keeps one import. `EMAIL`, `normalise`
@@ -28,7 +29,7 @@ const skillItemsSchema = (max: number) => z.array(skillItemSchema).min(1).max(ma
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
 const SkillItemsSchema = skillItemsSchema(CV_SKILL_GUIDANCE.libraryPerSection);
 const GeneratedSkillItemsSchema = skillItemsSchema(CV_LIMITS.skillsPerSection);
-const BulletSignpostSchema = z.string().trim().min(1).max(60)
+export const BulletSignpostSchema = z.string().trim().min(1).max(60)
   .refine(value => !/[\r\n]/.test(value), "Keep each competency signpost on one line.").nullable();
 const signpostsMatchBullets = (section: { bullets: string[]; bulletSignposts?: Array<string | null> }) =>
   section.bulletSignposts === undefined || section.bulletSignposts.length === section.bullets.length;
@@ -130,7 +131,25 @@ export const CvEntrySchema = z.object({
   employmentId: z.string().min(1).max(100).optional(),
   roleId: z.string().min(1).max(100).optional(),
 });
+/** Public display labels only; private career narratives never enter a CV snapshot through this map. */
+export const CvCareerDisplaySchema = z.object({
+  recordId: z.string().min(1).max(100),
+  kind: z.enum(["role", "engagement", "project", "contribution", "qualification", "learning", "skill", "other"]),
+  title: z.string().max(250), organisationLabel: z.string().max(250).nullable(),
+  dates: z.object({ start: z.string().nullable(), end: z.string().nullable(), current: z.boolean() }),
+  publicLabel: z.string().max(250).nullable(), groupRecordId: z.string().max(100).nullable(),
+});
+const CareerProjectionSchema = z.object({
+  version: z.number().int().nonnegative(), presentation: z.enum(["chronological", "project", "hybrid"]),
+  // IDs only: disputed statements must never leak into the model's source material through metadata.
+  conflictChoices: z.array(CareerCvChoiceOverrideSchema).max(100).optional(),
+  display: z.record(z.string(), CvCareerDisplaySchema),
+  sourceMap: z.record(z.string(), z.object({ recordId: z.string(), recordRevision: z.number().int().positive(),
+    assertionId: z.string().nullable(), assertionRevision: z.number().int().positive().nullable(), publicText: z.boolean(),
+    origin: z.literal("accepted_suggestion").optional() })),
+});
 export const CvLibrarySchema = z.object({
+  careerProjection: CareerProjectionSchema.optional(),
   name: z.string().trim().min(1).max(120),
   /** Other contact details: the one free-text line every library had before the fields below. */
   contact: z.string().trim().max(500),
@@ -159,7 +178,6 @@ export const CvLibrarySchema = z.object({
   if (contactLine(library).length > CONTACT_LINE_LIMIT) ctx.addIssue({ code: "custom", path: ["contact"], message: `Shorten the contact details so they fit on one line of ${CONTACT_LINE_LIMIT} characters.` });
   if (library.employment) {
     if (new Set(library.employment.map(job => job.id)).size !== library.employment.length) ctx.addIssue({ code: "custom", message: "Employment IDs must be unique." });
-    if (new Set(library.employment.map(employmentKey)).size !== library.employment.length) ctx.addIssue({ code: "custom", message: "This company, job title and date range already exist in employment history." });
   }
   if (library.structuredExperience) {
     const jobs = new Set<string>();
@@ -203,7 +221,7 @@ export const CvContentSchema = z.object({
   linkedinUrl: LinkedInSchema,
   websiteUrl: WebsiteSchema,
   name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters), summarySources: z.array(CvStoredSourceIdSchema).max(8).optional(),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSignposts: z.array(BulletSignpostSchema).max(CV_LIMITS.bulletsPerSection).optional(), bulletSources: z.array(z.array(CvStoredSourceIdSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, career: CvCareerDisplaySchema.optional(), skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSignposts: z.array(BulletSignpostSchema).max(CV_LIMITS.bulletsPerSection).optional(), bulletSources: z.array(z.array(CvStoredSourceIdSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })
     .refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")
     .refine(section => signpostsMatchBullets(section), "Give one signpost slot per bullet.")
     .refine(section => section.kind !== "skill" || !section.bulletSignposts?.some(Boolean), "Competency signposts belong to prose bullets only.")).min(1).max(CV_LIMITS.sections),
@@ -237,21 +255,31 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
       if (!stored) throw new Error("CV contains an industry description not in employment history");
       return stored;
     }))];
-    return [entry.id, { ...section, ...(selectedSkills ? { skillItems: selectedSkills } : {}), ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
+    return [entry.id, { ...section, ...(selectedSkills ? { skillItems: selectedSkills } : {}), ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), ...(library.careerProjection?.display[entry.id] ? { career: library.careerProjection.display[entry.id] } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
   }));
-  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: contactLine(library), linkedinUrl: library.linkedinUrl, websiteUrl: library.websiteUrl, summary: plan.summary, summarySources: plan.summarySources,
-    sections: library.entries.flatMap(e => selected.has(e.id) ? [selected.get(e.id)!] : []), gaps: plan.gaps });
+  const theme = library.careerProjection ? { ...(library.theme ?? DEFAULT_CV_THEME), experienceLayout: library.theme?.experienceLayout ?? library.careerProjection.presentation } : library.theme ?? DEFAULT_CV_THEME;
+  return CvContentSchema.parse({ theme, name: library.name, contact: contactLine(library), linkedinUrl: library.linkedinUrl, websiteUrl: library.websiteUrl, summary: plan.summary, summarySources: plan.summarySources,
+    sections: library.careerProjection ? plan.sections.map(section => selected.get(section.entryId)!)
+      : library.entries.flatMap(e => selected.has(e.id) ? [selected.get(e.id)!] : []), gaps: plan.gaps });
 }
 
 
 /** Keep the stored library granular; give generation one evidence set per explicit role. */
+const EMPTY_CV_EXPERIENCE = "Add at least one work detail to Experience before building a CV.";
+
+/** Historical failures keep their recovery path after the confirmation vocabulary is retired. */
+export function isEmptyCvExperienceError(error: unknown): boolean {
+  return error instanceof Error && (error.message === EMPTY_CV_EXPERIENCE ||
+    error.message.startsWith("Confirm at least one responsibility or outcome"));
+}
+
 export function groupCvLibrary(library: CvLibrary): CvLibrary {
   CvLibrarySchema.parse(library);
   const eligible = library.entries.flatMap(entry => {
     const usable = eligibleCvEvidence(entry);
     return usable && (!entry.roleId || library.entries.some(parent => parent.id === entry.roleId && isActiveEvidence(parent))) ? [usable] : [];
   });
-  if (!eligible.length) throw new Error("Confirm at least one responsibility or outcome in a job's evidence, then save your library before building a CV.");
+  if (!eligible.length) throw new Error(EMPTY_CV_EXPERIENCE);
   library = { ...library, employment: library.employment?.filter(job => eligible.some(entry => entry.employmentId === job.id)), entries: eligible };
   if (library.employment !== undefined) {
     const experience = employmentCompanyGroups(library.employment).flatMap(group => group.jobs).flatMap(job => {
@@ -269,12 +297,12 @@ export function groupCvLibrary(library: CvLibrary): CvLibrary {
   }) };
 }
 
-/** Review can report missing evidence for Manual prose; generation still requires confirmed rows. */
+/** Review can report missing evidence for Manual prose; generation still needs usable source details. */
 export function cvReviewEvidenceLibrary(library: CvLibrary): CvLibrary {
   const parsed = CvLibrarySchema.parse(library);
   try { return groupCvLibrary(parsed); }
   catch (error) {
-    if (!(error instanceof Error) || !error.message.startsWith("Confirm at least one responsibility or outcome")) throw error;
+    if (!isEmptyCvExperienceError(error)) throw error;
     // Neither unconfirmed rows nor an unattributed profile can support a factual claim.
     return { ...parsed, profile: "", employment: [], entries: [] };
   }

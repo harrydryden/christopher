@@ -8,7 +8,7 @@
  * the cursor must render only the two rows whose highlight changed — on a 50-row page, where
  * rendering all of them per key is what made typing lag on a phone.
  */
-import { act, Profiler, type ReactNode, type TdHTMLAttributes } from "react";
+import { act, Profiler, type ComponentProps, type ReactNode, type TdHTMLAttributes } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RoleCompaniesVM, RoleRowVM } from "@/lib/queries/jobs";
@@ -35,7 +35,9 @@ vi.mock("@/app/actions/cv", () => ({ requestCv: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: ReactNode; href: string }) => <a href={href}>{children}</a> }));
 
-import { RolesTable } from "./RolesTable";
+import { RolesTable as ActualRolesTable } from "./RolesTable";
+const RolesTable = (props: ComponentProps<typeof ActualRolesTable>) => <ActualRolesTable {...props}
+  initiallyExpandedId={props.initiallyExpandedId ?? props.rows[0]?.id} />;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -140,6 +142,8 @@ it("does not parse an open description again when the row around it renders", as
       cvQuote: null, cvBlocked: null, archiveNotes: [],
     },
   });
+  await act(async () => root.render(<RolesTable key="description-loaded" rows={ROWS} companies={COMPANIES}
+    keyboard emptyState={<p>Nothing</p>} />));
   await act(async () => { press("s"); await Promise.resolve(); });
   expect(container.querySelector(`#role-review-${ROWS[0]!.id} strong`)?.textContent).toBe("twelve");
   const before = parsed.runs;

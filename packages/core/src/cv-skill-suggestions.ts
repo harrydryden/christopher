@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { groupCvLibrary, isActiveStoredEvidence, type CvContent, type CvLibrary } from "./cv";
+import { groupCvLibrary, isEmptyCvExperienceError, isActiveStoredEvidence, type CvContent, type CvLibrary } from "./cv";
 import { CV_SKILL_GUIDANCE, cvSkillIdentity } from "./cv-format";
 import type { CvSkillDraftContext } from "./cv-skill-draft-context";
 
@@ -40,7 +40,7 @@ export function cvSkillEvidenceRows(library: CvLibrary): Array<{ id: string; tex
       ? (entry.confirmedResponsibilities ?? []).map((text, index) => ({ id: `entry:${entry.id}:row:${index}`, text }))
       : []);
   } catch (error) {
-    if (error instanceof Error && /Confirm at least one responsibility/.test(error.message)) return [];
+    if (isEmptyCvExperienceError(error)) return [];
     throw error;
   }
 }

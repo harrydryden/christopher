@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
+import { disposableAdmin } from "./lib/web.mjs";
 
 const require = createRequire(import.meta.url);
 require("tsx/cjs");
@@ -23,8 +24,13 @@ async function within(promise, ms, message) {
 }
 
 /** Browser → optional evidence checkpoint → immutable Library version and resumed build. */
-export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, userId) {
+export async function verifyCvTailoringWorkspace(baseUrl, _cookie, databaseUrl, _userId, secret) {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const marker = randomUUID().slice(0, 8);
+  const email = `tailoring-${marker}@col.invalid`;
+  const domain = `tailoring-${marker}.invalid`;
+  let userId;
+  let cookie;
   const answerId = randomUUID();
   const skipId = randomUUID();
   let browser;
@@ -51,6 +57,8 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
   const originalSnapshot = JSON.stringify(library);
 
   try {
+    ({ userId, cookie } = await disposableAdmin(pool, { email, name: "Synthetic Tailoring Candidate",
+      domain, companyName: "Tailoring Smoke", secret, userAgent: "smoke-cv-tailoring" }));
     const latest = await pool.query("select coalesce(max(version), 0)::int version from cv_libraries where user_id = $1", [userId]);
     baseVersion = Number(latest.rows[0].version) + 1;
     quiz.libraryVersion = baseVersion;
@@ -102,14 +110,18 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/optional-evidence-mobile.png", fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "the quiz must fit a phone viewport");
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole("textbox", { name: "Your answer", exact: true }).fill("Launched the service in France and reached the first 40 customers.");
+    await page.getByRole("textbox", { name: "Your answer (optional)", exact: true }).fill("Launched the service in France and reached the first 40 customers.");
     const destination = page.getByRole("combobox", { name: "Save this evidence under", exact: true });
     await destination.selectOption("employment:tailoring-job");
-    await page.getByRole("button", { name: "Use my answer as written", exact: true }).first().click();
-    assert.equal(await page.getByRole("textbox", { name: "Wording to save", exact: true }).inputValue(), "Launched the service in France and reached the first 40 customers.");
-    await page.getByRole("button", { name: "Confirm for Operations Director", exact: true }).click();
-    await page.getByRole("button", { name: "Save evidence and continue", exact: true }).click();
-    await page.waitForURL(url => url.pathname.startsWith("/cv/") && !url.pathname.endsWith(answerId));
+    assert.equal(await page.getByRole("button", { name: "Confirm for Operations Director", exact: true }).count(), 0,
+      "a user-authored answer needs no second confirmation");
+    await page.getByRole("button", { name: "Save facts and continue", exact: true }).click();
+    try {
+      await page.waitForURL(url => url.pathname.startsWith("/cv/") && !url.pathname.endsWith(answerId), { timeout: 15_000 });
+    } catch {
+      const alerts = await page.getByRole("alert").allTextContents();
+      throw new Error(`Direct quiz continuation stayed at ${page.url()}; alerts: ${JSON.stringify(alerts)}`);
+    }
     const continuationId = new URL(page.url()).pathname.split("/").pop();
     const answered = await pool.query(
       `select d.library_snapshot, d.archived_at, d.gap_quiz,
@@ -151,34 +163,29 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     await page.getByRole("tabpanel", { name: "Review" }).getByRole("link", { name: "Open the continuing CV build" }).click();
     await page.waitForURL(url => url.pathname === `/cv/${continuationId}`);
 
-    // The newest Library renders the evidence and its tag as cells in the same row.
-    await page.goto(`${baseUrl}/library`);
-    await page.getByRole("tab", { name: "Work history", exact: true }).click();
-    await page.getByText("Edit evidence rows directly · 2/20", { exact: true }).click();
-    const evidenceInput = page.getByRole("textbox", { name: /Synthetic Works Operations Director evidence 2/ });
-    await evidenceInput.waitFor();
-    const evidenceRow = evidenceInput.locator("xpath=ancestor::tr");
-    // The row's Type is one dropdown that takes several types at once: a menu button that opens the six types.
-    assert.equal(await evidenceRow.getByRole("button", { name: "Type of row 2", exact: true }).count(), 1);
-    assert.equal(await evidenceRow.getByRole("button", { name: /Remove Synthetic Works Operations Director evidence 2/ }).count(), 1);
-    await evidenceRow.scrollIntoViewIfNeeded();
+    // The answered fact is now a directly usable Career assertion on the owned migrated Work
+    // record. The old job link resolves to that record rather than opening a second editor.
+    const careerFact = await pool.query(`select id, subject_id, status, provenance->>'kind' as source
+      from career_assertions where user_id = $1 and text = $2`,
+      [userId, "Launched the service in France and reached the first 40 customers."]);
+    assert.equal(careerFact.rows.length, 1, "the answer is captured once as a career fact");
+    assert.equal(careerFact.rows[0].status, "usable");
+    assert.equal(careerFact.rows[0].source, "direct_user");
+    await page.goto(`${baseUrl}/library?job=tailoring-job`);
+    const career = page.getByRole("region", { name: "Career record" });
+    await career.getByRole("heading", { name: "Operations Director", exact: true }).waitFor();
+    const savedFacts = await career.getByRole("textbox", { name: "Saved detail", exact: true }).all();
+    assert.ok((await Promise.all(savedFacts.map(field => field.inputValue()))).includes(
+      "Launched the service in France and reached the first 40 customers."));
+    assert.equal(await career.getByRole("button", { name: "Confirm all", exact: true }).count(), 0);
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/library-evidence-desktop.png", fullPage: true });
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/library-mobile-layout.png", fullPage: true });
-    if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) {
-      console.error("Mobile overflow", await page.evaluate(() => [...document.querySelectorAll("body *")]
-        .filter(element => element.getBoundingClientRect().right > innerWidth + 1)
-        .slice(0, 18).map(element => ({ tag: element.tagName, class: element.className,
-          right: element.getBoundingClientRect().right, overflow: getComputedStyle(element).overflowX }))));
-    }
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "the Library page must not overflow a phone viewport");
-    await evidenceRow.scrollIntoViewIfNeeded();
-    const rowScroller = evidenceRow.locator("xpath=ancestor::div[contains(@class,'overflow-x-auto')]");
-    assert.ok((await rowScroller.evaluate(element => element.scrollWidth >= element.clientWidth)), "the evidence table must remain usable through its own horizontal scroller");
-    const mobileTag = evidenceRow.locator('button[aria-label="Type of row 2"]');
-    assert.equal(await mobileTag.isEnabled(), true);
-    await mobileTag.focus();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "the Career page must not overflow a phone viewport");
+    const mobileFact = career.getByRole("textbox", { name: "Saved detail", exact: true }).last();
+    const mobileBox = await mobileFact.boundingBox();
+    assert.ok(mobileBox && mobileBox.width >= 44 && mobileBox.height >= 44, "saved career facts remain usable on a phone");
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/library-evidence-mobile.png", fullPage: true });
     await page.setViewportSize({ width: 1440, height: 1000 });
 
@@ -259,9 +266,11 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     console.log("  CV tailoring browser flow passed: optional quiz, confirmed Library version, immutable snapshot, continuation, skip resume, narrative, dashboard state, and responsive same-row evidence tags");
   } finally {
     await browser?.close();
-    await pool.query("delete from tasks where payload->>'userId' = $3 or payload->>'draftId' in (select id::text from cv_drafts where id in ($1, $2) or parent_id in ($1, $2))", [answerId, skipId, userId]);
-    await pool.query("delete from cv_drafts where id in ($1, $2) or parent_id in ($1, $2)", [answerId, skipId]);
-    if (baseVersion) await pool.query("delete from cv_libraries where user_id = $1 and version >= $2", [userId, baseVersion]);
+    if (userId) {
+      await pool.query("delete from tasks where payload->>'userId' = $3 or payload->>'draftId' in (select id::text from cv_drafts where id in ($1, $2) or parent_id in ($1, $2))", [answerId, skipId, userId]);
+      await pool.query("delete from users where id = $1", [userId]);
+    }
+    await pool.query("delete from companies where domain = $1", [domain]);
     await pool.end();
   }
 }

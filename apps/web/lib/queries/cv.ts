@@ -159,10 +159,11 @@ const buildCvDraftColumns = {
   pendingSkillProposals: cvDrafts.pendingSkillProposals,
   semanticAuditCache: cvDrafts.semanticAuditCache,
 };
-const legacyEditingFields = { contextId: null, descriptionVersionId: null, editingMode: null,
+const legacyEditingFields = { contextId: null, opportunityId: null, descriptionVersionId: null, editingMode: null,
   autoBaselineId: null, editingTargets: null, appliedRefinements: null,
   refinementSnapshot: null, refinedResultKey: null, refinementSourceContent: null,
-  refinementSourceTargets: null, refinementEngineContract: null, refinementOriginKind: null } as const;
+  refinementSourceTargets: null, refinementEngineContract: null, refinementOriginKind: null,
+  careerVersion: null, careerSourceMap: null, careerDisplay: null, careerPresentation: null } as const;
 
 /** One account's draft by id, or null when it belongs to someone else. */
 export async function getOwnCvDraft(userId: string, id: string): Promise<typeof cvDrafts.$inferSelect | null> {

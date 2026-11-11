@@ -7,7 +7,7 @@ This is the cross-product state review accompanying ADR 0005. It separates the u
 - Keep three primary destinations: Find roles, Applications and Experience. Following/discovery sit within Find roles; search learning sits within Preferences.
 - A state tells the person what is available now and the next useful action. Detail explains a refusal only when it affects that action.
 - Show existing results during refresh. Distinguish queued work, active work, a decision waiting for the person and a recoverable failure. Never invent a progress percentage.
-- Keep user-owned decisions separate from processing: shortlist, confirm evidence, approve a CV and record submission are explicit actions.
+- Keep user-owned decisions separate from processing: shortlist, save career facts, approve a CV and record submission are explicit actions.
 - A partial result is usable with its limitation visible. Do not label missing information as an empty result or silently replace a saved document.
 - Put recovery beside the failed item. Provider, queue and infrastructure diagnostics belong in Operations, not member-facing error copy.
 - Warnings guide; they do not veto a renderable CV that the owner deliberately approves. Ownership, invalid data, stale saves and running-build conflicts remain technical guards.
@@ -19,7 +19,7 @@ The tables describe the intended contract, including existing behaviour that mus
 | Job / destination | State | User sees | Primary action / next transition | Recovery and preserved data |
 | --- | --- | --- | --- | --- |
 | Find suitable roles / Matches | No preferences yet | A short filter setup, not an apparently empty search | Save filters → matching can run | Preserve entered values on refusal |
-| Find suitable roles / Matches | No followed sources | Empty state with a route into discovery | Follow a company | Keep filters |
+| Find suitable roles / Matches | No followed sources | Private career-based catalogue recommendations where available, otherwise an honest empty state | Discover matching roles or follow a company | Keep filters; no follow is required to see eligible catalogue matches |
 | Find suitable roles / Matches | Loading or refreshing | Existing rows plus quiet activity; first load uses a stable placeholder | Review available rows | A failed refresh retains prior rows and the last successful check |
 | Find suitable roles / Matches | No matching roles | No matches for the current filters | Adjust filters; Following is secondary | Distinguish zero matches from unavailable source data |
 | Find suitable roles / Matches | Results ready | Role, employer, relevant status and shortlist control | Shortlist → Applications | Dismiss and archive remain reversible where supported |
@@ -36,9 +36,9 @@ The tables describe the intended contract, including existing behaviour that mus
 | Bring an external role / Add a role | Ready for confirmation | Editable role details | Confirm → saved opportunity | Confirmation does not submit an application |
 | Maintain facts / Experience | No evidence | One import chooser and manual entry | Import a source | LinkedIn is an export upload or pasted text, never an implied URL ingestion |
 | Maintain facts / Experience | Upload/import processing | Source name and current import state | Continue other work | A saved import can be reopened |
-| Maintain facts / Experience | Proposals ready | Proposed facts, duplicates/conflicts and source | Confirm selected facts → new library version | Unselected/unconfirmed material is not usable evidence |
-| Maintain facts / Experience | Import failed | Source-specific retry or correction | Retry, replace input or dismiss | Keep existing confirmed evidence and unsaved review choices |
-| Maintain facts / Experience | Confirmed | Editable reusable facts with source/provenance | Save evidence | A change offers a new CV build; it does not rewrite existing CVs |
+| Maintain facts / Experience | Imported rows ready | Selected source rows and provenance | Add selected rows once → saved career record | Unselected/model-only suggestions are not promoted; no second confirmation |
+| Maintain facts / Experience | Import failed | Source-specific retry or correction | Retry, replace input or dismiss | Keep saved Experience and unsaved choices |
+| Maintain facts / Experience | Saved | Editable reusable facts with source/provenance | Edit or add detail | User facts are usable by default; changing them does not rewrite existing CVs |
 | Prepare an application / CV | No saved CV | Auto and Manual entry, with cost clear | Build Auto or start Manual | No compulsory questionnaire before the first usable CV |
 | Prepare an application / Auto | Queued/working | Progress distinct from the selected saved version | Continue editing/reviewing a saved version | Completion makes a result available without taking over the editor |
 | Prepare an application / Auto | Same inputs | Existing baseline | Open/use saved result | No new credit, task or generation |
@@ -67,7 +67,7 @@ The tables describe the intended contract, including existing behaviour that mus
 | Refine | Translating a target dropdown and generic structured payload into the actual document | Select the visible item; show what is remembered and reset it beside that item |
 | Source updates | Discovering a conflict only after asking to generate | Preview changed role/evidence and compatible/conflicting choices before applying them |
 | Comparison | Reading two documents to infer omissions and choices | Explicit added/removed/changed/order/priority/layout differences |
-| Evidence import | Several entry forms appear to promise different ingestion behaviours | One source chooser leading to the same proposal/confirmation lifecycle |
+| Evidence import | Several entry forms appear to promise different ingestion behaviours | One source chooser leading to the same selected-row save lifecycle |
 | Following | Operational scan states compete with the person's role-discovery goal | Company row leads with roles available and one actionable issue; diagnostics stay secondary |
 | Applications | CV progress and application stage can be mistaken for the same state | Separate preparation from explicit submission/outcome while retaining one opportunity row |
 
@@ -123,3 +123,30 @@ Ask representative users to complete these tasks without narrating the interface
 5. Resolve one changed-source refinement, reset another, and finalise despite an acknowledged warning.
 
 Record completion without help, wrong turns, help requests, time to first usable CV, whether an unintended build/credit occurs, and whether the participant correctly identifies the current final document and the scope of each edit. Analyse errors individually rather than presenting a small sample as a population success rate. Automated browser acceptance and local timings must remain separate from these human observations. No participants or results are claimed by this document.
+
+
+## Approved role access and direct editing follow-up (ADR 0008)
+
+Contract: [ADR 0008](../adr/0008-role-entitlements-and-contextual-editing.md). The following changes are implemented and locally exercised by the production-browser and automated checks recorded in ADR 0008. Hosted checks and the strict live prompt qualification gate remain pending; human comprehension is untested. These changes supersede disclosures and confirmation wording in older rows where inconsistent.
+
+| Task | Visible surface and next action | Accounting and recovery |
+| --- | --- | --- |
+| Start a role | Role identity, existing access or one-credit first AI request | Duplicate owned catalogue-role contexts share access; Manual starts free |
+| Edit the current CV | One Current CV, mode/save state, directly editable text and visible layout controls | Exact Save is free; Auto remains immutable; dirty buffers survive navigation |
+| Ask for writing help | Visible pixel star; dark tooltip “Help me write”; three-action menu only | Quote correction/refinement/tailoring units, or first-role credit, before request |
+| Review a suggestion | Inline before/after, Use change and Dismiss | Successful generation uses the quoted charge; acceptance is free; stale targets cannot be overwritten |
+| Update source or whole CV | Named source-update task showing actual changes and cost | Existing role uses editing allowance; cached results free; old editions preserved |
+| Inspect history/compare/remembered choices | Named task destination with clear return to current document | No duplicated hidden baseline/edition lists; return preserves dirty state |
+| Maintain Experience | Visible records, factual fields, public/private controls and tags | Durable factual save free; no new Experience AI tool in this phase |
+| Review Experience differences | Persistent local review destination and quiet account count | No mass acknowledgement or mandatory resolution gate |
+| Track an application | Opportunity, selected CV, stage and next action | Preparing/payment never means Submitted |
+| Allowance exhausted | Always-visible session and weekly bars with exact resets; free controls remain usable | No forced purchase/check; saves, export and valid unchecked finalisation continue |
+| Work fails/cancels | Local Retry/status and intact original content | Failed system work does not consume quota; retry identity prevents duplicate charge |
+
+No accordions, `details`, “More options” or explainer paragraphs remain in the scoped CV, Experience, Applications and opportunity preparation surfaces. Essential controls remain visible; infrequent controls move to clearly named task screens. The writing menu is the explicit exception. Admin screens are not part of this redesign.
+
+The local validation covers Manual-based AI, duplicate role accounting, successive direct edits, scoped tool requests, accepting/dismissing/stale suggestions, quota with continued free saving, source/history/reset handovers, 390 px/320 px writing controls and unchanged final PDF bytes; see ADR 0008 for exact suite scope and broad-run exceptions. Compare completion steps and wrong turns in a later real-person study; no comprehension claims follow from automated browser results.
+
+## Shared frontend interaction follow-up
+
+The [design system](../DESIGN-SYSTEM.md) now defines the common task-navigation and save-state contracts used across the CV and Experience workspaces. Local tasks share keyboard navigation and linked panels while retaining unsent input. Save acknowledgement refers to the submitted snapshot; subsequent edits remain visibly unsaved. Phone layouts preserve readable source text as well as containing controls within the viewport. These changes consolidate the existing tasks rather than changing their AI, credit, evidence or finalisation policies. Human task comprehension remains to be evaluated with the protocol above.

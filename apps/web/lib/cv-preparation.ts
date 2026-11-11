@@ -5,7 +5,7 @@ import type { CvAssessment } from "@col/core/cv-assessment";
 import type { LibraryProposal } from "@col/core/library-import";
 import { cvClaimItems } from "@col/core/cv-assessment";
 import { cvQuoteIsAnchored } from "@col/core/cv-review";
-import { cvSectionHeading, cvSectionTexts, cvSupportingTitle } from "@col/core/cv-format";
+import { cvDisplayGroups, cvSectionHeading, cvSectionTexts, cvSupportingTitle } from "@col/core/cv-format";
 
 const identity = (value: string) => value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase("en-GB");
 
@@ -122,8 +122,8 @@ export function cvQuickScan(content: CvContent, layout: CvPdfLayoutReport) {
   const claims = cvClaimItems(content).filter(item => onFirstPage.has(item.id));
   const supporting = cvSupportingTitle(content.sections.map(section => section.kind));
   const printedWords = [content.name, content.contact, content.linkedinUrl ? "LinkedIn" : "",
-    content.websiteUrl ? "Website" : "", "Executive Summary", content.summary,
-    content.sections.some(section => section.kind === "experience") ? "Work experience" : "", supporting,
+    content.websiteUrl ? "Website" : "", content.summary,
+    ...cvDisplayGroups(content).filter(group => group.kind === "experience").map(group => group.title), supporting,
     ...content.sections.flatMap(section => [section.kind === "skill" ? section.heading : cvSectionHeading(section),
       ...(section.industryDescriptions ?? []), ...cvSectionTexts(section)])]
     .filter((value): value is string => !!value);

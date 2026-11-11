@@ -1,21 +1,19 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useState } from "react";
 import type { CvTheme } from "@col/core/cv-theme-values";
+import dynamic from "next/dynamic";
 import { SettingsForm } from "./SettingsForm";
 import { saveCvAppearance } from "@/app/actions/cv";
 
-const Appearance = dynamic(() => import("./CvAppearance").then(module => module.CvAppearance));
+const CvAppearance = dynamic(() => import("./CvAppearance").then(module => module.CvAppearance), {
+  loading: () => <p role="status" className="text-14 text-muted">Loading appearance controls…</p>,
+});
 
-/** Theme controls are only needed when changing the default, not on every preferences visit. */
+/** The named appearance task keeps every control available without an extra disclosure. */
 export function DefaultCvAppearance({ value }: { value: CvTheme }) {
-  const [opened, setOpened] = useState(false);
-  return <details onToggle={event => { if (event.currentTarget.open) setOpened(true); }}>
-    <summary className="min-h-11 cursor-pointer py-2 text-14 font-semibold">Default CV appearance</summary>
-    {opened && <SettingsForm action={saveCvAppearance} successMessage="Saved.">
-      <p className="mb-3 text-12 text-muted">These defaults apply to future CVs. Open a saved CV's Appearance to change that revision.</p>
-      <Appearance name="theme" value={value} />
-    </SettingsForm>}
-  </details>;
+  return <section aria-label="Default CV appearance">
+    <SettingsForm action={saveCvAppearance} successMessage="Saved.">
+      <CvAppearance name="theme" value={value} />
+    </SettingsForm>
+  </section>;
 }

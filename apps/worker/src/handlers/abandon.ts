@@ -1,10 +1,11 @@
-import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds, type Db, type ReleasedHolds } from "@col/db";
+import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds, settleCvAiUsage, type Db, type ReleasedHolds } from "@col/db";
 import { cvBuildFailure, type CvBuildFailure, type ScoreBatchRecord } from "@col/core";
 import type { AbandonHookMap, InterruptedHookMap } from "../queue";
 import { failOpenCvBuildStepsQuietly } from "./cv-journal";
 import { abandonScoreBatch } from "./score-batch-recovery";
 import { log } from "../log";
 import { sql } from "drizzle-orm";
+import { abandonCvInlineEdit } from "./cv-inline-edit";
 
 /**
  * What a CV draft is told when the worker gave up on building it. It names the number of attempts
@@ -88,12 +89,18 @@ async function isCompletedQuizPredecessor(
  * worker that ran it and, later, by a sweep that finds the row.
  */
 export const onAbandon: AbandonHookMap = {
+  edit_cv_text: abandonCvInlineEdit,
   suggest_cv_skills: async (task, deps) => {
     const runId = typeof task.payload.runId === "string" ? task.payload.runId : null;
-    if (!runId) return;
-    await deps.db.execute(sql`update cv_skill_suggestion_runs set status = 'failed',
-      error = 'Skill suggestions were interrupted. Refresh to try again.', updated_at = now()
-      where id = ${runId}::uuid and status in ('queued', 'running')`);
+    const userId = typeof task.payload.userId === "string" ? task.payload.userId : null;
+    if (!runId || !userId) return;
+    await deps.db.transaction(async tx => {
+      const closed = await tx.execute(sql`update cv_skill_suggestion_runs set status = 'failed',
+        error = 'Skill suggestions were interrupted. Refresh to try again.', updated_at = now()
+        where id = ${runId}::uuid and user_id = ${userId}::uuid and status in ('queued', 'running') returning id`);
+      if (closed.rows.length) await settleCvAiUsage(tx, { usageId: runId,
+        source: { kind: "skills_run", id: runId }, outcome: "failed" });
+    });
   },
   fetch_locations: async (task, deps, reason) => {
     const jobId = typeof task.payload.jobId === "string" ? task.payload.jobId : null;

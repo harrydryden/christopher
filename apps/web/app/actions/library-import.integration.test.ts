@@ -110,7 +110,8 @@ afterAll(async () => {
 beforeEach(async () => {
   auth.requireUser.mockReset(); auth.requireUser.mockImplementation(async () => user);
   auth.requireVerifiedUser.mockReset(); auth.requireVerifiedUser.mockImplementation(async () => auth.requireUser());
-  await database.execute(sql`truncate library_imports, cv_libraries, tasks, user_settings restart identity cascade`);
+  await database.execute(sql`truncate library_imports, cv_libraries, tasks, user_settings,
+    career_records, career_perspectives, career_changes, career_heads restart identity cascade`);
 });
 
 it("refuses a paste that is too short or too long before anything is stored", async () => {
@@ -268,7 +269,7 @@ it("asks an unverified account to confirm its email before reading anything", as
   expect(await imports()).toHaveLength(0);
 });
 
-it("adds the ticked items with their rows unconfirmed, through the Library's own save", async () => {
+it("adds selected source-backed rows as usable facts through the Library save", async () => {
   const row = await proposed();
 
   const result = await acceptProposed(row.id, form({
@@ -276,21 +277,21 @@ it("adds the ticked items with their rows unconfirmed, through the Library's own
     accept: ["job-0", "job-0-row-0", "job-0-row-1", "education-0"],
   }));
 
-  expect(result).toMatchObject({ ok: true, message: expect.stringContaining("They arrive with their rows unconfirmed") });
+  expect(result).toMatchObject({ ok: true, message: expect.stringContaining("ready to use in Experience") });
   expect((result as { message: string }).message).toContain("Added 1 job, 2 responsibilities and 1 education or training item");
   const saved = await latestLibrary();
   expect(saved!.version).toBe(1);
   const library = saved!.content;
   expect(library.employment).toMatchObject([{ company: "Acme Logistics", jobTitle: "Director of Operations", startDate: "2020-03", endDate: "2022-06" }]);
   const experience = library.entries.find(entry => entry.kind === "experience")!;
-  expect(experience.status).toBe("active");
-  expect(experience.confirmedResponsibilities ?? []).toEqual([]);
-  expect(responsibilityRows(experience.details)).toEqual([ROWS.moved, ROWS.handover]);
-  expect(library.entries.find(entry => entry.kind === "education")).toMatchObject({ status: "active", heading: "University of Leeds" });
+  expect(experience.status ?? "active").toBe("active");
+  expect(new Set(experience.confirmedResponsibilities ?? [])).toEqual(new Set([ROWS.moved, ROWS.handover]));
+  expect(new Set(responsibilityRows(experience.details))).toEqual(new Set([ROWS.moved, ROWS.handover]));
+  expect(library.entries.find(entry => entry.kind === "education")?.heading).toBe("University of Leeds");
 
-  // The import is finished with, and the save queued what any other save queues.
+  // The import is finished and its facts are usable without a paid Library review.
   expect((await getLibraryImport(database, user.id, row.id))!.resolvedAt).toBeInstanceOf(Date);
-  expect((await tasks()).map(task => task.type).sort()).toEqual(["rescore_all", "review_library"]);
+  expect((await tasks()).map(task => task.type).sort()).toEqual(["rescore_all"]);
 });
 
 it("adds only what was ticked, and refuses a form that ticked nothing", async () => {
@@ -370,9 +371,10 @@ it("adds to a library that already has the job rather than repeating it", async 
   expect(library.employment).toHaveLength(1);
   const experience = library.entries.filter(entry => entry.kind === "experience");
   expect(experience).toHaveLength(1);
-  // The confirmed row keeps its confirmation; the new one arrives beside it, unconfirmed.
-  expect(experience[0]).toMatchObject({ status: "active", confirmedResponsibilities: [ROWS.handover] });
-  expect(responsibilityRows(experience[0]!.details)).toEqual([ROWS.handover, ROWS.moved]);
+  // The original row and the newly accepted row remain usable, regardless of relevance ordering.
+  expect(experience[0]!.status ?? "active").toBe("active");
+  expect(new Set(experience[0]!.confirmedResponsibilities ?? [])).toEqual(new Set([ROWS.handover, ROWS.moved]));
+  expect(new Set(responsibilityRows(experience[0]!.details))).toEqual(new Set([ROWS.handover, ROWS.moved]));
 });
 
 it("asks for a name before writing the first library of an account that has none", async () => {

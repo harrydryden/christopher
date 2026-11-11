@@ -52,7 +52,7 @@ it("shows a free workspace entry immediately without waiting for a credit quote"
   await act(async () => resolve({ [JOB]: { line: "Uses 1 CV credit · 2 remaining", refusal: null } }));
   expect(pricing()).toBeNull();
   expect(text()).toContain("Prepare CV · free");
-  expect(text()).toContain("one CV credit only when you request it");
+  expect(text()).not.toContain("new Auto generation uses one CV credit");
 });
 
 it("allows free workspace preparation even when no CV credits remain", async () => {
@@ -75,16 +75,17 @@ it("keeps free preparation available while the credit quote never resolves", asy
   expect(text()).toContain("Prepare CV · free");
 });
 
-it("renders one expanded editor inside a mobile card, with its role context", async () => {
+it("renders one named application task on mobile, with its role context", async () => {
   vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   await act(async () => root.render(<ApplicationsTable rows={[{ ...row, jobUrl: "https://acme.example/job" }]} openKey={JOB}
     quotes={{ [JOB]: { line: "Uses 1 CV credit", refusal: null } }} emptyState={<p>Nothing</p>} />));
-  const mobile = container.querySelector('[aria-label="Applications"]')!;
+  const mobile = container.querySelector('[aria-label="Application: Operations Manager"]')!;
   expect(mobile.textContent).toContain("Operations Manager");
   expect(mobile.textContent).toContain("View vacancy");
   expect(mobile.querySelectorAll("form")).toHaveLength(1);
   expect(mobile.querySelector('textarea[placeholder^="Paste the original advert"]')).not.toBeNull();
-  expect(container.querySelectorAll(`#application-${JOB}`)).toHaveLength(1);
+  expect(container.querySelector('table')).toBeNull();
+  expect(mobile.textContent).toContain("Back to applications");
 });
 
 it("does not carry an untouched Applied date into a later status", async () => {
@@ -107,7 +108,7 @@ it("does not carry an untouched Applied date into a later status", async () => {
   expect((container.querySelector('input[name="appliedOn"]') as HTMLInputElement).value).toBe("2026-09-03");
 });
 
-it("keeps saved next steps and notes in a guided update while their fields are hidden", async () => {
+it("keeps saved next steps and notes directly editable without disclosure controls", async () => {
   const existing: PipelineRow = { ...row, stage: "applied", application: {
     id: "7ad5b760-26fb-4f30-b472-432bd33d6e6a", status: "applied", appliedOn: "2026-09-15", cvId: null,
     notes: "Spoke to recruiter", history: [], nextAction: "Send references", nextActionOn: "2026-10-08", hasPdf: false,
@@ -117,15 +118,12 @@ it("keeps saved next steps and notes in a guided update while their fields are h
   act(() => update.click());
   const form = container.querySelector<HTMLFormElement>('form[id^="application-status-"]')!;
   expect(form.parentElement?.textContent).toContain("What happened?");
-  expect(form.querySelector('input[name="nextAction"]')?.closest('[hidden]')).not.toBeNull();
+  expect(form.querySelector('input[name="nextAction"]')?.closest('[hidden]')).toBeNull();
   expect(new FormData(form).get("nextAction")).toBe("Send references");
   expect(new FormData(form).get("nextActionOn")).toBe("2026-10-08");
   expect(new FormData(form).get("notes")).toBe("Spoke to recruiter");
-  const next = [...form.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find(button => button.textContent === "Edit next step")!;
-  act(() => next.click());
   const field = form.querySelector<HTMLInputElement>('input[name="nextAction"]')!;
   act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "Call recruiter"); field.dispatchEvent(new Event("input", { bubbles: true })); });
-  act(() => [...form.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find(button => button.textContent === "Hide next step")!.click());
   expect(new FormData(form).get("nextAction")).toBe("Call recruiter");
 });
 
@@ -143,11 +141,23 @@ it("does not close an edited application without an explicit discard", async () 
   await act(async () => root.render(<ApplicationsTable rows={[row]} openKey={JOB} quotes={{}} emptyState={<p>Nothing</p>} />));
   const notes = container.querySelector<HTMLTextAreaElement>('textarea[name="notes"]')!;
   act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(notes, "Call tomorrow"); notes.dispatchEvent(new Event("input", { bubbles: true })); });
-  const title = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Operations Manager")!;
-  act(() => title.click());
+  const back = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Back to applications")!;
+  act(() => back.click());
   expect(container.querySelector('form[id^="application-status-"]')).not.toBeNull();
   expect(notes.value).toBe("Call tomorrow");
   expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("unsaved changes"));
+});
+
+it("opens a named task from the title and returns to the list without an accordion row", async () => {
+  await act(async () => root.render(<ApplicationsTable rows={[row]} quotes={{}} emptyState={<p>Nothing</p>} />));
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Operations Manager")!.click());
+  expect(container.querySelector('[aria-label="Application: Operations Manager"]')).not.toBeNull();
+  expect(container.querySelector("table")).toBeNull();
+  act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent === "Back to applications")!.click());
+  expect(container.querySelector("table")).not.toBeNull();
+  expect(container.querySelector('[aria-label="Application: Operations Manager"]')).toBeNull();
 });
 
 it("preserves a pasted advert and request key across a failed free workspace attempt", async () => {

@@ -18,6 +18,8 @@ import { CvPlanSchema, CvTailoringPlanOutputSchema, CvSkillSuggestionPlanSchema,
 import { CV_AUTHOR_PROMPT, CV_REVIEW_PROMPT, CV_RUBRIC_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import { CV_SKILL_SUGGESTION_PROMPT } from "./cv-skill-suggestion-prompt";
 import { CV_SKILL_VERIFICATION_PROMPT } from "./cv-skill-verification-prompt";
+import { CvInlineProposalSchema, CvInlineVerificationSchema } from "@col/core/cv-inline-ai";
+import { CV_INLINE_EDIT_PROMPT, CV_INLINE_VERIFY_PROMPT } from "./cv-inline-edit-prompt";
 import * as P from "./prompts";
 import * as S from "./schemas";
 
@@ -285,9 +287,15 @@ export function assertCacheLayout(id: string, layout: CacheLayout): void {
 
 export type PromptId =
   | "A1" | "A2" | "A3" | "A4" | "A5" | "A6" | "A7" | "A8" | "A9" | "A10" | "A10.sources" | "A11" | "A12" | "A13"
-  | "cv.rubric" | "cv.planning" | "cv.author" | "cv.improvement" | "cv.review" | "cv.review_candidate" | "cv.skill_suggestions" | "cv.skill_verify";
+  | "cv.rubric" | "cv.planning" | "cv.author" | "cv.improvement" | "cv.review" | "cv.review_candidate" | "cv.skill_suggestions" | "cv.skill_verify" | "cv.inline_edit" | "cv.inline_verify";
 
 export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
+  "cv.inline_edit": define({ id: "cv.inline_edit", callSite: "CV", stage: "inline_edit", system: CV_INLINE_EDIT_PROMPT,
+    schema: CvInlineProposalSchema, route: { model: "cvModel", effort: "low" }, maxTokens: 2_000,
+    timeoutMs: 60_000, priority: "interactive", expectedOutputTokens: 350 }),
+  "cv.inline_verify": define({ id: "cv.inline_verify", callSite: "CV", stage: "inline_verify", system: CV_INLINE_VERIFY_PROMPT,
+    schema: CvInlineVerificationSchema, route: { model: "cvModel", effort: "low" }, maxTokens: 512,
+    timeoutMs: 45_000, priority: "interactive", expectedOutputTokens: 50 }),
   A1: define({ id: "A1", callSite: "A1", system: P.A1_CHOOSE_CAREERS_LINKS, schema: S.CareersLinksSchema,
     route: { model: "callSite", effort: "low" }, expectedOutputTokens: 300 }),
   A2: define({ id: "A2", callSite: "A2", system: P.A2_CLASSIFY_PAGE, schema: S.PageClassificationSchema,

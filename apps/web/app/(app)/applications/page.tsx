@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { z } from "zod";
-import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@col/core";
+import { ROLE_STAGES, ROLE_STAGE_LABELS, type RoleStage } from "@col/core";
 import { ApplicationsTable } from "@/components/ApplicationsTable";
 import { CvPastedApplicationEntry } from "@/components/CvPastedApplicationEntry";
 import { AutoRefresh } from "@/components/AutoRefresh";
@@ -125,15 +125,14 @@ export default async function ApplicationsPage({
           </Link>
         ))}
       </nav>
-      <details className="text-13 text-muted">
-        <summary className="min-h-11 cursor-pointer py-2 font-medium underline">Stage breakdown</summary>
+      <nav aria-label="Application stages" className="text-13 text-muted">
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {STRIP_STAGES.map((stage) => <Link key={stage} prefetch={false} href={linkTo({ filter: "all", stage })} aria-current={stage === requestedStage && !focus ? "page" : undefined}
             className="inline-flex min-h-11 items-center underline-offset-2 hover:underline">
             {ROLE_STAGE_LABELS[stage]} <span className="ml-1 tabular-nums">{result.stages[stage]}</span>
           </Link>)}
         </div>
-      </details>
+      </nav>
       {/* A CV on this page is still being written: the cells follow it without a reload. */}
       {(building || improvingRows.length > 0) && (
         <AutoRefresh scope="cv" initialVersion={cvWork.version} message={building ? buildingMessage : improvingMessage} />
@@ -155,17 +154,6 @@ export default async function ApplicationsPage({
           label="Application pages"
         />
       )}
-      <details className="text-13 text-muted">
-        <summary className="cursor-pointer">What the stages mean</summary>
-        <dl className="mt-2 space-y-1">
-          {ROLE_STAGES.map((stage) => (
-            <div key={stage} className="flex flex-wrap gap-2">
-              <dt className="ds-pixel text-10 text-fg">{ROLE_STAGE_LABELS[stage]}</dt>
-              <dd>{ROLE_STAGE_DESCRIPTIONS[stage]}</dd>
-            </div>
-          ))}
-        </dl>
-      </details>
     </div>
   );
 }

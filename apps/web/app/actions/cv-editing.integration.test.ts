@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { createDb, grantCvCredits, publishCvAutoBaseline, schema, type Db } from "@col/db";
+import { createDb, consumeCvCredit, grantCvCredits, publishCvAutoBaseline, schema, type Db } from "@col/db";
 import { CvContentSchema, DEFAULT_CV_THEME } from "@col/core";
 import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@col/core/cv-assessment";
 import { createCvAssessment } from "@col/core/cv-review";
@@ -100,7 +100,7 @@ it("saves one exact edit on the selected Auto producer without applying a pendin
     { kind: "exact_wording", text: edit.text },
   ]);
   expect(await database.select().from(schema.tasks)).toHaveLength(1);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(1);
   expect(await saveAndUpdateCvExactRefinement(opened.contextId, instruction.version, source, edit))
     .toMatchObject({ ok: true, draftId: saved.draftId, charged: false });
   expect((await saveAndUpdateCvExactRefinement(opened.contextId, instruction.version, source,
@@ -151,7 +151,7 @@ it("saves one exact edit on the selected Auto producer without applying a pendin
   expect(fromAuto?.autoBaselineId).toBe(claimed.baselineId);
   expect(fromAuto?.content?.summary).toBe("Exact first Auto edit");
   expect(await database.select().from(schema.tasks)).toHaveLength(1);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(1);
   const generic = await saveCvRefinement(opened.contextId, fromBaseline.version, {
     id: clearedDraft!.refinementSnapshot!.at(-1)!.id, sourceKind: "baseline", sourceId: claimed.baselineId,
     kind: "exact_wording", target: edit.target, text: "A later body edit", order: 1,
@@ -209,7 +209,7 @@ it("keeps generated Refine wording and applied instruction history while an unre
   }).returning();
   expect(await selectCvEdition(opened.contextId, "draft", generated!.id)).toMatchObject({ ok: true });
   const taskCount = (await database.select().from(schema.tasks)).length;
-  const reservationCount = (await database.select().from(schema.creditReservations)).length;
+  const reservationCount = (await database.select().from(schema.cvAiUsage)).length;
   const libraryCount = (await database.select().from(schema.cvLibraries)).length;
   const saved = await saveAndUpdateCvExactRefinement(opened.contextId, pending.version,
     { kind: "draft", id: generated!.id, revision: generated!.revision }, {
@@ -227,7 +227,7 @@ it("keeps generated Refine wording and applied instruction history while an unre
     { id: child!.refinementSnapshot!.at(-1)!.id, version: 1 }]);
   expect(child?.appliedRefinements?.some(row => row.id === rules[1]!.id)).toBe(false);
   expect(await database.select().from(schema.tasks)).toHaveLength(taskCount);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(reservationCount);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(reservationCount);
   expect(await database.select().from(schema.cvLibraries)).toHaveLength(libraryCount);
 });
 
@@ -245,10 +245,10 @@ it("claims one immutable Auto build, one task and one credit for concurrent deli
   expect([a.charged, b.charged].sort()).toEqual([false, true]);
   expect(await database.select().from(schema.cvAutoBaselines)).toHaveLength(1);
   expect((await database.select().from(schema.tasks)).filter(task => task.type === "generate_cv")).toHaveLength(1);
-  expect((await database.select().from(schema.creditReservations)).filter(row => row.status === "reserved")).toHaveLength(1);
+  expect((await database.select().from(schema.cvAiUsage)).filter(row => row.status === "reserved")).toHaveLength(1);
   const reopened = await openOrClaimAutoCv(opened.contextId, "open");
   expect(reopened).toMatchObject({ ok: true, charged: false, baselineId: a.baselineId });
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(1);
   const content = CvContentSchema.parse({ name: "Ada Example", contact: "London", summary: "Operations lead",
     sections: [{ entryId: "role", kind: "experience", heading: "Operations Manager",
       bullets: ["Reduced backlog by 20%"] }], gaps: [] });
@@ -266,10 +266,11 @@ it("claims one immutable Auto build, one task and one credit for concurrent deli
     tailoringPlan: plan }));
   await database.update(schema.cvDrafts).set({ status: "ready", content, editingTargets: targets })
     .where(eq(schema.cvDrafts.id, a.draftId!));
+  await database.transaction(tx => consumeCvCredit(tx, a.draftId!));
   const completed = await openOrClaimAutoCv(opened.contextId, "update");
   expect(completed).toMatchObject({ ok: true, status: "ready", charged: false,
     baselineId: a.baselineId, draftId: a.draftId });
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(1);
   await database.insert(schema.cvLibraries).values({ userId, version: 2,
     content: { ...library, profile: "Changed profile after publication" } });
   const pinned = await openOrClaimAutoCv(opened.contextId, "open");
@@ -369,7 +370,7 @@ it("starts Manual without a task and rejects a forged legacy Save that would lea
   expect(refusal.ok).toBe(false);
   expect((await database.select().from(schema.cvLibraries)).length).toBe(0);
   expect((await database.select().from(schema.tasks)).length).toBe(0);
-  expect((await database.select().from(schema.creditReservations)).length).toBe(0);
+  expect((await database.select().from(schema.cvAiUsage)).length).toBe(0);
 });
 
 it("updates an owned Manual source exactly and rejects a foreign context without learning or billing", async () => {
@@ -403,7 +404,134 @@ it("updates an owned Manual source exactly and rejects a foreign context without
   expect(child?.content?.sections[0]?.heading).toBe("My own heading");
   expect(await database.select().from(schema.cvLibraries)).toHaveLength(0);
   expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
+});
+
+it("projects Manual-origin appearance and order twice for free from the first pinned source", async () => {
+  const opened = await context();
+  const started = await createManualCvEdition(opened.contextId, opened.descriptionVersionId);
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const [starter] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, started.draftId));
+  const original = CvContentSchema.parse({ name: "Ada Example", contact: "London", summary: "Own wording",
+    sections: [{ entryId: `manual:${crypto.randomUUID()}`, kind: "experience", heading: "Own role",
+      bullets: ["First result", "Second result"] }], gaps: [] });
+  const saved = await saveManualCvEdition(started.draftId, starter!.revision, original);
+  expect(saved.ok).toBe(true);
+  if (!saved.ok) return;
+  const [manual] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, saved.draftId));
+  await database.update(schema.users).set({ emailVerifiedAt: null }).where(eq(schema.users.id, userId));
+  const appearance = await saveCvRefinement(opened.contextId, 0, { sourceKind: "draft", sourceId: manual!.id,
+    kind: "structured", target: { type: "appearance" }, order: 0,
+    structured: { kind: "appearance", theme: { ...DEFAULT_CV_THEME, primary: "#285447" } } });
+  expect(appearance).toMatchObject({ ok: true, version: 1 });
+  if (!appearance.ok) return;
+  const first = await generateRefinedCv(opened.contextId, 1, "draft", manual!.id);
+  expect(first).toMatchObject({ ok: true, status: "ready", charged: false });
+  if (!first.ok || !first.draftId) return;
+  const [one] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, first.draftId));
+  expect(one?.content?.summary).toBe(original.summary);
+  expect(one?.content?.theme?.primary).toBe("#285447");
+  expect(one?.refinementSourceContent).toEqual(original);
+  const order = await saveCvRefinement(opened.contextId, 1, { sourceKind: "draft", sourceId: one!.id,
+    kind: "structured", target: { type: "selection" }, order: 1,
+    structured: { kind: "item_order", sectionIds: [manual!.editingTargets!.sections[0]!.sectionId],
+      itemIds: { [manual!.editingTargets!.sections[0]!.sectionId]:
+        [...manual!.editingTargets!.sections[0]!.bulletIds].reverse() } } });
+  expect(order).toMatchObject({ ok: true, version: 2 });
+  if (!order.ok) return;
+  const second = await generateRefinedCv(opened.contextId, 2, "draft", one!.id);
+  expect(second).toMatchObject({ ok: true, status: "ready", charged: false });
+  if (!second.ok || !second.draftId) return;
+  const [two] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, second.draftId));
+  expect(two?.content?.sections[0]?.bullets).toEqual(["Second result", "First result"]);
+  expect(two?.content?.theme?.primary).toBe("#285447");
+  expect(two?.refinementSourceContent).toEqual(original);
+  expect(two?.refinementSourceTargets).toEqual(manual?.editingTargets);
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
   expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+});
+
+it("keeps a prior generated instruction's wording when a later layout choice is free", async () => {
+  const opened = await context();
+  const started = await createManualCvEdition(opened.contextId, opened.descriptionVersionId);
+  if (!started.ok) throw new Error(JSON.stringify(started));
+  const [starter] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, started.draftId));
+  const original = CvContentSchema.parse({ name: "Ada Example", contact: "London", summary: "Original Manual wording",
+    sections: [{ entryId: `manual:${crypto.randomUUID()}`, kind: "experience", heading: "Own role",
+      bullets: ["One result"] }, { entryId: `manual:${crypto.randomUUID()}`, kind: "experience",
+      heading: "Earlier role", bullets: ["Another result"] }], gaps: [] });
+  const saved = await saveManualCvEdition(started.draftId, starter!.revision, original);
+  if (!saved.ok) throw new Error(JSON.stringify(saved));
+  const [manual] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, saved.draftId));
+  const instruction = await saveCvRefinement(opened.contextId, 0, { sourceKind: "draft", sourceId: manual!.id,
+    kind: "instruction", target: { type: "summary", id: manual!.editingTargets!.summaryId },
+    text: "Make the summary concise", order: 0 });
+  expect(instruction).toMatchObject({ ok: true, version: 1 });
+  if (!instruction.ok) return;
+  const secondInstruction = await saveCvRefinement(opened.contextId, 1, { sourceKind: "draft", sourceId: manual!.id,
+    kind: "instruction", target: { type: "section", id: manual!.editingTargets!.sections[0]!.sectionId },
+    text: "Emphasise this role", order: 1 });
+  expect(secondInstruction).toMatchObject({ ok: true, version: 2 });
+  if (!secondInstruction.ok) return;
+  const order = await saveCvRefinement(opened.contextId, 2, { sourceKind: "draft", sourceId: manual!.id,
+    kind: "structured", target: { type: "selection" }, order: 2,
+    structured: { kind: "item_order", sectionIds: manual!.editingTargets!.sections.map(row => row.sectionId).reverse(),
+      itemIds: Object.fromEntries(manual!.editingTargets!.sections.map(row => [row.sectionId, row.bulletIds])) } });
+  expect(order).toMatchObject({ ok: true, version: 3 });
+  if (!order.ok) return;
+  const events = await database.select().from(schema.cvRefinementEvents)
+    .where(eq(schema.cvRefinementEvents.contextId, opened.contextId));
+  const generated = CvContentSchema.parse({ ...original, summary: "Concise AI wording kept intact",
+    sections: [...original.sections].reverse() });
+  const [ready] = await database.insert(schema.cvDrafts).values({ userId, contextId: opened.contextId,
+    descriptionVersionId: opened.descriptionVersionId, editingMode: "refine", parentId: manual!.id,
+    jobTitle: manual!.jobTitle, companyName: manual!.companyName, jobDescription: description,
+    libraryVersion: manual!.libraryVersion, librarySnapshot: manual!.librarySnapshot, model: manual!.model,
+    revision: manual!.revision + 1, status: "ready", content: generated,
+    editingTargets: { ...manual!.editingTargets!, sections: [...manual!.editingTargets!.sections].reverse() },
+    refinementSnapshot: events.map(row => row.refinement),
+    refinementSourceContent: original, refinementSourceTargets: manual!.editingTargets,
+    refinementOriginKind: "manual", appliedRefinements: null }).returning();
+  await database.update(schema.cvApplicationContexts).set({ selectedKind: "draft", selectedId: ready!.id })
+    .where(eq(schema.cvApplicationContexts.id, opened.contextId));
+  const tasksBeforeFree = (await database.select().from(schema.tasks)).length;
+  const usageBeforeFree = (await database.select().from(schema.cvAiUsage)).length;
+  const appearance = await saveCvRefinement(opened.contextId, 3, { sourceKind: "draft", sourceId: ready!.id,
+    kind: "structured", target: { type: "appearance" }, order: 3,
+    structured: { kind: "appearance", theme: { ...DEFAULT_CV_THEME, primary: "#285447" } } });
+  expect(appearance).toMatchObject({ ok: true, version: 4 });
+  if (!appearance.ok) return;
+  const result = await generateRefinedCv(opened.contextId, 4, "draft", ready!.id);
+  expect(result).toMatchObject({ ok: true, status: "ready", charged: false });
+  if (!result.ok || !result.draftId) return;
+  const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, result.draftId));
+  expect(child?.content?.summary).toBe(generated.summary);
+  expect(child?.content?.theme?.primary).toBe("#285447");
+  const rows = await database.select().from(schema.cvRefinementEvents)
+    .where(eq(schema.cvRefinementEvents.contextId, opened.contextId));
+  expect(child?.appliedRefinements).toEqual(rows.map(row => ({ id: row.refinement.id, version: row.refinement.version })));
+  expect(await database.select().from(schema.tasks)).toHaveLength(tasksBeforeFree);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(usageBeforeFree);
+  const resetOrder = await resetCvRefinement(opened.contextId, 4, events[2]!.stableId);
+  expect(resetOrder).toMatchObject({ ok: true, version: 5 });
+  if (!resetOrder.ok) return;
+  const reordered = await generateRefinedCv(opened.contextId, 5, "draft", child!.id);
+  expect(reordered).toMatchObject({ ok: true, status: "ready", charged: false });
+  if (!reordered.ok || !reordered.draftId) return;
+  const [reorderedChild] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, reordered.draftId));
+  expect(reorderedChild?.content?.summary).toBe(generated.summary);
+  expect(reorderedChild?.content?.sections.map(section => section.heading)).toEqual(original.sections.map(section => section.heading));
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(usageBeforeFree);
+  const removed = await resetCvRefinement(opened.contextId, 5, events[0]!.stableId);
+  expect(removed).toMatchObject({ ok: true, version: 6 });
+  if (!removed.ok) return;
+  await grantCvCredits(database, { userId, source: "admin", units: 1, externalRef: `reset-${userId}` });
+  const rebuild = await generateRefinedCv(opened.contextId, 6, "draft", reorderedChild!.id);
+  expect(rebuild).toMatchObject({ ok: true, status: "queued", charged: true });
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(usageBeforeFree + 1);
+  expect((await database.select().from(schema.tasks)).filter(row => row.type === "generate_cv")).toHaveLength(1);
 });
 
 it("saves an unsaved Manual buffer against its pinned advert after this context receives a newer JD", async () => {
@@ -427,7 +555,7 @@ it("saves an unsaved Manual buffer against its pinned advert after this context 
     jobSource: source!.jobSource, content: expect.objectContaining({ summary: wording.summary }) });
   expect(await database.select().from(schema.cvLibraries)).toHaveLength(0);
   expect(await database.select().from(schema.tasks)).toHaveLength(0);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
 });
 
 it("projects two successive exact Refine changes from Auto without another task or credit", async () => {
@@ -486,7 +614,7 @@ it("projects two successive exact Refine changes from Auto without another task 
     .where(eq(schema.cvApplicationContexts.id, opened.contextId));
   expect(selected).toMatchObject({ selectedKind: "baseline", selectedId: claimed.baselineId });
   expect((await database.select().from(schema.tasks)).filter(task => task.type === "generate_cv")).toHaveLength(1);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(1);
 });
 
 it("binds chained cited locks to the retained Auto source, including a re-edited summary", async () => {
@@ -538,7 +666,7 @@ it("binds chained cited locks to the retained Auto source, including a re-edited
     "Cut the backlog by 20%", "Improved weekly reporting cadence"]);
   expect(edition?.content?.summary).toBe("Operations leader improving delivery");
   expect((await database.select().from(schema.tasks)).filter(task => task.type === "generate_cv")).toHaveLength(1);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(1);
 
   // A target newly added to a generated edition has no retained Auto anchor.
   const added = CvContentSchema.parse({ ...edition!.content!, sections: [{ ...edition!.content!.sections[0]!,
@@ -579,6 +707,7 @@ it("rebases only chosen exact anchors to the current JD and leaves a changed fac
     librarySnapshot: sourceLibrary, editingTargets: oldTargets }));
   await database.update(schema.cvDrafts).set({ status: "ready", content: oldContent,
     editingTargets: oldTargets }).where(eq(schema.cvDrafts.id, first.draftId));
+  await database.transaction(tx => consumeCvCredit(tx, first.draftId!));
   await database.update(schema.tasks).set({ status: "done" }).where(sql`${schema.tasks.payload}->>'draftId' = ${first.draftId}`);
   const firstRule = await saveCvRefinement(opened.contextId, 0, { sourceKind: "baseline",
     sourceId: first.baselineId, kind: "exact_wording",
@@ -644,5 +773,5 @@ it("rebases only chosen exact anchors to the current JD and leaves a changed fac
   if (later.ok) expect(later.items).toMatchObject([{ id: compatibleId, status: "current" },
     { id: preview.items[1]!.id, status: "conflict", reason: "changed_source" }]);
   expect((await database.select().from(schema.tasks)).filter(task => task.type === "generate_cv")).toHaveLength(2);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(2);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(2);
 });

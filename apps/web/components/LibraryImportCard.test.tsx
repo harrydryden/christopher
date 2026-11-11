@@ -6,8 +6,9 @@ import { LibraryImportCard } from "@/components/LibraryImportCard";
 it("offers LinkedIn PDF separately from a CV and keeps paste as an export fallback", () => {
   const html = renderToStaticMarkup(createElement(LibraryImportCard));
   expect(html).toContain('id="library-import-linkedin"');
-  expect(html).toContain('name="library-import-source"');
-  expect(html).toContain("Choose one source. Nothing is added to Experience until you review and confirm it.");
+  expect(html).toContain('aria-label="Import source"');
+  expect(html).not.toContain("<details");
+  expect(html).toContain('aria-current="true"');
   expect(html).toContain('name="kind" value="linkedin"');
   expect(html).toContain('id="library-linkedin-pdf"');
   expect(html).toContain('accept="application/pdf,.pdf"');
@@ -22,13 +23,13 @@ it("offers LinkedIn PDF separately from a CV and keeps paste as an export fallba
   expect(html).toContain("https://www.linkedin.com/help/linkedin/answer/a541960");
 });
 
-it("opens only the LinkedIn guide when a new account follows its sign-in choice", () => {
+it("shows the chosen source first while retaining the other unsent forms for switching", () => {
   const normal = renderToStaticMarkup(createElement(LibraryImportCard));
-  expect(normal.match(/<details[^>]*id="library-import-cv"[^>]*>/)?.[0]).toContain("open");
-  expect(normal.match(/<details[^>]*id="library-import-linkedin"[^>]*>/)?.[0]).not.toContain("open");
+  expect(normal.match(/<section[^>]*id="library-import-cv"[^>]*>/)?.[0]).not.toContain("hidden");
+  expect(normal.match(/<section[^>]*id="library-import-linkedin"[^>]*>/)?.[0]).toContain("hidden");
   const guided = renderToStaticMarkup(createElement(LibraryImportCard, { openLinkedIn: true }));
-  expect(guided.match(/<details[^>]*id="library-import-cv"[^>]*>/)?.[0]).not.toContain("open");
-  expect(guided.match(/<details[^>]*id="library-import-linkedin"[^>]*>/)?.[0]).toContain("open");
+  expect(guided.match(/<section[^>]*id="library-import-cv"[^>]*>/)?.[0]).toContain("hidden");
+  expect(guided.match(/<section[^>]*id="library-import-linkedin"[^>]*>/)?.[0]).not.toContain("hidden");
   expect(guided).toContain('name="kind" value="cv"');
   expect(guided).toContain('name="kind" value="paste"');
 });

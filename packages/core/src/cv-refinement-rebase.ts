@@ -95,6 +95,8 @@ export function cvPreviewRefinementRebase(input: { from: CvRefinementRebaseSourc
     }
     if (row.dependencies.originBaselineId && row.dependencies.originBaselineId !== from.id)
       return conflict("manual_origin");
+    if (row.structured?.kind === "skill_selection")
+      return conflict("changed_source"); // A source-checked role choice needs a new run on the new Auto input.
     if (row.dependencies.descriptionVersionId !== from.descriptionVersionId)
       return conflict("changed_role");
     const prior = cvRefinementDependencies({ content: from.content, targets: from.targets,

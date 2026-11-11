@@ -13,7 +13,7 @@ import {
   reviewFixture,
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, confirmCvTargetingPrioritiesForUser, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { createDb, confirmCvTargetingPrioritiesForUser, consumeCvCredit, reserveCvCredit, updateBillingAccount, schema, subscribeToCompany, type Db } from "@col/db";
 import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@col/core/cv";
@@ -754,7 +754,7 @@ describe("priority workflows", () => {
     expect(child!.careerSourceMap).toEqual(child!.librarySnapshot.careerProjection?.sourceMap);
     expect(child!.careerDisplay).toEqual(child!.librarySnapshot.careerProjection?.display);
     expect(child!.careerPresentation).toBe(child!.librarySnapshot.careerProjection?.presentation);
-    expect(await database.select().from(schema.creditReservations)).toMatchObject([{ draftId: child!.id, status: "reserved" }]);
+    expect(await database.select().from(schema.cvAiUsage)).toMatchObject([{ sourceId: child!.id, status: "reserved" }]);
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${child!.id}`))).toHaveLength(1);
     // A replay returns the same continuation and does not write another Library version or task.
     expect(await answerCvGapQuiz(parent!.id, { ok: true }, form)).toEqual({ ok: true, message: `cv-gap-destination:/cv/${child!.id}` });
@@ -828,6 +828,7 @@ describe("priority workflows", () => {
     expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: [`entry:${projectedEntry.id}:row:0`], sections: [{ entryId: projectedEntry.id, kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [[`entry:${projectedEntry.id}:row:0`]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.transaction(tx => consumeCvCredit(tx, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
     await expect(saveWithBase(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
@@ -1618,6 +1619,8 @@ it("queues a rebuild from unsaved draft edits without overwriting the source or 
 });
 
 it("assesses, improves with current evidence, finalises and exports through the real revision workflow", async () => {
+    // This journey deliberately performs multiple paid passes in one session.
+    await updateBillingAccount(database, user.id, { plan: "search" });
   const { AiEngine } = await import("../../../../packages/ai/src/index");
   const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");

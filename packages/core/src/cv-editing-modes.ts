@@ -116,6 +116,14 @@ export const CvRefinementSchema = z.object({
     z.object({ kind: z.literal("targeting"), choices: CvTargetingChoicesSchema }),
     z.object({ kind: z.literal("appearance"), theme: CvThemeSchema }),
     z.object({ kind: z.literal("item_order"), sectionIds: z.array(uuid).max(20), itemIds: z.record(uuid, z.array(uuid).max(100)) }),
+    z.object({ kind: z.literal("skill_selection"), runId: uuid, careerVersion: z.number().int().nonnegative(),
+      sections: z.array(z.object({ entryId: z.string().min(1).max(100), sectionId: uuid,
+        heading: z.string().trim().min(1).max(250),
+        items: z.array(z.object({ id: uuid, bulletId: uuid, label: z.string().trim().min(1).max(CV_LIMITS.skillCharacters),
+          sourceId: z.string().min(1).max(220), quote: z.string().trim().min(1).max(1600),
+          sourceRef: z.object({ recordId: z.string().min(1), recordRevision: z.number().int().positive(),
+            assertionId: z.string().nullable(), assertionRevision: z.number().int().positive().nullable(),
+            publicText: z.boolean(), origin: z.literal("accepted_suggestion") }) })).min(1).max(CV_LIMITS.skillsPerSection) })).min(1).max(CV_LIMITS.skillSections) }),
   ]).optional(),
   dependencies: z.object({ descriptionVersionId: uuid, sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
     sourceIds: z.array(z.string().min(1).max(220)).max(100), originBaselineId: uuid.nullable().optional() }),
@@ -134,6 +142,84 @@ export const CvRefinementSchema = z.object({
 });
 export type CvRefinementV1 = z.infer<typeof CvRefinementSchema>;
 export type CvRefinementConflict = { id: string; targetId?: string; reason: "missing_target" | "changed_source" | "changed_role" | "cannot_fit" | "duplicate_target" };
+
+/** A saved edition may have applied choices that have since been edited or forgotten. */
+export function cvRemovedAppliedRefinements(snapshot: CvRefinementV1[],
+  applied: Array<{ id: string; version: number }>, current: CvRefinementV1[]): CvRefinementV1[] {
+  const appliedKeys = new Set(applied.map(row => `${row.id}:${row.version}`));
+  const currentKeys = new Set(current.map(row => `${row.id}:${row.version}`));
+  return snapshot.filter(row => appliedKeys.has(`${row.id}:${row.version}`) &&
+    !currentKeys.has(`${row.id}:${row.version}`));
+}
+
+export function cvNeedsAuthoredRebuild(removed: CvRefinementV1[]): boolean {
+  return removed.some(row => row.kind !== "structured" ||
+    (row.structured?.kind !== "appearance" && row.structured?.kind !== "item_order"));
+}
+
+export function cvProjectSkillSelection(content: CvContent, targets: CvEditingTargets,
+  choice: Extract<NonNullable<CvRefinementV1["structured"]>, { kind: "skill_selection" }>) {
+  const next = structuredClone(content);
+  const nextTargets = structuredClone(targets);
+  const usedLabels = new Set(next.sections.filter(section => section.kind === "skill")
+    .flatMap(section => section.skillItems ?? []).map(value => value.trim().toLocaleLowerCase("en-GB")));
+  for (const selected of choice.sections) {
+    const index = next.sections.findIndex(section => section.entryId === selected.entryId);
+    if (index >= 0 && (next.sections[index]!.kind !== "skill" || nextTargets.sections[index]!.sectionId !== selected.sectionId))
+      throw new Error("The selected skill section changed. Reload this CV.");
+    const section = index >= 0 ? next.sections[index]! : {
+      entryId: selected.entryId, kind: "skill" as const, heading: selected.heading,
+      bullets: [] as string[], skillItems: [] as string[] };
+    const ids = index >= 0 ? nextTargets.sections[index]! : {
+      entryId: selected.entryId, sectionId: selected.sectionId, bulletIds: [] as string[], skillIds: [] as string[] };
+    const skills = section.skillItems ?? [];
+    for (const item of selected.items) {
+      const label = item.label.trim().toLocaleLowerCase("en-GB");
+      const heldIndex = skills.findIndex(value => value.trim().toLocaleLowerCase("en-GB") === label);
+      if (heldIndex >= 0) {
+        if (ids.skillIds[heldIndex] !== item.id) throw new Error("The selected skill target changed. Reload this CV.");
+        continue;
+      }
+      if (usedLabels.has(label)) continue;
+      skills.push(item.label); ids.skillIds.push(item.id); usedLabels.add(label);
+    }
+    section.skillItems = skills;
+    const beforeBullets = section.bullets.length;
+    section.bullets = skills.slice(0, CV_LIMITS.bulletsPerSection);
+    for (let position = beforeBullets; position < section.bullets.length; position++) {
+      const corresponding = selected.items.find(item => item.label === section.bullets[position]);
+      if (!corresponding) throw new Error("The selected skill bullet lost its target.");
+      ids.bulletIds.push(corresponding.bulletId);
+    }
+    if (index < 0) { next.sections.push(section); nextTargets.sections.push(ids); }
+  }
+  if (next.sections.length > CV_LIMITS.sections ||
+    next.sections.filter(section => section.kind === "skill").length > CV_LIMITS.skillSections)
+    throw new Error("The selected skills exceed this CV's section limit.");
+  return { content: CvContentSchema.parse(next), targets: validateCvEditingTargets(next, nextTargets) };
+}
+
+function applyGeneratedSkillSelection(content: CvContent,
+  choice: Extract<NonNullable<CvRefinementV1["structured"]>, { kind: "skill_selection" }>): CvContent {
+  const next = structuredClone(content);
+  const held = new Set(next.sections.filter(section => section.kind === "skill")
+    .flatMap(section => section.skillItems ?? []).map(value => value.trim().toLocaleLowerCase("en-GB")));
+  for (const selected of choice.sections) {
+    const section = next.sections.find(item => item.entryId === selected.entryId);
+    if (section && section.kind !== "skill") throw new Error("The selected skill section changed.");
+    const target = section ?? { entryId: selected.entryId, kind: "skill" as const,
+      heading: selected.heading, bullets: [] as string[], skillItems: [] as string[] };
+    const items = target.skillItems ?? [];
+    for (const item of selected.items) {
+      const label = item.label.trim().toLocaleLowerCase("en-GB");
+      if (!held.has(label)) { items.push(item.label); held.add(label); }
+    }
+    target.skillItems = items;
+    target.bullets = items.slice(0, CV_LIMITS.bulletsPerSection);
+    if (!section) next.sections.push(target);
+  }
+  return CvContentSchema.parse(next);
+}
 
 function withBulletSignpost(section: CvContent["sections"][number], index: number,
   bulletSignpost: string | null | undefined): CvContent["sections"][number] {
@@ -254,6 +340,13 @@ export function cvProjectRefinements(input: { content: CvContent; targets: CvEdi
   for (const row of ordered.filter(item => item.kind === "structured")) {
     const choice = row.structured;
     if (!choice) { conflicts.push({ id: row.id, reason: "missing_target" }); continue; }
+    if (choice.kind === "skill_selection") {
+      try {
+        const selected = cvProjectSkillSelection(content, targets, choice);
+        content = selected.content; targets = selected.targets;
+      } catch { conflicts.push({ id: row.id, reason: "missing_target" }); }
+      continue;
+    }
     if (choice.kind === "appearance") content.theme = choice.theme;
     if (choice.kind === "targeting") {
       const projected = projectCvTargetedSections(content, { entries: choice.choices.entries });
@@ -312,6 +405,23 @@ export function cvRefineWritingLibrary(library: CvLibrary, refinements: CvRefine
   for (const row of refinements.filter(item => !item.reset && item.kind === "structured")
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))) {
     const choice = row.structured;
+    if (choice?.kind === "skill_selection") {
+      for (const section of choice.sections) {
+        const existing = result.entries.find(entry => entry.id === section.entryId && entry.kind === "skill");
+        if (existing) existing.skillItems = [...new Set([...(existing.skillItems ?? []), ...section.items.map(item => item.label)])];
+        else result.entries.push({ id: section.entryId, kind: "skill", heading: section.heading,
+          details: section.items.map(item => item.label).join("\n"), skillItems: section.items.map(item => item.label) });
+        if (result.careerProjection) {
+          result.careerProjection.version = Math.max(result.careerProjection.version, choice.careerVersion);
+          const saved = result.entries.find(entry => entry.id === section.entryId && entry.kind === "skill")!;
+          for (const item of section.items) {
+            const index = saved.skillItems!.indexOf(item.label);
+            result.careerProjection.sourceMap[`entry:${section.entryId}:skill:${index}`] = item.sourceRef;
+            if (!existing) result.careerProjection.sourceMap[`entry:${section.entryId}:row:${index}`] = item.sourceRef;
+          }
+        }
+      }
+    }
     if (choice?.kind === "appearance") result.theme = choice.theme;
     if (choice?.kind === "targeting") {
       const omitted = new Set(choice.choices.entries.filter(item => item.treatment === "omit").map(item => item.entryId));
@@ -361,6 +471,11 @@ export function cvApplyGeneratedStructure(input: { candidate: CvContent; source:
   for (const row of input.refinements.filter(item => item.kind === "structured" && !item.reset)
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))) {
     const choice = row.structured;
+    if (choice?.kind === "skill_selection") {
+      try { content = applyGeneratedSkillSelection(content, choice); }
+      catch { conflicts.push({ id: row.id, reason: "missing_target" }); }
+      continue;
+    }
     if (choice?.kind === "appearance") content.theme = choice.theme;
     if (choice?.kind === "targeting") {
       content.sections = projectCvTargetedSections(content, { entries: choice.choices.entries }).sections;
@@ -424,7 +539,16 @@ export function cvApplyGeneratedStructure(input: { candidate: CvContent; source:
 export function cvApplyGeneratedExactLocks(input: { candidate: CvContent; source: CvContent;
   sourceTargets: CvEditingTargets; library: CvLibrary; refinements: CvRefinementV1[];
   descriptionVersionId: string }): { content: CvContent; conflicts: CvRefinementConflict[] } {
-  const sourceTargets = validateCvEditingTargets(input.source, input.sourceTargets);
+  const originalTargets = validateCvEditingTargets(input.source, input.sourceTargets);
+  const selections = input.refinements.filter(row => row.structured?.kind === "skill_selection" && !row.reset);
+  const projectedSource = selections.length ? cvProjectRefinements({ content: input.source,
+    targets: originalTargets, library: input.library, refinements: selections,
+    descriptionVersionId: input.descriptionVersionId, sourceHash: "" }) : null;
+  if (projectedSource?.conflicts.length) return { content: input.candidate,
+    conflicts: projectedSource.conflicts };
+  const source = projectedSource?.content ?? input.source;
+  const sourceTargets = projectedSource?.targets ?? originalTargets;
+  const library = selections.length ? cvRefineWritingLibrary(input.library, selections) : input.library;
   const content = structuredClone(input.candidate);
   const originalCandidate = input.candidate;
   const conflicts: CvRefinementConflict[] = [];
@@ -437,8 +561,8 @@ export function cvApplyGeneratedExactLocks(input: { candidate: CvContent; source
     if (!id || used.has(id)) { issue(id ? "duplicate_target" : "missing_target"); continue; }
     used.add(id);
     if (lock.dependencies.descriptionVersionId !== input.descriptionVersionId) { issue("changed_role"); continue; }
-    const dependency = cvRefinementDependencies({ content: input.source, targets: sourceTargets,
-      library: input.library, descriptionVersionId: input.descriptionVersionId, target: lock.target });
+    const dependency = cvRefinementDependencies({ content: source, targets: sourceTargets,
+      library, descriptionVersionId: input.descriptionVersionId, target: lock.target });
     if (lock.dependencies.sourceHash !== dependency.sourceHash) { issue("changed_source"); continue; }
     const text = lock.text?.trim() ?? "";
     if (lock.target.type === "summary" && id === sourceTargets.summaryId) {
@@ -455,7 +579,7 @@ export function cvApplyGeneratedExactLocks(input: { candidate: CvContent; source
       content.sections[sectionIndex] = { ...section, heading: text };
     } else if (lock.target.type === "bullet" && owner.bulletIds.includes(id)) {
       const sourceIndex = owner.bulletIds.indexOf(id);
-      const sourceSection = input.source.sections.find(item => item.entryId === owner.entryId)!;
+      const sourceSection = source.sections.find(item => item.entryId === owner.entryId)!;
       const originalSection = originalCandidate.sections.find(item => item.entryId === owner.entryId)!;
       const sourceRefs = sourceSection.bulletSources?.[sourceIndex]?.map(String).sort();
       const matches = originalSection.bullets.flatMap((value, index) => {
@@ -470,7 +594,7 @@ export function cvApplyGeneratedExactLocks(input: { candidate: CvContent; source
         bulletIndex, lock.bulletSignpost);
     } else if (lock.target.type === "skill" && owner.skillIds.includes(id) && section.skillItems) {
       const sourceIndex = owner.skillIds.indexOf(id);
-      const sourceSection = input.source.sections.find(item => item.entryId === owner.entryId)!;
+      const sourceSection = source.sections.find(item => item.entryId === owner.entryId)!;
       const original = sourceSection.skillItems?.[sourceIndex];
       const matches = section.skillItems.flatMap((value, index) => value === original ? [index] : []);
       if (matches.length !== 1) { issue("missing_target"); continue; }

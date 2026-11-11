@@ -3,7 +3,7 @@
   "at": "2026-11-02T17:25:16.647Z",
   "draftId": "53c57ae6-089b-44ea-8307-0aa646e742c1",
   "promptSetVersion": "f21a62396b80",
-  "unverified": false,
+  "unverified": true,
   "source": "live",
   "recording": "/tmp/col-cv-refine-eval-1102/cv-live-provider-recording.jsonl",
   "routes": {
@@ -110,7 +110,7 @@
         "requirementIds": []
       },
       "editorial": {
-        "disclaimer": "Heuristic editorial signals only — they do not predict hiring outcomes.",
+        "disclaimer": "Heuristic editorial signals only \u2014 they do not predict hiring outcomes.",
         "repetition": {
           "kind": "heuristic_editorial_signal",
           "score": 100,
@@ -131,5 +131,10 @@
         }
       }
     }
+  },
+  "supersededForCurrentRegistry": {
+    "at": "2026-11-11T18:49:28.632780+00:00",
+    "reason": "New scoped CV edit and verification prompts were added. This historical live run remains evidence for f21a62396b80 only; it does not qualify the current registry or the new inline tools.",
+    "historicalVerifiedReport": "report-live-2026-11-02.json"
   }
 }

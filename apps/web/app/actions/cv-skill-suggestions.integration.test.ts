@@ -7,6 +7,7 @@ import { signInTestUser } from "@/test/auth";
 import { and, eq, sql } from "drizzle-orm";
 import type { User } from "@col/db/schema";
 import { cvSkillDraftContext } from "@col/core/cv-skill-draft-context";
+import { cvTailoringEvidence } from "@col/core/cv-tailoring";
 
 let database: Db;
 async function saveWithBase(id: string, previous: Parameters<typeof saveCvDraft>[1], form: FormData) {
@@ -58,7 +59,8 @@ const form = (runId: string, selected: string[], summary = "Analyst", intent?: s
   return data;
 };
 const request = (draft: Awaited<ReturnType<typeof fixture>>, edited = content, refresh = false, pageLibraryVersion = 1) =>
-  requestCvSkillSuggestions(draft.id, refresh, pageLibraryVersion, edited, draft.revision);
+  requestCvSkillSuggestions(draft.id, refresh, pageLibraryVersion, edited, draft.revision,
+    { charge: "role_credit", units: 0, priceVersion: 1 });
 
 it("queues one owned proposal and refuses another account's read", async () => {
   const draft = await fixture();
@@ -67,6 +69,8 @@ it("queues one owned proposal and refuses another account's read", async () => {
   expect(first.ok).toBe(true);
   if (!first.ok) return;
   expect(first.run.status).toBe("queued");
+  expect((await database.select().from(schema.cvAiUsage)).map(row => [row.chargeKind, row.action, row.status]))
+    .toEqual([["role_credit", "skills", "reserved"]]);
   const again = await request(draft);
   expect(again.ok && again.run.id).toBe(first.run.id);
   const queued = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_cv_skills"));
@@ -134,6 +138,10 @@ it("saves selected labels only, replays exactly once and rejects changed wording
   const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, accepted!.acceptedDraftId!));
   expect(saved?.content?.sections.flatMap(section => section.skillItems ?? [])).toEqual(["Excel"]);
   expect(saved?.libraryVersion).toBe(2);
+  const derived = await database.select().from(schema.careerAssertions).where(eq(schema.careerAssertions.userId, user.id));
+  expect(derived.some(row => row.text === "Excel" && row.provenance.kind === "accepted_suggestion"
+    && row.provenance.sourceId === "entry:role:row:0" && row.provenance.quote === "Used Excel")).toBe(true);
+  expect(cvTailoringEvidence(saved!.librarySnapshot!).some(row => row.text === "Excel")).toBe(false);
   await expect(saveWithBase(draft.id, { ok: true }, form(requested.run.id, [chosen]))).rejects.toThrow(`redirect:/cv/${saved!.id}`);
   expect((await database.select().from(schema.cvLibraries))).toHaveLength(2);
   expect((await database.select().from(schema.cvDrafts))).toHaveLength(2);

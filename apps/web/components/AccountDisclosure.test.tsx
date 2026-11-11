@@ -6,7 +6,7 @@ import { AccountDisclosure } from "./AccountDisclosure";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-it("opens the requested purchase section on arrival and same-page navigation", async () => {
+it("keeps purchase destinations visible on arrival and same-page navigation", async () => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -16,15 +16,16 @@ it("opens the requested purchase section on arrival and same-page navigation", a
       <AccountDisclosure id="top-ups" title="Top up CV credits">5 credits · £5</AccountDisclosure>
       <AccountDisclosure id="plans" title="Compare plans">Search · £29/month</AccountDisclosure>
     </>));
-    const packs = host.querySelector<HTMLDetailsElement>("#top-ups")!;
-    const plans = host.querySelector<HTMLDetailsElement>("#plans")!;
-    expect(packs.open).toBe(true);
-    expect(plans.open).toBe(false);
+    const packs = host.querySelector<HTMLElement>("#top-ups")!;
+    const plans = host.querySelector<HTMLElement>("#plans")!;
+    expect(packs.hidden).toBe(false);
+    expect(plans.hidden).toBe(false);
+    expect(host.querySelector("details")).toBeNull();
     await act(async () => {
       window.history.replaceState({}, "", "/account#plans");
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
-    expect(plans.open).toBe(true);
+    expect(plans.hidden).toBe(false);
   } finally {
     await act(async () => root.unmount());
     host.remove();

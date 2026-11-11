@@ -6,6 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const router = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("@/app/actions/cv-editing", () => ({ createManualCvEdition: vi.fn(), saveManualCvEdition: vi.fn() }));
+vi.mock("@/app/actions/cv-inline-ai", () => ({ requestCvInlineEdit: vi.fn(), readCvInlineEdit: vi.fn(),
+  latestCvInlineEdit: vi.fn(async () => ({ ok: false, error: "No pending suggestion." })), dismissCvInlineEdit: vi.fn() }));
 import { createManualCvEdition, saveManualCvEdition } from "@/app/actions/cv-editing";
 import { CvManualMode } from "./CvManualMode";
 
@@ -37,7 +39,7 @@ it("can save a genuine first Manual section without Auto or an AI call", async (
     prefill={{ name: "Alex Morgan", contact: "London", summary: "Operations analyst" }} />));
   const add = [...container.querySelectorAll("button")].find(button => button.textContent === "Add section")!;
   act(() => add.click());
-  const heading = [...container.querySelectorAll("input")].find(input => input.closest("label")?.textContent?.includes("Heading"))!;
+  const heading = container.querySelector<HTMLInputElement>('input[id^="cv-manual-heading-"]')!;
   enter(heading, "My project work");
   const bullet = [...container.querySelectorAll("textarea")].find(input => input.closest("label")?.textContent?.includes("Bullet 1"))!;
   enter(bullet, "Built the monthly report for my team.");
@@ -61,8 +63,7 @@ it("keeps a chosen comma-containing skill as one ordered Manual label", async ()
   const type = [...container.querySelectorAll<HTMLSelectElement>("select")].find(select =>
     select.closest("label")?.textContent?.includes("Type"))!;
   act(() => { type.value = "skill"; type.dispatchEvent(new Event("change", { bubbles: true })); });
-  const heading = [...container.querySelectorAll<HTMLInputElement>("input")].find(input =>
-    input.closest("label")?.textContent?.includes("Heading"))!;
+  const heading = container.querySelector<HTMLInputElement>('input[id^="cv-manual-heading-"]')!;
   enter(heading, "Delivery skills");
   act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Add Planning, delivery"]')!.click());
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>

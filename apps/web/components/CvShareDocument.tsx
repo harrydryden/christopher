@@ -28,9 +28,7 @@ export interface CvShareNote {
 
 function CommentForm({ action, anchor }: { action: string; anchor: string }) {
   return (
-    <details className="border border-line-muted">
-      <summary className="cursor-pointer px-3 py-1.5 text-12 font-medium text-fg">Comment on this</summary>
-      <form method="post" action={action} className="flex flex-col gap-3 border-t border-line-muted p-3">
+      <form method="post" action={action} aria-label="Comment on this section" className="grid gap-3 border-t border-line-muted pt-3 sm:grid-cols-3">
         <input type="hidden" name="anchor" value={anchor} />
         <label className="block text-14">
           <span className={labelClass}>Your name</span>
@@ -42,23 +40,22 @@ function CommentForm({ action, anchor }: { action: string; anchor: string }) {
             className={`mt-1 ${inputClass}`}
           />
         </label>
-        <label className="block text-14">
+        <label className="block text-14 sm:col-span-2">
           <span className={labelClass}>Your note</span>
           <textarea
             name="body"
             required
-            rows={3}
+            rows={2}
             maxLength={CV_SHARE_BODY_MAX_CHARS}
             className={`mt-1 resize-y ${inputClass}`}
           />
         </label>
-        <div>
+        <div className="sm:col-span-3">
           <button type="submit" className={buttonClass("primary", "sm")}>
             Send note
           </button>
         </div>
       </form>
-    </details>
   );
 }
 

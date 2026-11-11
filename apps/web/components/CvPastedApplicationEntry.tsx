@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation";
 import { createCvApplicationContext } from "@/app/actions/cv-editing";
 
 /** A role outside Find roles can start Manual without an Auto build or an invented advert. */
-export function CvPastedApplicationEntry() {
+export function CvPastedApplicationEntry({ opportunities = [] }: { opportunities?: Array<{
+  contextId: string; companyName: string; jobTitle: string; createdAt: Date | string;
+}> }) {
   const router = useRouter();
   const requestKey = useRef(`paste:${crypto.randomUUID()}`);
   const [companyName, setCompanyName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [existingContextId, setExistingContextId] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function open() {
@@ -18,14 +21,28 @@ export function CvPastedApplicationEntry() {
     setPending(true); setError(null);
     try {
       const result = await createCvApplicationContext({ requestKey: requestKey.current,
-        companyName: companyName.trim(), jobTitle: jobTitle.trim(), description: description.trim() });
+        companyName: companyName.trim(), jobTitle: jobTitle.trim(), description: description.trim(),
+        ...(existingContextId ? { existingContextId } : {}) });
       if (!result.ok) setError(result.error);
       else router.push(`/cv/context/${result.contextId}`);
     } catch { setError("Could not open this application. Your role details remain here."); }
     finally { setPending(false); }
   }
-  return <details className="border border-line-muted p-3 text-14">
-    <summary className="min-h-11 cursor-pointer font-medium">Start an application from a role you found yourself</summary>
+  return <section aria-labelledby="new-application-heading" className="border border-line-muted p-3 text-14">
+    <h2 id="new-application-heading" className="font-medium">Add a role</h2>
+    {opportunities.length > 0 && <label className="mt-3 block space-y-1"><span className="block">Role access</span>
+      <select className="min-h-11 w-full border border-line-muted bg-raised px-3" value={existingContextId}
+        onChange={event => {
+          const id = event.target.value; setExistingContextId(id);
+          const held = opportunities.find(row => row.contextId === id);
+          if (held) { setCompanyName(held.companyName); setJobTitle(held.jobTitle); }
+        }}>
+        <option value="">New role</option>
+        {opportunities.map(row => <option key={row.contextId} value={row.contextId}>
+          Reuse: {row.companyName} · {row.jobTitle} · {new Date(row.createdAt).toISOString().slice(0, 10)}
+        </option>)}
+      </select>
+    </label>}
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
       <label className="space-y-1"><span className="block">Company</span><input className="min-h-11 w-full border border-line-muted bg-raised px-3"
         maxLength={160} value={companyName} onChange={event => setCompanyName(event.target.value)} /></label>
@@ -36,8 +53,7 @@ export function CvPastedApplicationEntry() {
           value={description} onChange={event => setDescription(event.target.value)} /></label>
     </div>
     <button type="button" className="mt-3 min-h-11 border border-line-muted px-4" disabled={pending || !companyName.trim() || !jobTitle.trim()}
-      onClick={open}>{pending ? "Opening…" : "Open application workspace · free"}</button>
-    <p className="mt-2 text-12 text-muted">Choose Auto, Refine or Manual there. You can start Manual without generating a CV.</p>
+      onClick={open}>{pending ? "Opening…" : "Create application · free"}</button>
     {error && <p role="alert" className="mt-2 text-danger">{error}</p>}
-  </details>;
+  </section>;
 }

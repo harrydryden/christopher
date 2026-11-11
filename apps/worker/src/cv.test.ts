@@ -546,6 +546,7 @@ it("passes distinct stable instruction targets to the writer and applies one exa
   await handleGenerateCv(task, deps);
   const [ready] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(ready?.status, ready?.error ?? "").toBe("ready");
+  expect(ready?.appliedRefinements).toEqual(refinements.map(row => ({ id: row.id, version: row.version })));
   expect(ready?.content?.sections[0]?.bullets).toEqual(["Led a team"]);
   expect(ready?.content?.sections[0]?.bulletSignposts).toEqual(["Team leadership"]);
   expect(author).toHaveBeenCalledWith(expect.objectContaining({ refinementInstructions: [

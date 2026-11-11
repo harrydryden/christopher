@@ -2,6 +2,7 @@
 
 import { memo, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { decideWithUndoToken, decideRolesWithUndoTokens, undoDecisionIfCurrent, undoDecisionsIfCurrent, archiveRoles, roleDetails } from "@/app/actions/decisions";
 import { CvWorkspaceEntry } from "@/components/CvWorkspaceEntry";
 import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } from "@/components/Badge";
@@ -20,9 +21,6 @@ import styles from "./RolesTable.module.css";
 import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@col/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
-
-/** Roughly what fits in the collapsed height; below it there is nothing to show more of. */
-const COLLAPSED_DESCRIPTION_CHARS = 400;
 
 /** The nudge R-6.1 asks for: a reason on apply is wanted, never required. */
 const APPLY_REASON_HINT = "One line on why helps the ranking (optional)";
@@ -136,7 +134,6 @@ interface RowActions {
   archiveRow(jobId: string): void;
   setBoxKind(jobId: string, kind: ReasonKind): void;
   closeBox(): void;
-  toggleDescription(): void;
 }
 
 /**
@@ -208,11 +205,10 @@ interface RoleRowProps {
   /** A write for this row is out: its actions wait. */
   busy: boolean;
   expanded: boolean;
+  dedicated: boolean;
   detail: DetailState | undefined;
   /** This row's reason box, or null when the box (if any) is another row's. */
   boxed: ReasonBoxState | null;
-  /** The open panel's description is expanded; always false for a closed row. */
-  descriptionOpen: boolean;
   hideCompany: boolean;
   archived: boolean;
   groupBusy: boolean;
@@ -227,7 +223,7 @@ interface RoleRowProps {
  * One role: its line in the table and, when open, its review panel. Memoised on primitives and
  * stable references, so a keystroke, a `j`/`k` press or a selection renders only the rows it changes.
  */
-const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, busy, expanded, detail, boxed, descriptionOpen, hideCompany, archived, groupBusy, boxPending, archivingThis, archivingAny, actions }: RoleRowProps) {
+const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, busy, expanded, dedicated, detail, boxed, hideCompany, archived, groupBusy, boxPending, archivingThis, archivingAny, actions }: RoleRowProps) {
   // The build replaces the link only once its credit availability is in hand: a panel that is still
   // loading, or that could not load, keeps the link rather than offering nothing.
   const buildHere = row.stage === "shortlisted" && detail?.state === "ready";
@@ -236,9 +232,9 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
       <TR highlighted={highlighted} className={`${styles.roleRow} ${selected ? "bg-sunken" : ""}`}>
         <TD id={`role-row-${row.id}`} className={`${styles.roleTitle} max-w-[22rem]`}>
           <span className="flex flex-wrap items-center gap-2">
-            <button type="button" disabled={boxPending} onClick={() => actions.toggleExpanded(row.id)} aria-expanded={expanded} className="text-left font-semibold text-fg hover:underline">
-              {row.title}
-            </button>
+            {dedicated ? <button type="button" className="text-left font-semibold text-fg hover:underline"
+              onClick={() => actions.toggleExpanded(row.id)}>{row.title}</button>
+              : <Link prefetch={false} href={`/roles/${row.id}`} className="font-semibold text-fg hover:underline">{row.title}</Link>}
             {row.addedByYou && !row.manual && <Badge tone="neutral">Added by you</Badge>}
             {row.manual && <Badge tone="neutral">{row.url ? "Added from link" : "Added from PDF"}</Badge>}
             {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
@@ -258,14 +254,8 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
         <TD className={`${styles.roleLocation} max-w-[10rem]`}>
           <span className={`${styles.cardLabel} text-muted`}>Location: </span>
           <div className="flex flex-wrap items-center gap-1">
-            {row.locations.length > 3 ? (
-              <details>
-                <summary className="cursor-pointer">{row.locations[0]} + {row.locations.length - 1} more locations</summary>
-                <ul className="mt-2 space-y-1 text-12 [overflow-wrap:anywhere]">
-                  {row.locations.map((location, index) => <li key={`${location}-${index}`}>{location}</li>)}
-                </ul>
-              </details>
-            ) : <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>}
+            <span>{row.locations.length ? row.locations.slice(0, 3).join(", ") : row.location}</span>
+            {row.locations.length > 3 && <Link prefetch={false} href={`/roles/${row.id}#locations`} className="underline">All {row.locations.length} locations</Link>}
             {row.remote && <Badge tone="blue">Remote</Badge>}
             {!row.location && row.locations.length === 0 && !row.remote && <span className="text-muted">—</span>}
           </div>
@@ -280,16 +270,12 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
         <TD className={`${styles.roleAction} text-right`}>
           {row.workflowStatus === "user-shortlisted" ? <Link prefetch={false} href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
           : archived ? <Button size="sm" disabled={archivingAny || boxPending} onClick={() => actions.archiveRow(row.id)}>{archivingThis ? "Restoring…" : "Restore"}</Button>
-          : <Button
-            size="sm"
-            aria-expanded={expanded}
-            aria-controls={`role-review-${row.id}`}
-            aria-label={`${expanded ? "Close review for" : "Review"} ${row.title} at ${row.companyName}`}
-            disabled={boxPending}
-            onClick={() => actions.toggleExpanded(row.id)}
-          >
-            {expanded ? "Close" : row.workflowStatus === "user-dismissed" ? "Reconsider" : "Review"}
-          </Button>}
+          : dedicated ? <button type="button" className={buttonClass("secondary", "sm")}
+            onClick={() => actions.toggleExpanded(row.id)}>Review</button>
+          : <Link prefetch={false} href={`/roles/${row.id}`} aria-label={`Review ${row.title} at ${row.companyName}`}
+            className={buttonClass("secondary", "sm", "no-underline")}>
+            {row.workflowStatus === "user-dismissed" ? "Reconsider" : "Review"}
+          </Link>}
         </TD>
         <TD className={styles.roleSelect}>
           <label className="inline-flex min-h-11 min-w-11 items-center">
@@ -346,18 +332,13 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
                   </div>}
                   {detail?.state === "ready" && (detail.details.description?.trim() ? (
                     <>
-                      <div className={descriptionOpen || detail.details.description.length <= COLLAPSED_DESCRIPTION_CHARS ? "" : "max-h-32 overflow-hidden"}>
+                      <div>
                         {looksMarkdown(detail.details.description)
                           ? <SafeMarkdown markdown={detail.details.description} className="ds-prose max-w-3xl" />
                           : <div className="ds-prose max-w-3xl space-y-2.5 text-14 text-fg">
                               {detail.details.description.split(/\n{2,}/).map((paragraph, i) => <p key={i}>{paragraph.trim()}</p>)}
                             </div>}
                       </div>
-                      {detail.details.description.length > COLLAPSED_DESCRIPTION_CHARS && (
-                        <button type="button" onClick={() => actions.toggleDescription()} className="mt-1 text-12 text-muted underline hover:text-fg">
-                          {descriptionOpen ? "Show less" : "Show more"}
-                        </button>
-                      )}
                     </>
                   ) : (
                     <p className="text-13 text-muted">No description stored.{row.url ? " Open the vacancy." : ""}</p>
@@ -410,11 +391,12 @@ const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, bus
   );
 });
 
-export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir, historyScope, initiallyExpandedId }: {
+export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir, historyScope, initiallyExpandedId, initialDecision = null }: {
   hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode;
   /** Account id; recent Undo survives the keyed table's filters and pages within this browser tab. */
   historyScope?: string;
   initiallyExpandedId?: string;
+  initialDecision?: "apply" | "skip" | null;
   /** The rows' companies, once each (`buildRoleCompanies` over the same rows). */
   companies: RoleCompaniesVM;
   /** One href per sortable column, built by the server with the filters in hand. */
@@ -422,6 +404,8 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   sort?: SortKey;
   dir?: SortDir;
 }) {
+  const router = useRouter();
+  const dedicated = !!initiallyExpandedId;
   // Rows leave the page the moment they are decided, before the server answers; a refusal puts
   // them back. `removedIds` is what has left; `returning` is what an undo has brought back before
   // the page the undo re-renders arrives, drawn from `departed`, the rows as they were when they left.
@@ -623,7 +607,6 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       return next;
     });
   }, [rows]);
-  const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
   const [flashError, setFlashError] = useState<string | null>(null);
   const [notice, setNotice] = useState<RoleUndoEntry | null>(null);
@@ -690,21 +673,30 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
   }, [initiallyExpandedId]);
 
   function toggleExpanded(jobId: string) {
+    if (!dedicated) { router.push(`/roles/${jobId}`); return; }
+    if (rows.length === 1 && expandedId === jobId) {
+      document.getElementById(`role-review-${jobId}`)?.scrollIntoView({ block: "start" });
+      return;
+    }
     const next = expandedId === jobId ? null : jobId;
     setExpandedId(next);
     setReasonBox(null);
-    setDescriptionOpen(false);
     if (next && !details[next]) loadDetails(next);
   }
 
   function openReasonBox(jobId: string, kind: ReasonKind, prefill = "") {
+    if (!dedicated) { router.push(`/roles/${jobId}?decision=${kind}`); return; }
     if (expandedId !== jobId) {
       setExpandedId(jobId);
-      setDescriptionOpen(false);
       if (!details[jobId]) loadDetails(jobId);
     }
     setReasonBox({ jobId, kind, prefill, pending: false, error: null, opened: ++boxOpenings.current, focus: true });
   }
+  useEffect(() => {
+    if (dedicated && initiallyExpandedId && initialDecision) openReasonBox(initiallyExpandedId, initialDecision);
+    // The route's query is the one-time intent for this mounted role task.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dedicated, initiallyExpandedId, initialDecision]);
 
   function decidedText(row: RoleRowVM, decision: ReasonKind): string {
     return `${decision === "apply" ? "Shortlisted" : "Dismissed"} ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`;
@@ -930,7 +922,6 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
     archiveRow: (jobId) => handlers.current.archiveRow(jobId),
     setBoxKind: (jobId, kind) => setReasonBox(box => (box?.jobId === jobId ? { ...box, kind } : box)),
     closeBox: () => setReasonBox(null),
-    toggleDescription: () => setDescriptionOpen(open => !open),
   }), []);
 
   const history = keyboard ? recentUndos.filter(entry => entry.jobId !== notice?.jobId) : [];
@@ -1052,9 +1043,9 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
                 selected={selected.has(row.id)}
                 busy={writing.has(row.id)}
                 expanded={expanded}
+                dedicated={dedicated}
                 detail={details[row.id]}
                 boxed={reasonBox?.jobId === row.id ? reasonBox : null}
-                descriptionOpen={expanded && descriptionOpen}
                 hideCompany={hideCompany}
                 archived={archived}
                 groupBusy={groupBusy}
@@ -1070,10 +1061,6 @@ export function RolesTable({ rows: inputRows, companies, hideCompany = false, ke
       {undoNotice}
       {keyboard && <>
         <p className="mt-3 hidden text-12 text-muted md:block"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open · <kbd>enter</kbd> save</p>
-        <details className="mt-3 text-12 text-muted md:hidden">
-          <summary className="min-h-11 cursor-pointer py-2 font-semibold">Keyboard help</summary>
-          <p><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open · <kbd>enter</kbd> save</p>
-        </details>
       </>}
     </div>
   );

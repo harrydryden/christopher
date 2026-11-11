@@ -18,7 +18,7 @@ it("offers company, existing-role and optional Experience starts without repeati
   expect(html).toContain("Choose how to begin");
   expect(html).toContain("Find roles at companies I follow");
   expect(html).toContain("I already have a role");
-  expect(html).toContain("Prepare Experience");
+  expect(html).toContain("Add your Experience");
   expect(html).toContain('href="/roles/add"');
   expect(html).toContain('href="/library"');
   expect(html).not.toContain("Start here ·");

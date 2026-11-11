@@ -40,7 +40,8 @@ export async function confirmCvTargetingPriorities(draftId: string, raw: CvTarge
 }
 
 /** Change this failed CV's own page choices and resume its original build, without a new draft. */
-export async function reviseFailedCvTargeting(draftId: string, raw: CvTargetingActionInput): Promise<CvTargetingActionResult> {
+export async function reviseFailedCvTargeting(draftId: string, raw: CvTargetingActionInput,
+  expectedQuote?: { charge: "role_credit" | "allowance"; units: number; priceVersion: number }): Promise<CvTargetingActionResult> {
   const user = await requireVerifiedUser();
   const parsed = Input.safeParse(raw);
   if (!zUuid().safeParse(draftId).success || !parsed.success || !parsed.data.expectedRubricKey)
@@ -52,7 +53,7 @@ export async function reviseFailedCvTargeting(draftId: string, raw: CvTargetingA
         beforeDraftLock: async tx => { await assertCvBuildCapacity(tx, user.id); },
         beforeQueue: async (tx, draft) => {
           if (draft.buildCheckpoint?.tailoringEnabled || draft.buildCheckpoint?.mode === "improve")
-            await reserveCvCredit(tx, user.id, draftId);
+            await reserveCvCredit(tx, user.id, draftId, new Date(), "whole_cv", expectedQuote);
         },
       });
   } catch (error) { return resultError(error); }

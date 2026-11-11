@@ -97,4 +97,13 @@ it("applies only explicitly selected compatible rules using the exact preview ke
   await act(async () => { [...container.querySelectorAll<HTMLButtonElement>("button")]
     .find(button => button.textContent?.includes("Carry compatible changes"))!.click(); });
   expect(applyCvRefinementRebase).toHaveBeenCalledWith(a, 2, c, d, "a".repeat(64), [a]);
+  const review = () => [...container.querySelectorAll<HTMLButtonElement>("button")]
+    .find(button => button.textContent === "Review source changes")!;
+  expect(review().disabled).toBe(true);
+  await act(async () => review().click());
+  expect(previewCvRefinementRebase).toHaveBeenCalledTimes(1);
+  act(() => root.render(<CvRoleDescription {...rebaseProps} refinementVersion={3} />));
+  expect(review().disabled).toBe(false);
+  await act(async () => review().click());
+  expect(previewCvRefinementRebase).toHaveBeenLastCalledWith(a, 3, c, d);
 });

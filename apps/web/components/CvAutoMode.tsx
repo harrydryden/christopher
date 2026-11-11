@@ -9,10 +9,11 @@ type Baseline = { id: string; status: "queued" | "ready" | "failed"; sourceDraft
   rendererCurrent?: boolean };
 
 export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = false, knownRoleDrift = false,
-  initialChoices = [] }: {
+  initialChoices = [], quote }: {
   contextId: string; selectedBaseline: Baseline | null;
   knownLibraryDrift?: boolean; knownRoleDrift?: boolean;
   initialChoices?: CareerCvChoiceOverride[];
+  quote?: { charge: "role_credit" | "allowance"; units: number; priceVersion: number };
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -44,14 +45,14 @@ export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = fa
       !window.confirm("Update Auto while another mode has unsaved wording? Your text remains on this page, but the selected edition may change.")) return;
     setPending(true); setError(null); setNotice(null);
     try {
-      const result = await openOrClaimAutoCv(contextId, "update", choices);
+      const result = await openOrClaimAutoCv(contextId, "update", choices, quote);
       if (result.sourceReview) {
         setSourceReview(result.sourceReview);
         if (result.sourceReview.length) setChoicesOpen(true);
       }
       if (!result.ok) setError(result.error);
       else {
-        setNotice(result.status === "ready" ? "Your saved Auto CV is ready. No new CV credit was used."
+        setNotice(result.status === "ready" ? "Your saved Auto CV is ready. No new AI usage was charged."
           : result.status === "queued" ? "Auto is building. Your current selection remains available while it runs."
             : "Auto could not start. Your saved editions remain available.");
         router.refresh();
@@ -68,7 +69,7 @@ export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = fa
       const result = await openCvAutoEdition(contextId, selectedBaseline.id);
       if (!result.ok) setError(result.error);
       else {
-        setNotice("This saved Auto CV is selected. Feedback and final approval are below; Check is optional."); router.refresh();
+        setNotice("This saved Auto CV is selected. Feedback and final approval use this edition."); router.refresh();
       }
     } catch { setError("Could not open this Auto edition. Please try again."); }
     finally { setPending(false); }
@@ -76,10 +77,9 @@ export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = fa
   return <div className="space-y-4 border border-line-muted p-4 text-14">
     <div>
       <h2 className="font-semibold">Auto CV</h2>
-      <p className="text-12 text-muted">Build from Experience and this role. Reopening the saved result is free.</p>
     </div>
     {selectedBaseline?.status === "ready" ? <div className="space-y-3 border border-line-muted p-3">
-      <p>The selected Auto result is available in Current CV.</p>
+      <p>Saved Auto result available.</p>
       {selectedBaseline.rendererCurrent === false && <p className="text-12 text-warn">This Auto PDF used an earlier layout. Update Auto or fork a new edition to review it with the current layout.</p>}
       <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending}
         onClick={useSavedBaseline}>Select Auto for Feedback and approval · free</button>
@@ -90,14 +90,14 @@ export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = fa
       {knownLibraryDrift && "Your Experience has changed. "}
       Update Auto only when you want a new result from the current inputs; the selected saved CV stays available.
     </p>}
-    <details open={choicesOpen} onToggle={event => {
-      const open = event.currentTarget.open;
-      setChoicesOpen(open);
-      if (open && sourceReview === null && !choicesError) void loadChoices();
-    }}>
-      <summary className="min-h-11 cursor-pointer py-3">Experience choices{choices.length ? ` · ${choices.length} for this CV` : " · optional"}</summary>
+    {!choicesOpen && <button type="button" className="min-h-11 underline" disabled={pending}
+      onClick={() => { if (sourceReview === null && !choicesError) void loadChoices(); else setChoicesOpen(true); }}>
+      Sources and Experience choices{choices.length ? ` · ${choices.length}` : ""}
+    </button>}
+    {choicesOpen && <section aria-label="Sources and Experience choices" className="space-y-2">
+      <button type="button" className="min-h-11 underline" onClick={() => setChoicesOpen(false)}>Back to Auto CV</button>
+      <h3 className="font-medium">Sources and Experience choices</h3>
       <div className="space-y-3 border border-line-muted p-3">
-        <p className="text-12 text-muted">Choose a statement for the next Auto build, or leave disputed details out. You can build and finalise without resolving Experience reviews.</p>
         {loadingChoices && <p role="status">Loading choices…</p>}
         {sourceReview?.map(group => <fieldset key={group.conflictId} disabled={pending || loadingChoices} className="min-w-0 border border-line-muted p-3">
           <legend className="px-1 font-semibold">{group.title}</legend>
@@ -124,11 +124,12 @@ export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = fa
             onClick={() => setChoiceDraft([])}>Reset CV-only choices</button>}
         </div>
       </div>
-    </details>
+    </section>}
     <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || loadingChoices} onClick={update}>
       {pending ? "Checking current inputs…" : selectedBaseline ? "Update Auto from current inputs" : "Create Auto CV"}
     </button>
-    <p className="text-12 text-muted">A saved result is free; generating a new Auto CV uses one CV credit. Refine and Manual edits stay separate.</p>
+    {quote && <p className="text-12 text-muted">New AI work: {quote.charge === "role_credit"
+      ? "1 role credit for the first successful result" : `${quote.units} AI units`}. Reopening a saved result is free.</p>}
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert" className="text-danger">{error}</p>}
   </div>;

@@ -70,8 +70,8 @@ beforeAll(async () => {
   act(() => {
     warmRoot.render(
       <>
-        <CvBuildLive id="warm" mode="build" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
-        <CvBuildLive id="warm" mode="log" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
+        <CvBuildLive diagnostics id="warm" mode="build" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
+        <CvBuildLive diagnostics id="warm" mode="log" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
       </>,
     );
   });
@@ -118,7 +118,7 @@ for (const status of [404, 401]) {
     vi.stubGlobal("fetch", fetch);
 
     act(() => {
-      root.render(<CvBuildLive id="draft-1" mode="build" initial={reading(first)} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+      root.render(<CvBuildLive diagnostics id="draft-1" mode="build" initial={reading(first)} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
     });
     await advance(FIRST_POLL_MS);
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -144,7 +144,7 @@ it("keeps backing off over a failure that a later reading can recover from", asy
     .mockResolvedValue(ok(first));
   vi.stubGlobal("fetch", fetch);
   act(() => {
-    root.render(<CvBuildLive id="draft-1" mode="build" initial={first} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+    root.render(<CvBuildLive diagnostics id="draft-1" mode="build" initial={first} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
   });
   await advance(FIRST_POLL_MS);
   expect(container.textContent).toContain("Progress updates are unavailable");
@@ -164,7 +164,7 @@ it("keeps an unsaved mode buffer mounted when finished work needs a hard-reload 
   const dirty = document.createElement("textarea"); dirty.dataset.cvModeDirty = "true"; dirty.value = "Unsaved Manual wording";
   document.body.append(dirty);
   try {
-    act(() => root.render(<CvBuildLive id="draft-1" mode="build" initial={first}
+    act(() => root.render(<CvBuildLive diagnostics id="draft-1" mode="build" initial={first}
       nowMs={T0 + 60_000} timeZone="UTC" versionLabel="V1" />));
     await advance(FIRST_POLL_MS * 4);
     expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(3);
@@ -176,7 +176,7 @@ it("keeps an unsaved mode buffer mounted when finished work needs a hard-reload 
 
 it("keeps the live stage visible while the detailed narrative is closed", async () => {
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
-  act(() => root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([wire(1, "load_inputs", "done")])}
+  act(() => root.render(<CvBuildLive diagnostics id="draft-1" mode="build" initial={reading([wire(1, "load_inputs", "done")])}
     nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />));
   await advance(2_000);
   expect(container.querySelector('h2')?.textContent).toContain("Preparing your CV");
@@ -196,7 +196,7 @@ it("counts every elapsed figure on the server's clock, whatever the browser's sa
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
   const running = { ...wire(1, "write", "running"), startedAt: iso(30), title: "Writing the CV" };
   act(() => {
-    root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([running])} nowMs={serverNow} timeZone="UTC" versionLabel="18-Sep-V1" />);
+    root.render(<CvBuildLive diagnostics id="draft-1" mode="build" initial={reading([running])} nowMs={serverNow} timeZone="UTC" versionLabel="18-Sep-V1" />);
   });
   await advance(5_000);
   // 30 s had passed on the server when it rendered, and five more since: not "0 s" for ten minutes.
@@ -215,7 +215,7 @@ it("stops the clock while the tab is hidden and puts every figure right the mome
   const running = { ...wire(1, "write", "running"), startedAt: iso(30), title: "Writing the CV" };
   try {
     act(() => {
-      root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([running])} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+      root.render(<CvBuildLive diagnostics id="draft-1" mode="build" initial={reading([running])} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
     });
     await advance(2_000);
     expect(container.textContent).toContain("Writing the CV · running 32 s");
@@ -235,7 +235,7 @@ it("tells a build log only while it is open", async () => {
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
   const steps = [wire(1, "load_inputs", "done"), { ...wire(2, "write", "running"), title: "Writing the CV" }];
   act(() => {
-    root.render(<CvBuildLive id="draft-1" mode="log" initial={reading(steps)} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+    root.render(<CvBuildLive diagnostics id="draft-1" mode="log" initial={reading(steps)} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
   });
   await advance(1_000);
   // Closed, the log is not narrated at all, however often the clock ticks.

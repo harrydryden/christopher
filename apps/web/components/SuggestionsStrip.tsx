@@ -57,10 +57,10 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
 
   return (
     <div className="mb-4 border-2 border-line-muted px-3 text-13">
-      {pending.length > 0 && <details>
-        <summary className="min-h-11 cursor-pointer py-3 text-muted">
+      {pending.length > 0 && <section aria-label="Filter suggestions">
+        <h2 className="py-3 font-medium text-muted">
           {pending.length} {pending.length === 1 ? "filter suggestion" : "filter suggestions"}{fromScans ? " from your scans" : " to review"}
-        </summary>
+        </h2>
         <div className="space-y-2 pb-3">
           {pending.map(item => <div key={item.id} className="flex flex-wrap items-center gap-x-3 border-t border-line-faint" title={item.description}>
             <span className="min-w-0 break-words text-fg">{item.term}</span>
@@ -69,7 +69,7 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
           </div>)}
           <a href="/learning" className="inline-flex min-h-11 items-center text-13 text-muted underline hover:text-fg">All suggestions</a>
         </div>
-      </details>}
+      </section>}
       {pendingId !== null && <span className="text-muted"><MarkSmall size={16} searching title="Saving" /></span>}
       {message && <p role="status" aria-live="polite" className="py-3 text-fg">{message}</p>}
       {error && <p role="alert" className="py-3 text-danger">{error}</p>}

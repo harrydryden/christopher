@@ -66,14 +66,5 @@ export function CompanySetupTimeline({ steps }: { steps: CompanyTimelineStep[] }
  * anything?" without one.
  */
 export function CompanySetupSummary({ steps }: { steps: CompanyTimelineStep[] }) {
-  return (
-    <details className="border-2 border-line-muted px-3 py-2">
-      <summary className="cursor-pointer text-12 text-muted">
-        <span className="text-fg">{companySetupLine(steps)}</span> · how this company was set up
-      </summary>
-      <div className="mt-2 border-t-2 border-line-faint pt-2">
-        <CompanySetupTimeline steps={steps} />
-      </div>
-    </details>
-  );
+  return <p role="status" className="text-12 text-muted">{companySetupLine(steps)}</p>;
 }

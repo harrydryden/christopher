@@ -14,7 +14,7 @@ import { withCvEditBase } from "@/test/cv-form";
  *   COL_DISABLE_BROWSER=1 pnpm test cv-e2e
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { consumeCvCredit, confirmCvTargetingPrioritiesForUser, createDb, grantCvCredits, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { consumeCvCredit, confirmCvTargetingPrioritiesForUser, createDb, grantCvCredits, reserveCvCredit, updateBillingAccount, schema, subscribeToCompany, type Db } from "@col/db";
 import { CvTargetingBriefSchema } from "@col/core/cv-targeting";
 import { randomUUID } from "node:crypto";
 import { createTestDb } from "@/test/db";
@@ -286,6 +286,8 @@ const aiCalls = () =>
 
 describe("the CV pipeline end to end, against a scripted model", () => {
   it("builds, edits, rebuilds, finalises and exports one CV through the real entry points", async () => {
+    // This journey deliberately performs multiple paid passes in one session.
+    await updateBillingAccount(database, user.id, { plan: "search" });
     const fake = createScriptedAiClient();
     const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
     const deps = {
@@ -731,7 +733,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     request.set("jobId", job.id);
     const refused = await requestCv({ ok: true }, request);
     expect(refused.ok).toBe(false);
-    expect((refused as { error: string }).error).toBe("You have no CV credits available. Add credits in Account to build this CV.");
+    expect((refused as { error: string }).error).toBe("You have no role credits available. Add one in Account to request AI help.");
 
     // Nothing was created for a build that was never admitted.
     expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);

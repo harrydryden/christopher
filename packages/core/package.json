@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./cv-inline-ai": {
+      "types": "./src/cv-inline-ai.ts",
+      "default": "./src/cv-inline-ai.ts"
+    },
     "./career-record": {
       "types": "./src/career-record.ts",
       "default": "./src/career-record.ts"

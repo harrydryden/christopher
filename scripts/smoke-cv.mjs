@@ -301,41 +301,40 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Experience", exact: true }).getAttribute("aria-current"), "page");
     // Applications owns the CV pages now; on Library it must not be the current entry.
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Applications", exact: true }).getAttribute("aria-current"), null);
-    await page.getByText("About you and contact", { exact: true }).click();
-    const introTab = page.getByRole("tab", { name: "About you", exact: true });
-    assert.equal(await introTab.getAttribute("aria-selected"), "true");
+    await page.getByRole("link", { name: "About you and contact", exact: true }).click();
+    await page.waitForURL("**/library/about");
+    assert.equal(new URL(page.url()).pathname, "/library/about");
     assert.equal(await page.getByRole("tab", { name: "Work history", exact: true }).count(), 0,
       "work facts use the career record, not a second legacy editor");
     assert.equal(await page.getByRole("tab", { name: "Education, training & skills", exact: true }).count(), 0,
       "supporting career facts use the same career record");
-    await page.getByText("Writing preferences", { exact: true }).click();
-    // Writing preferences live on the Library, beside the wording they shape (SPEC: writing preferences on the Library page).
-    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 1);
-    // Saving is the person's own act: there is no save control until there is something to save,
-    // and then it is pinned above the fold with a way to discard.
-    assert.equal(await page.getByRole("button", { name: "Save About you", exact: true }).count(), 0);
+    // Contact details have their own task and save; career facts remain in the record.
+    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Save contact details", exact: true }).isDisabled(), true);
     await page.getByRole("textbox", { name: "Website", exact: true }).fill("https://example.com/portfolio");
-    await page.getByText("Unsaved About you changes", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Discard", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Save contact details", exact: true }).isEnabled(), true);
     assert.equal(await page.getByRole("textbox", { name: "Website", exact: true }).inputValue(), "https://example.com/portfolio");
-    // About stays a deliberate Save while factual career details autosave independently.
-    await page.getByRole("button", { name: "Save About you", exact: true }).click();
-    await page.getByRole("textbox", { name: "Bio", exact: true }).fill("Leading complex delivery teams.");
+    await page.getByRole("button", { name: "Save contact details", exact: true }).click();
+    await page.getByRole("status").filter({ hasText: "About you and contact saved." }).waitFor();
+    await page.getByRole("textbox", { name: "About you", exact: true }).fill("Leading complex delivery teams.");
 
-    // Nothing typed here leaves by accident: an in-app link asks first, and declining stays put.
+    // The task's back link asks before discarding an unsaved contact edit.
     const declined = new Promise((resolve) =>
       page.once("dialog", (dialog) => { dialog.dismiss().then(() => resolve(dialog.message())); }),
     );
-    await page.getByRole("navigation", { name: "Workspace tools" }).getByRole("link", { name: "Preferences", exact: true }).click();
-    assert.match(await declined, /unsaved Experience changes/i);
-    assert.equal(new URL(page.url()).pathname, "/library");
+    await page.getByRole("link", { name: "Back to Experience", exact: true }).click();
+    assert.match(await declined, /Leave without saving your contact changes/i);
+    assert.equal(new URL(page.url()).pathname, "/library/about");
     // Leaving on purpose: the same prompt, accepted. The edits above are never saved.
     const leaving = (dialog) => dialog.accept();
     page.on("dialog", leaving);
-    await page.goto(`${baseUrl}/cv/library`);
+    await page.getByRole("link", { name: "Back to Experience", exact: true }).click();
+    await page.waitForURL("**/library");
     await page.getByRole("heading", { name: "Experience", exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/library");
     page.off("dialog", leaving);
+    await page.goto(`${baseUrl}/cv/library`);
+    assert.equal(new URL(page.url()).pathname, "/library");
     // A career fact is available as soon as it is saved. Work, employer and their relationship
     // are owned records; no legacy job confirmation, AI task or credit is involved.
     const career = page.getByRole("region", { name: "Career record" });
@@ -425,7 +424,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await career.getByRole("heading", { name: "Operations Lead", exact: true }).waitFor();
     assert.equal(await career.getByRole("textbox", { name: "Saved detail", exact: true }).inputValue(), "Ran the smoke estate end to end every morning.");
     await page.getByRole("navigation", { name: "Workspace tools" }).getByRole("link", { name: "Preferences", exact: true }).click();
-    await page.getByText("Default CV appearance", { exact: true }).click();
+    await page.getByRole("link", { name: "Default CV appearance", exact: true }).click();
+    await page.waitForURL("**/settings/cv");
     const appearance = page.getByRole("group", { name: "Appearance", exact: true });
     await appearance.getByRole("button", { name: "Gold", exact: true }).click();
     await Promise.all([
@@ -434,7 +434,6 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     ]);
     assert.equal((await setting("cvTheme")).value.primary, "#ffcc00");
     await page.reload();
-    await page.getByText("Default CV appearance", { exact: true }).click();
     await appearance.waitFor();
     assert.equal(await appearance.getByRole("button", { name: "Gold", exact: true }).getAttribute("aria-pressed"), "true");
     // Writing preferences are written on the Library, beside the wording they shape; Settings only points there.
@@ -556,8 +555,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "Edited profile retained through panel changes.",
     );
     const main = page.locator("[data-cv-main]");
-    await page.getByRole("button", { name: "Show job description", exact: true }).click();
-    const openWidth = (await main.boundingBox()).width;
+    await page.getByRole("tab", { name: "Role details", exact: true }).click();
+    assert.equal(await page.locator("#cv-job-description").isVisible(), true);
+    assert.match(await page.locator("#cv-job-description").innerText(), /job description/i);
+    await page.getByRole("tab", { name: "Write", exact: true }).click();
+    assert.equal(await page.locator("#cv-job-description").isVisible(), false);
 
     // The current edit has one primary save; a fresh rewrite is available under More with its cost.
     assert.equal(await page.getByRole("button", { name: "Save changes · free", exact: true }).count(), 1);
@@ -685,27 +687,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(await page.getByRole("table").isVisible(), true);
     assert.equal(await page.getByText("View full assessment", { exact: true }).count(), 1);
     assert.equal(await page.locator("blockquote").count(), 0);
-    const pinned = page.getByRole("checkbox", { name: "Pin beside writing", exact: true });
-    await pinned.check();
-    assert.equal(await pinned.isChecked(), true);
     for (const tab of ["Write", "Review", "Appearance"]) {
       await page.getByRole("tab", { name: tab, exact: true }).click();
       assert.equal(await page.getByRole("tabpanel").count(), 1);
-      assert.equal(await page.locator("#cv-job-description").isVisible(), true);
-      await page
-        .getByRole("button", { name: "Hide job description", exact: true })
-        .click();
-      assert.equal(
-        await page.locator("#cv-job-description").isVisible(),
-        false,
-      );
-      assert.ok(
-        (await main.boundingBox()).width > openWidth + 200,
-        `${tab} must reclaim the sidebar width`,
-      );
-      await page
-        .getByRole("button", { name: "Show job description", exact: true })
-        .click();
+      assert.equal(await page.locator("#cv-job-description").isVisible(), false);
     }
     await page.getByRole("tab", { name: "Write", exact: true }).click();
     await page
@@ -722,12 +707,12 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       .press("End");
     assert.equal(
       await page
-        .getByRole("tab", { name: "Appearance", exact: true })
+        .getByRole("tab", { name: "Role details", exact: true })
         .getAttribute("aria-selected"),
       "true",
     );
     await page
-      .getByRole("tab", { name: "Appearance", exact: true })
+      .getByRole("tab", { name: "Role details", exact: true })
       .press("Home");
     assert.equal(
       await page
@@ -757,15 +742,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       path: "tmp/cv-review-tabs/evaluation-desktop.png",
       fullPage: true,
     });
-    await page
-      .getByRole("button", { name: "Hide job description", exact: true })
-      .click();
+    await page.getByRole("tab", { name: "Role details", exact: true }).click();
     await page.screenshot({
-      path: "tmp/cv-review-tabs/evaluation-wide.png",
+      path: "tmp/cv-review-tabs/role-details.png",
       fullPage: true,
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    for (const tab of ["Write", "Review", "Appearance"]) {
+    for (const tab of ["Write", "Review", "Appearance", "Role details"]) {
       await page.getByRole("tab", { name: tab, exact: true }).click();
       assert.equal(
         await page.evaluate(

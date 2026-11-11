@@ -115,8 +115,8 @@ export function CareerConflictReview({ detail: incoming, decide }: { detail: Car
       </dl>}
       <p className="mt-3 text-12 text-muted">{sourceLabel(row)}</p>
       {row.provenance.quote && <blockquote className="mt-2 border-l-2 border-line-muted pl-3 text-12 text-muted">{row.provenance.quote}</blockquote>}
-      {row.provenance.originalText !== row.text && <details className="mt-2 text-12"><summary className="min-h-11 cursor-pointer underline">Original wording</summary>
-        <p className="whitespace-pre-wrap break-words text-muted">{row.provenance.originalText}</p></details>}
+      {row.provenance.originalText !== row.text && <section className="mt-2 text-12"><h4 className="font-medium">Original wording</h4>
+        <p className="whitespace-pre-wrap break-words text-muted">{row.provenance.originalText}</p></section>}
       <button type="button" className={`${buttonClass("secondary", "sm")} mt-4 w-full`} disabled={controlsDisabled}
         onClick={() => void save("choose", row.id)}>Use this statement for future CVs</button>
     </article>)}</div>
@@ -178,8 +178,8 @@ export function CareerConflictReview({ detail: incoming, decide }: { detail: Car
     {error && <div role="alert" className="text-13 text-danger">{error} <button type="button" className="min-h-11 underline" onClick={() => router.refresh()}>Refresh saved review</button></div>}
     {notice && <p role="status" className="text-13 text-success">{notice}</p>}
     {awaiting && <p role="status" className="text-13 text-muted">Updating this review… <button type="button" className="min-h-11 underline" onClick={() => router.refresh()}>Refresh saved review</button></p>}
-    <details className="border-t border-line-muted pt-3"><summary className="min-h-11 cursor-pointer text-13 underline">Decision history</summary>
+    <section className="border-t border-line-muted pt-3"><h3 className="text-13 font-semibold">Decision history</h3>
       <ol className="space-y-2 text-13">{detail.history.map(item => <li key={item.revision}>{new Date(item.createdAt).toLocaleString("en-GB")} · {item.choice === "dismiss" ? "Not a conflict" : item.choice === "later" ? "Review later" : item.choice === "reopen" ? "Restored to review" : item.choice === "choose" ? "Used one statement" : item.choice === "correct" ? "Corrected details" : "Kept both with context"}</li>)}</ol>
-    </details>
+    </section>
   </section>;
 }

@@ -32,7 +32,7 @@ export function CvWorkspaceEntry({ jobId, separate = false }: { jobId: string; s
     <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending} onClick={open}>
       {pending ? "Opening…" : separate ? "Start a separate application · free" : "Prepare CV · free"}
     </button>
-    <p className="text-12 text-muted">Choose Auto, Refine or Manual there. A new Auto generation uses one CV credit only when you request it.</p>
+
     {error && <p role="alert" className="text-12 text-danger">{error}</p>}
   </div>;
 }

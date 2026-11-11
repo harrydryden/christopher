@@ -159,7 +159,7 @@ const buildCvDraftColumns = {
   pendingSkillProposals: cvDrafts.pendingSkillProposals,
   semanticAuditCache: cvDrafts.semanticAuditCache,
 };
-const legacyEditingFields = { contextId: null, descriptionVersionId: null, editingMode: null,
+const legacyEditingFields = { contextId: null, opportunityId: null, descriptionVersionId: null, editingMode: null,
   autoBaselineId: null, editingTargets: null, appliedRefinements: null,
   refinementSnapshot: null, refinedResultKey: null, refinementSourceContent: null,
   refinementSourceTargets: null, refinementEngineContract: null, refinementOriginKind: null,

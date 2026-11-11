@@ -23,6 +23,7 @@ describe("task dedupe keys and priorities", () => {
   it("keys and ranks one payload of every type exactly as the queue has always stored it", () => {
     const u = "u1", c = "c1";
     const cases: { [T in TaskType]: [TaskPayloads[T], string | null, number] } = {
+      edit_cv_text: [{ userId: u, runId: "r1" }, "edit_cv_text:r1", 1],
       extract_document: [{ sourceId: "s1", documentId: "d1" }, "extract_document:d1", 5],
       verify_company: [{ candidateId: "k1" }, "verify_company:k1", 5],
       monitor_source: [{ sourceId: "s1" }, "monitor_source:s1", 5],
@@ -77,7 +78,7 @@ describe("task deadlines", () => {
 
   it("names every task type once", () => {
     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
-    expect(TASK_TYPE_NAMES).toHaveLength(29);
+    expect(TASK_TYPE_NAMES).toHaveLength(30);
   });
 });
 

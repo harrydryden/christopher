@@ -4,7 +4,6 @@ import { dailyCvVersions, getCvMotionMedians, getOwnCvDraft, readCvProgress } fr
 import { cvViewerBuildState } from "@/lib/cv-public-diagnostics";
 import { cvPageMode } from "@/lib/cv-page-mode";
 import { cvProgressReading } from "@/lib/cv-progress";
-import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvDraftEditor, CvGapQuiz, CvTargetingConfirmation } from "@/components/CvLazyWidgets";
 import { gapQuizForm, gapQuizLibrary } from "@/lib/cv-gap-quiz-library";
@@ -31,7 +30,8 @@ import { cvDraftEditBaseHash } from "@/lib/cv-edit-base";
 import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
-import { applications, cvLibraries } from "@col/db";
+import { applications, cvLibraries, CV_AI_UNITS, getCvAiAllowance, quoteCvAiAction } from "@col/db";
+import { CvAiAllowance } from "@/components/CvAiAllowance";
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { zUuid } from "@/lib/validation";
@@ -131,7 +131,7 @@ export default async function CvDraftPage({
   }
   // Everything below is read once the draft is known to be this account's, side by side.
   const now = new Date();
-  const [versions, progress, system, admin, latestLibrary, sharing, [application], hasFinalPdf, targetingView] = await Promise.all([
+  const [versions, progress, system, admin, latestLibrary, sharing, [application], hasFinalPdf, targetingView, allowance, skillQuote] = await Promise.all([
     dailyCvVersions(db(), [draft.id]),
     // The build's state, the queue row behind it and every motion of its ledger, in one read: the
     // same read the progress feed makes, so the page and the feed assemble the same token.
@@ -157,6 +157,8 @@ export default async function CvDraftPage({
       .limit(1),
     draft.finalisedAt ? hasStoredFinalisedCvPdf(user.id, id) : Promise.resolve(false),
     cvTargetingViewForOwnedDraft(user.id, draft),
+    getCvAiAllowance(db(), user.id),
+    quoteCvAiAction(db(), { userId: user.id, source: { kind: "draft", id }, action: "skills" }),
   ]);
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
@@ -185,7 +187,7 @@ export default async function CvDraftPage({
   // while there is a build to estimate.
   const medians = reading.live ? await getCvMotionMedians() : {};
   // What every view of the build feed starts from, whether it is the build as it happens or its log.
-  const live = { id, initial: reading, nowMs: now.getTime(), timeZone: system.timezone, versionLabel: version, maxAttempts, medians };
+  const live = { id, initial: reading, nowMs: now.getTime(), timeZone: system.timezone, versionLabel: version, maxAttempts, medians, diagnostics: admin };
   const current =
     !!content &&
     cvAssessmentCurrent(
@@ -219,6 +221,7 @@ export default async function CvDraftPage({
   const assessment = (
     <>
       <CvAssessmentPanel
+        checkQuote={{ charge: skillQuote.charge, units: skillQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.check, priceVersion: skillQuote.priceVersion }}
         id={id}
         revision={draft.revision}
         baseHash={content ? cvDraftEditBaseHash(content, draft.targetingBrief) : ""}
@@ -251,6 +254,7 @@ export default async function CvDraftPage({
   );
   return (
     <div className="w-full space-y-5">
+      <CvAiAllowance session={allowance.session} week={allowance.week} />
       <nav aria-label="CV navigation">
         <Link prefetch={false}
           href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"}
@@ -296,7 +300,7 @@ export default async function CvDraftPage({
             <p className="ds-prose whitespace-pre-wrap text-14 leading-relaxed">
               {draft.jobDescription}
             </p>
-            <CvDisclosure label="source and evidence details">
+            <section aria-label="Source and Experience">
               <p className="my-2 text-14">
                 <a className="underline" href="/library">
                   Open Experience
@@ -318,7 +322,7 @@ export default async function CvDraftPage({
                   </a>
                 )}
               </p>
-            </CvDisclosure>
+            </section>
           </>
         }
       >
@@ -414,6 +418,8 @@ export default async function CvDraftPage({
             key={id}
             id={id}
             content={content}
+            skillQuote={{ charge: skillQuote.charge, units: skillQuote.units, priceVersion: skillQuote.priceVersion }}
+            wholeCvQuote={{ charge: skillQuote.charge, units: skillQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.whole_cv, priceVersion: skillQuote.priceVersion }}
             theme={resolveCvTheme(content.theme)}
             librarySkillSections={librarySkillSections}
             librarySupportingSections={librarySupportSections(latestLibrary[0]?.content ?? draft.librarySnapshot)}
@@ -443,7 +449,7 @@ export default async function CvDraftPage({
             tracking={
               <>
                 <section className="space-y-3 border-2 border-line bg-raised p-4">
-                  <CvDisclosure label="application tracking">
+                  <section aria-label="Application tracking">
                     {application ? (
                       <Link prefetch={false} href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"} className="underline">
                         Application recorded · view it
@@ -482,7 +488,7 @@ export default async function CvDraftPage({
                         </label>
                       </SettingsForm>
                     )}
-                  </CvDisclosure>
+                  </section>
                 </section>
               </>
             }

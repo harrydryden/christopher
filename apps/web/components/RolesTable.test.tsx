@@ -4,7 +4,7 @@
  * before the server answers, and comes back with the server's sentence if it refuses; the undo
  * returns it at once; a group decision does the same for the whole selection.
  */
-import { act, type ReactNode } from "react";
+import { act, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RoleCompaniesVM, RoleRowVM } from "@/lib/queries/jobs";
@@ -21,13 +21,18 @@ const actions = vi.hoisted(() => ({
   roleDetails: vi.fn(),
   retryFailedScore: vi.fn(),
 }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }));
 vi.mock("@/app/actions/decisions", () => actions);
 vi.mock("@/app/actions/scores", () => ({ retryFailedScore: actions.retryFailedScore }));
 vi.mock("@/app/actions/cv", () => ({ requestCv: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
-vi.mock("next/link", () => ({ default: ({ children, href }: { children: ReactNode; href: string }) => <a href={href}>{children}</a> }));
+vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
+vi.mock("next/link", () => ({ default: ({ children, href, ...rest }: { children: ReactNode; href: string } & ComponentProps<"a">) =>
+  <a href={href} {...rest}>{children}</a> }));
 
-import { RolesTable } from "./RolesTable";
+import { RolesTable as ActualRolesTable } from "./RolesTable";
+// Decision and Undo regressions exercise the named role task, where the review is permanently visible.
+const RolesTable = (props: ComponentProps<typeof ActualRolesTable>) => <ActualRolesTable {...props}
+  initiallyExpandedId={props.initiallyExpandedId ?? props.rows[0]?.id} />;
 import { SKIP_REASON_REQUIRED } from "@/lib/decision-reason";
 import { RoleRefusalNotices } from "./RoleRefusalNotices";
 import { dismissRoleRefusal, roleRefusals } from "@/lib/role-refusals";
@@ -73,6 +78,7 @@ let root: Root;
 let container: HTMLElement;
 const scrolled = vi.fn();
 beforeEach(() => {
+  navigation.push.mockReset();
   sessionStorage.clear();
   for (const action of Object.values(actions)) action.mockReset();
   actions.decideWithUndoToken.mockImplementation(async (jobId: string, decision: string, reason: string) => {
@@ -91,6 +97,37 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("opens role review as a named route and sends keyboard decision intent there", () => {
+  act(() => root.render(<ActualRolesTable rows={[FIRST]} companies={COMPANIES} keyboard emptyState={<p>Nothing</p>} />));
+  expect(container.querySelector(`a[href="/roles/${FIRST.id}"]`)?.textContent).toBe(FIRST.title);
+  expect(container.querySelector(`a[aria-label="Review ${FIRST.title} at Meridian"]`)?.textContent).toBe("Review");
+  expect(container.querySelector(`#role-review-${FIRST.id}`)).toBeNull();
+  press("a");
+  expect(navigation.push).toHaveBeenCalledWith(`/roles/${FIRST.id}?decision=apply`);
+});
+
+it("shows a long saved vacancy in full on its role task", async () => {
+  const description = `${"Manage delivery across teams. ".repeat(20)}The final requirement matters.`;
+  actions.roleDetails.mockResolvedValue({ ok: true, details: { jobId: FIRST.id, description,
+    salaryText: null, department: null, employmentType: null, keywordTerms: [], fitVerdict: null,
+    fitRationale: null, locationReason: "", cvQuote: null, cvBlocked: null, archiveNotes: [] } });
+  await act(async () => root.render(<ActualRolesTable rows={[FIRST]} companies={COMPANIES}
+    initiallyExpandedId={FIRST.id} emptyState={null} />));
+  const review = container.querySelector(`#role-review-${FIRST.id}`)!;
+  expect(review.textContent).toContain("The final requirement matters.");
+  expect(review.querySelector(".max-h-32")).toBeNull();
+  expect(review.textContent).not.toContain("Show more");
+});
+
+it("keeps the dedicated role review visible and opens its requested decision", () => {
+  act(() => root.render(<ActualRolesTable rows={[FIRST]} companies={COMPANIES}
+    initiallyExpandedId={FIRST.id} initialDecision="skip" emptyState={null} />));
+  expect(container.querySelector(`#role-review-${FIRST.id}`)).not.toBeNull();
+  expect(reasonBox()).not.toBeNull();
+  act(() => button(FIRST.title).click());
+  expect(container.querySelector(`#role-review-${FIRST.id}`)).not.toBeNull();
 });
 
 it("keeps several successful decisions available across filtered table remounts and retains a failed Undo", async () => {
@@ -216,8 +253,7 @@ it("offers one Retry score in a failed review and preserves the previous score a
   const request = deferred();
   actions.retryFailedScore.mockReturnValue(request.promise);
   render([failed]);
-  expect([...container.querySelectorAll("button")].some(el => el.textContent === "Retry score")).toBe(false);
-  act(() => button(FIRST.title).click());
+  expect([...container.querySelectorAll("button")].some(el => el.textContent === "Retry score")).toBe(true);
   const review = container.querySelector(`#role-review-${failed.id}`)!;
   expect(review.textContent).toContain("72");
   expect(review.textContent).toContain("Previous score; update failed");
@@ -506,20 +542,16 @@ it("draws each row's company from the page's map and says in words what its live
   expect(container.querySelector<HTMLAnchorElement>(`#role-review-${other.id} a[href="https://northwind.example"]`)?.textContent).toBe("Website ↗");
 });
 
-it("keeps a long location list reviewable and exposes every place on demand", () => {
+it("keeps long location lists compact with a direct route to every location", () => {
   const locations = ["USA, GA, Atlanta", ...Array.from({ length: 68 }, (_, i) => `Location ${i + 1}`), "USA, MA, Boston"];
   const multiLocation: RoleRowVM = { ...FIRST, location: locations[0]!, locations };
   act(() => root.render(<RolesTable rows={[multiLocation]} companies={COMPANIES} emptyState={<p>Nothing</p>} />));
 
-  const details = container.querySelector<HTMLDetailsElement>("tbody details");
-  const summary = details?.querySelector("summary");
-  expect(details?.open).toBe(false);
-  expect(summary?.textContent).toBe("USA, GA, Atlanta + 69 more locations");
-  expect(details?.querySelectorAll("li")).toHaveLength(70);
-  expect(details?.querySelector("li:last-child")?.textContent).toBe("USA, MA, Boston");
-  expect(details?.querySelector("ul")?.className).not.toContain("overflow-y-auto");
-  act(() => summary!.click());
-  expect(details?.open).toBe(true);
+  expect(container.querySelector("tbody details")).toBeNull();
+  expect(container.textContent).toContain("USA, GA, Atlanta, Location 1, Location 2");
+  const locationsLink = container.querySelector<HTMLAnchorElement>(`a[href="/roles/${FIRST.id}#locations"]`);
+  expect(locationsLink?.textContent).toBe("All 70 locations");
+  expect(container.textContent).not.toContain("USA, MA, Boston");
 });
 
 it("shows a short location list directly", () => {
@@ -558,7 +590,6 @@ it("shows a role's archive notes once its review panel has loaded them, and ship
   actions.roleDetails.mockReturnValue(loading);
   expect(Object.keys(FIRST)).not.toContain("events");
   render([FIRST, SECOND]);
-  act(() => button(FIRST.title).click());
   expect(actions.roleDetails).toHaveBeenCalledWith(FIRST.id);
   expect(text()).not.toContain("Archived:");
 

@@ -14,7 +14,6 @@ import type { CvTargetingBriefV1, CvTargetingChoices, CvTargetingView } from "@c
 import { projectCvTargetedSections } from "@col/core/cv-targeting-projection";
 import { readCvSkillSuggestions, requestCvSkillSuggestions, saveCvDraft, type CvSkillSuggestionsResult } from "@/app/actions/cv";
 import { CvWorkspacePanel } from "./CvWorkspace";
-import { CvDisclosure } from "./CvDisclosure";
 import { Button } from "./Button";
 import { CvAppearance } from "./CvAppearance";
 import { CvSkillGuidance } from "./CvSkillGuidance";
@@ -35,7 +34,8 @@ export type LibrarySkillSection = { id: string; heading: string; items: string[]
  * assessment panel's "your Library changed" sentence. It submits the same form, to the same
  * action, with the same intent, so there is one rebuild in the product and not two.
  */
-export function RebuildButton({ form, disabled = false }: { form?: string; disabled?: boolean } = {}) {
+export function RebuildButton({ form, disabled = false, quote }: { form?: string; disabled?: boolean;
+  quote?: { charge: "role_credit" | "allowance"; units: number } } = {}) {
   const { pending } = useFormStatus();
   return (
     <Button
@@ -47,7 +47,7 @@ export function RebuildButton({ form, disabled = false }: { form?: string; disab
       variant="secondary"
       size="sm"
     >
-      Rewrite from Experience · 1 credit
+      Rewrite from Experience{quote ? ` · ${quote.charge === "role_credit" ? "1 role credit" : `${quote.units} AI units`}` : ""}
     </Button>
   );
 }
@@ -99,6 +99,8 @@ export function CvDraftEditor({
   baseEditHash: incomingBaseEditHash,
   targetingView: incomingTargetingView,
   targetingBrief: incomingTargetingBrief,
+  skillQuote,
+  wholeCvQuote,
 }: {
   id: string;
   content: CvContent;
@@ -129,6 +131,8 @@ export function CvDraftEditor({
   baseEditHash?: string;
   targetingView?: CvTargetingView | null;
   targetingBrief?: CvTargetingBriefV1 | null;
+  skillQuote?: { charge: "role_credit" | "allowance"; units: number; priceVersion: number };
+  wholeCvQuote?: { charge: "role_credit" | "allowance"; units: number; priceVersion: number };
 }) {
   const formId = `cv-edit-${id}`;
   // A same-ID router.refresh may deliver a different saved draft while this editor still holds
@@ -324,14 +328,14 @@ export function CvDraftEditor({
     return () => { active = false; window.clearInterval(timer); };
   }, [id, skillRun?.id, skillRun?.status, suggestionPollStopped]);
   async function loadSuggestions(refresh: boolean) {
-    if (suggestionRequestInFlight.current || projectionIssue) return;
+    if (suggestionRequestInFlight.current || projectionIssue || !skillQuote) return;
     suggestionRequestInFlight.current = true;
     const generation = ++suggestionGeneration.current;
     setSuggestionStarting(true);
     setSuggestionError("");
     setSuggestionPollStopped(false);
     try {
-      const result = await requestCvSkillSuggestions(id, refresh, latestLibraryVersion, preSuggestionCandidate, baseRevision);
+      const result = await requestCvSkillSuggestions(id, refresh, latestLibraryVersion, preSuggestionCandidate, baseRevision, skillQuote);
       if (generation !== suggestionGeneration.current) return;
       if (result.ok) { setSkillRun(result.run); setSuggestionInputFingerprint(preSuggestionFingerprint); setSelectedSuggestionIds([]); }
       else {
@@ -477,12 +481,13 @@ export function CvDraftEditor({
           submitLabel={dirty ? "Save changes · free" : "Save as new revision · free"}
           submitVariant={!finalised && dirty ? "primary" : "secondary"}
           submitDisabled={!!skillIssue || staleEditBase}
-          secondaryActions={<details className="text-12"><summary className="cursor-pointer">More options</summary><div className="mt-2 space-y-2"><p>Rewrite uses the latest Experience and one CV credit. Save keeps your edits without checking or rebuilding this CV.</p><RebuildButton disabled={!!skillIssue || staleEditBase} /></div></details>}
+          secondaryActions={<RebuildButton disabled={!!skillIssue || staleEditBase} quote={wholeCvQuote} />}
         >
           {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
           {theme && (
             <input type="hidden" name="theme" value={JSON.stringify(theme)} />
           )}
+          {wholeCvQuote && <input type="hidden" name="aiQuote" value={JSON.stringify(wholeCvQuote)} />}
           <input type="hidden" name="removedSkills" value={JSON.stringify(removedSkillIds)} />
           <input type="hidden" name="addedSkills" value={JSON.stringify(addedSkills)} />
           <input type="hidden" name="skillSectionOrder" value={JSON.stringify(orderedSkillIds)} />
@@ -521,7 +526,6 @@ export function CvDraftEditor({
         {preview && currentPreview && <>
           <span>{preview.pages} {preview.pages === 1 ? "page" : "pages"} rendered · limit {theme.maxPages}</span>
           {preview.pages > theme.maxPages && <p role="status" className="w-full text-12 text-warn">This wording renders to {preview.pages} pages, above your {theme.maxPages}-page limit. Saving and Check keep the wording unchanged. After Check, you can finalise with this measured warning, or shorten or summarise, choose a larger limit, or deliberately Rewrite.</p>}
-          <CvDisclosure label="preview on this page" mountWhenOpen><iframe title="Current CV PDF preview" src={preview.url} className="h-[650px] w-full border-2 border-line-muted bg-raised" /></CvDisclosure>
         </>}
       </section>
       <CvWorkspacePanel tab="appearance">
@@ -539,13 +543,14 @@ export function CvDraftEditor({
       </CvWorkspacePanel>
       <CvWorkspacePanel tab="evaluation">
         {content.fitNotes?.length ? (
-          <CvDisclosure label={`What the fitter changed (${content.fitNotes.length})`}>
+          <section className="border-t border-line-muted pt-3" aria-label="What the fitter changed">
+            <h3 className="mb-2 font-semibold">What the fitter changed ({content.fitNotes.length})</h3>
             <ul className="list-disc space-y-1 pl-5 text-14">
               {content.fitNotes.map((note, index) => (
                 <li key={index}>{note}</li>
               ))}
             </ul>
-          </CvDisclosure>
+          </section>
         ) : null}
         {assessment}
       </CvWorkspacePanel>
@@ -612,13 +617,13 @@ export function CvDraftEditor({
           <section className="border border-line-muted p-3" aria-label="Skill recommendations">
             <h3 className="font-semibold">Suggested skills from your Experience</h3>
             <p className="mt-2 text-12 text-muted">Generate grounded suggestions for this CV and role, then choose which to save.</p>
-            <details className="mt-1 text-12 text-muted"><summary className="cursor-pointer">How skill suggestions work</summary><p className="mt-1">Aim for around 10 across relevant categories. New selections are saved to Experience with your CV; existing skills are marked included. Remove a current skill if you want to replace it.</p></details>
             <button type="button" className={`${buttonClass("secondary")} mt-3`}
               onClick={() => void (suggestionPollStopped && !suggestionsStale ? reconnectSuggestions() : loadSuggestions(!!skillRun))}
-              disabled={suggestionStarting || !!projectionIssue || (!!skillRun && !suggestionsStale && !suggestionPollStopped && (skillRun.status === "queued" || skillRun.status === "running"))}>
+              disabled={!skillQuote || suggestionStarting || !!projectionIssue || (!!skillRun && !suggestionsStale && !suggestionPollStopped && (skillRun.status === "queued" || skillRun.status === "running"))}>
               {suggestionStarting ? "Starting skill check…" : suggestionPollStopped && !suggestionsStale ? "Reconnect to suggestion check"
                 : !skillRun ? "Generate skills" : suggestionsStale ? "Generate skills for current edits" : "Refresh suggestions"}
             </button>
+            {skillQuote && <p className="text-12 text-muted">{skillQuote.charge === "role_credit" ? "1 role credit" : `${skillQuote.units} AI units`}</p>}
             {suggestionsStale && <p role="status" className="mt-2 text-12 text-warn">Your CV wording or section choices changed after this skill check. Generate skills for the current edits before selecting suggestions.</p>}
             {!suggestionsStale && (skillRun?.status === "queued" || skillRun?.status === "running") ? <p role="status" className="mt-2 text-12">Checking your Experience, current CV wording and this role…</p> : null}
             {!suggestionsStale && skillRun?.status === "failed" && <p role="status" className="mt-2 text-12 text-warn">{skillRun.error ?? "Suggestions could not be prepared."}</p>}
@@ -765,8 +770,8 @@ export function CvDraftEditor({
                   }}
                   rows={Math.max(3, section.bullets.length * 2)} className={`ds-prose ${input}`} />
                 {signpostNotice === section.entryId && <p role="status" className="text-12 text-warn">A label was cleared because its bullet was removed or changed. Review the remaining labels before saving.</p>}
-                <details className="border border-line-muted p-2"><summary className="cursor-pointer font-medium">Optional bold competency labels</summary>
-                  <p className="mt-2 text-12 text-muted">A short label sits before its own bullet. Leave it blank for normal prose. Labels are checked with the bullet against your evidence.</p>
+                <section className="border border-line-muted p-2" aria-label="Bullet titles">
+                  <h4 className="font-medium">Bullet titles (optional)</h4>
                   <div className="mt-2 space-y-2">{rows[index]!.split("\n").map(value => value.trim()).filter(Boolean).map((bullet, bulletIndex) =>
                     <label key={bulletIndex} className="block text-12">Bullet {bulletIndex + 1}: {bullet.slice(0, 70)}{bullet.length > 70 ? "…" : ""}
                       <input type="text" aria-label={`Competency label for bullet ${bulletIndex + 1} in ${section.heading}`}
@@ -775,7 +780,7 @@ export function CvDraftEditor({
                           next[bulletIndex] = event.target.value || null; return { ...current, [section.entryId]: next }; })}
                         className={input} placeholder="Optional, e.g. Team leadership" />
                     </label>)}</div>
-                </details>
+                </section>
               </div>}
             </div>;
           })}
@@ -805,7 +810,8 @@ export function CvDraftEditor({
         </fieldset>
         {share}
         {tracking}
-        {buildLog && <CvDisclosure label="Build details">{buildLog}</CvDisclosure>}
+        {buildLog && <section aria-label="Build details" className="border-t border-line-muted pt-3">
+          <h3 className="mb-2 text-14 font-semibold">Build details</h3>{buildLog}</section>}
       </CvWorkspacePanel>
     </>
   );

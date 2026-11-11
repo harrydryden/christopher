@@ -6,10 +6,12 @@ import { CvContextLayout } from "./CvContextLayout";
 import { cvSectionEntryId } from "@/lib/cv-content-links";
 
 /** Primary modes stay mounted after a visit so local wording survives a mode switch. */
-export function CvContextModes({ initialMode, auto, refine, manual }: {
+export function CvContextModes({ initialMode, auto, refine, manual, history, compare, roleDetails }: {
   initialMode: CvEditingMode; auto: ReactNode; refine: ReactNode; manual: ReactNode;
+  history?: ReactNode; compare?: ReactNode; roleDetails?: ReactNode;
 }) {
   const [mode, setMode] = useState<CvEditingMode>(initialMode);
+  const [view, setView] = useState<"document" | "history" | "compare" | "role">("document");
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const [visited, setVisited] = useState<Set<CvEditingMode>>(() => new Set([initialMode]));
@@ -24,14 +26,20 @@ export function CvContextModes({ initialMode, auto, refine, manual }: {
       try { hash = decodeURIComponent(window.location.hash.slice(1)); } catch { return; }
       const rawHash = window.location.hash;
       if (!hash) return;
+      if (hash === "cv-history" || hash === "cv-compare" || hash === "cv-role-details") {
+        setView(hash === "cv-history" ? "history" : hash === "cv-compare" ? "compare" : "role");
+        requestAnimationFrame(() => document.getElementById(hash)?.focus());
+        return;
+      }
+      setView("document");
       if (hash === "cv-panel-evaluation" || hash === "cv-guided-review" || hash.startsWith("cv-review-row-") ||
         hash === "cv-context-feedback") {
-        const panel = document.getElementById("cv-context-feedback") as HTMLDetailsElement | null;
-        if (panel) { panel.open = true; panel.querySelector<HTMLElement>("summary")?.focus(); panel.scrollIntoView?.(); }
+        const panel = document.getElementById("cv-context-feedback");
+        if (panel) requestAnimationFrame(() => { panel.querySelector<HTMLElement>("h2[tabindex], button, a")?.focus(); panel.scrollIntoView?.(); });
       } else if (hash === "cv-panel-appearance" || hash === "cv-context-layout") {
         if (modeRef.current === "auto") { setVisited(previous => new Set([...previous, "refine"])); setMode("refine"); }
-        const panel = document.getElementById("cv-context-layout") as HTMLDetailsElement | null;
-        if (panel) { panel.open = true; panel.querySelector<HTMLElement>("summary")?.focus(); panel.scrollIntoView?.(); }
+        const panel = document.getElementById("cv-context-layout");
+        if (panel) requestAnimationFrame(() => { panel.querySelector<HTMLElement>("h2[tabindex], button, select")?.focus(); panel.scrollIntoView?.(); });
       } else if (hash === "cv-panel-content" || hash.startsWith("cv-content-")) {
         const next = modeRef.current === "auto" ? "refine" : modeRef.current;
         setVisited(previous => new Set([...previous, next])); setMode(next);
@@ -85,11 +93,22 @@ export function CvContextModes({ initialMode, auto, refine, manual }: {
     document.addEventListener("click", navigating, true);
     return () => { window.removeEventListener("beforeunload", unloading); document.removeEventListener("click", navigating, true); };
   }, []);
-  const select = (next: CvEditingMode) => { setVisited(previous => new Set([...previous, next])); setMode(next); };
+  const select = (next: CvEditingMode) => { setVisited(previous => new Set([...previous, next])); setMode(next); setView("document"); };
   const tabs = [{ id: "auto" as const, label: "Auto", hint: "From Experience and this role" },
     { id: "refine" as const, label: "Refine", hint: "Remembered for this role" },
     { id: "manual" as const, label: "Manual", hint: "This version only" }];
-  return <CvContextLayout mode={mode} chooseRefine={() => select("refine")}><div className="space-y-4">
+  return <CvContextLayout mode={mode} visible={view === "document"} chooseRefine={() => select("refine")}><div className="space-y-4">
+    <nav aria-label="CV tasks" className="flex flex-wrap gap-3 text-14">
+      <button type="button" className="min-h-11 underline" aria-current={view === "document" ? "page" : undefined}
+        onClick={() => setView("document")}>Edit current CV</button>
+      {history && <button type="button" className="min-h-11 underline" aria-current={view === "history" ? "page" : undefined}
+        onClick={() => setView("history")}>History</button>}
+      {compare && <button type="button" className="min-h-11 underline" aria-current={view === "compare" ? "page" : undefined}
+        onClick={() => setView("compare")}>Compare</button>}
+      {roleDetails && <button type="button" className="min-h-11 underline" aria-current={view === "role" ? "page" : undefined}
+        onClick={() => setView("role")}>Role details</button>}
+    </nav>
+    <div hidden={view !== "document"}>
     <div role="group" aria-label="CV editing mode" className="grid gap-2 sm:grid-cols-3">
       {tabs.map(tab => <button key={tab.id} type="button"
         id={`cv-mode-${tab.id}`} aria-controls={`cv-mode-panel-${tab.id}`} aria-pressed={mode === tab.id}
@@ -102,5 +121,9 @@ export function CvContextModes({ initialMode, auto, refine, manual }: {
       aria-labelledby={`cv-mode-${tab.id}`} hidden={mode !== tab.id}>
       {visited.has(tab.id) ? tab.id === "auto" ? auto : tab.id === "refine" ? refine : manual : null}
     </section>)}
+    </div>
+    {history && <section id="cv-history" tabIndex={-1} aria-label="Saved CV history" hidden={view !== "history"}>{history}</section>}
+    {compare && <section id="cv-compare" tabIndex={-1} aria-label="Compare saved CVs" hidden={view !== "compare"}>{compare}</section>}
+    {roleDetails && <section id="cv-role-details" tabIndex={-1} aria-label="Role details" hidden={view !== "role"}>{roleDetails}</section>}
   </div></CvContextLayout>;
 }

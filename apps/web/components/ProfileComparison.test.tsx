@@ -8,12 +8,13 @@ const profile = (version: number, overrides: Partial<ComparedProfile> = {}): Com
 });
 const render = (previous: ComparedProfile, current: ComparedProfile) => renderToStaticMarkup(<ProfileComparison previous={previous} current={current} />);
 
-it("offers a native read-only comparison with labelled, escaped added and removed lines", () => {
+it("shows a read-only named comparison with labelled, escaped added and removed lines", () => {
   const html = render(profile(1), profile(2, {
     markdown: "# Preferences\n<script>alert(1)</script>", pinnedStatements: ["Keep remote"],
     openQuestions: [{ id: "q-one", question: "Where?", answer: "Remote" }],
   }));
-  expect(html).toContain("<details");
+  expect(html).toContain('aria-label="Compare with previous version"');
+  expect(html).not.toContain("<details");
   expect(html).toContain("Compare with previous version");
   expect(html).toContain("Changes from version 1 to version 2");
   expect(html).toContain("Profile text changes");
@@ -40,7 +41,7 @@ it("shows grouping changes and keeps full versions available when the diff is ab
   const before = Array.from({ length: 1_000 }, (_, index) => `old-${index}`).join("\n");
   const after = Array.from({ length: 1_000 }, (_, index) => `new-${index}`).join("\n");
   const html = render(profile(1, { markdown: before }), profile(2, { markdown: after }));
-  expect(html).toContain("Read full profile text in both versions");
+  expect(html).toContain("Full profile text in both versions");
   expect(html).toContain("old-500");
   expect(html).toContain("new-500");
 });

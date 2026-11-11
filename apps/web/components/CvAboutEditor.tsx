@@ -1,17 +1,10 @@
-"use client";
-
-import { lazy, Suspense, useState, type ComponentProps } from "react";
+import Link from "next/link";
+import type { ComponentProps } from "react";
 import type { CvLibraryEditor } from "./CvLibraryEditor";
 
-const Editor = lazy(() => import("./CvLibraryEditor").then(module => ({ default: module.CvLibraryEditor })));
-
-/** About and contact can be opened without loading the legacy evidence editor on first visit. */
-export function CvAboutEditor(props: ComponentProps<typeof CvLibraryEditor>) {
-  const [visited, setVisited] = useState(false);
-  return <details className="border-t border-line-muted pt-3" onToggle={event => {
-    if (event.currentTarget.open) setVisited(true);
-  }}>
-    <summary className="min-h-11 cursor-pointer text-16 font-semibold">About you and contact</summary>
-    {visited && <div className="mt-3"><Suspense fallback={<p role="status" className="text-14 text-muted">Opening About you…</p>}><Editor {...props} careerManaged /></Suspense></div>}
-  </details>;
+/** Contact editing is a named task; the career page does not load or serialise its editor. */
+export function CvAboutEditor(_props: ComponentProps<typeof CvLibraryEditor>) {
+  return <Link prefetch={false} href="/library/about" className="inline-flex min-h-11 items-center text-14 underline">
+    About you and contact
+  </Link>;
 }

@@ -44,7 +44,8 @@ export async function writeCvLibraryVersion(
   userId: string,
   expectedVersion: number,
   build: (current: CvLibrary | null) => CvLibrary,
-  options: { review?: boolean; careerOrigin?: "direct_user" | "document"; careerSourceId?: string } = {},
+  options: { review?: boolean; careerOrigin?: "direct_user" | "document" | "accepted_suggestion";
+    careerSourceId?: string; acceptedSuggestionCitations?: Record<string, { sourceId: string; quote: string }> } = {},
 ): Promise<number> {
   await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
@@ -54,7 +55,8 @@ export async function writeCvLibraryVersion(
   const content = CvLibrarySchema.parse(retainArchivedEvidence(latest?.content,
     parseLibraryAdditions(build(latest?.content ?? null))));
   await captureLibraryAdditionsIn(tx, userId, latest?.content ?? null, content, version,
-    { kind: options.careerOrigin ?? "direct_user", sourceId: options.careerSourceId });
+    { kind: options.careerOrigin ?? "direct_user", sourceId: options.careerSourceId,
+      citations: options.acceptedSuggestionCitations });
   await tx.insert(cvLibraries).values({ userId, version, content });
   const [career] = await tx.select({ revision: careerHeads.revision }).from(careerHeads)
     .where(eq(careerHeads.userId, userId)).limit(1);

@@ -38,6 +38,22 @@ it("shows direct factual capture without a second confirmation gate", () => {
   expect(html).toContain("Save detail · free");
   expect(html).not.toContain("Confirm all");
   expect(html).not.toContain("0 of 1 confirmed");
+  expect(html).not.toContain("<details");
+});
+
+it("keeps an unsaved detail while opening named perspectives and history tasks", () => {
+  act(() => root.render(<CareerRecordEditor workspace={workspace} />));
+  const detail = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")].find(input =>
+    input.placeholder === "What did you do or achieve?")!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(detail, "Retained work detail");
+    detail.dispatchEvent(new Event("input", { bubbles: true })); });
+  const nav = container.querySelector('nav[aria-label="Experience tasks"]')!;
+  act(() => [...nav.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Perspectives")!.click());
+  expect(detail.closest("div[hidden]")).not.toBeNull();
+  act(() => [...nav.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "History and recovery")!.click());
+  act(() => [...nav.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Edit record")!.click());
+  expect(detail.value).toBe("Retained work detail");
+  expect(saveCareerChange).not.toHaveBeenCalled();
 });
 
 it("adds an atomic, reusable skill label with its skill facet", async () => {

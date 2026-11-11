@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { createDb, grantCvCredits, lockAccountScoreInput, saveCareerChange, saveCareerChangeIn, ensureCareerBackfill,
+import { createDb, consumeCvCredit, releaseCvCredit, grantCvCredits, lockAccountScoreInput, saveCareerChange, saveCareerChangeIn, ensureCareerBackfill,
   schema, type Db } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { createTestDb } from "@/test/db";
@@ -53,7 +53,7 @@ it("builds from directly saved career facts without a legacy Library or proof co
     expect.objectContaining({ id: recordId, details: "Reduced backlog by 20%" }),
   ]));
   expect(drafts[0]?.careerSourceMap?.[`entry:${recordId}:row:0`]).toMatchObject({ recordId, recordRevision: 1 });
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(1);
 });
 
 it("creates a new immutable Auto input after a factual edit while retaining the first build's facts", async () => {
@@ -62,6 +62,9 @@ it("creates a new immutable Auto input after a factual edit while retaining the 
   expect(first.ok).toBe(true);
   const [original] = await database.select().from(schema.cvDrafts);
   const before = JSON.stringify(original!.librarySnapshot);
+  // Complete the first useful result before asking for a changed-input build.
+  await database.update(schema.cvDrafts).set({ status: "ready" }).where(eq(schema.cvDrafts.id, original!.id));
+  await database.transaction(tx => consumeCvCredit(tx, original!.id));
   await saveCareerChange(database, userId, { expectedRevision: 1, requestKey: crypto.randomUUID(),
     operations: [{ type: "edit_record", id: recordId, expectedRevision: 1, fields: fields("Reduced backlog by 35%") }] });
   const next = await openOrClaimAutoCv(contextId, "update");
@@ -151,7 +154,7 @@ async function conflictedSetup(onlyDisputed = false) {
 
 it("keeps pending conflicts advisory while Auto builds from unaffected details", async () => {
   const { contextId, recordId } = await conflictedSetup();
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
   const result = await openOrClaimAutoCv(contextId, "update");
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, charged: true, sourceReview: [expect.anything()] });
   const [draft] = await database.select().from(schema.cvDrafts);
@@ -166,7 +169,7 @@ it("offers a CV-only choice when every fact is disputed and pins it through dupl
   const { contextId, firstId, secondId, group } = await conflictedSetup(true);
   const empty = await openOrClaimAutoCv(contextId, "update");
   expect(empty).toMatchObject({ ok: false, error: expect.stringContaining("continue in Manual"), sourceReview: [expect.anything()] });
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
   expect(await database.select().from(schema.cvAutoBaselines)).toHaveLength(0);
   const choices = [{ groupKey: group.groupKey, fingerprint: group.fingerprint, chosenAssertionId: firstId }];
   const result = await openOrClaimAutoCv(contextId, "update", choices);
@@ -178,12 +181,19 @@ it("offers a CV-only choice when every fact is disputed and pins it through dupl
   expect(draft?.librarySnapshot.careerProjection?.conflictChoices).toEqual(choices);
   expect(JSON.stringify(draft?.librarySnapshot)).toContain("Led a team of 5");
   expect(JSON.stringify(draft?.librarySnapshot)).not.toContain("Led a team of 10");
+  // The first failed operation returns its held role credit before a different choice is built.
+  await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, draft!.id));
+  await database.transaction(tx => releaseCvCredit(tx, draft!.id, "Fixture build failed"));
   const second = await openOrClaimAutoCv(contextId, "update", [{ ...choices[0]!, chosenAssertionId: secondId }]);
   expect(second).toMatchObject({ ok: true, charged: true });
   expect(second.ok && second.baselineId).not.toBe(result.baselineId);
   await database.update(schema.tasks).set({ status: "done" });
   await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, draft!.id));
   await database.update(schema.cvAutoBaselines).set({ status: "failed" }).where(eq(schema.cvAutoBaselines.id, result.baselineId));
+  if (second.ok && second.draftId) {
+    await database.update(schema.cvDrafts).set({ status: "ready" }).where(eq(schema.cvDrafts.id, second.draftId));
+    await database.transaction(tx => consumeCvCredit(tx, second.draftId!));
+  }
   const retried = await retryFailedAutoCv(contextId, result.baselineId);
   expect(retried, JSON.stringify(retried)).toMatchObject({ ok: true, draftId: result.draftId });
   const [again] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
@@ -203,7 +213,7 @@ it("refuses stale or foreign CV-only choices before reserving a credit", async (
   ] });
   const stale = await openOrClaimAutoCv(contextId, "update", [choice]);
   expect(stale).toMatchObject({ ok: false, error: expect.stringMatching(/changed|reload|refresh/i) });
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
   expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
   const other = await signInTestUser(database, process.env.SESSION_SECRET!, "other-career@example.com");
   session = other.cookie;

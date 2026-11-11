@@ -7,7 +7,8 @@ import { saveCareerChangeIn } from "./career-record";
 import { careerAssertions, careerHeads, careerLinks, careerRecords } from "./schema";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-type Origin = { kind: "direct_user" | "document"; sourceId?: string };
+type Origin = { kind: "direct_user" | "document" | "accepted_suggestion"; sourceId?: string;
+  citations?: Record<string, { sourceId: string; quote: string }> };
 
 /** Capture newly accepted legacy rows under the same account lock and Library transaction. */
 export async function captureLibraryAdditionsIn(tx: Tx, userId: string, before: CvLibrary | null,
@@ -23,10 +24,17 @@ export async function captureLibraryAdditionsIn(tx: Tx, userId: string, before: 
     .map(row => `${row.subjectId}\0${row.text.trim().toLocaleLowerCase("en-GB")}`));
   const operations: CareerOperation[] = [];
   const provenance: Record<string, CareerProvenance> = {};
-  const makeProvenance = (text: string): CareerProvenance => ({ kind: origin.kind,
-    sourceId: origin.kind === "document" ? origin.sourceId ?? null : null,
-    quote: origin.kind === "document" && text.length <= 4000 ? text : null,
-    originalText: text, captureContext: `cv_library:${libraryVersion}` });
+  const makeProvenance = (text: string, heading?: string): CareerProvenance => {
+    const citation = heading ? origin.citations?.[`${heading}\0${text}`] : undefined;
+    return { kind: origin.kind,
+      sourceId: origin.kind === "document" ? origin.sourceId ?? null
+        : origin.kind === "accepted_suggestion" ? citation?.sourceId ?? origin.sourceId ?? null : null,
+      quote: origin.kind === "document" && text.length <= 4000 ? text
+        : origin.kind === "accepted_suggestion" ? citation?.quote ?? null : null,
+      originalText: text,
+      captureContext: origin.kind === "accepted_suggestion" ? `cv_skill_run:${origin.sourceId ?? "unknown"}`
+        : `cv_library:${libraryVersion}` };
+  };
   const addRecord = (id: string, kind: CareerOperation & { type: "create_record" }) => {
     if (knownRecords.has(id)) return;
     operations.push(kind);
@@ -103,7 +111,7 @@ export async function captureLibraryAdditionsIn(tx: Tx, userId: string, before: 
       operations.push({ type: "add_assertion", id, subjectId, text, publicText: null,
         facets: entry.kind === "skill" && sourceRows.includes(text) ? ["skill"] : entry.rowFacets?.[text] ?? [],
         context: null });
-      provenance[id] = { ...makeProvenance(text),
+      provenance[id] = { ...makeProvenance(text, entry.heading),
         ...(entry.kind === "skill" && sourceRows.includes(text)
           ? { captureContext: `cv_library:${libraryVersion}:entry:${entry.id}:skill:${sourceRows.indexOf(text)}` } : {}) };
       knownFacts.add(factKey);

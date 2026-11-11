@@ -16,7 +16,6 @@ function LibraryDrift({ sentence }: { sentence: string | null }) {
   return (
     <div role="status" className="flex flex-wrap items-center gap-3 border border-warn p-3 text-14">
       <p className="text-warn">{sentence}</p>
-      <p>Use More options in Write if you want a new draft from the latest Experience.</p>
     </div>
   );
 }
@@ -44,6 +43,7 @@ export function CvAssessmentPanel({
   initialFindingId = null,
   reviewDecision = null,
   checkSuccessHash = "cv-panel-content",
+  checkQuote,
 }: {
   id: string;
   revision?: number;
@@ -80,6 +80,7 @@ export function CvAssessmentPanel({
   initialFindingId?: string | null;
   reviewDecision?: CvReviewDecision | null;
   checkSuccessHash?: string;
+  checkQuote?: { charge: "role_credit" | "allowance"; units: number; priceVersion: number };
 }) {
   if (continuationDraftId) return <section className="space-y-3 border border-line-muted p-4" aria-labelledby="cv-match-title">
     <h2 id="cv-match-title" className="text-14 font-semibold">Job match assessment</h2>
@@ -112,11 +113,11 @@ export function CvAssessmentPanel({
         {!busy && !finalised && (
           <>
             <fieldset disabled={!!blocked} className="min-w-0">
-              <CvCheckForm id={id} hasContent={hasContent} successHash={checkSuccessHash} />
+              <CvCheckForm id={id} hasContent={hasContent} successHash={checkSuccessHash} quote={checkQuote} />
               {hasContent && <p className="mt-2 text-12 text-muted">Check assesses this exact saved wording. It does not rewrite or shorten it.</p>}
             </fieldset>
             {blocked && <p role="status" className="text-14 text-warn">{blocked}</p>}
-            {hasContent && baseHash && <CvFinaliseControl id={id} revision={revision} baseHash={baseHash} />}
+            {hasContent && baseHash && <CvFinaliseControl key={`${id}:${revision}:${baseHash}`} id={id} revision={revision} baseHash={baseHash} />}
           </>
         )}
       </section>
@@ -171,9 +172,9 @@ export function CvAssessmentPanel({
           : <p className="mt-2 text-14">No specific improvement is flagged by this saved review.</p>}
       </div>
       {!finalised && !busy && <CvReviewControls key={`${assessment.inputHash}:${assessment.assessedAt}`} id={id} rows={rows} decision={decision} factualRowIds={factualRowIds} assessmentHash={assessment.inputHash} assessedAt={assessment.assessedAt} initialFindingId={initialFindingId} canFinalise={false} summaryIssue={summaryIssue} overPages={overPages ? assessment.pageCount : null} maxPages={cvMaxPages(content?.theme)} />}
-      {!finalised && !busy && content && baseHash && <CvFinaliseControl id={id} revision={revision} baseHash={baseHash} />}
-      <details id="cv-full-assessment" className="border-t border-line-muted pt-3">
-        <summary className="cursor-pointer text-14 font-medium">View full assessment</summary>
+      {!finalised && !busy && content && baseHash && <CvFinaliseControl key={`${id}:${revision}:${baseHash}`} id={id} revision={revision} baseHash={baseHash} />}
+      <section id="cv-full-assessment" className="border-t border-line-muted pt-3">
+        <h3 className="text-14 font-medium">Full assessment</h3>
         <div className="mt-4 space-y-4">
       {quality && (
         <div className="space-y-3" aria-labelledby="cv-quality-title">
@@ -216,7 +217,7 @@ export function CvAssessmentPanel({
       )}
       <CvEvaluationTable rows={rows} />
         </div>
-      </details>
+      </section>
       <div className="flex flex-wrap items-center gap-3 text-14">
         <a className="font-medium text-fg underline" href={`/cv/${id}/preparation`}>
           Quick scan, uploaded LinkedIn check and interview preparation

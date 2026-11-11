@@ -5,7 +5,7 @@ import { withCvEditBase } from "@/test/cv-form";
  * waiting for the worker at once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, grantCvCredits, releaseCvCredit, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
+import { createDb, consumeCvCredit, grantCvCredits, releaseCvCredit, reserveCvCredit, schema, subscribeToCompany, type Db } from "@col/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@col/db/migrate";
 import { CV_THEMES, DEFAULT_CV_THEME, CvLibrarySchema } from "@col/core/cv";
@@ -203,7 +203,8 @@ it("retries a Direct Edit as an assessment of the wording as typed, with the rub
   const [task] = await buildTasks();
   expect(task!.payload).toMatchObject({ draftId: draft.id, mode: "assess", userId: expect.any(String) });
   expect((await draftRow(draft.id)).buildCheckpoint).toEqual({ sourceRubric: rubric });
-  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id))).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, draft.id)))
+    .toMatchObject([{ chargeKind: "role_credit", action: "check", status: "reserved" }]);
 });
 
 it("reserves a returned credit again when the user retries a failed AI-written build", async () => {
@@ -219,7 +220,7 @@ it("reserves a returned credit again when the user retries a failed AI-written b
   expect((await draftRow(draft.id)).status).toBe("failed");
   await grantCvCredits(database, { userId: user.id, source: "topup", units: 1, externalRef: "retry-pack" });
   expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
-  expect((await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("reserved");
+  expect((await database.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, draft.id))).filter(row => row.status === "reserved")).toHaveLength(1);
 });
 
 it("saves wording immediately without a task and keeps the rubric for an explicit Check", async () => {
@@ -265,7 +266,7 @@ it("saves skill order without AI, checks that revision, and carries order into a
   expect(saved?.content?.sections.map(section => section.entryId)).toEqual(["one", "methods", "tools"]);
   expect(saved?.content?.sections[2]?.skillItems).toEqual(["SQL", "Python"]);
   expect(await buildTasks()).toHaveLength(0);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
   await grantCvCredits(database, { userId: user.id, source: "admin", units: 1, externalRef: "skill-order-rewrite" });
   const rewrite = formForOrder();
   rewrite.set("intent", "improve");
@@ -276,11 +277,16 @@ it("saves skill order without AI, checks that revision, and carries order into a
     { entryId: "methods", items: ["Planning"] },
     { entryId: "tools", items: ["SQL", "Python"] },
   ]);
-  expect((await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, queued!.id)))[0]?.status).toBe("reserved");
+  expect((await database.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, queued!.id)))[0]?.status).toBe("reserved");
+  // A second first-use request cannot race the one-credit unlock.
+  expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toMatchObject({ ok: false, error: expect.stringContaining("already being prepared") });
+  await database.update(schema.cvDrafts).set({ status: "ready", content: saved!.content }).where(eq(schema.cvDrafts.id, queued!.id));
+  await database.transaction(tx => consumeCvCredit(tx, queued!.id));
   expect(await assessCvDraft(saved!.id, { ok: true }, new FormData())).toEqual({ ok: true });
   expect((await buildTasks()).find(task => (task.payload as { draftId?: string }).draftId === saved!.id)?.payload)
     .toMatchObject({ draftId: saved!.id, mode: "assess" });
-  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, saved!.id))).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, saved!.id)))
+    .toMatchObject([{ chargeKind: "allowance", units: 2, status: "reserved" }]);
 });
 
 it("saves successive ranked priority edits freely and checks the final wording with the original rubric", async () => {
@@ -446,8 +452,8 @@ it("deduplicates repeated direct saves, permits distinct wording, and carries th
   expect(await assessCvDraft(grandchild!.id, { ok: true }, new FormData())).toMatchObject({ ok: false });
   expect((await buildTasks()).filter(task => task.payload && (task.payload as { draftId?: string }).draftId === grandchild!.id))
     .toMatchObject([{ payload: { draftId: grandchild!.id, mode: "assess" } }]);
-  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, grandchild!.id)))
-    .toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, grandchild!.id)))
+    .toMatchObject([{ action: "check", chargeKind: "role_credit", status: "reserved" }]);
   await expect(saveWithBase(parent.id, { ok: true }, edit("Second saved wording"))).rejects.toThrow("redirect:/cv/");
   children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children).toHaveLength(2);
@@ -674,7 +680,7 @@ it("resumes a failed targeted page fit on the same draft with its own revised pa
   const resumed = await draftRow(draft.id);
   expect(resumed).toMatchObject({ status: "queued", failure: null, targetingBrief: { presentation: { maxPages: 2 } } });
   expect(await buildTasks()).toHaveLength(1);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(0);
 });
 
 it("reprojects saved targeted wording on page-fit recovery without authoring or losing Feature text", async () => {
@@ -805,7 +811,7 @@ it("uses a fixed credit price even when the internal budget estimate is high", a
   expect(await outcome(requestCv({ ok: true }, generate(roles[1]!.job.id)))).toMatch(/^redirect:\/cv\//);
   expect(await outcome(requestCv({ ok: true }, generate(roles[2]!.job.id)))).toMatch(/^redirect:\/cv\//);
   expect(await database.select().from(schema.cvDrafts)).toHaveLength(3);
-  expect(await database.select().from(schema.creditReservations)).toHaveLength(3);
+  expect(await database.select().from(schema.cvAiUsage)).toHaveLength(3);
 });
 
 it("lets exactly one of two simultaneous requests take the last place", async () => {
@@ -1008,7 +1014,8 @@ it("checks an earlier page-limit failure, then finalises and downloads the uncha
   expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = (await buildTasks()).filter(row => (row.payload as { draftId?: string }).draftId === draft.id);
   expect(task?.payload).toMatchObject({ draftId: draft.id, mode: "assess" });
-  expect(await database.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id))).toHaveLength(0);
+  expect(await database.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, draft.id)))
+    .toMatchObject([{ action: "check", chargeKind: "role_credit", status: "reserved" }]);
   const fake = createScriptedAiClient();
   const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
   const result = await handleGenerateCv(task!, { db: database, env: { anthropicApiKey: "scripted-key" },
@@ -1018,6 +1025,8 @@ it("checks an earlier page-limit failure, then finalises and downloads the uncha
   const checked = await draftRow(draft.id);
   expect(checked.status).toBe("ready");
   expect(checked.content).toEqual(over);
+  expect(await database.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, draft.id)))
+    .toMatchObject([{ action: "check", status: "consumed" }]);
   expect(checked.assessment?.pageCount).toBe(pages);
   expect(callsOf(fake.calls, "author")).toHaveLength(0);
   const form = reviewed();

@@ -5,6 +5,7 @@ import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATION
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 import type { CvLibrary } from "@col/core";
+import type { CvInlineInput } from "@col/core/cv-inline-ai";
 import * as P from "./prompts";
 
 interface Captured {
@@ -93,6 +94,20 @@ function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
   });
   return { engine, calls, usage };
 }
+
+it("scoped corrections send only the selected field and bounded adjacent text, without a full CV or evidence", async () => {
+  const { engine, calls, usage } = engineWith({ text: "Led operations." });
+  const input = { request: { action: "inline_correction", text: "I led operations.",
+    target: { type: "bullet", id: "target", field: "text" } }, selection: { selected: "I led operations." },
+    surrounding: { before: "", after: "" }, maxFieldLength: 650, model: "claude-sonnet-5",
+    role: "PRIVATE ROLE", evidence: [{ id: "source", text: "PRIVATE EVIDENCE" }], omittedEvidence: 0 } as unknown as CvInlineInput;
+  expect(await engine.editCvText(input)).toEqual({ text: "Led operations." });
+  const payload = JSON.stringify(calls[0]!.params.messages);
+  expect(payload).toContain("I led operations.");
+  expect(payload).not.toContain("PRIVATE ROLE"); expect(payload).not.toContain("PRIVATE EVIDENCE");
+  expect(calls[0]!.params.max_tokens).toBe(2000);
+  expect(usage[0]).toMatchObject({ callSite: "CV", stage: "inline_edit" });
+});
 
 it("asks A13 for a grounded, editable row without persisting it", async () => {
   const answer = "I helped the team reduce handover time by around 20%.";

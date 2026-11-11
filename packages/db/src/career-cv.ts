@@ -296,7 +296,10 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
       for (const [index, row] of selected.entries()) {
         const ref = { recordId: record.id, recordRevision: record.revision,
           assertionId: row.assertion?.id ?? null, assertionRevision: row.assertion?.revision ?? null,
-          publicText: confidential };
+          publicText: confidential,
+          ...(row.assertion?.provenance.kind === "accepted_suggestion" ||
+            (!row.assertion && record.provenance.kind === "accepted_suggestion")
+            ? { origin: "accepted_suggestion" as const } : {}) };
         if (!skillNarrative) sourceMap[`entry:${record.id}:row:${index}`] = ref;
         if (kind === "skill") sourceMap[`entry:${record.id}:skill:${index}`] = ref;
       }
@@ -305,7 +308,10 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
           flattened(cvAssertionText(row, confidential) ?? "") === flattened(text));
         sourceMap[`entry:${record.id}:row:${index}`] = { recordId: record.id,
           recordRevision: record.revision, assertionId: cited?.id ?? null,
-          assertionRevision: cited?.revision ?? null, publicText: confidential };
+          assertionRevision: cited?.revision ?? null, publicText: confidential,
+          ...(cited?.provenance.kind === "accepted_suggestion" ||
+            (!cited && record.provenance.kind === "accepted_suggestion")
+            ? { origin: "accepted_suggestion" as const } : {}) };
       }
       const parents = links.filter(link => link.fromId === record.id && link.kind === "part_of" && !link.archivedAt);
       display[record.id] = { recordId: record.id, kind: record.kind as CareerDisplayEntry["kind"], title,

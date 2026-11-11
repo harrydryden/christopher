@@ -10,9 +10,9 @@ import { CvTargetingBriefSchema, cvRankedPriorityChoices } from "@col/core/cv-ta
 import { cvTargetingRubricKey, cvTargetingSource } from "@col/core/cv-targeting-identity";
 import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvRefinedResultKey, cvProjectRefinements, cvRefineWritingLibrary, cvRefinementSourceIdentity,
   cvRefinementDependencies, cvEditingTargetsFor, cvProjectOneExactWording,
-  cvRemovedAppliedRefinements, cvNeedsAuthoredRebuild,
   validateCvEditingTargetTransition, CvRefinementSchema,
   type CvAutoInputV1, type CvRefinementV1, type CvEditingTargets } from "@col/core/cv-editing-modes";
+import { cvRemovedAppliedRefinements, cvNeedsAuthoredRebuild } from "@col/core/cv-refinement-state";
 import { BulletSignpostSchema, CvContentSchema, CvLibrarySchema, CvThemeSchema, DEFAULT_CV_THEME, groupCvLibrary, isEmptyCvExperienceError, isKnownModel, modelForCallSite,
   type CvContent, type CvLibrary } from "@col/core";
 import { canonicalJson, cvAssessmentCurrent, validateCvRubric } from "@col/core/cv-review";

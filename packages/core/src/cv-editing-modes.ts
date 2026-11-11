@@ -143,19 +143,6 @@ export const CvRefinementSchema = z.object({
 export type CvRefinementV1 = z.infer<typeof CvRefinementSchema>;
 export type CvRefinementConflict = { id: string; targetId?: string; reason: "missing_target" | "changed_source" | "changed_role" | "cannot_fit" | "duplicate_target" };
 
-/** A saved edition may have applied choices that have since been edited or forgotten. */
-export function cvRemovedAppliedRefinements(snapshot: CvRefinementV1[],
-  applied: Array<{ id: string; version: number }>, current: CvRefinementV1[]): CvRefinementV1[] {
-  const appliedKeys = new Set(applied.map(row => `${row.id}:${row.version}`));
-  const currentKeys = new Set(current.map(row => `${row.id}:${row.version}`));
-  return snapshot.filter(row => appliedKeys.has(`${row.id}:${row.version}`) &&
-    !currentKeys.has(`${row.id}:${row.version}`));
-}
-
-export function cvNeedsAuthoredRebuild(removed: CvRefinementV1[]): boolean {
-  return removed.some(row => row.kind !== "structured" ||
-    (row.structured?.kind !== "appearance" && row.structured?.kind !== "item_order"));
-}
 
 export function cvProjectSkillSelection(content: CvContent, targets: CvEditingTargets,
   choice: Extract<NonNullable<CvRefinementV1["structured"]>, { kind: "skill_selection" }>) {

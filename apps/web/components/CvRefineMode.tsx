@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { cvNeedsAuthoredRebuild, cvRemovedAppliedRefinements,
-  type CvRefinementConflict, type CvRefinementV1 } from "@col/core/cv-editing-modes";
+import type { CvRefinementConflict, CvRefinementV1 } from "@col/core/cv-editing-modes";
+import { cvNeedsAuthoredRebuild, cvRemovedAppliedRefinements } from "@col/core/cv-refinement-state";
 import type { CvEditingTargets } from "@col/core/cv-editing-modes";
 import type { CvContent } from "@col/core/cv";
 import type { CvTargetingChoices, CvTargetingView } from "@col/core/cv-targeting";

@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./career-record": {
+      "types": "./src/career-record.ts",
+      "default": "./src/career-record.ts"
+    },
+    "./catalogue-recommendations": {
+      "types": "./src/catalogue-recommendations.ts",
+      "default": "./src/catalogue-recommendations.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"

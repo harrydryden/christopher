@@ -10,7 +10,7 @@ import { assertCvFinalisable, canonicalJson, cvAssessmentCurrent, cvReviewDecisi
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, cvPdfs, cvSkillSuggestionRuns, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit, tasks } from "@col/db";
+import { actionCvs, applications, BillingLimitError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, cvPdfs, cvSkillSuggestionRuns, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit, tasks, latestCareerCvEvidence, ensureCareerBackfill, type Db } from "@col/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   MAX_CV_SKILL_DRAFT_CONTEXT_BYTES, cvSkillDraftContext, cvDraftContextHighlightedSkills, isCvSkillDraftContext,
@@ -197,7 +197,11 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
           throw new UserFacingError("The edited skill fields could not be read. Reload the Library and try again.");
         submitted = normaliseSubmittedLibrarySkills(submitted, editedSkillIds, current);
         const parsed = CvLibrarySchema.parse(submitted);
-        return { ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME };
+        if (current && (canonicalJson(parsed.employment ?? []) !== canonicalJson(current.employment ?? []) ||
+          canonicalJson(parsed.entries) !== canonicalJson(current.entries)))
+          throw new UserFacingError("Edit facts, qualifications and skills in Experience, then reload this page.");
+        return { ...parsed, careerProjection: current?.careerProjection,
+          theme: parsed.theme ?? DEFAULT_CV_THEME };
       }, { review: false });
     });
   } catch (error) {
@@ -272,9 +276,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
       const answers: CvGapAnswer[] = [];
       for (const question of quiz.questions) {
         const answer = String(form.get(`answer:${question.id}`) ?? "").trim();
-        const confirmed = form.get(`confirmed:${question.id}`) === "on";
         if (!answer) continue;
-        if (!confirmed) throw new UserFacingError("Confirm each answer is accurate before saving it.");
         const encodedDestination = String(form.get(`destination:${question.id}`) ?? "");
         const separator = encodedDestination.indexOf(":");
         const kind = separator < 0 ? "" : encodedDestination.slice(0, separator);
@@ -285,7 +287,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
         if (!destination) throw new UserFacingError("Choose where each answer belongs in your Library.");
         answers.push({ questionId: question.id, answer, destination });
       }
-      if (!answers.length) throw new UserFacingError("Add and confirm at least one answer, or continue without further evidence.");
+      if (!answers.length) throw new UserFacingError("Add at least one answer, or continue without further evidence.");
       const parsedAnswers = z.array(CvGapAnswerSchema).min(1).max(4).safeParse(answers);
       if (!parsedAnswers.success) throw new UserFacingError("Keep each answer under 2,000 characters and answer no more than four questions.");
       let newVersion: number;
@@ -302,7 +304,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
               throw new UserFacingError("Choose a Library entry that is still in your Library for each answer. Reload if the available entries changed.");
           }
           return addGapAnswersToLibrary(current, quiz, parsedAnswers.data, () => `gap-${randomUUID()}`);
-        });
+        }, { review: false });
       } catch (error) {
         if (error instanceof UserFacingError && error.message === "The library changed. Reload before saving.")
           throw new UserFacingError("Your Library changed after these questions were prepared. Review the latest Library, archive this paused CV from Applications, then start a new build so its questions use that evidence.");
@@ -319,6 +321,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
         preferredWording: draft.librarySnapshot.preferredWording,
         theme: draft.librarySnapshot.theme,
       }));
+      const careerProjection = continuationLibrary.careerProjection;
       const continuationBrief = rebaseTargetingBrief(
         draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null,
         newVersion, CvLibrarySchema.parse(continuationLibrary), draft.jobDescription);
@@ -328,6 +331,10 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
         jobTitle: draft.jobTitle, companyName: draft.companyName,
         jobDescription: draft.jobDescription, jobSource: draft.jobSource,
         libraryVersion: newVersion, librarySnapshot: continuationLibrary, model: draft.model,
+        careerVersion: careerProjection?.version ?? null,
+        careerSourceMap: careerProjection?.sourceMap ?? null,
+        careerDisplay: careerProjection?.display ?? null,
+        careerPresentation: careerProjection?.presentation ?? null,
         targetingBrief: continuationBrief,
         status: "queued",
         buildCheckpoint: {
@@ -445,19 +452,6 @@ export async function requestCv(
     const id = zUuid().parse(String(form.get("jobId")));
     const settings = await getSettings();
     const model = cvModelFor(settings);
-    const library = await latestLibrary(db(), user.id);
-    if (!library) return fail("Save your Library first.");
-    // What the library is missing is written for the person who has to fix it.
-    let generationLibrary;
-    try {
-      generationLibrary = groupCvLibrary(
-        CvLibrarySchema.parse({ ...library.content, ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? library.content.theme ?? DEFAULT_CV_THEME }),
-      );
-    } catch (error) {
-      // A schema failure is a bug, not advice: only the library's own refusal is repeated back.
-      if (error instanceof z.ZodError) throw error;
-      throw new UserFacingError(error instanceof Error ? error.message : "This library cannot be used for a CV yet.");
-    }
     // The role must be one this account can see.
     const [row] = await db()
       .select({ job: jobs, company: sql<string>`coalesce(${jobs.companyLabel}, ${companies.name}, 'Unknown employer')` })
@@ -485,9 +479,11 @@ export async function requestCv(
       );
     if (description.length > 60_000)
       return fail("Keep the job description under 60,000 characters.");
+    await ensureCareerBackfill(db(), user.id);
     // Targeting can omit evidence before the writing budget is allocated. The worker checks the
     // selected view after confirmation; rejecting the full Library here would prevent that choice.
     draftId = await db().transaction(async (tx) => {
+      await lockAccountScoreInput(tx as unknown as Db, user.id, "shared");
       // The account's lock comes before the role's, in every transaction that queues a build.
       await lockCvBuildCapacity(tx, user.id);
       // Then the role's row in this account's table, which `setRoleStage` and `decide` lock first:
@@ -517,14 +513,18 @@ export async function requestCv(
       if (inFlight) return inFlight.id;
       // Going to the build already running is never refused; starting a fourth one is.
       await assertCvBuildCapacity(tx, user.id);
-      const explicitTheme = settings.cvTheme ?? (canonicalJson(CvThemeSchema.parse(library.content.theme ?? DEFAULT_CV_THEME)) !== canonicalJson(DEFAULT_CV_THEME)
-        ? library.content.theme : undefined);
+      const library = await latestLibrary(tx, user.id);
+      const career = await latestCareerCvEvidence(tx as unknown as Db, user.id, { roleText: description }, settings.cvTheme?.experienceLayout);
+      const generationLibrary = groupCvLibrary(CvLibrarySchema.parse({ ...career.library,
+        ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? career.library.theme ?? DEFAULT_CV_THEME }));
+      const explicitTheme = settings.cvTheme ?? (canonicalJson(CvThemeSchema.parse(career.library.theme ?? DEFAULT_CV_THEME)) !== canonicalJson(DEFAULT_CV_THEME)
+        ? career.library.theme : undefined);
       const presentation = { maxPages: explicitTheme?.maxPages ?? 2,
         bodySizePt: explicitTheme?.bodySizePt ?? 12 };
       const targetedSnapshot = { ...generationLibrary,
         theme: { ...generationLibrary.theme!, ...presentation } };
       const targetingBrief = CvTargetingBriefSchema.parse({ version: 1,
-        source: cvTargetingSource(library.version, targetedSnapshot, description),
+        source: cvTargetingSource(library?.version ?? 0, targetedSnapshot, description),
         entries: [], presentation,
         priority: { state: "unprepared", emphasisRequirementIds: [], acknowledgedEssentialOmissionIds: [] } });
       const [draft] = await tx
@@ -546,8 +546,10 @@ export async function requestCv(
                 ? "direct"
                 : "unknown",
           },
-          libraryVersion: library.version,
+          libraryVersion: library?.version ?? 0,
           librarySnapshot: targetedSnapshot,
+          careerVersion: career.careerVersion, careerSourceMap: career.sourceMap,
+          careerDisplay: career.display, careerPresentation: career.presentation,
           targetingBrief,
           model,
           buildCheckpoint: { tailoringEnabled: true },
@@ -1011,15 +1013,16 @@ function rebaseTargetingBrief(brief: ReturnType<typeof CvTargetingBriefSchema.pa
  * build from. Undefined when the account has no Library to read, which leaves the draft's own
  * snapshot in place rather than emptying it.
  */
-async function currentLibrarySnapshot(tx: Tx, userId: string, settings: AppSettings) {
+async function currentLibrarySnapshot(tx: Tx, userId: string, settings: AppSettings, roleText: string) {
   const latest = await latestLibrary(tx, userId);
-  if (!latest) return undefined;
   try {
+    const career = await latestCareerCvEvidence(tx as unknown as Db, userId, { roleText }, settings.cvTheme?.experienceLayout);
     return {
-      libraryVersion: latest.version,
-      librarySnapshot: groupCvLibrary(
-        CvLibrarySchema.parse({ ...latest.content, ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? latest.content.theme ?? DEFAULT_CV_THEME }),
-      ),
+      libraryVersion: latest?.version ?? 0,
+      careerVersion: career.careerVersion, careerSourceMap: career.sourceMap,
+      careerDisplay: career.display, careerPresentation: career.presentation,
+      librarySnapshot: groupCvLibrary(CvLibrarySchema.parse({ ...career.library,
+        ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? career.library.theme ?? DEFAULT_CV_THEME })),
     };
   } catch (error) {
     // A schema failure is a bug, not advice: only the library's own refusal is repeated back.
@@ -1031,11 +1034,10 @@ async function currentLibrarySnapshot(tx: Tx, userId: string, settings: AppSetti
 /**
  * Assessment retries preserve saved wording and use the original JD/evidence snapshot.
  *
- * A retry after a failure the person had to resolve is the exception. They resolved it in their
- * Library or in Settings, and the draft's snapshot is the frozen copy that failed — the evidence,
- * the writing preferences and the page limit as they were. Re-queueing that is a retry that cannot
- * succeed and costs what the first attempt cost, so those retries take the Library and the
- * settings as they are now, and the checkpoint and failure of the attempt they replace go with it.
+ * If writing has not started, a retry takes the current career record and preferences. Once
+ * wording exists, its source snapshot remains pinned so every citation keeps its meaning.
+ * A changed page limit may be applied without replacing those facts; new facts enter an explicit
+ * new build. Completed rubric work can be reused when the role description is unchanged.
  *
  * Every retry is asked of the CV model the account has chosen now. "Choose a different CV model,
  * then retry" is the way forward the page offers for a model that keeps failing, and a retry that
@@ -1049,7 +1051,9 @@ export async function assessCvDraft(
   const user = await requireVerifiedUser();
   try {
     zUuid().parse(id);
+    await ensureCareerBackfill(db(), user.id);
     await db().transaction(async (tx) => {
+      await lockAccountScoreInput(tx as unknown as Db, user.id, "shared");
       // A retry queues the draft again, so it counts against the account's cap like a new build.
       await lockCvBuildCapacity(tx, user.id);
       await lockCvDraft(tx, id);
@@ -1073,6 +1077,11 @@ export async function assessCvDraft(
       if (draft.targetingBrief && draft.failure?.kind === "page_limit_unfittable")
         throw new UserFacingError("Open Write, then use Change this CV's page and evidence choices to retry this targeted CV.");
       await assertCvBuildCapacity(tx, user.id);
+      const [runningTask] = await tx.select({ id: tasks.id }).from(tasks).where(and(
+        eq(tasks.type, "generate_cv"), inArray(tasks.status, ["queued", "running"]),
+        sql`${tasks.payload}->>'draftId' = ${id}`)).limit(1);
+      if (runningTask) throw new UserFacingError("The previous task is still finishing. Retry shortly.");
+
       // A terminal failure returned the original credit. A person asking to retry an AI-written
       // build reserves one again, while a Direct Edit assessment remains free. Automatic worker
       // retries never pass through this action and keep their original reservation.
@@ -1086,7 +1095,13 @@ export async function assessCvDraft(
         !draft.content;
       const settings = await getSettingsFor(user.id, tx);
       const model = cvModelFor(settings);
-      const refreshed = stale ? await currentLibrarySnapshot(tx, user.id, settings) : undefined;
+      // Existing wording keeps the exact sources its citations refer to. A retry can apply a
+      // new page limit, but only a build with no wording takes today's career facts.
+      const refreshed = stale ? draft.content ? {
+        libraryVersion: draft.libraryVersion,
+        librarySnapshot: CvLibrarySchema.parse({ ...draft.librarySnapshot,
+          theme: settings.cvTheme ?? draft.content.theme ?? draft.librarySnapshot.theme ?? DEFAULT_CV_THEME }),
+      } : await currentLibrarySnapshot(tx, user.id, settings, draft.jobDescription) : undefined;
       const oldBrief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
       const refreshedBrief = refreshed && oldBrief ? CvTargetingBriefSchema.parse({
         ...rebaseTargetingBrief(oldBrief, refreshed.libraryVersion, CvLibrarySchema.parse(refreshed.librarySnapshot), draft.jobDescription),

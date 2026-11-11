@@ -93,7 +93,18 @@ export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChan
               ))}
             </select>
           </label>
-          <p className="text-12 text-muted sm:col-span-2 sm:self-end">
+          <label className="text-14">
+            Structure
+            <select aria-label="Structure" className={`mt-1 ${selectClass}`}
+              value={theme.experienceLayout ?? "chronological"}
+              onChange={event => change({ ...theme, experienceLayout: event.target.value as NonNullable<CvTheme["experienceLayout"]> })}>
+              <option value="chronological">Chronological</option>
+              <option value="project">Projects</option>
+              <option value="hybrid">Roles and projects</option>
+            </select>
+            <span className="mt-1 block text-12 text-muted">If this CV has no projects, its experience stays under Experience.</span>
+          </label>
+          <p className="text-12 text-muted sm:self-end">
             Save keeps your current wording. Check measures that exact saved CV;
             it does not rewrite it. Preview shows the actual page count.
           </p>

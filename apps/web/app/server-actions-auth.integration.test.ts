@@ -175,6 +175,8 @@ const GATES: Record<string, Record<string, Gate>> = {
   },
   "actions/setup.ts": { dismissSetupChecklist: "user" },
   "actions/suggestions.ts": { acceptSuggestion: "verified", rejectSuggestion: "verified", findMoreSuggestions: "verified" },
+  "actions/recommendations.ts": { decideCatalogueRecommendation: "user" },
+  "actions/career.ts": { getCareerWorkspace: "user", saveCareerChange: "user", undoCareerChange: "user" },
 };
 
 const classified = Object.entries(GATES).flatMap(([module, exports]) => Object.entries(exports).map(([name, gate]) => ({ module, name, gate })));

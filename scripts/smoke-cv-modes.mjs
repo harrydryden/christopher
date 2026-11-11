@@ -68,7 +68,7 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     const initialWork=await workCounts();
     await page.reload();
     started=performance.now(); await page.getByRole("button",{name:/Update Auto/}).click();
-    await page.getByRole("status").filter({hasText:/ready|saved|credit/i}).first().waitFor();
+    await page.getByRole("status").filter({hasText:"Your saved Auto CV is ready. No new CV credit was used."}).waitFor();
     timings.autoReuseMs=Math.round(performance.now()-started);
     assert.deepEqual(await workCounts(),initialWork,"Auto cache hit creates no work or credit reservation");
     await page.reload();

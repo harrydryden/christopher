@@ -118,7 +118,11 @@ it("saves Library versions before confirmation and queues rescoring only after c
   expect(await taskTypes()).toEqual([]);
 
   await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
-  expect(await saveCvLibrary({ ok: true }, form({ library: JSON.stringify(library), version: "1" }))).toEqual({ ok: true });
+  const [saved] = await database.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
+    .where(eq(schema.cvLibraries.userId, user.id));
+  expect(saved!.content.entries[0]!.skillItems).toEqual(["SQL"]);
+  expect(await saveCvLibrary({ ok: true }, form({ library: JSON.stringify({ ...saved!.content,
+    profile: "Operations leader with reporting experience" }), version: "1" }))).toEqual({ ok: true });
   expect((await database.select({ version: schema.cvLibraries.version }).from(schema.cvLibraries)).map(row => row.version).sort()).toEqual([1, 2]);
   expect(await taskTypes()).toEqual(["rescore_all"]);
 });

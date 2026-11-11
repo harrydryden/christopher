@@ -34,6 +34,9 @@ export type CvEvaluationRow = {
   reason: string;
   companyText?: string;
   sources: string[];
+  sourceIds?: string[];
+  sourceRefs?: Array<{ id: string; quote: string }>;
+  careerSources?: Array<{ href: string; label: string }>;
   /**
    * Where to go to close this gap: the Library, with the need quoted and — when the row cites one
    * job and only one — that job in hand. Absent on a row with nothing missing.
@@ -70,12 +73,39 @@ function needText(row: CvEvaluationRow): string {
  * `job` is added only when the row's own content links resolve to exactly one job in employment
  * history, which is the only mapping from a CV block back to the Library that is not a guess.
  */
-export function cvLibraryHref(row: CvEvaluationRow, library?: Pick<CvLibrary, "entries"> | null): string | undefined {
+export function cvLibraryHref(row: CvEvaluationRow, library?: Pick<CvLibrary, "entries" | "careerProjection"> | null): string | undefined {
   if (!needsLibraryEvidence(row)) return undefined;
   const need = needText(row).slice(0, NEED_CHARACTERS);
   if (!need) return undefined;
   const job = cvLibraryJobFor(row.contentLinks, library);
   return `/library?need=${encodeURIComponent(need)}${job ? `&job=${encodeURIComponent(job)}` : ""}`;
+}
+
+/** Link only through the saved CV snapshot's exact career source IDs. */
+export function cvCareerSourceLinks(row: CvEvaluationRow,
+  library?: Pick<CvLibrary, "entries" | "careerProjection"> | null): Array<{ href: string; label: string }> {
+  const projection = library?.careerProjection;
+  if (!projection) return [];
+  const seen = new Set<string>();
+  const refs = (row.sourceRefs ?? (row.sourceIds ?? []).map(id => ({ id, quote: "" }))).flatMap(source => {
+    const direct = projection.sourceMap[source.id];
+    if (direct) return [direct];
+    if (!source.id.startsWith("entry:")) return [];
+    const entryId = source.id.slice(6);
+    const display = projection.display[entryId];
+    if (!display) return [];
+    const lines = library.entries.find(entry => entry.id === entryId)?.details.split(/\r?\n/) ?? [];
+    const matches = source.quote.trim() ? lines.flatMap((line, index) => line.trim() === source.quote.trim() ? [index] : []) : [];
+    const exact = matches.length === 1 ? projection.sourceMap[`entry:${entryId}:row:${matches[0]}`] : null;
+    return [exact ?? { recordId: display.recordId, assertionId: null }];
+  });
+  return refs.flatMap(ref => {
+    const href = `/library?record=${encodeURIComponent(ref.recordId)}${ref.assertionId ? `&assertion=${encodeURIComponent(ref.assertionId)}` : ""}#${ref.assertionId ? `career-assertion-${ref.assertionId}` : `career-record-${ref.recordId}`}`;
+    if (seen.has(href)) return [];
+    seen.add(href);
+    const title = projection.display[ref.recordId]?.title ?? "saved career record";
+    return [{ href, label: `Source ${seen.size} in ${title}` }];
+  });
 }
 
 /**
@@ -150,7 +180,7 @@ export function cvCommentRows(comments: CvCommentInput[], content: CvContent | n
 export function cvEvaluationRows(
   assessment: CvAssessment,
   content: CvContent | null,
-  library?: Pick<CvLibrary, "entries"> | null,
+  library?: Pick<CvLibrary, "entries" | "careerProjection"> | null,
   comments: CvCommentInput[] = [],
 ): CvEvaluationRow[] {
   const claims = new Map(
@@ -258,6 +288,8 @@ export function cvEvaluationRows(
         reason: match.reason,
         companyText: requirement.origin === "user" ? undefined : requirement.quote,
         sources: unique(match.libraryEvidence.map((ref) => ref.quote)),
+        sourceIds: unique(match.libraryEvidence.map((ref) => ref.id)),
+        sourceRefs: match.libraryEvidence.map(ref => ({ id: ref.id, quote: ref.quote })),
       };
     },
   );
@@ -274,6 +306,8 @@ export function cvEvaluationRows(
       experience: claim.status === "unsupported" ? "None" : "Weak",
       reason: claim.reason,
       sources: unique(claim.evidence.map((ref) => ref.quote)),
+      sourceIds: unique(claim.evidence.map((ref) => ref.id)),
+      sourceRefs: claim.evidence.map(ref => ({ id: ref.id, quote: ref.quote })),
     });
   }
   // Authoring gaps have no requirement IDs; retain them without guessing semantic matches.
@@ -296,6 +330,7 @@ export function cvEvaluationRows(
   // The way out of every gap, added once the rows are built so each kind is judged the same way.
   return [...rows, ...cvCommentRows(comments, content)].map((row) => {
     const libraryHref = cvLibraryHref(row, library);
-    return libraryHref ? { ...row, libraryHref } : row;
+    const careerSources = cvCareerSourceLinks(row, library);
+    return { ...row, ...(libraryHref ? { libraryHref } : {}), ...(careerSources.length ? { careerSources } : {}) };
   });
 }

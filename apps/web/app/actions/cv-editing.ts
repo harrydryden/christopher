@@ -18,6 +18,7 @@ import { cvPreviewRefinementRebase, type CvRefinementRebaseItem } from "@col/cor
 import { appendCvRefinement, currentCvRefinements, attachCvAutoBaselineDraft, claimCvAutoBaseline, cvApplicationContexts, cvAutoBaselines,
   cvContextDescriptions, cvDrafts, jobs, companies, userJobs, users, nextCvRevision, reserveCvCredit,
   resolveCvApplicationContext } from "@col/db";
+import { latestCareerCvEvidence, ensureCareerBackfill, lockAccountScoreInput } from "@col/db";
 import type { Db } from "@col/db";
 import { cvTailoringPlans, saveCvTailoringPlan } from "@col/db";
 import { updateCvContextDescription } from "@col/db";
@@ -911,7 +912,10 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
         draftId: held.sourceDraftId, updateAvailable: null, charged: false }
         : { ok: true, status: "missing", charged: false };
     }
+    await ensureCareerBackfill(db(), user.id);
     const outcome = await db().transaction(async tx => {
+      // A build pins both career facts and contact/preferences while their writers wait.
+      await lockAccountScoreInput(tx as unknown as Db, user.id, "shared");
       await lockCvBuildCapacity(tx, user.id);
       const [context] = await tx.select().from(cvApplicationContexts)
         .where(and(eq(cvApplicationContexts.id, contextId), eq(cvApplicationContexts.userId, user.id))).for("update");
@@ -921,16 +925,17 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
           eq(cvContextDescriptions.contextId, context.id), eq(cvContextDescriptions.userId, user.id)));
       if (!description) throw new UserFacingError("Reload the current role description before updating Auto.");
       const latest = await latestLibrary(tx, user.id);
-      if (!latest) throw new UserFacingError("Save your Experience before generating an Auto CV.");
       const settings = await getSettingsFor(user.id, tx);
+      const career = await latestCareerCvEvidence(tx as unknown as Db, user.id,
+        { roleText: description.text }, settings.cvTheme?.experienceLayout);
       const model = settings.cvModel;
       if (!isKnownModel(model) || model === modelForCallSite(settings, "A3"))
         throw new UserFacingError("Choose a supported CV model in Settings before generating.");
-      const explicitTheme = settings.cvTheme ?? (canonicalJson(CvThemeSchema.parse(latest.content.theme ?? DEFAULT_CV_THEME))
-        !== canonicalJson(DEFAULT_CV_THEME) ? latest.content.theme : undefined);
-      const theme = { ...(latest.content.theme ?? DEFAULT_CV_THEME),
+      const explicitTheme = settings.cvTheme ?? (canonicalJson(CvThemeSchema.parse(career.library.theme ?? DEFAULT_CV_THEME))
+        !== canonicalJson(DEFAULT_CV_THEME) ? career.library.theme : undefined);
+      const theme = { ...(explicitTheme ?? career.library.theme ?? DEFAULT_CV_THEME),
         maxPages: explicitTheme?.maxPages ?? 2, bodySizePt: explicitTheme?.bodySizePt ?? 12 };
-      const library = groupCvLibrary(CvLibrarySchema.parse({ ...latest.content,
+      const library = groupCvLibrary(CvLibrarySchema.parse({ ...career.library,
         ...(settings.cvWritingPreferences ?? {}), theme }));
       const routes = Object.fromEntries(CV_PROMPT_IDS.map(id => {
         const route = resolveRoute(PROMPTS[id], settings.stageRoutes);
@@ -972,8 +977,11 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
       const [draft] = await tx.insert(cvDrafts).values({ userId: user.id, contextId: context.id,
         descriptionVersionId: description.id, editingMode: "auto", autoBaselineId: claim.baseline.id,
         jobId: context.jobId, jobTitle: context.jobTitle, companyName: context.companyName,
-        jobDescription: description.text, jobSource: description.source, libraryVersion: latest.version,
-        librarySnapshot: library, model, revision, status: "queued", buildCheckpoint: {
+        jobDescription: description.text, jobSource: description.source, libraryVersion: latest?.version ?? 0,
+        librarySnapshot: library, careerVersion: career.careerVersion,
+        careerSourceMap: career.sourceMap, careerDisplay: career.display,
+        careerPresentation: career.presentation,
+        model, revision, status: "queued", buildCheckpoint: {
           tailoringEnabled: true, quizCompleted: true, ...(rubricCheckpoint ?? {}),
         } }).returning({ id: cvDrafts.id });
       await attachCvAutoBaselineDraft(tx, { userId: user.id, baselineId: claim.baseline.id, draftId: draft!.id });

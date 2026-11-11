@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { EvidenceConversation } from "./EvidenceConversation";
-import { confirmEvidenceAnswerAsWritten, dismissEvidenceDraft, requestEvidenceDraft, skipEvidenceQuestion } from "@/app/actions/evidence";
+import { confirmEvidenceAnswerAsWritten, confirmEvidenceDraft, dismissEvidenceDraft, requestEvidenceDraft, skipEvidenceQuestion } from "@/app/actions/evidence";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock("@/app/actions/evidence", () => ({
@@ -43,10 +43,10 @@ it("can review and save the person's answer without requesting a model draft", a
   try {
     await ui.type(ui.answer(), "I helped the team reduce handover time.");
     await act(async () => ui.button("Use my answer as written").click());
-    expect(ui.container.textContent).toContain("Proposed wording");
+    expect(ui.container.textContent).toContain("Optional wording review");
     expect(ui.container.querySelectorAll("textarea")[1]?.value).toBe("I helped the team reduce handover time.");
     vi.mocked(confirmEvidenceAnswerAsWritten).mockResolvedValue({ ok: true, version: 2 });
-    await act(async () => ui.button("Confirm and save to Operations lead at Example Company").click());
+    await act(async () => ui.button("Save to Operations lead at Example Company").click());
     expect(confirmEvidenceAnswerAsWritten).toHaveBeenCalledWith(expect.objectContaining({ answer: "I helped the team reduce handover time." }), "I helped the team reduce handover time.");
     expect(requestEvidenceDraft).not.toHaveBeenCalled();
     expect(ui.container.textContent).toContain("Saved to Experience.");
@@ -66,6 +66,39 @@ it("keeps the answer when returning from a proposal to edit it", async () => {
     await act(async () => ui.button("Edit my answer").click());
     expect(ui.answer().value).toBe("The team improved handovers.");
     expect(ui.container.textContent).not.toContain("Nothing further for this question.");
+  } finally { act(() => ui.root.unmount()); ui.container.remove(); }
+});
+
+it("shows model wording as a suggestion while saving only the original answer", async () => {
+  const ui = mount();
+  try {
+    await ui.type(ui.answer(), "The team improved handovers.");
+    vi.mocked(requestEvidenceDraft).mockResolvedValue({ ok: true, draft: { id: "draft-1", status: "drafted",
+      wording: "Transformed all handovers.", answer: "The team improved handovers.", question: props.question,
+      questionId: props.questionId, destination: props.destination, source: "library", sourceId: null,
+      baseVersion: 1, error: null, attempt: 1, acceptedVersion: null } });
+    await act(async () => ui.button("Review an evidence draft").click());
+    expect(ui.container.textContent).toContain("Suggested organisation: Transformed all handovers.");
+    expect(ui.container.querySelectorAll("textarea")[1]?.value).toBe("The team improved handovers.");
+    expect(ui.container.querySelectorAll("textarea")[1]?.readOnly).toBe(true);
+    vi.mocked(confirmEvidenceDraft).mockResolvedValue({ ok: true, version: 2 });
+    await act(async () => ui.button("Save to Operations lead at Example Company").click());
+    expect(confirmEvidenceDraft).toHaveBeenCalledWith("draft-1", "The team improved handovers.");
+  } finally { act(() => ui.root.unmount()); ui.container.remove(); }
+});
+
+it("keeps a quiz's original answer ready when optional drafting is requested", async () => {
+  const confirmed = vi.fn();
+  const ui = mount({ source: "cv_quiz", sourceId: "cv-1", onConfirmed: confirmed });
+  try {
+    await ui.type(ui.answer(), "I led the morning handover.");
+    vi.mocked(requestEvidenceDraft).mockResolvedValue({ ok: true, draft: { id: "draft-1", status: "queued",
+      wording: null, answer: "I led the morning handover.", question: props.question,
+      questionId: props.questionId, destination: props.destination, source: "cv_quiz", sourceId: "cv-1",
+      baseVersion: 1, error: null, attempt: 1, acceptedVersion: null } });
+    await act(async () => ui.button("Review an evidence draft").click());
+    expect(confirmed).toHaveBeenCalledWith("I led the morning handover.");
+    expect(ui.container.querySelectorAll("textarea")[1]?.value).toBe("I led the morning handover.");
   } finally { act(() => ui.root.unmount()); ui.container.remove(); }
 });
 
@@ -101,9 +134,10 @@ it("a late draft poll cannot replace an explicit choice to use the original answ
     source: "library" as const, sourceId: null };
   const ui = mount({ initialDraft });
   try {
-    await act(async () => ui.button("Use my answer as written").click());
+    expect(ui.container.querySelectorAll("textarea")[1]?.value).toBe("We supported the change.");
     await act(async () => finish({ ok: true, json: async () => ({ status: "drafted", wording: "Changed the whole operation.", error: null, attempt: 1 }) }));
     expect(ui.container.querySelectorAll("textarea")[1]?.value).toBe("We supported the change.");
+    expect(ui.container.textContent).toContain("Suggested organisation: Changed the whole operation.");
   } finally { act(() => ui.root.unmount()); ui.container.remove(); vi.unstubAllGlobals(); }
 });
 
@@ -117,13 +151,13 @@ it("restores edited wording and a CV question's explicit confirmation after navi
   act(() => first.root.unmount()); first.container.remove();
   const review = mount(quiz);
   expect(review.container.querySelectorAll<HTMLTextAreaElement>("textarea")[1]?.value).toBe("Supported handover changes with the team.");
-  expect([...review.container.querySelectorAll("button")].map(item => item.textContent)).toContain("Confirm for Operations lead at Example Company");
-  await act(async () => review.button("Confirm for Operations lead at Example Company").click());
+  expect([...review.container.querySelectorAll("button")].map(item => item.textContent)).toContain("Use this wording for Operations lead at Example Company");
+  await act(async () => review.button("Use this wording for Operations lead at Example Company").click());
   act(() => review.root.unmount()); review.container.remove();
   confirmed.mockClear();
   const returned = mount(quiz);
   try {
-    expect(returned.container.textContent).toContain("Wording confirmed for this CV question.");
+    expect(returned.container.textContent).toContain("Wording ready for this CV question.");
     expect(confirmed).toHaveBeenCalledWith("Supported handover changes with the team.");
   } finally { act(() => returned.root.unmount()); returned.container.remove(); }
 });

@@ -179,7 +179,9 @@ export default async function CvContextPage({ params, searchParams }: { params: 
         copySource={workspace.selected ? { kind: workspace.selected.kind, id: workspace.selected.id } : null}
         draft={selectedDraft?.editingMode === "manual" ? { id: selectedDraft.id, revision: selectedDraft.revision,
           content: selectedDraft.content, editingTargets: selectedDraft.editingTargets } : null} prefill={prefill}
-        initialTheme={resolveCvTheme(selectedDraft?.editingMode === "manual" ? selectedDraft.content?.theme : defaultTheme)} />
+        initialTheme={resolveCvTheme(selectedDraft?.editingMode === "manual" ? selectedDraft.content?.theme : defaultTheme)}
+        skillChoices={library?.success ? library.data.entries.filter(entry => entry.kind === "skill" && entry.status === "active")
+          .flatMap(entry => entry.skillItems ?? []) : []} />
       </>} />
     <section id="cv-current-cv" role="region" aria-label="Current CV" className="space-y-2">
     {!selectedDraft?.content && <div className="border border-line-muted p-4 text-14">

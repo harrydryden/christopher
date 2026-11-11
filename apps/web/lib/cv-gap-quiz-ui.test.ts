@@ -52,4 +52,8 @@ it("offers the shaped destinations and starts each question on its suggestion", 
   expect(selects[0]).toMatch(/<option[^>]*value="employment:job:1"[^>]*selected=""/);
   expect(selects[1]).toMatch(/<option[^>]*value="evidence:skills"[^>]*selected=""/);
   expect(html).not.toContain("Ran the budget");
+  expect(html).toContain('name="answer:q1"');
+  expect(html).toContain("Save facts and continue");
+  expect(html).not.toContain("Optional wording review");
+  expect(html).not.toContain('name="confirmed:q1"');
 });

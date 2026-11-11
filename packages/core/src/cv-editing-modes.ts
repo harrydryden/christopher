@@ -9,6 +9,21 @@ import { CV_LIMITS } from "./cv-format";
 import { cvTailoringEvidence } from "./cv-tailoring";
 import { projectCvTargetedSections } from "./cv-targeting-projection";
 
+/** Keep career citations anchored to immutable fact IDs when a CV view reorders its rows. */
+export function cvStableEvidenceId(library: CvLibrary, sourceId: string): string {
+  const ref = library.careerProjection?.sourceMap[sourceId];
+  if (!ref) return sourceId;
+  return ref.assertionId ? `career:assertion:${ref.assertionId}` : `career:narrative:${ref.recordId}`;
+}
+
+export function cvStableEvidence(library: CvLibrary) {
+  return cvTailoringEvidence(library).map(row => {
+    const ref = library.careerProjection?.sourceMap[row.id];
+    return { ...row, id: cvStableEvidenceId(library, row.id),
+      revision: ref?.assertionRevision ?? ref?.recordRevision ?? null };
+  });
+}
+
 /** A null database mode means a historical CV whose provenance is not known. */
 export const CvEditingModeSchema = z.enum(["auto", "refine", "manual"]);
 export type CvEditingMode = z.infer<typeof CvEditingModeSchema>;
@@ -502,10 +517,10 @@ export function cvRefinementDependencies(input: { content: CvContent; targets: C
   library: CvLibrary; descriptionVersionId: string; target: CvRefinementV1["target"];
   structured?: CvRefinementV1["structured"] }) {
   const targets = validateCvEditingTargets(input.content, input.targets);
-  const evidence = cvTailoringEvidence(input.library);
-  const byId = new Map(evidence.map(row => [row.id, row.text]));
+  const evidence = cvStableEvidence(input.library);
+  const byId = new Map(evidence.map(row => [row.id, [row.text, row.revision]]));
   const refs = (items?: Array<string | { sourceId: string }>) => items?.map(item =>
-    typeof item === "string" ? item : item.sourceId) ?? [];
+    cvStableEvidenceId(input.library, typeof item === "string" ? item : item.sourceId)) ?? [];
   let sourceIds: string[] = [];
   let ownerEntryId: string | null = null;
   if (input.target.type === "summary" && input.target.id === targets.summaryId)
@@ -559,18 +574,20 @@ export function cvCarryEditingTargets(input: { priorContent: CvContent; priorTar
     const oldIndex = prior.sections.findIndex(row => row.entryId === target.entryId);
     if (oldIndex < 0) continue;
     const old = prior.sections[oldIndex]!;
-    if (!sameDependency({ type: "section", id: old.sectionId }, { type: "section", id: target.sectionId })) continue;
-    target.sectionId = old.sectionId;
+    if (sameDependency({ type: "section", id: old.sectionId }, { type: "section", id: target.sectionId }))
+      target.sectionId = old.sectionId;
     const oldSection = input.priorContent.sections[oldIndex]!;
     const newSection = input.content.sections[index]!;
     for (let i = 0; i < newSection.bullets.length; i++) {
       const refs = newSection.bulletSources?.[i];
       if (!refs?.length) continue;
-      const signature = canonicalJson([...refs].sort());
+      const signature = canonicalJson(refs.map(ref => cvStableEvidenceId(input.library, ref)).sort());
       const oldMatches = oldSection.bullets.flatMap((_text, n) =>
-        oldSection.bulletSources?.[n]?.length && canonicalJson([...oldSection.bulletSources[n]!].sort()) === signature ? [n] : []);
+        oldSection.bulletSources?.[n]?.length && canonicalJson(oldSection.bulletSources[n]!.map(ref =>
+          cvStableEvidenceId(input.priorLibrary, ref)).sort()) === signature ? [n] : []);
       const newMatches = newSection.bullets.flatMap((_text, n) =>
-        newSection.bulletSources?.[n]?.length && canonicalJson([...newSection.bulletSources[n]!].sort()) === signature ? [n] : []);
+        newSection.bulletSources?.[n]?.length && canonicalJson(newSection.bulletSources[n]!.map(ref =>
+          cvStableEvidenceId(input.library, ref)).sort()) === signature ? [n] : []);
       if (oldMatches.length === 1 && newMatches.length === 1 &&
         sameDependency({ type: "bullet", id: old.bulletIds[oldMatches[0]!] },
           { type: "bullet", id: target.bulletIds[i] })) target.bulletIds[i] = old.bulletIds[oldMatches[0]!]!;

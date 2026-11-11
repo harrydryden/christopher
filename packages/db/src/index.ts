@@ -15,6 +15,14 @@ export { reserveLocationRead, WORKDAY_LOCATION_READS_PER_HOUR } from "./location
 export { appendProfile, latestProfileFor, ProfileVersionConflictError } from "./profiles";
 export { lockScoreModelInput, lockAccountScoreInput, accountCanScore } from "./score-fence";
 export { latestCvLibrary } from "./cv-library";
+export { getCareerRecommendationProfile, type CareerRecommendationProfile } from "./career-recommendation-profile";
+export { getCareerWorkspace, saveCareerChange, saveCareerChangeIn, undoCareerChange, careerConflicts, CareerWriteConflict } from "./career-record";
+export { ensureCareerBackfill } from "./career-backfill";
+export { careerCvEvidence, latestCareerCvEvidence } from "./career-cv";
+export { captureLibraryAdditionsIn } from "./career-library-bridge";
+export { captureDirectCareerAnswerIn } from "./career-library-bridge";
+export { reviseDirectCareerAnswerIn } from "./career-library-bridge";
+export { publishCareerCompatibilityIn } from "./career-record";
 export { claimableTaskSql, workloadMetrics } from "./scaling";
 export { topStatements, resetStatements, formatStatementTotals, type StatementTotal, type StatementTotals } from "./pg-stat";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";

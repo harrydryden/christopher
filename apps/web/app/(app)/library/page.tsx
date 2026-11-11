@@ -2,7 +2,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
 import { SettingsForm } from "@/components/SettingsForm";
 import { inputClass, labelClass } from "@/components/Field";
-import { CvLibraryEditor } from "@/components/CvLibraryEditor";
+import { CvAboutEditor } from "@/components/CvAboutEditor";
+import { CareerRecordEditor } from "@/components/CareerRecordEditor";
 import { LibraryEvidencePoller } from "@/components/LibraryEvidencePoller";
 import { LibraryImportCard } from "@/components/LibraryImportCard";
 import { LibraryImportPoller } from "@/components/LibraryImportPoller";
@@ -14,6 +15,7 @@ import { getLibraryEvidence, getOwnCvLibrary, libraryReviewSignature } from "@/l
 import { libraryImportProgress, listLibraryImports } from "@/lib/queries/library-imports";
 import { requireUser } from "@/lib/auth";
 import { openEvidenceDrafts } from "@/app/actions/evidence";
+import { getCareerWorkspace } from "@/app/actions/career";
 
 export const dynamic = "force-dynamic";
 
@@ -21,12 +23,16 @@ export const dynamic = "force-dynamic";
 const NEED_LIMIT = 300;
 
 export default async function LibraryPage({ searchParams }: {
-  searchParams: Promise<{ need?: string; job?: string; return?: string; onboarding?: string }>;
+  searchParams: Promise<{ need?: string; job?: string; return?: string; onboarding?: string; record?: string;
+    assertion?: string; query?: string; cursor?: string; assertionsCursor?: string; linksCursor?: string; changesCursor?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
   const openLinkedIn = params.onboarding === "linkedin";
-  const library = await getOwnCvLibrary(user.id);
+  const [library, career] = await Promise.all([getOwnCvLibrary(user.id),
+    getCareerWorkspace({ recordId: params.record, legacyJobId: params.job, assertionId: params.assertion, query: params.query, cursor: params.cursor,
+      assertionsCursor: params.assertionsCursor, linksCursor: params.linksCursor,
+      changesCursor: params.changesCursor && /^\d+$/.test(params.changesCursor) ? Number(params.changesCursor) : undefined })]);
   const [evidence, writing, signature, imports, openDrafts] = await Promise.all([
     getLibraryEvidence(user.id, library),
     getCvWritingPreferences(user.id),
@@ -56,12 +62,13 @@ export default async function LibraryPage({ searchParams }: {
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Experience" />
-      {!library && <div className="space-y-2"><p className="ds-prose max-w-3xl text-16">Start from a document or enter your work history yourself. You can review imported suggestions before adding them.</p>
-        <a href="#experience-manual" className="inline-flex min-h-11 items-center text-14 font-semibold underline">Enter work history yourself</a></div>}
+      {!library && <div className="space-y-2"><p className="ds-prose max-w-3xl text-16">Start from a document or add a role, project or other activity yourself. You can review imported suggestions before adding them.</p>
+        <a href="#experience-manual" className="inline-flex min-h-11 items-center text-14 font-semibold underline">Add a career detail yourself</a></div>}
       {!library && <LibraryImportCard openLinkedIn={openLinkedIn} />}
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} needsName={!library && !(user.name ?? "").trim()} />
       {importProgress && <LibraryImportPoller pending={reading} signature={importProgress.signature} />}
-      <section id="experience-manual" aria-label="Edit Experience" className="scroll-mt-20"><CvLibraryEditor
+      <section id="experience-manual" aria-label="Edit Experience" className="scroll-mt-20"><CareerRecordEditor workspace={career} initialQuery={params.query ?? ""} /></section>
+      <section aria-label="About you and contact" className="space-y-3"><CvAboutEditor
         library={content}
         version={library?.version ?? 0}
         evidence={evidence}

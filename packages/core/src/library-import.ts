@@ -16,8 +16,7 @@
  *
  * Nothing here writes to the Library. `proposalToLibraryAdditions` returns the library the person
  * would have if they accepted the items they ticked — additions only, with every new block active
- * and every row on it unconfirmed, so confirming those rows is the review step rather than a
- * second one.
+ * and every selected source-backed row usable after the member's single acceptance.
  */
 import { z } from "zod";
 import {
@@ -533,9 +532,9 @@ export function proposalToLibraryAdditions(
     if (!rows.length) continue;
     added.rows += rows.length;
     if (existing) {
-      // Appended, never rewritten: the rows that were there keep their wording and their
-      // confirmations, and the new ones arrive unconfirmed under them.
-      entries[index] = { ...existing, details: [...responsibilityRows(existing.details), ...rows].join("\n") };
+      // Existing wording remains intact; selected anchored rows become usable immediately.
+      entries[index] = { ...existing, details: [...responsibilityRows(existing.details), ...rows].join("\n"),
+        confirmedResponsibilities: [...new Set([...(existing.confirmedResponsibilities ?? []), ...rows])] };
     } else {
       entries.push({
         id: `${prefix}:${job.id}:evidence`,
@@ -544,7 +543,7 @@ export function proposalToLibraryAdditions(
         heading: employmentHeading(record),
         details: rows.join("\n"),
         employmentId: record.id,
-        confirmedResponsibilities: [],
+        confirmedResponsibilities: rows,
       });
     }
   }

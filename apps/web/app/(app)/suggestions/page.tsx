@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import { CareerRecommendations } from "@/components/CareerRecommendations";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { discoverySources, tasks } from "@col/db/schema";
@@ -185,6 +187,9 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
       {resolved.length ? <div className="space-y-4">{resolved.map(row => <div key={row.suggestion.id}><SuggestionCard row={row}/>{row.suggestion.resolvedAt && <p className="mt-1 text-12 text-muted">{row.suggestion.status === "expired" ? "Expired" : "Reviewed"} {relativeTime(row.suggestion.resolvedAt, now)}</p>}</div>)}</div> : <EmptyState title={q ? "No matching history" : "No review history yet"} description={q ? "Try another name." : "Companies you follow or dismiss appear here."}/>}
     </> : <>
       <CompanyCapacityReadout {...companyEntitlement} />
+      {!q && <Suspense fallback={<p role="status" className="mb-4 text-14 text-muted">Finding matches from your Experience…</p>}>
+        <CareerRecommendations userId={user.id} followBlocked={blockedReason}/>
+      </Suspense>}
       <CatalogueBox userId={user.id} q={q} matches={matches} domain={domain} blockedReason={blockedReason}/>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="ds-pixel text-12">Companies to review</h2>

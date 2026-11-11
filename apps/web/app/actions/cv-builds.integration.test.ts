@@ -591,8 +591,10 @@ it("retries a page-limit failure against the page limit set since, keeping the C
   expect(retried.content!.theme).toEqual({ ...theme, maxPages: 3 });
   expect(retried.content!.sections).toEqual(content.sections);
   expect(retried.librarySnapshot.theme!.maxPages).toBe(3);
-  expect(retried.libraryVersion).toBe(2);
-  expect(retried.librarySnapshot.entries.some(entry => entry.id === "new-stronger-evidence")).toBe(true);
+  // A check of saved wording retains the sources its existing citations identify.
+  expect(retried.libraryVersion).toBe(draft.libraryVersion);
+  expect(retried.librarySnapshot.entries).toEqual(draft.librarySnapshot.entries);
+  expect(retried.librarySnapshot.entries.some(entry => entry.id === "new-stronger-evidence")).toBe(false);
   expect(retried.buildCheckpoint?.sourceRubric).toEqual(sourceRubric);
   expect(await database.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, draft.id))).toHaveLength(0);
 });

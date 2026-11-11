@@ -1,4 +1,5 @@
 /** Browser-safe CV contract. PDFKit is imported only through the server entry point. */
+import type { CvContent } from "./cv";
 export const CV_SKILL_GUIDANCE = {
   libraryPerSection: 20,
   cvPerSection: 10,
@@ -30,6 +31,46 @@ export const CV_GROUPS = [{ kind: "experience", title: "Experience" }, ...CV_SUP
 export type CvSectionKind = typeof CV_GROUPS[number]["kind"];
 export type CvSupportingKind = typeof CV_SUPPORTING_GROUPS[number]["kind"];
 export const CV_SECTION_ORDER = Object.fromEntries(CV_GROUPS.map((group, index) => [group.kind, index])) as Record<CvSectionKind, number>;
+
+/** Presentation reorders existing sections, never copies a contribution or changes its sources. */
+export function cvDisplayGroups(content: CvContent) {
+  const indexed = content.sections.map((section, index) => ({ section, index }));
+  const experience = indexed.filter(item => item.section.kind === "experience");
+  const mode = content.theme?.experienceLayout ?? "chronological";
+  const byId = new Map(experience.map(item => [item.section.entryId, item.section.career]));
+  const isProject = (item: typeof indexed[number]) => item.section.career?.kind === "project" ||
+    (item.section.career?.groupRecordId && byId.get(item.section.career.groupRecordId)?.kind === "project");
+  const chronology = (items: typeof indexed) => [...items].sort((left, right) => {
+    const a = left.section.career, b = right.section.career;
+    // Old saved CVs keep the exact order their original snapshot had.
+    if (!a || !b) return left.index - right.index;
+    const groupA = byId.get(a.groupRecordId ?? "") ?? a;
+    const groupB = byId.get(b.groupRecordId ?? "") ?? b;
+    const key = (record: NonNullable<typeof a>) => record.dates.current ? "9999" : record.dates.end ?? record.dates.start ?? "";
+    const order = key(groupB).localeCompare(key(groupA));
+    if (order) return order;
+    if (a.groupRecordId === b.recordId) return 1;
+    if (b.groupRecordId === a.recordId) return -1;
+    return left.index - right.index;
+  });
+  const projects = experience.filter(isProject);
+  const roles = experience.filter(item => !isProject(item));
+  const groups: Array<{ kind: CvSectionKind; title: string; sections: typeof indexed }> = [];
+  // A project view needs actual project records. With none, retain the available Experience.
+  if (mode === "chronological" || !projects.length) {
+    if (experience.length) groups.push({ kind: "experience", title: "Experience", sections: chronology(experience) });
+  } else {
+    const projectGroup = { kind: "experience" as const, title: "Projects", sections: projects };
+    const roleGroup = { kind: "experience" as const, title: "Experience", sections: chronology(roles) };
+    if (mode === "project") groups.push(projectGroup, ...(roles.length ? [roleGroup] : []));
+    else groups.push(...(roles.length ? [roleGroup] : []), projectGroup);
+  }
+  for (const group of CV_SUPPORTING_GROUPS) {
+    const sections = indexed.filter(item => item.section.kind === group.kind);
+    if (sections.length) groups.push({ ...group, sections });
+  }
+  return groups;
+}
 
 /** Names only the selected supporting kinds, in the same order as the editor and PDF. */
 export function cvSupportingTitle(kinds: Iterable<string>): string | null {

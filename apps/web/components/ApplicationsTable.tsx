@@ -70,7 +70,7 @@ function statusAction(row: PipelineRow) {
   return null;
 }
 
-function StatusPanel({ row, onSaved }: { row: PipelineRow; onSaved: () => void }) {
+function StatusPanel({ row, editRevision, onSaved }: { row: PipelineRow; editRevision: () => number; onSaved: (submittedRevision: number) => void }) {
   const action = statusAction(row);
   const current = row.application?.status ?? null;
   const [status, setStatus] = useState<ApplicationStatus>(current ?? "applying");
@@ -119,8 +119,9 @@ function StatusPanel({ row, onSaved }: { row: PipelineRow; onSaved: () => void }
       <h3 className="text-14 font-semibold">What happened?</h3>
       {action ? (
         <SettingsForm id={formId} action={async (previous, form) => {
+          const submittedRevision = editRevision();
           const result = await action(previous, form);
-          if (result.ok) onSaved();
+          if (result.ok) onSaved(submittedRevision);
           return result;
         }} submitLabel="Save update">
           <input type="hidden" name="confirm" defaultValue="" ref={confirmField} />
@@ -331,10 +332,45 @@ export function ApplicationsTable({
   // A `?job=` link, and the CV column's own Build CV, both open the row on its CV section.
   const [focusedCvKey, setFocusedCvKey] = useState<string | null>(openKey ?? null);
   const dirtyKeys = useRef(new Set<string>());
+  const nonStatusDirtyKeys = useRef(new Set<string>());
+  const editRevisions = useRef(new Map<string, number>());
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!dirtyKeys.current.size) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const intercept = (event: MouseEvent) => {
+      if (!dirtyKeys.current.size || event.defaultPrevented || event.button !== 0 ||
+        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor || (anchor.target && anchor.target !== "_self") || anchor.hasAttribute("download")) return;
+      let destination: URL;
+      try { destination = new URL(anchor.href, window.location.href); } catch { return; }
+      // Hard or external navigation is covered by beforeunload. A hash-only jump keeps this form mounted.
+      if (destination.origin !== window.location.origin ||
+        (destination.pathname === window.location.pathname && destination.search === window.location.search)) return;
+      if (window.confirm("Leave this application with unsaved changes? Your entries will be lost.")) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("beforeunload", warn);
+    document.addEventListener("click", intercept, true);
+    return () => { window.removeEventListener("beforeunload", warn); document.removeEventListener("click", intercept, true); };
+  }, []);
+  function markDirty(key: string, target: EventTarget | null) {
+    dirtyKeys.current.add(key);
+    editRevisions.current.set(key, (editRevisions.current.get(key) ?? 0) + 1);
+    if (!(target instanceof Element) || !target.closest('form[id^="application-status-"]')) {
+      nonStatusDirtyKeys.current.add(key);
+    }
+  }
   function canLeaveCurrent(nextKey: string | null): boolean {
     if (!expandedKey || expandedKey === nextKey || !dirtyKeys.current.has(expandedKey)) return true;
     if (!window.confirm("Leave this application with unsaved changes? Your entries will be lost.")) return false;
     dirtyKeys.current.delete(expandedKey);
+    nonStatusDirtyKeys.current.delete(expandedKey);
+    editRevisions.current.delete(expandedKey);
     return true;
   }
   function openCv(key: string) { if (!canLeaveCurrent(key)) return; setExpandedKey(key); setFocusedCvKey(key); }
@@ -346,8 +382,14 @@ export function ApplicationsTable({
   const rows = inputRows.map((row) => patched[row.key] ?? row);
   if (!rows.length) return <>{emptyState}</>;
   const detailsFor = (row: PipelineRow) => <div className="grid gap-6 md:grid-cols-2"
-    onInputCapture={() => dirtyKeys.current.add(row.key)} onChangeCapture={() => dirtyKeys.current.add(row.key)}>
-    <StatusPanel row={row} onSaved={() => dirtyKeys.current.delete(row.key)} />
+    onInputCapture={(event) => markDirty(row.key, event.target)}
+    onChangeCapture={(event) => markDirty(row.key, event.target)}>
+    <StatusPanel row={row} editRevision={() => editRevisions.current.get(row.key) ?? 0}
+      onSaved={(submittedRevision) => {
+        if (editRevisions.current.get(row.key) === submittedRevision && !nonStatusDirtyKeys.current.has(row.key)) {
+          dirtyKeys.current.delete(row.key);
+        }
+      }} />
     <CvPanel row={row} focus={focusedCvKey === row.key} quotes={quotes} unverified={unverified}
       onPatched={(fresh) => setPatched((previous) => ({ ...previous, [fresh.key]: fresh }))} />
   </div>;

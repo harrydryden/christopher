@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition } from "react";
+import { useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -13,6 +13,9 @@ import { Card } from "@/components/Card";
  */
 export default function WorkspaceError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const router = useRouter();
+  const [retrying, startRetry] = useTransition();
+  const retryStarted = useRef(false);
+  useEffect(() => { if (!retrying) retryStarted.current = false; }, [retrying]);
   const detail = process.env.NODE_ENV === "production" ? null : error.message;
   return (
     <div role="alert">
@@ -26,12 +29,14 @@ export default function WorkspaceError({ error, reset }: { error: Error & { dige
           <Button
             variant="primary"
             size="sm"
-            onClick={() => startTransition(() => {
-              router.refresh();
-              reset();
-            })}
+            disabled={retrying}
+            onClick={() => {
+              if (retryStarted.current) return;
+              retryStarted.current = true;
+              startRetry(() => { router.refresh(); reset(); });
+            }}
           >
-            Try again
+            {retrying ? "Trying again…" : "Try again"}
           </Button>
         </div>
       </Card>

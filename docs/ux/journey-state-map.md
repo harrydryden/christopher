@@ -150,3 +150,9 @@ The local validation covers Manual-based AI, duplicate role accounting, successi
 ## Shared frontend interaction follow-up
 
 The [design system](../DESIGN-SYSTEM.md) now defines the common task-navigation and save-state contracts used across the CV and Experience workspaces. Local tasks share keyboard navigation and linked panels while retaining unsent input. Save acknowledgement refers to the submitted snapshot; subsequent edits remain visibly unsaved. Phone layouts preserve readable source text as well as containing controls within the viewport. These changes consolidate the existing tasks rather than changing their AI, credit, evidence or finalisation policies. Human task comprehension remains to be evaluated with the protocol above.
+
+## Opportunity screen follow-up
+
+The next screen pass consolidates Applications filters without merging their meanings: Progress answers which applications are active or closed, Next steps answers what is due, and Stage records what happened. All remain URL-backed links; selected states and company scope remain visible. Empty filtered results offer a route back without silently clearing the company. The complete due list is one click away, replacing the duplicate three-item preview. Add a role opens the dedicated `/applications/new` task; the working application list starts with its filters and results rather than a full entry form.
+
+Companies list management links remain navigation; interactive management belongs on the company page. Roles shares one setup snapshot across checklist and empty-state guidance. Companies and Applications have named loading states, and unexpected page failures have a guarded retry. Application update navigation must preserve unsaved input when leaving is cancelled, including typing that occurs while an earlier save is pending. Automated task acceptance and measured bundle/query changes are recorded in the design-system follow-up; human comprehension remains untested.

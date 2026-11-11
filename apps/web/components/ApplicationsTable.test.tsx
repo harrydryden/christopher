@@ -12,6 +12,7 @@ vi.mock("@/app/actions/cv-editing", () => ({ createCvApplicationContext: vi.fn()
 
 import { ApplicationsTable, type PipelineCvQuotes } from "./ApplicationsTable";
 import { createCvApplicationContext } from "@/app/actions/cv-editing";
+import { setRoleStage } from "@/app/actions/applications";
 import type { PipelineRow } from "@/lib/queries/applications";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -146,6 +147,90 @@ it("does not close an edited application without an explicit discard", async () 
   expect(container.querySelector('form[id^="application-status-"]')).not.toBeNull();
   expect(notes.value).toBe("Call tomorrow");
   expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("unsaved changes"));
+});
+
+it("protects an edited application across route filters and unload without intercepting a new tab or hash", async () => {
+  const originalUrl = window.location.href;
+  window.history.replaceState({}, "", "/applications?filter=all");
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  await act(async () => root.render(<ApplicationsTable rows={[row]} openKey={JOB} quotes={{}} emptyState={<p>Nothing</p>} />));
+  const notes = container.querySelector<HTMLTextAreaElement>('textarea[name="notes"]')!;
+  act(() => {
+    notes.value = "Call tomorrow";
+    notes.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const link = document.createElement("a");
+  link.href = "/applications?filter=due";
+  document.body.append(link);
+  let arrived = 0;
+  link.addEventListener("click", event => { arrived += 1; event.preventDefault(); });
+  const click = (options: MouseEventInit = {}) => {
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...options });
+    link.dispatchEvent(event);
+    return event;
+  };
+  try {
+    expect(click().defaultPrevented).toBe(true);
+    expect(arrived).toBe(0);
+    expect(notes.value).toBe("Call tomorrow");
+    expect(confirm).toHaveBeenCalledTimes(1);
+
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    link.target = "_blank";
+    click();
+    expect(arrived).toBe(1);
+    link.target = "";
+    click({ metaKey: true });
+    expect(arrived).toBe(2);
+    link.download = "applications.csv";
+    click();
+    expect(arrived).toBe(3);
+    link.removeAttribute("download");
+    link.href = `${window.location.pathname}${window.location.search}#status`;
+    click();
+    expect(arrived).toBe(4);
+    expect(confirm).toHaveBeenCalledTimes(1);
+
+    link.href = "/applications?filter=due";
+    confirm.mockReturnValue(true);
+    click();
+    expect(arrived).toBe(5);
+    expect(notes.value).toBe("Call tomorrow");
+    // Acceptance only permits the link. If navigation fails, the form is still protected.
+    confirm.mockReturnValue(false);
+    click();
+    expect(arrived).toBe(5);
+    expect(confirm).toHaveBeenCalledTimes(3);
+  } finally { link.remove(); window.history.replaceState({}, "", originalUrl); }
+});
+
+it("keeps edits made during a pending status save protected after success", async () => {
+  let finish!: (result: { ok: true }) => void;
+  vi.mocked(setRoleStage).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.stubGlobal("confirm", vi.fn(() => false));
+  await act(async () => root.render(<ApplicationsTable rows={[row]} openKey={JOB} quotes={{}} emptyState={<p>Nothing</p>} />));
+  const form = container.querySelector<HTMLFormElement>('form[id^="application-status-"]')!;
+  const notes = form.querySelector<HTMLTextAreaElement>('textarea[name="notes"]')!;
+  act(() => {
+    notes.value = "First note";
+    notes.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+  expect(setRoleStage).toHaveBeenCalledTimes(1);
+  act(() => {
+    notes.value = "Second note";
+    notes.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => finish({ ok: true }));
+  const back = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Back to applications")!;
+  act(() => back.click());
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("unsaved changes"));
+  expect(notes.value).toBe("Second note");
+  expect(container.querySelector('form[id^="application-status-"]')).not.toBeNull();
 });
 
 it("opens a named task from the title and returns to the list without an accordion row", async () => {

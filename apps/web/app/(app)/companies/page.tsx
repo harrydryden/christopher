@@ -16,11 +16,9 @@ import { companySortParams, nextCompanySort, parseCompanySort, type CompanySort,
 import { GateSetup } from "@/components/GateSetup";
 import { getSystemSettings } from "@/lib/settings";
 import { hasChosenGate } from "@/lib/queries/setup";
-import { needsEmailConfirmation, requireUser } from "@/lib/auth";
-import { CompanyManageMenu } from "@/components/CompanyManageMenu";
+import { requireUser } from "@/lib/auth";
 import { getWorkerStatus } from "@/lib/queries/health";
 import { nextScanSentence } from "./scan-line";
-import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { RefusalNotice } from "@/components/RefusalNotice";
 import { CompanyCapacityReadout } from "@/components/CompanyCapacityReadout";
 import { getCompanyEntitlement } from "@/lib/billing/service";
@@ -57,7 +55,6 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const [{ rows, total, page }, work, system, gateChosen, companyEntitlement] = await Promise.all([listCompanyPage(user.id, pageNumber(sp.page), "", order), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id), getCompanyEntitlement(user.id)]);
   const workerState = rows.some(row => row.activityState === "running") ? (await getWorkerStatus()).state : null;
   const now = new Date();
-  const unverified = needsEmailConfirmation(user);
 
   return (
     <div>
@@ -160,10 +157,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
 
                 </TD>
                 <TD>
-                  {/* Refresh is occasional, so it sits in the row's Manage menu rather than beside it. */}
-                  <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
-                    extra="refresh" running={activityState === "running"} monitoringIssue={activityState === "running" && workerState !== "healthy" ? workerState ?? undefined : undefined}
-                    blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
+                  <Link prefetch={false} href={`/companies/${company.id}#manage`} className="inline-flex min-h-11 items-center text-13 underline">Manage</Link>
                 </TD>
               </TR>
             ))}
@@ -179,9 +173,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   </Link>
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block min-h-11 truncate py-2 text-12 text-muted underline">{company.domain}</a>
                 </div>
-                <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
-                  extra="refresh" running={activityState === "running"} monitoringIssue={activityState === "running" && workerState !== "healthy" ? workerState ?? undefined : undefined}
-                  blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
+                <Link prefetch={false} href={`/companies/${company.id}#manage`} className="inline-flex min-h-11 items-center text-13 underline">Manage</Link>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-12">
                 {needsSource && !discovering && subscription.status === "active" ? <Badge tone="amber">no careers source</Badge>

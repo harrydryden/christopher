@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { mkdir } from "node:fs/promises";
 
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
 const { chromium } = createRequire(new URL("../apps/worker/package.json", import.meta.url))("playwright");
@@ -19,6 +20,7 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const appliedId = randomUUID();
   const interviewId = randomUUID();
+  const emptyCompanyId = randomUUID();
   const appliedDay = "2026-09-21";
   let browser;
   try {
@@ -30,6 +32,10 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
         JSON.stringify([{ status: "applied", at: "2026-09-21T09:00:00.000Z", notes: "Keep this note", on: appliedDay }]),
         JSON.stringify([{ status: "interview", at: "2026-09-22T09:00:00.000Z", notes: "" }])],
     );
+    await pool.query(
+      "insert into companies (id, name, domain, homepage_url) values ($1, 'Smoke empty company', $2, $3)",
+      [emptyCompanyId, `smoke-empty-${emptyCompanyId}.invalid`, `https://smoke-empty-${emptyCompanyId}.invalid`],
+    );
 
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -39,6 +45,30 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${baseUrl}/applications`);
+
+    const shots = "/tmp/col-opportunity-browser";
+    await mkdir(shots, { recursive: true });
+    assert.equal(await page.getByRole("group", { name: "Progress" }).getByRole("link", { name: /^Active / }).getAttribute("aria-current"), "page");
+    assert.equal(await page.getByRole("link", { name: "Add a role", exact: true }).getAttribute("href"), "/applications/new");
+    await page.locator("tr").filter({ hasText: "Smoke applied role" }).first().waitFor();
+    await page.screenshot({ path: `${shots}/applications-populated-desktop.png`, fullPage: true });
+    await page.goto(`${baseUrl}/applications?filter=all&stage=accepted&company=${emptyCompanyId}`);
+    await page.getByRole("heading", { name: "No accepted roles" }).waitFor();
+    assert.equal(await page.getByRole("group", { name: "Application stages" }).getByRole("link", { name: /^Accepted / }).getAttribute("aria-current"), "page");
+    assert.equal(await page.getByRole("group", { name: "Progress" }).getByRole("link", { name: /^All / }).getAttribute("aria-current"), null);
+    await page.screenshot({ path: `${shots}/applications-filtered-empty-desktop.png`, fullPage: true });
+    await page.setViewportSize({ width: 320, height: 800 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false,
+      "filtered applications must not overflow a 320px viewport");
+    await page.screenshot({ path: `${shots}/applications-filtered-empty-320.png`, fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole("link", { name: "View applications" }).click();
+    await page.waitForURL(url => !url.searchParams.has("stage") && url.searchParams.get("company") === emptyCompanyId);
+    assert.equal(new URL(page.url()).searchParams.get("stage"), null, "clearing a stage retains the company scope");
+    assert.equal(new URL(page.url()).searchParams.get("company"), emptyCompanyId);
+    await page.getByRole("link", { name: "Show all companies" }).first().click();
+    await page.waitForURL(url => !url.searchParams.has("company") && !url.searchParams.has("stage"));
+    await page.locator("tr").filter({ hasText: "Smoke applied role" }).first().waitFor();
 
     const appliedRow = page.locator("tr").filter({ hasText: "Smoke applied role" }).first();
     await appliedRow.getByRole("button", { name: "Update", exact: true }).click();
@@ -55,6 +85,21 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
     assert.equal(applied.next_action_on, "2026-10-09", "the reminder date is retained");
     assert.equal(applied.history.length, 1, "editing a reminder does not invent a stage event");
 
+    await appliedForm.getByRole("textbox", { name: "Next step" }).fill("Unsaved filter navigation");
+    for (const target of [
+      page.getByRole("group", { name: "Progress" }).getByRole("link", { name: /^Closed / }),
+      page.getByRole("group", { name: "Next steps" }).getByRole("link", { name: /^Due this week / }),
+    ]) {
+      const declined = new Promise(resolve => page.once("dialog", dialog => {
+        resolve(dialog.message());
+        dialog.dismiss();
+      }));
+      await target.click();
+      assert.match(await declined, /Leave this application with unsaved changes/i);
+      assert.equal(new URL(page.url()).pathname, "/applications");
+      assert.equal(await appliedForm.getByRole("textbox", { name: "Next step" }).inputValue(), "Unsaved filter navigation");
+    }
+    page.once("dialog", dialog => dialog.accept());
     await appliedTask.getByRole("button", { name: "Back to applications" }).click();
     const interviewRow = page.locator("tr").filter({ hasText: "Smoke interview role" }).first();
     await interviewRow.getByRole("button", { name: "Update", exact: true }).click();
@@ -72,6 +117,7 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
       await page.reload();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false,
         `applications must not overflow a ${width}px viewport`);
+      await page.screenshot({ path: `${shots}/applications-populated-${width}.png`, fullPage: true });
       const appliedCard = page.locator('[aria-label="Applications"] article').filter({ hasText: "Smoke applied role" }).first();
       const update = appliedCard.locator("button").filter({ hasText: /^Update$/ });
       try { await update.waitFor({ state: "visible", timeout: 5000 }); }
@@ -98,11 +144,41 @@ export async function verifyApplicationsWorkspace(baseUrl, cookie, databaseUrl, 
       await mobileTask.getByRole("button", { name: "Back to applications" }).click();
       await page.locator('[aria-label="Applications"] article').filter({ hasText: "Smoke interview role" }).first().waitFor();
     }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${baseUrl}/companies`);
+    const desktopManage = page.getByRole("link", { name: "Manage", exact: true }).first();
+    await desktopManage.waitFor();
+    assert.match(await desktopManage.getAttribute("href"), /^\/companies\/[0-9a-f-]{36}#manage$/i);
+    await page.screenshot({ path: `${shots}/companies-desktop.png`, fullPage: true });
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.reload();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false,
+      "tracked companies must not overflow a 320px viewport");
+    const mobileManage = page.getByRole("link", { name: "Manage", exact: true }).first();
+    const manageBox = await mobileManage.boundingBox();
+    assert.ok(manageBox && manageBox.height >= 44, "mobile Manage link needs a 44px target");
+    await page.screenshot({ path: `${shots}/companies-320.png`, fullPage: true });
+    await page.goto(`${baseUrl}/applications/new`);
+    await page.getByRole("heading", { name: "New application" }).waitFor();
+    await page.screenshot({ path: `${shots}/applications-new-320.png`, fullPage: true });
+    const beforeAi = (await pool.query("select count(*)::int as n from ai_calls where user_id = $1", [userId])).rows[0].n;
+    const beforeUsage = (await pool.query("select count(*)::int as n from cv_ai_usage where user_id = $1", [userId])).rows[0].n;
+    await page.getByRole("textbox", { name: "Company", exact: true }).fill("Smoke New Company");
+    await page.getByRole("textbox", { name: "Role", exact: true }).fill("Smoke new application role");
+    await page.getByRole("textbox", { name: "Role description, if you have it" }).fill("A role supplied directly by the account owner.");
+    await page.getByRole("button", { name: "Create application · free" }).click();
+    await page.waitForURL(/\/cv\/context\/[0-9a-f-]{36}$/i);
+    const contextId = new URL(page.url()).pathname.split("/").at(-1);
+    const [created] = (await pool.query("select user_id, company_name, job_title from cv_application_contexts where id = $1", [contextId])).rows;
+    assert.deepEqual([created?.user_id, created?.company_name, created?.job_title], [userId, "Smoke New Company", "Smoke new application role"]);
+    assert.equal((await pool.query("select count(*)::int as n from ai_calls where user_id = $1", [userId])).rows[0].n, beforeAi);
+    assert.equal((await pool.query("select count(*)::int as n from cv_ai_usage where user_id = $1", [userId])).rows[0].n, beforeUsage);
     assert.deepEqual(errors, [], "applications browser flow has no page errors");
-    console.log("  applications status and mobile flow passed");
+    console.log("  applications populated/filtered-empty, free new-role route and mobile flow; companies desktop/320 passed");
   } finally {
     await browser?.close();
     await pool.query("delete from applications where id = any($1::uuid[])", [[appliedId, interviewId]]);
+    await pool.query("delete from companies where id = $1", [emptyCompanyId]);
     await pool.end();
   }
 }

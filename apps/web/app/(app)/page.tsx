@@ -37,9 +37,9 @@ const STRIP_LIMIT = 5;
  * in its table gets the checklist as the page's explanation, because there the blank table is the
  * question; an account with roles gets a card it can hide. Finished setup shows nothing.
  */
-async function Setup({ userId }: { userId: string }) {
-  const checklist = buildSetupChecklist(await setupStatus(userId));
-  const counts = await fetchRoleCounts(userId);
+async function Setup({ userId, facts }: { userId: string; facts: Promise<Awaited<ReturnType<typeof setupStatus>>> }) {
+  const [resolved, counts] = await Promise.all([facts, fetchRoleCounts(userId)]);
+  const checklist = buildSetupChecklist(resolved);
   if (Object.values(counts).every((n) => n === 0)) return <SetupChecklist checklist={checklist} variant="explanation" />;
   if (checklist.complete) return null;
   return checklist.dismissed ? null : <SetupChecklist checklist={checklist} variant="card" />;
@@ -65,6 +65,9 @@ async function Suggestions({ userId }: { userId: string }) {
 export default async function RolesPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
   const user = await requireUser();
   const filters = await searchParams;
+  // Both the checklist and an empty Matched tab use these account facts. Share the in-flight
+  // read rather than querying the same monitoring state twice during one render.
+  const setupFacts = setupStatus(user.id);
   // A new tab, page or filter gets its own boundary, so navigation shows the loading state
   // instead of leaving the previous result looking current while the next query settles.
   const queryKey = JSON.stringify(Object.entries(filters).sort(([left], [right]) => left.localeCompare(right)));
@@ -72,10 +75,10 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
     <Suspense><WorkNotice userId={user.id} /></Suspense>
     <PageHeader title="Roles" description="Review matches from the companies you follow."
       actions={<Link prefetch={false} href="/roles/add" className={buttonLinkClass("secondary")}>Add a role · Link or PDF</Link>} />
-    <Suspense><Setup userId={user.id} /></Suspense>
+    <Suspense><Setup userId={user.id} facts={setupFacts} /></Suspense>
     <Suspense><Suggestions userId={user.id} /></Suspense>
     <Suspense key={queryKey} fallback={<section id="roles" role="status" aria-label="Loading roles" className="border border-line-muted p-4 text-14 text-muted">Loading roles and filters…</section>}>
-      <RoleWorkspace userId={user.id} searchParams={filters} />
+      <RoleWorkspace userId={user.id} searchParams={filters} setupFacts={setupFacts} />
     </Suspense>
   </div>;
 }

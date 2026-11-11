@@ -63,6 +63,7 @@ const PAGES = [
     "A LinkedIn link alone does not read your profile.",
     "Writing preferences", "Writing style", "Saved phrasing", "No Experience saved yet"]],
   ["/applications", ["Applications", "Active", "Closed", "Due this week", "Application stages", "Add a role"]],
+  ["/applications/new", ["New application", "Back to Applications", "Company", "Role description, if you have it", "Create application · free"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
   ["/?view=auto-matched", ["Roles"], "Matched"],
   ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],

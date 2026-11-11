@@ -1097,7 +1097,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(await mainNav.getByRole("link", { name: "Applications", exact: true }).getAttribute("aria-current"), "page");
     assert.equal(await mainNav.getByRole("link", { name: "CVs", exact: true }).count(), 0);
     assert.equal(await page.getByRole("navigation", { name: "Workspace sections" }).count(), 0);
-    const segments = page.getByRole("navigation", { name: "Application progress", exact: true });
+    const segments = page.getByRole("navigation", { name: "Application filters", exact: true })
+      .getByRole("group", { name: "Progress", exact: true });
     for (const segment of ["Active", "Closed", "All"]) assert.equal(await segments.getByRole("link", { name: new RegExp(`^${segment} `) }).count(), 1);
 
     const tableRow = () => page.getByRole("row").filter({ hasText: "Table role 1" });

@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./cv-inline-ai": {
+      "types": "./src/cv-inline-ai.ts",
+      "default": "./src/cv-inline-ai.ts"
+    },
     "./career-record": {
       "types": "./src/career-record.ts",
       "default": "./src/career-record.ts"
@@ -47,6 +51,10 @@
     "./cv-editing-modes": {
       "types": "./src/cv-editing-modes.ts",
       "default": "./src/cv-editing-modes.ts"
+    },
+    "./cv-refinement-state": {
+      "types": "./src/cv-refinement-state.ts",
+      "default": "./src/cv-refinement-state.ts"
     },
     "./cv-refinement-rebase": {
       "types": "./src/cv-refinement-rebase.ts",

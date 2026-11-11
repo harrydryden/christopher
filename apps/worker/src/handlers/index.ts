@@ -1,4 +1,5 @@
 import { handleGenerateCv } from "./cv";
+import { handleEditCvText } from "./cv-inline-edit";
 import { handleSuggestCvSkills } from "./cv-skill-suggestions";
 import { handleImportLibraryDocument } from "./library-import";
 import { handleReviewLibrary } from "./library-review";
@@ -29,6 +30,7 @@ import { handleAdmitScores } from "../score-admission";
 import { handleResumeReasonTags } from "./resume-reason-tags";
 
 export const handlers: HandlerMap = {
+  edit_cv_text: handleEditCvText,
   extract_document: handleExtractDocument,
   verify_company: handleVerifyCompany,
   monitor_source: handleMonitorSource,

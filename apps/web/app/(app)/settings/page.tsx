@@ -1,6 +1,5 @@
 import { MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD } from "@col/core";
-import { DefaultCvAppearance } from "@/components/DefaultCvAppearance";
-import { getDefaultCvAppearance } from "@/lib/cv-appearance";
+import Link from "next/link";
 import { saveCvModel } from "@/app/actions/cv";
 import { saveAiBudget, saveGate, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles, saveSeedProfileSetting } from "@/app/actions/learning";
@@ -29,7 +28,7 @@ const checkboxClass = "flex items-center gap-2 text-14";
 export default async function SettingsPage() {
   const user = await requireUser();
   const admin = user.role === "admin";
-  const [settings, appearance, budget, gateChosen] = await Promise.all([getSettings(), getDefaultCvAppearance(user.id), accountAiBudget(user.id), hasChosenGate(user.id)]);
+  const [settings, budget, gateChosen] = await Promise.all([getSettings(), accountAiBudget(user.id), hasChosenGate(user.id)]);
 
   return (
     <div className="space-y-6">
@@ -125,7 +124,7 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
-      <DefaultCvAppearance key={JSON.stringify(appearance)} value={appearance} />
+      <Link prefetch={false} href="/settings/cv" className="inline-flex min-h-11 items-center text-14 font-semibold underline">Default CV appearance</Link>
 
       <p className="text-14 text-muted">Writing preferences are on the <a href="/library" className="text-fg underline">Experience</a> page.</p>
 

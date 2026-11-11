@@ -27,13 +27,20 @@ beforeEach(() => {
   queries.listPendingFilterSuggestionsResolved.mockResolvedValue([]);
   queries.getReasonTagEditor.mockResolvedValue({ vocabulary: [], recent: [], page: 2, totalPages: 2, totalDecisions: 26 });
 });
-it("compares the previous owned version across numbering gaps and keeps current editors", async () => {
+it("offers a named comparison across numbering gaps and keeps current editors", async () => {
   const tree = elements(await LearningPage({ searchParams: Promise.resolve({ tagsPage: "2" }) }));
   expect(queries.getPreferenceProfile.mock.calls).toEqual([["account-a", undefined], ["account-a", 1]]);
-  expect(tree.find(node => node.type === ProfileComparison)?.props).toMatchObject({ previous: { version: 1 }, current: { version: 3 } });
+  expect(tree.some(node => node.type === ProfileComparison)).toBe(false);
+  expect(tree.some(node => node.props.href === "/learning?view=compare&v=3")).toBe(true);
   expect(tree.filter(node => node.type === LearningProfileEditor)).toHaveLength(2);
   expect(tree.find(node => node.type === ReasonTagList)?.props).toMatchObject({ page: 2, totalPages: 2, totalDecisions: 26 });
   expect(queries.getReasonTagEditor).toHaveBeenCalledWith("account-a", "2");
+});
+it("shows only the requested comparison and a return path on the named task", async () => {
+  const tree = elements(await LearningPage({ searchParams: Promise.resolve({ view: "compare", v: "3" }) }));
+  expect(tree.find(node => node.type === ProfileComparison)?.props).toMatchObject({ previous: { version: 1 }, current: { version: 3 } });
+  expect(tree.some(node => node.props.href === "/learning?v=3")).toBe(true);
+  expect(tree.some(node => node.type === LearningProfileEditor)).toBe(false);
 });
 it.each(["", "0", "-1", "1.5", "3e0", "999999999999999999999999", ["1", "3"]].map(v => ({ v })))("rejects malformed version $v before any profile query", async ({ v }) => {
   const tree = elements(await LearningPage({ searchParams: Promise.resolve({ v }) }));

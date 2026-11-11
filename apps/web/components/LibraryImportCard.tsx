@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { Card } from "@/components/Card";
 import { inputClass, labelClass } from "@/components/Field";
 import { LibraryImportForm } from "@/components/LibraryImportForm";
@@ -14,15 +17,23 @@ import { importLibraryDocument } from "@/app/actions/library-import";
  * and a person should not have to discover a five-megabyte cap by hitting it.
  */
 export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { showTitle?: boolean; openLinkedIn?: boolean }) {
+  const [source, setSource] = useState<"cv" | "linkedin" | "paste" | "website">(openLinkedIn ? "linkedin" : "cv");
+  const choices = [
+    { id: "cv", label: "CV or career document" },
+    { id: "linkedin", label: "LinkedIn PDF export" },
+    { id: "paste", label: "Pasted text" },
+    { id: "website", label: "Your website or portfolio" },
+  ] as const;
   return (
     <Card title={showTitle ? "Start from a document or page" : undefined}>
       <div className="grid gap-2">
-        <p className="text-14 text-muted">
-          Choose one source. Nothing is added to Experience until you review and confirm it.
-        </p>
+        <nav aria-label="Import source" className="flex flex-wrap gap-2">
+          {choices.map(choice => <button key={choice.id} type="button" aria-current={source === choice.id ? "true" : undefined}
+            onClick={() => setSource(choice.id)} className={`min-h-11 border px-3 text-14 ${source === choice.id ? "border-ink font-semibold" : "border-line-muted"}`}>{choice.label}</button>)}
+        </nav>
 
-        <details id="library-import-cv" name="library-import-source" open={showTitle && !openLinkedIn} className="border-t border-line-muted pt-2">
-          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">CV or career document</summary>
+        <section id="library-import-cv" hidden={source !== "cv"} className="border-t border-line-muted pt-2">
+          <h3 className="text-14 font-medium">CV or career document</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
             PDF or Word, up to 5 MB.
@@ -35,10 +46,10 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
             </label>
           </LibraryImportForm>
           </div>
-        </details>
+        </section>
 
-        <details id="library-import-linkedin" name="library-import-source" open={openLinkedIn} className="border-t border-line-muted pt-2">
-          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">LinkedIn PDF export</summary>
+        <section id="library-import-linkedin" hidden={source !== "linkedin"} className="border-t border-line-muted pt-2">
+          <h3 className="text-14 font-medium">LinkedIn PDF export</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-13 text-muted">Upload only your own profile. This is a dated export, not a check of your live LinkedIn page.</p>
           <ol className="list-decimal space-y-1 pl-5 text-12 text-muted">
@@ -58,10 +69,10 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
               This is an export of my own LinkedIn profile.</label>
           </LibraryImportForm>
           </div>
-        </details>
+        </section>
 
-        <details name="library-import-source" className="border-t border-line-muted pt-2">
-          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">Pasted text</summary>
+        <section hidden={source !== "paste"} className="border-t border-line-muted pt-2">
+          <h3 className="text-14 font-medium">Pasted text</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
             100 to 40,000 characters, one document at a time.
@@ -74,10 +85,10 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
             </label>
           </LibraryImportForm>
           </div>
-        </details>
+        </section>
 
-        <details name="library-import-source" className="border-t border-line-muted pt-2">
-          <summary className="flex min-h-11 cursor-pointer items-center text-14 font-medium">Your website or portfolio</summary>
+        <section hidden={source !== "website"} className="border-t border-line-muted pt-2">
+          <h3 className="text-14 font-medium">Your website or portfolio</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
             Your own site or portfolio. Job sites are never read.
@@ -90,7 +101,7 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
             </label>
           </LibraryImportForm>
           </div>
-        </details>
+        </section>
       </div>
     </Card>
   );

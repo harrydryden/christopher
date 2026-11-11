@@ -66,19 +66,18 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
     assert.equal(final.rows[0].tasks, before.rows[0].tasks, "direct capture queues no model task");
     assert.ok(final.rows[0].version > before.rows[0].version, "career facts publish a new Library compatibility version");
 
-    // Account keeps the plan readout first and its links reveal the matching native disclosures.
+    // Account keeps the plan readout first; links jump to the visible purchase and plan tasks.
     // The controls are inspected only; this smoke never starts a checkout.
     await page.goto(`${baseUrl}/account`);
     await page.getByRole("heading", { name: "Plan and credits" }).waitFor();
-    await page.getByRole("link", { name: "Top up CV credits", exact: true }).click();
-    const topUps = page.locator("details#top-ups");
+    await page.getByRole("link", { name: "Top up role credits", exact: true }).click();
+    const topUps = page.locator("section#top-ups");
     assert.equal(new URL(page.url()).hash, "#top-ups");
-    await page.waitForFunction(() => document.querySelector("details#top-ups")?.open === true);
-    assert.equal(await topUps.getAttribute("open"), "", "the top-up link opens its disclosure");
+    assert.equal(await topUps.getByRole("heading", { name: "Top up role credits" }).isVisible(), true);
+    assert.equal(await topUps.getByRole("button", { name: "Buy 5" }).isVisible(), true);
     await page.getByRole("link", { name: "Compare plans", exact: true }).click();
-    const plans = page.locator("details#plans");
-    await page.waitForFunction(() => document.querySelector("details#plans")?.open === true);
-    assert.equal(await plans.getAttribute("open"), "", "the compare link opens its disclosure");
+    const plans = page.locator("section#plans");
+    assert.equal(await plans.getByRole("heading", { name: "Compare plans" }).isVisible(), true);
     assert.match(await plans.locator("div.grid > div").first().innerText(), /Free[\s\S]*Current/, "the current plan appears first");
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, "account-plan-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -94,10 +93,10 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
       const availability = page.getByRole("group", { name: "Availability" });
       await availability.getByRole("checkbox", { name: "Newly opened" }).waitFor();
       assert.equal(await availability.isVisible(), true, `Availability stays visible at ${width}px`);
-      const filters = page.getByRole("button", { name: "Filters", exact: true });
-      await filters.click();
       assert.equal(await page.getByRole("textbox", { name: "Location" }).isVisible(), true,
-        `advanced role filters open at ${width}px`);
+        `role location stays visible at ${width}px`);
+      assert.equal(await page.getByRole("spinbutton", { name: "Min fit" }).isVisible(), true,
+        `minimum fit stays visible at ${width}px`);
       const sortWidth = await page.getByRole("combobox", { name: "Sort by" }).evaluate(element => element.getBoundingClientRect().width);
       assert.ok(sortWidth >= 160, `the Sort by value and chevron need 160px at ${width}px`);
       for (const name of ["Sort by", "Direction"]) {
@@ -114,7 +113,6 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
       assert.equal(await menu.evaluate(element => element === document.activeElement), true,
         "Escape returns focus to the menu button");
       if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `roles-filters-${width}.png`), fullPage: true });
-      await page.getByRole("button", { name: "Hide filters", exact: true }).click();
     }
     assert.deepEqual(errors, [], "browser console page errors");
     console.log("  career evidence: direct fact saved without confirmation or model work; account and phone controls checked");

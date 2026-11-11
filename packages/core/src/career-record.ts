@@ -19,7 +19,7 @@ export const CareerRecordFieldsSchema = z.object({
   industries: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
 });
 export const CareerProvenanceSchema = z.object({
-  kind: z.enum(["direct_user", "legacy_saved", "document", "model"]),
+  kind: z.enum(["direct_user", "legacy_saved", "document", "accepted_suggestion", "model"]),
   sourceId: z.string().max(200).nullable(),
   quote: z.string().max(4000).nullable(),
   originalText: z.string().max(40_000),
@@ -78,7 +78,8 @@ export type CareerWorkspace = { revision: number; records: CareerRecordSummary[]
 export type CareerChangeResult = { ok: true; revision: number; changeId: string; changedIds: string[];
   conflicts: CareerConflictView[] } | { ok: false; error: string };
 export type CareerSourceRef = { recordId: string; recordRevision: number;
-  assertionId: string | null; assertionRevision: number | null; publicText: boolean };
+  assertionId: string | null; assertionRevision: number | null; publicText: boolean;
+  origin?: "accepted_suggestion" };
 export type CareerSourceMap = Record<string, CareerSourceRef>;
 export type CareerPresentation = "chronological" | "project" | "hybrid";
 export type CareerDisplayEntry = { recordId: string; kind: "role" | "engagement" | "project" | "contribution" | "qualification" | "learning" | "skill" | "other";

@@ -61,7 +61,7 @@ async function settle() {
 }
 
 it("fetches a finished CV's narrative only when its log is opened, and says so when it cannot", async () => {
-  act(() => root.render(<CvBuildLive id="draft-1" mode="log" initial={finished} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />));
+  act(() => root.render(<CvBuildLive diagnostics id="draft-1" mode="log" initial={finished} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />));
   await settle();
   // Closed: the page shows the log's control and the adopted revision, and has asked for nothing.
   expect(views.requested).toBe(0);

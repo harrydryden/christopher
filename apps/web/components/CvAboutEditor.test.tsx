@@ -8,22 +8,16 @@ vi.mock("@/app/actions/cv", () => ({ saveCvLibrary: vi.fn(), rescoreLibrary: vi.
 
 import { CvAboutEditor } from "./CvAboutEditor";
 
-// React's lazy boundary is resolved during the same act as the disclosure toggle.
-
-it("loads the About editor only after opening its disclosure", async () => {
+it("opens a named contact task without mounting the large library editor on Experience", async () => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   await act(async () => root.render(<CvAboutEditor library={null} version={0} scopeId="account" careerManaged />));
   expect(host.querySelector('input[name="version"]')).toBeNull();
 
-  const details = host.querySelector("details")!;
-  await act(async () => {
-    details.open = true;
-    details.dispatchEvent(new Event("toggle", { bubbles: true }));
-    await import("./CvLibraryEditor");
-  });
-  expect(host.querySelector<HTMLInputElement>('input[name="version"]')?.value).toBe("0");
+  expect(host.querySelector("details")).toBeNull();
+  expect(host.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe("/library/about");
+  expect(host.textContent).toBe("About you and contact");
 
   await act(async () => root.unmount());
   host.remove();

@@ -7,6 +7,7 @@ import { CvAboutEditor } from "@/components/CvAboutEditor";
 import { CareerRecordEditor } from "@/components/CareerRecordEditor";
 import { LibraryEvidencePoller } from "@/components/LibraryEvidencePoller";
 import { LibraryImportCard } from "@/components/LibraryImportCard";
+import { LibrarySecondaryTasks } from "@/components/LibrarySecondaryTasks";
 import { LibraryImportPoller } from "@/components/LibraryImportPoller";
 import { LibraryImportProposals } from "@/components/LibraryImportProposals";
 import { saveCvWritingPreferences } from "@/app/actions/cv";
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 const NEED_LIMIT = 300;
 
 export default async function LibraryPage({ searchParams }: {
-  searchParams: Promise<{ need?: string; job?: string; return?: string; onboarding?: string; record?: string;
+  searchParams: Promise<{ view?: string; need?: string; job?: string; return?: string; onboarding?: string; record?: string;
     assertion?: string; query?: string; cursor?: string; assertionsCursor?: string; linksCursor?: string; changesCursor?: string }>;
 }) {
   const user = await requireUser();
@@ -64,12 +65,21 @@ export default async function LibraryPage({ searchParams }: {
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Experience" />
       <Link prefetch={false} href="/library/review" className="inline-flex min-h-11 items-center text-13 underline">Review saved details</Link>
-      {!library && <div className="space-y-2"><p className="ds-prose max-w-3xl text-16">Start from a document or add a role, project or other activity yourself. You can review imported suggestions before adding them.</p>
-        <a href="#experience-manual" className="inline-flex min-h-11 items-center text-14 font-semibold underline">Add a career detail yourself</a></div>}
-      {!library && <LibraryImportCard openLinkedIn={openLinkedIn} />}
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} needsName={!library && !(user.name ?? "").trim()} />
       {importProgress && <LibraryImportPoller pending={reading} signature={importProgress.signature} />}
-      <section id="experience-manual" aria-label="Edit Experience" className="scroll-mt-20"><CareerRecordEditor workspace={career} initialQuery={params.query ?? ""} /></section>
+      <LibrarySecondaryTasks initialTask={params.view === "records" || params.record || params.job || params.assertion ? "records"
+        : params.view === "writing" ? "writing" : params.view === "import" || !library || openLinkedIn ? "import" : "records"}
+        records={<section id="experience-manual" aria-label="Edit Experience" className="scroll-mt-20"><CareerRecordEditor workspace={career} initialQuery={params.query ?? ""} /></section>}
+        importForm={<LibraryImportCard showTitle={!library} openLinkedIn={openLinkedIn} />}
+        writingForm={<Card>
+          <SettingsForm action={saveCvWritingPreferences} key={JSON.stringify(writing)}
+            submitLabel="Save writing preferences" successMessage="Writing preferences saved."
+            secondaryActions={<span className="text-12 text-muted">{library ? `Experience version ${library.version}` : "No Experience saved yet"}</span>}>
+            <input type="hidden" name="previousPreferences" value={JSON.stringify(writing)} />
+            <label className={labelClass}>Writing style<textarea name="stylePreferences" rows={4} maxLength={4000} defaultValue={writing.stylePreferences} className={inputClass} /></label>
+            <label className={labelClass}>Saved phrasing<textarea name="preferredWording" rows={5} maxLength={12000} defaultValue={writing.preferredWording} className={inputClass} /></label>
+          </SettingsForm>
+        </Card>} />
       <section aria-label="About you and contact" className="space-y-3"><CvAboutEditor
         library={content}
         version={library?.version ?? 0}
@@ -85,23 +95,6 @@ export default async function LibraryPage({ searchParams }: {
       {evidence.evaluating && library && (
         <LibraryEvidencePoller version={library.version} signature={signature} />
       )}
-      {library && <details id="library-import-panel" open={openLinkedIn} className="border-t border-line-muted pt-3"><summary className="cursor-pointer text-14 text-muted">Import another document</summary><div className="mt-3"><LibraryImportCard showTitle={false} openLinkedIn={openLinkedIn} /></div></details>}
-      <details className="border-t border-line-muted pt-3">
-        <summary className="cursor-pointer text-14 text-muted">Writing preferences</summary>
-        <div className="mt-3"><Card>
-        <SettingsForm
-          action={saveCvWritingPreferences}
-          key={JSON.stringify(writing)}
-          submitLabel="Save writing preferences"
-          successMessage="Writing preferences saved."
-          secondaryActions={<span className="text-12 text-muted">{library ? `Experience version ${library.version}` : "No Experience saved yet"}</span>}
-        >
-          <input type="hidden" name="previousPreferences" value={JSON.stringify(writing)} />
-          <label className={labelClass}>Writing style<textarea name="stylePreferences" rows={4} maxLength={4000} defaultValue={writing.stylePreferences} className={inputClass} /></label>
-          <label className={labelClass}>Saved phrasing<textarea name="preferredWording" rows={5} maxLength={12000} defaultValue={writing.preferredWording} className={inputClass} /></label>
-        </SettingsForm>
-        </Card></div>
-      </details>
     </div>
   );
 }

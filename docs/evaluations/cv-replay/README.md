@@ -1,6 +1,6 @@
 # CV replay report
 
-`report.json` is the current verified report checked against the shipped prompt set by `scripts/check-evaluation-reports.ts`. It qualifies **`f21a62396b80`** using fresh provider responses for a Refine edition with a writing instruction and ranked, targeted synthetic choices. All four replay invariants pass with no missing recorded requests.
+`report-live-2026-11-02.json` preserves the verified report for **`f21a62396b80`** byte-for-byte. Its active `report.json` copy is now marked unverified for the current registry because new scoped editing prompts have not received live qualification. The historical run used fresh provider responses for a Refine edition with a writing instruction and ranked, targeted synthetic choices; all four replay invariants passed with no missing recorded requests. See `../cv-inline-edit-2026-11-11/` for explicitly unverified current fixture evidence and the remaining release gate.
 
 The worker preserves the editing mode, frozen source, stable targets, role choices and pinned routes through the isolated replay rather than converting the fixture to a legacy build. The live result, exact PDF and scope notes are in `../cv-modes-2026-11-02/`.
 

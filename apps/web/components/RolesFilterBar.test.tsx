@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 import { RolesFilterBar } from "./RolesFilterBar";
 
-it("names the action and keeps active filters and availability visible outside advanced controls", () => {
+it("names the action and keeps all filters visible", () => {
   const filters = { ...parseRolesFilters({ view: "auto-matched" }), company: "company-1", q: "Director",
     location: "London", minFit: 70, status: ["new" as const], sort: "fit" as const, dir: "desc" as const };
   const markup = renderToStaticMarkup(<RolesFilterBar filters={filters} companyOptions={[{ id: "company-1", name: "Meridian" }]}
@@ -19,8 +19,8 @@ it("names the action and keeps active filters and availability visible outside a
   expect(applied?.textContent).toContain("Title: Director");
   expect(applied?.textContent).toContain("Availability: Newly opened");
   expect(container.querySelector('button[type="submit"]')?.textContent?.trim()).toBe("Update results");
-  expect(container.querySelector('button[aria-controls="role-filter-fields"]')?.getAttribute("aria-expanded")).toBe("false");
-  expect(container.querySelector('#role-filter-fields')?.className).toContain("hidden");
+  expect(container.querySelector('button[aria-controls="role-filter-fields"]')).toBeNull();
+  expect(container.querySelector('#role-filter-fields')?.className).not.toContain("hidden");
   expect(container.querySelector('fieldset')?.closest('#role-filter-fields')).toBeNull();
   expect(container.querySelector('a[href="/?view=auto-matched#roles"]')?.textContent?.trim()).toBe("Clear filters");
 });
@@ -41,6 +41,6 @@ it("does not show Clear filters when the view has no applied filter", () => {
   const container = document.createElement("div");
   container.innerHTML = markup;
   expect(container.textContent).not.toContain("Clear filters");
-  expect(container.querySelector('button[aria-controls="role-filter-fields"]')?.textContent).toBe("Filters");
+  expect(container.querySelector('input[name="location"]')).not.toBeNull();
   expect(container.querySelector('fieldset')?.closest('#role-filter-fields')).toBeNull();
 });

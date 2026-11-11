@@ -78,6 +78,7 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
   const [perspectiveLabel, setPerspectiveLabel] = useState("");
   const [perspectiveNote, setPerspectiveNote] = useState("");
   const [perspectiveAssertions, setPerspectiveAssertions] = useState<string[]>([]);
+  const [taskView, setTaskView] = useState<"record" | "perspectives" | "history">("record");
   const recordDirty = !same(fields, savedFields) || industriesText !== fields.industries.join(", ");
   const assertionDirty = selected?.assertions.some(row => {
     const saved = assertionBaseRef.current[row.id] ?? { text: row.text, publicText: row.publicText ?? "" };
@@ -284,22 +285,18 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
   }
   const shown = workspace.records;
   return <section aria-label="Career record" className="space-y-5">
-    <div className="space-y-2"><h2 className="text-16 font-semibold">Your career record</h2>
-      <p className="text-14 text-muted">Add roles, projects and useful details as you remember them. Your own facts are ready to use when saved; writing advice is optional.</p></div>
+    <h2 className="text-16 font-semibold">Your career record</h2>
     <form className="flex flex-wrap items-end gap-2" onSubmit={event => { event.preventDefault(); void makeRecord(); }}>
       <label className="grid gap-1"><span className={labelClass}>Add</span><select className={selectClass} value={newKind}
         onChange={event => setNewKind(event.target.value as RecordKind)}>
-        {advancedKinds.includes(newKind) && <option value={newKind}>{kinds.find(([kind]) => kind === newKind)?.[1]}</option>}
         {kinds.filter(([kind]) => commonKinds.includes(kind)).map(([value,label]) => <option key={value} value={value}>{label}</option>)}
+        <optgroup label="Other record types">{kinds.filter(([kind]) => advancedKinds.includes(kind)).map(([value,label]) =>
+          <option key={value} value={value}>{label}</option>)}</optgroup>
       </select></label>
       <label className="grid min-w-0 flex-1 gap-1"><span className={labelClass}>Name or title</span><input className={inputClass}
         maxLength={250} value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="e.g. Programme delivery" /></label>
       <button className={buttonClass("primary")} disabled={busy || recordDirty || assertionDirty || otherDraftDirty || !newTitle.trim()}>Add to Experience</button>
     </form>
-    <details className="text-13"><summary className="min-h-11 cursor-pointer text-muted">More record types</summary>
-      <div className="flex flex-wrap gap-2">{kinds.filter(([kind]) => advancedKinds.includes(kind)).map(([kind,label]) =>
-        <button type="button" key={kind} className="min-h-11 underline" onClick={() => setNewKind(kind)}>Add {label.toLowerCase()}</button>)}</div>
-    </details>
     <div className="grid gap-5 lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
       <nav aria-label="Career records" className="min-w-0 space-y-2"><h3 className="text-14 font-semibold">Browse your record</h3>
         <form method="get" action="/library" className="flex flex-wrap items-end gap-2"
@@ -335,6 +332,12 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
             onClick={() => void retryRef.current?.()}>Retry save</button>}</div>}
         {lastChange && <button type="button" className="min-h-11 text-13 underline" disabled={busy || dirty}
           onClick={() => void undo(lastChange)}>Undo last change</button>}
+        <nav aria-label="Experience tasks" className="flex flex-wrap gap-2">
+          {([ ["record", "Edit record"], ["perspectives", "Perspectives"], ["history", "History and recovery"] ] as const).map(([view,label]) =>
+            <button key={view} type="button" className={buttonClass(taskView === view ? "primary" : "secondary")}
+              aria-current={taskView === view ? "page" : undefined} onClick={() => setTaskView(view)}>{label}</button>)}
+        </nav>
+        <div hidden={taskView !== "record"}>
         <fieldset className="grid gap-3 border border-line-muted p-4 sm:grid-cols-2"><legend className="px-1 text-14 font-semibold">Details</legend>
           <label className="grid gap-1 sm:col-span-2"><span className={labelClass}>Title</span><input className={inputClass} maxLength={250}
             value={fields.title} onChange={event => changeFields({ ...fields, title: event.target.value })} onBlur={() => void saveRecord()} /></label>
@@ -366,10 +369,10 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
             maxLength={250} value={fields.publicLabel ?? ""} placeholder="e.g. Confidential healthcare client"
             onChange={event => changeFields({ ...fields, publicLabel: event.target.value || null })} onBlur={() => void saveRecord()} /></label>}
         </fieldset>
-        {selected.record.kind === "skill" && <details className="border-b border-line-muted pb-2"><summary className="min-h-11 cursor-pointer text-13 underline">Supporting notes (optional)</summary>
-          <label className="mt-2 grid gap-1"><span className={labelClass}>Supporting notes</span><textarea className={inputClass}
+        {selected.record.kind === "skill" && <section className="border-b border-line-muted pb-2">
+          <label className="mt-2 grid gap-1"><span className={labelClass}>Supporting notes (optional)</span><textarea className={inputClass}
             rows={3} maxLength={40000} value={fields.originalNarrative}
-            onChange={event => changeFields({ ...fields, originalNarrative: event.target.value })} onBlur={() => void saveRecord()} /></label></details>}
+            onChange={event => changeFields({ ...fields, originalNarrative: event.target.value })} onBlur={() => void saveRecord()} /></label></section>}
         <section className="space-y-2"><h4 className="text-14 font-semibold">{selected.record.kind === "skill" ? "Skill labels" : "Contributions and facts"}</h4>
           {selected.record.kind === "skill" && !selected.effectiveConfidential && <SkillTagPicker label="Skills in this area"
             selected={selected.assertions.filter(row => row.status === "usable").map(row => row.text)}
@@ -432,8 +435,9 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
             <input className={inputClass} maxLength={250} value={linkPublicLabel} onChange={event => setLinkPublicLabel(event.target.value)}
               placeholder="e.g. Confidential healthcare client" /></label>}
         </section>
-        <details className="border-t border-line-muted pt-2"><summary className="min-h-11 cursor-pointer text-13 underline">Perspectives on this work</summary>
-          <p className="text-12 text-muted">A perspective highlights existing facts. It does not create another job or independent evidence.</p>
+        </div>
+        <section hidden={taskView !== "perspectives"} className="border-t border-line-muted pt-2">
+          <h4 className="text-14 font-semibold">Perspectives on this work</h4>
           <ul className="divide-y divide-line-faint">{selected.perspectives.filter(row => !row.archived).map(row =>
             <li key={row.id} className="flex flex-wrap items-center gap-2 py-2 text-13"><span className="min-w-0 flex-1">{row.label}{row.note ? ` · ${row.note}` : ""}</span>
               <button type="button" className="min-h-11 underline" disabled={busy || recordDirty || assertionDirty}
@@ -451,14 +455,14 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
                   event.target.checked ? [...current, row.id] : current.filter(id => id !== row.id))} />{row.text}</label>)}</fieldset>
             <button type="button" className={buttonClass("secondary")} disabled={busy || !perspectiveLabel.trim()}
               onClick={() => void savePerspective()}>{perspectiveId ? "Update perspective" : "Save perspective"}</button></div>
-        </details>
+        </section>
+        <section hidden={taskView !== "history"} className="space-y-3">
         {selected.assertions.some(row => row.status === "proposed") &&
-          <details className="border-t border-line-muted pt-2"><summary className="min-h-11 cursor-pointer text-13 underline">Optional writing and fact suggestions</summary>
-            <p className="text-12 text-muted">Suggestions do not change your saved facts or block a CV.</p>
+          <section className="border-t border-line-muted pt-2"><h4 className="text-14 font-semibold">Suggested wording</h4>
             {selected.assertions.filter(row => row.status === "proposed").map(row => <p key={row.id}
               id={`career-assertion-${row.id}`} className="mt-2 scroll-mt-20 text-13">Suggested: {row.text}</p>)}
-          </details>}
-        <details><summary className="min-h-11 cursor-pointer text-13 underline">History and recovery</summary>
+          </section>}
+        <h4 className="text-14 font-semibold">History and recovery</h4>
           {selected.assertions.filter(row => row.status === "retracted").map(row => <p key={row.id}
             id={`career-assertion-${row.id}`} className="flex scroll-mt-20 flex-wrap items-center gap-2 text-13">
             <span className="min-w-0 flex-1">Removed detail: {row.text}</span><button type="button" className="min-h-11 underline" disabled={busy || recordDirty || assertionDirty}
@@ -471,7 +475,7 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
             href={`/library?record=${selected.record.id}&changesCursor=${selected.changesNextCursor}#career-record-${selected.record.id}`}
             onClick={event => { if (dirty || busy) { event.preventDefault(); setError("Save or retry this detail before opening older changes."); } }}>
             Older changes</a>}
-        </details>
+        </section>
       </div> : <p className="text-14 text-muted">Choose a saved record, or add a new one above.</p>}
     </div>
   </section>;

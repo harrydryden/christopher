@@ -39,7 +39,7 @@ const PAGES = [
   // The smoke account has no roles in either live tab, so Matched shows the first-use explanation.
   // The setup checklist explains the blank table: the smoke account has confirmed its address and
   // follows one company, and nothing else, so it reads "2 of 4 done" and cannot be hidden.
-  ["/", ["Roles", "Review matches from the companies you follow.", "Add a role · Link or PDF", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "All setup steps", "2 of 4 done"], "Matched"],
+  ["/", ["Roles", "Review matches from the companies you follow.", "Add a role · Link or PDF", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "2 of 4 done"], "Matched"],
   // The header carries the shared schedule: one scan a day for every follower.
   // Filters first: an account that has not chosen its gate is asked for it above the add form.
   ["/companies", ["Companies", "next scheduled scan", "Choose your filters first", "Roles to review", "Monitoring", "Manage"]],
@@ -50,6 +50,7 @@ const PAGES = [
   // The attention list and the resolution on the item the smoke company raises: no source yet.
   ["/health", ["Needs attention", "Needs you", "No careers page to scan", "Re-discover"]],
   ["/settings", ["Preferences", "What work are you looking for?", "Writing preferences are on the"]],
+  ["/settings/cv", ["Default CV appearance", "Back to Preferences"]],
   ["/account", ["Account", "Sign-in methods"]],
   ["/admin", ["Admin", "Registration", "Accounts"]],
   ["/admin/settings", ["System settings", "Schedule"]],
@@ -57,12 +58,11 @@ const PAGES = [
   ["/admin/health", ["Operations"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
-  ["/library", ["Experience", "Your career record", "About you and contact", "No career details saved yet",
+  ["/library", ["Experience", "Your records", "Import a document", "Writing preferences", "About you and contact",
     "Start from a document or page", "CV or career document", "LinkedIn PDF export", "Pasted text", "Your website or portfolio",
-    "Your own facts are ready to use when saved",
     "A LinkedIn link alone does not read your profile.",
     "Writing preferences", "Writing style", "Saved phrasing", "No Experience saved yet"]],
-  ["/applications", ["Applications", "Active", "Closed", "Due this week", "Stage breakdown", "What the stages mean"]],
+  ["/applications", ["Applications", "Active", "Closed", "Due this week", "Application stages", "Add a role"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
   ["/?view=auto-matched", ["Roles"], "Matched"],
   ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],

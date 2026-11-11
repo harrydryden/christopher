@@ -8,6 +8,7 @@ import type { CvTheme } from "@col/core/cv-theme-values";
 import { createManualCvEdition, saveManualCvEdition } from "@/app/actions/cv-editing";
 import { useCvContextLayout } from "./CvContextLayout";
 import { SkillTagPicker, skillKey } from "./SkillTagPicker";
+import { CvInlineWritingTool, type CvInlineQuotes } from "./CvInlineWritingTool";
 
 type Kind = CvContent["sections"][number]["kind"];
 type Item = { id: string; text: string; sources?: string[]; signpost?: string | null };
@@ -16,6 +17,10 @@ type Section = { entryId: string; sectionId: string; kind: Kind; heading: string
   original: CvContent["sections"][number] | null };
 type Draft = { id: string; revision: number; content: CvContent | null; editingTargets: CvEditingTargets | null };
 const uuid = () => crypto.randomUUID();
+function inputSelection(id: string) {
+  const input = document.getElementById(id) as HTMLTextAreaElement | HTMLInputElement | null;
+  return input ? { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0 } : null;
+}
 const blank = (kind: Kind): Section => ({ entryId: `manual:${uuid()}`, sectionId: uuid(), kind, heading: "",
   bullets: kind === "skill" ? [] : [{ id: uuid(), text: "" }],
   skills: kind === "skill" ? [{ id: uuid(), text: "" }] : [],
@@ -38,12 +43,13 @@ function sectionsFrom(draft: Draft | null): Section[] {
 }
 
 /** A Manual edition starts empty and only becomes renderable after the person's first valid Save. */
-export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, copySource = null, initialTheme, skillChoices = [] }: {
+export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, copySource = null, initialTheme, skillChoices = [], inlineQuotes }: {
   contextId: string; descriptionVersionId: string | null; draft: Draft | null;
   prefill: { name: string; contact: string; summary: string };
   copySource?: { kind: "baseline" | "draft"; id: string } | null;
   initialTheme?: CvTheme;
   skillChoices?: readonly string[];
+  inlineQuotes?: CvInlineQuotes;
 }) {
   const router = useRouter();
   const [base, setBase] = useState<Draft | null>(draft);
@@ -59,14 +65,18 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
   const [notice, setNotice] = useState<string | null>(null);
   const stale = !!base && !!draft && draft.id !== base.id && draft.id !== expectedChild;
   const visibleSections = sections.map(row => ({ kind: row.kind, heading: row.heading,
-    bullets: row.kind === "skill" ? row.skills.map(item => item.text) : row.bullets.map(item => item.text) }));
+    bullets: row.kind === "skill" ? row.skills.map(item => item.text) : row.bullets.map(item => item.text),
+    signposts: row.kind === "skill" ? [] : row.bullets.map(item => item.signpost ?? null) }));
   const savedSections = base?.content?.sections.map(row => ({ kind: row.kind, heading: row.heading,
-    bullets: row.kind === "skill" ? row.skillItems ?? [] : row.bullets })) ?? [];
+    bullets: row.kind === "skill" ? row.skillItems ?? [] : row.bullets,
+    signposts: row.kind === "skill" ? [] : row.bullets.map((_, index) => row.bulletSignposts?.[index] ?? null) })) ?? [];
   const dirty = !!base && (name !== (base.content?.name ?? prefill.name) ||
     contact !== (base.content?.contact ?? prefill.contact) ||
     summary !== (base.content?.summary ?? prefill.summary) ||
     JSON.stringify(theme) !== JSON.stringify(initialTheme) ||
     JSON.stringify(visibleSections) !== JSON.stringify(savedSections));
+  const inlineSource = base?.content && base.editingTargets
+    ? { kind: "draft" as const, id: base.id, revision: base.revision } : null;
   useEffect(() => {
     if (draft && expectedChild === draft.id) {
       setBase(draft); setSections(sectionsFrom(draft)); setName(draft.content?.name ?? prefill.name);
@@ -94,17 +104,26 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
   function updateItem(index: number, type: "bullets" | "skills", itemId: string, text: string) {
     updateSection(index, row => ({ ...row, [type]: row[type].map(item => item.id === itemId ? { ...item, text } : item) }));
   }
-  async function save() {
-    if (!base || stale || pending) return;
+  async function save(change?: { type: "summary" | "section" | "bullet" | "skill";
+    id: string; field: "text" | "signpost"; text: string }): Promise<boolean> {
+    if (!base || stale || pending || expectedChild) return false;
     setPending(true); setError(null); setNotice(null);
     try {
+      const nextSummary = change?.type === "summary" ? change.text : summary;
+      const nextSections = change ? sections.map(row => ({ ...row,
+        heading: change.type === "section" && row.sectionId === change.id ? change.text : row.heading,
+        bullets: row.bullets.map(item => item.id === change.id && change.type === "bullet"
+          ? change.field === "signpost" ? { ...item, signpost: change.text || null } : { ...item, text: change.text }
+          : item),
+        skills: row.skills.map(item => item.id === change.id && change.type === "skill" ? { ...item, text: change.text } : item),
+      })) : sections;
       const content: CvContent = {
         ...(base.content ?? {}),
         ...(theme ? { theme } : {}),
         ...(base.content?.linkedinUrl ? { linkedinUrl: base.content.linkedinUrl } : {}),
         ...(base.content?.websiteUrl ? { websiteUrl: base.content.websiteUrl } : {}),
-        name: name.trim(), contact: contact.trim(), summary: summary.trim(), gaps: base.content?.gaps ?? [],
-        sections: sections.map(row => {
+        name: name.trim(), contact: contact.trim(), summary: nextSummary.trim(), gaps: base.content?.gaps ?? [],
+        sections: nextSections.map(row => {
           const heading = row.heading.trim();
           if (row.kind === "skill") {
             const held = row.skills.filter(item => item.text.trim());
@@ -118,24 +137,28 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
           return { ...(row.original ?? {}), entryId: row.entryId, kind: row.kind, heading,
             bullets: held.map(item => item.text.trim()),
             ...(held.every(item => item.sources?.length) && held.length ? { bulletSources: held.map(item => item.sources!) } : { bulletSources: undefined }),
-            ...(row.original?.bulletSignposts ? { bulletSignposts: held.map(item => item.signpost ?? null) } : {}),
+            ...(row.original?.bulletSignposts || held.some(item => item.signpost) ?
+              { bulletSignposts: held.map(item => item.signpost ?? null) } : {}),
             skillItems: undefined };
         }),
       };
       const targets = base.content ? { version: 1 as const,
         summaryId: base.editingTargets?.summaryId ?? uuid(),
-        sections: sections.map(row => ({ entryId: row.entryId, sectionId: row.sectionId,
+        sections: nextSections.map(row => ({ entryId: row.entryId, sectionId: row.sectionId,
           bulletIds: row.kind === "skill" ? row.skills.flatMap((item, index) => item.text.trim() ? [row.mirroredBulletIds[index]!] : [])
             : row.bullets.filter(item => item.text.trim()).map(item => item.id),
           skillIds: row.kind === "skill" ? row.skills.filter(item => item.text.trim()).map(item => item.id) : [],
         })) } : undefined;
       const result = await saveManualCvEdition(base.id, base.revision, content, targets);
-      if (!result.ok) setError(result.error);
-      else { setExpectedChild(result.draftId); setNotice("Manual wording saved as a new revision. No AI or CV credit was used."); router.refresh(); }
-    } catch { setError("Could not save Manual wording. Your edits are still here."); }
+      if (!result.ok) { setError(result.error); return false; }
+      setExpectedChild(result.draftId);
+      setNotice(change ? "Change saved in this Manual CV." : "Manual wording saved as a new revision. No AI or role credit was used.");
+      router.refresh(); return true;
+    } catch { setError("Could not save Manual wording. Your edits are still here."); return false; }
     finally { setPending(false); }
   }
   return <div className="space-y-4 border border-line-muted p-4 text-14" data-cv-mode-dirty={dirty ? "true" : "false"}
+    data-cv-mode-pending={pending || expectedChild ? "true" : "false"}
     data-cv-mode-editor-id={base?.id}>
     <div><h2 className="font-semibold">Manual · this version only</h2>
       <p className="text-12 text-muted">Write and save your own CV. Nothing here is added to Experience or remembered for Auto or Refine unless you explicitly choose it later.</p></div>
@@ -146,9 +169,19 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
         onClick={() => start(false)}>{pending ? "Starting…" : "Start blank Manual CV · free"}</button>
     </div> : <>
       {stale && <p role="alert" className="border border-warn p-3">The selected edition changed. Your typed wording remains here; copy it before reloading this application.</p>}
+      {expectedChild && <p role="status">Updating the saved Manual CV… <button type="button" className="min-h-11 underline"
+        onClick={() => router.refresh()}>Refresh saved CV</button></p>}
+      <fieldset disabled={pending || !!expectedChild || stale} className="space-y-4">
       <label className="block space-y-1"><span className="font-medium">Name</span><input className="min-h-11 w-full border border-line-muted bg-raised px-3" maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label>
       <label className="block space-y-1"><span className="font-medium">Contact</span><input className="min-h-11 w-full border border-line-muted bg-raised px-3" maxLength={500} value={contact} onChange={event => setContact(event.target.value)} /></label>
-      <label className="block space-y-1" data-cv-source-summary="true"><span className="font-medium">Summary</span><textarea className="min-h-24 w-full border border-line-muted bg-raised p-3" value={summary} onChange={event => setSummary(event.target.value)} /></label>
+      <div className="space-y-1" data-cv-source-summary="true"><label htmlFor="cv-manual-summary" className="block font-medium">Summary</label>
+        <div className="flex flex-wrap items-start gap-2"><textarea id="cv-manual-summary" className="min-h-24 min-w-0 flex-1 border border-line-muted bg-raised p-3"
+          value={summary} onChange={event => setSummary(event.target.value)} />
+          {inlineQuotes && base?.editingTargets && <CvInlineWritingTool contextId={contextId} source={inlineSource}
+            target={{ type: "summary", id: base.editingTargets.summaryId, field: "text" }} label="Summary"
+            text={summary} quotes={inlineQuotes} getSelection={() => inputSelection("cv-manual-summary")}
+            useLabel="Use change and save Manual CV"
+            onUseChange={next => save({ type: "summary", id: base.editingTargets!.summaryId, field: "text", text: next })} />}</div></div>
       <div className="space-y-3"><h3 className="font-semibold">Sections</h3>
         {sections.map((row, index) => <fieldset key={row.sectionId} className="space-y-2 border border-line-muted p-3" data-cv-source-entry={row.entryId}>
           <legend className="font-medium">Section {index + 1}</legend>
@@ -167,8 +200,15 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
             <button type="button" className="min-h-11 border border-line-muted px-3"
               aria-label={`Move section ${index + 1} down`} disabled={index === sections.length - 1}
               onClick={() => setSections(rows => { const next = [...rows]; [next[index], next[index + 1]] = [next[index + 1]!, next[index]!]; return next; })}>↓</button></div>
-          <label className="block space-y-1"><span>Heading</span><input className="min-h-11 w-full border border-line-muted bg-raised px-3" maxLength={250}
-            value={row.heading} onChange={event => updateSection(index, current => ({ ...current, heading: event.target.value }))} /></label>
+          <div className="space-y-1"><label htmlFor={`cv-manual-heading-${row.sectionId}`} className="block">Heading</label>
+            <div className="flex flex-wrap items-start gap-2"><input id={`cv-manual-heading-${row.sectionId}`}
+              className="min-h-11 min-w-0 flex-1 border border-line-muted bg-raised px-3" maxLength={250}
+              value={row.heading} onChange={event => updateSection(index, current => ({ ...current, heading: event.target.value }))} />
+              {inlineQuotes && inlineSource && <CvInlineWritingTool contextId={contextId} source={inlineSource}
+                target={{ type: "section", id: row.sectionId, field: "text" }} label={`${row.heading || `section ${index + 1}`} heading`}
+                text={row.heading} quotes={inlineQuotes} getSelection={() => inputSelection(`cv-manual-heading-${row.sectionId}`)}
+                useLabel="Use change and save Manual CV"
+                onUseChange={next => save({ type: "section", id: row.sectionId, field: "text", text: next })} />}</div></div>
           {row.kind === "skill" && <SkillTagPicker label={`Choose skills for ${row.heading || `section ${index + 1}`}`}
             selected={row.skills.map(item => item.text).filter(Boolean)}
             choices={[...skillChoices, ...sections.flatMap(section => section.skills.map(item => item.text))]}
@@ -179,9 +219,28 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
               : current)}
             onRemove={() => {}} />}
           {(row.kind === "skill" ? row.skills : row.bullets).map((item, position) => <div key={item.id} className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-start">
-            <label className="col-span-3 w-full space-y-1 sm:min-w-0 sm:flex-1"><span>{row.kind === "skill" ? `Skill ${position + 1}` : `Bullet ${position + 1}`}</span>
-              <textarea className="min-h-11 w-full border border-line-muted bg-raised p-2" value={item.text}
-                onChange={event => updateItem(index, row.kind === "skill" ? "skills" : "bullets", item.id, event.target.value)} /></label>
+            <div className="col-span-3 w-full space-y-1 sm:min-w-0 sm:flex-1">
+              {row.kind !== "skill" && <div className="flex flex-wrap items-start gap-2">
+                <label className="min-w-0 flex-1 space-y-1"><span>Bullet title {position + 1} (optional)</span>
+                  <input id={`cv-manual-title-${item.id}`} className="min-h-11 w-full border border-line-muted bg-raised px-3" maxLength={60}
+                    value={item.signpost ?? ""} onChange={event => updateSection(index, current => ({ ...current,
+                      bullets: current.bullets.map(value => value.id === item.id ? { ...value, signpost: event.target.value || null } : value) }))} /></label>
+                {inlineQuotes && inlineSource && <CvInlineWritingTool contextId={contextId} source={inlineSource}
+                  target={{ type: "bullet", id: item.id, field: "signpost" }} label={`Bullet title ${position + 1}`}
+                  text={item.signpost ?? ""} quotes={inlineQuotes} getSelection={() => inputSelection(`cv-manual-title-${item.id}`)}
+                  useLabel="Use change and save Manual CV"
+                  onUseChange={next => save({ type: "bullet", id: item.id, field: "signpost", text: next })} />}</div>}
+              <div className="flex flex-wrap items-start gap-2"><label className="min-w-0 flex-1 space-y-1">
+                <span>{row.kind === "skill" ? `Skill ${position + 1}` : `Bullet ${position + 1}`}</span>
+                <textarea id={`cv-manual-item-${item.id}`} className="min-h-11 w-full border border-line-muted bg-raised p-2" value={item.text}
+                  onChange={event => updateItem(index, row.kind === "skill" ? "skills" : "bullets", item.id, event.target.value)} /></label>
+                {inlineQuotes && inlineSource && <CvInlineWritingTool contextId={contextId} source={inlineSource}
+                  target={{ type: row.kind === "skill" ? "skill" : "bullet", id: item.id, field: "text" }}
+                  label={`${row.kind === "skill" ? "Skill" : "Bullet"} ${position + 1}`} text={item.text}
+                  quotes={inlineQuotes} getSelection={() => inputSelection(`cv-manual-item-${item.id}`)}
+                  useLabel="Use change and save Manual CV"
+                  onUseChange={next => save({ type: row.kind === "skill" ? "skill" : "bullet", id: item.id, field: "text", text: next })} />}</div>
+            </div>
             <button type="button" className="min-h-11 border border-line-muted px-3" aria-label={`Remove ${row.kind === "skill" ? "skill" : "bullet"} ${position + 1} from ${row.heading || `section ${index + 1}`}`}
               disabled={(row.kind === "skill" ? row.skills : row.bullets).length <= 1}
               onClick={() => updateSection(index, current => ({ ...current,
@@ -219,7 +278,8 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
         !(row.kind === "skill" ? row.skills : row.bullets).filter(item => item.text.trim()).every(item => item.sources?.length)) &&
         <p className="text-12 text-warn">New lines cannot inherit old source citations. Save keeps your wording; its factual review will need a fresh Check.</p>}
       <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || stale || !name.trim() || !summary.trim() || !sections.length}
-        onClick={save}>{pending ? "Saving…" : "Save Manual CV · free"}</button>
+        onClick={() => void save()}>{pending ? "Saving…" : "Save Manual CV · free"}</button>
+      </fieldset>
     </>}
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert" className="text-danger">{error}</p>}

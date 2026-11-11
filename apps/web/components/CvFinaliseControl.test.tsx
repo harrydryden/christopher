@@ -77,3 +77,31 @@ it("ignores unsaved wording in a different mounted mode or edition", async () =>
     expect(container.textContent).toContain("The saved PDF is now available");
   } finally { other.remove(); otherMode.remove(); }
 });
+
+
+it("waits for a saved child to arrive before offering final approval", async () => {
+  const editor = document.createElement("div");
+  editor.dataset.cvModePending = "true";
+  editor.dataset.cvModeDirty = "true";
+  editor.dataset.cvModeEditorId = "old-draft";
+  document.body.append(editor);
+  vi.mocked(prepareCvFinalisation).mockResolvedValue({ ok: true, token: "signed", measuredPages: 1,
+    maxPages: 2, assessmentState: "unchecked", warnings: [] });
+  try {
+    await act(async () => root.render(<CvFinaliseControl id="old-draft" revision={2} baseHash="old" />));
+    const review = container.querySelector<HTMLButtonElement>("button")!;
+    expect(review.disabled).toBe(true);
+    await act(async () => review.click());
+    expect(prepareCvFinalisation).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Save your CV edits before");
+    await act(async () => {
+      root.render(<CvFinaliseControl id="new-draft" revision={3} baseHash="new" />);
+      editor.dataset.cvModePending = "false";
+      editor.dataset.cvModeDirty = "false";
+      editor.dataset.cvModeEditorId = "new-draft";
+    });
+    expect(review.disabled).toBe(false);
+    await act(async () => review.click());
+    expect(prepareCvFinalisation).toHaveBeenCalledWith("new-draft", 3, "new");
+  } finally { editor.remove(); }
+});

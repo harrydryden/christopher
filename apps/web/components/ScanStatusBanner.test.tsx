@@ -28,13 +28,13 @@ it("links a stopped or restarting unfinished scan to Health without claiming it 
   expect(render("idle")).not.toContain("Scanning now");
 });
 
-it("keeps scan exceptions outside the collapsed monitoring details while writing", () => {
+it("keeps scan exceptions visible and links to monitoring while writing", () => {
   route.path = "/cv/example";
   try {
     const html = render("waiting");
-    expect(html).toContain("<details>");
-    expect(html.slice(html.indexOf("</details>"))).toContain("Scan waiting for monitoring");
-    expect(html).toContain("Following 1 company");
+    expect(html).not.toContain("<details>");
+    expect(html).toContain("Scan waiting for monitoring");
+    expect(html).toContain('href="/companies"');
     expect(html).not.toContain("<details open");
   } finally { route.path = "/"; }
 });

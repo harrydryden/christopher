@@ -18,7 +18,7 @@ import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
 import { cvAssessmentCurrent } from "@col/core/cv-review";
 import { resolveCvTheme } from "@col/core/cv";
 import { cvDraftEditBaseHash } from "@/lib/cv-edit-base";
-import { CvSelectEdition } from "@/components/CvSelectEdition";
+import { CvHistory } from "@/components/CvHistory";
 import { cvManualHeadingWarnings } from "@col/core/cv-employment-display";
 import { storedFinalisedCvPdfStatus } from "@/lib/cv-pdf-store";
 import { cvTargetingViewForOwnedDraft } from "@/lib/cv-targeting-view";
@@ -33,6 +33,8 @@ import { CvRoleDescription } from "@/components/CvRoleDescription";
 import { cvComparisonSourceForOwnedDraft } from "@/lib/cv-comparison-source";
 import { cvContextInputDrift } from "@/lib/cv-context-drift";
 import { CV_RENDER_VERSION, cvRefinementConflicts } from "@col/core/cv-editing-modes";
+import { CV_AI_UNITS, getCvAiAllowance, quoteCvAiAction } from "@col/db";
+import { CvAiAllowance } from "@/components/CvAiAllowance";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +48,21 @@ export default async function CvContextPage({ params, searchParams }: { params: 
     baselines: history.baselinesBefore, editions: history.editionsBefore,
   });
   if (!workspace) notFound();
+  const [allowance, correctionQuote] = await Promise.all([
+    getCvAiAllowance(db(), user.id),
+    quoteCvAiAction(db(), { userId: user.id, source: { kind: "context", id }, action: "inline_correction" }),
+  ]);
+  const inlineQuotes = {
+    inline_correction: { charge: correctionQuote.charge,
+      units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.inline_correction,
+      priceVersion: correctionQuote.priceVersion },
+    inline_refine: { charge: correctionQuote.charge,
+      units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.inline_refine,
+      priceVersion: correctionQuote.priceVersion },
+    inline_tailor: { charge: correctionQuote.charge,
+      units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.inline_tailor,
+      priceVersion: correctionQuote.priceVersion },
+  };
   const [latestLibrary] = await db().select({ content: cvLibraries.content, version: cvLibraries.version }).from(cvLibraries)
     .where(eq(cvLibraries.userId, user.id)).orderBy(desc(cvLibraries.version)).limit(1);
   const library = latestLibrary ? CvLibrarySchema.safeParse(latestLibrary.content) : null;
@@ -91,6 +108,9 @@ export default async function CvContextPage({ params, searchParams }: { params: 
       rendererCurrent: selectedBaseline.engineContract.render === CV_RENDER_VERSION } : null}
     knownLibraryDrift={knownLibraryDrift} knownRoleDrift={knownRoleDrift}
     initialChoices={selectedBaseline?.librarySnapshot?.careerProjection?.conflictChoices}
+    quote={{ charge: correctionQuote.charge,
+      units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.whole_cv,
+      priceVersion: correctionQuote.priceVersion }}
     />;
   const manualEditions = workspace.editions.filter(edition => edition.editingMode === "manual");
   const refinedEditions = workspace.editions.filter(edition => edition.editingMode === "refine");
@@ -136,21 +156,15 @@ export default async function CvContextPage({ params, searchParams }: { params: 
     !selectedDraft.appliedRefinements?.some(applied => applied.id === row.id && applied.version === row.version)) : [];
   return <div className="space-y-5">
     <PageHeader title={`${workspace.context.jobTitle} · ${workspace.context.companyName}`}
-      description="One application workspace. Choose Auto, Refine or Manual; your saved editions remain separate."
       actions={<Link href="/applications" className="min-h-11 py-2 text-14 underline">Applications</Link>} />
-    <a className="inline-flex min-h-11 items-center text-14 underline" href="#cv-current-cv">
-      Jump to Current CV · {selectedDraft ? `${selectedDraft.editingMode ?? "saved"} version ${selectedDraft.revision}`
-        : selectedBaseline?.status === "ready" ? "selected Auto result" : "no saved CV yet"}
-    </a>
-    {workspace.description && <CvRoleDescription contextId={id}
-      descriptionVersionId={workspace.context.currentDescriptionVersionId}
-      description={workspace.description.text} version={workspace.description.version}
-      baselines={rebaseBaselines.map(row => ({ id: row.id, status: row.status,
-        descriptionVersionId: row.descriptionVersionId, publishedAt: row.publishedAt?.toISOString() ?? null,
-        roleVersion: row.descriptionVersionId ? rebaseVersionById.get(row.descriptionVersionId) ?? null : null }))}
-      initialFrom={workspace.refinements.find(row => row.dependencies.originBaselineId)?.dependencies.originBaselineId ?? selectedBaseline?.id ?? null}
-      originBaselineIds={[...new Set(workspace.refinements.map(row => row.dependencies.originBaselineId).filter((value): value is string => !!value))]}
-      refinementVersion={workspace.context.refinementsVersion} refinements={workspace.refinements} />}
+    <section id="cv-current-cv" role="region" aria-label="Current CV" className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Current CV</h2>
+        <span className="text-13 text-muted">{selectedDraft
+          ? `${selectedDraft.editingMode ?? "saved"} · version ${selectedDraft.revision}${selectedDraft.finalisedAt ? " · final PDF saved" : ""}`
+          : selectedBaseline?.status === "ready" ? "Auto · saved result" : "No saved CV yet"}</span>
+      </div>
+    <CvAiAllowance session={allowance.session} week={allowance.week} />
     {selectedDraft && processing && reading && system && <section className="space-y-3 border border-line-muted p-4 text-14">
       <h2 className="font-semibold">Current CV build</h2>
       <p>Your selected edition is being prepared. Other saved editions and unsaved mode wording remain available.</p>
@@ -158,35 +172,58 @@ export default async function CvContextPage({ params, searchParams }: { params: 
         timeZone={system.timezone} versionLabel={`V${selectedDraft.revision}`} />
     </section>}
     <CvContextModes initialMode={initialMode} auto={auto}
-      refine={<><CvRefineModeLazy contextId={id} source={refinementSource
+      roleDetails={workspace.description && <CvRoleDescription contextId={id}
+        descriptionVersionId={workspace.context.currentDescriptionVersionId}
+        description={workspace.description.text} version={workspace.description.version}
+        baselines={rebaseBaselines.map(row => ({ id: row.id, status: row.status,
+          descriptionVersionId: row.descriptionVersionId, publishedAt: row.publishedAt?.toISOString() ?? null,
+          roleVersion: row.descriptionVersionId ? rebaseVersionById.get(row.descriptionVersionId) ?? null : null }))}
+        initialFrom={workspace.refinements.find(row => row.dependencies.originBaselineId)?.dependencies.originBaselineId ?? selectedBaseline?.id ?? null}
+        originBaselineIds={[...new Set(workspace.refinements.map(row => row.dependencies.originBaselineId).filter((value): value is string => !!value))]}
+        refinementVersion={workspace.context.refinementsVersion} refinements={workspace.refinements} />}
+      refine={<><CvRefineModeLazy contextId={id} inlineQuotes={inlineQuotes}
+        wholeCvQuote={{ charge: correctionQuote.charge,
+          units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.whole_cv,
+          priceVersion: correctionQuote.priceVersion }}
+        skillQuote={{ charge: correctionQuote.charge,
+          units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.skills,
+          priceVersion: correctionQuote.priceVersion }}
+        skillDraft={selectedDraft?.status === "ready" && selectedDraft.content ? {
+          id: selectedDraft.id, revision: selectedDraft.revision, libraryVersion: selectedDraft.libraryVersion } : null}
+        source={refinementSource
         ? { kind: refinementSource.kind, id: refinementSource.id, revision: refinementSource.revision, label: refinementSource.label,
           autoOrigin: refinementSource.kind === "baseline" || refinementSource.autoOrigin } : null}
         initialVersion={workspace.context.refinementsVersion} targets={targetOptions} refinements={workspace.refinements}
-        appliedRefinements={selectedDraft?.appliedRefinements ?? []}
+        appliedRefinements={selectedDraft?.appliedRefinements ??
+          (selectedDraft?.editingMode === "refine" && selectedDraft.status === "ready"
+            ? selectedDraft.refinementSnapshot?.map(row => ({ id: row.id, version: row.version })) : null) ?? []}
+        appliedSnapshot={selectedDraft?.refinementSnapshot ?? []}
         sourceContent={refinementSource?.content} sourceTargets={refinementSource?.targets}
         sourceTheme={refinementSource ? resolveCvTheme(refinementSource.content.theme) : undefined}
         targetingView={refinementTargetingView}
         conflicts={refinementSource && workspace.description ? cvRefinementConflicts({
           content: refinementSource.content, targets: refinementSource.targets, library: refinementSource.library,
           descriptionVersionId: workspace.description.id, refinements: workspace.refinements }) : []} />
-        {selectedDraft?.editingMode === "refine" && selectedDraft.content && selectedDraft.refinementSourceContent &&
-          <CvEditionComparison source={CvContentSchema.parse(selectedDraft.refinementSourceContent)}
-            result={CvContentSchema.parse(selectedDraft.content)}
-            sourceTargets={selectedDraft.refinementSourceTargets} resultTargets={selectedDraft.editingTargets}
-            sourceTargeting={comparisonSource?.sourceTargeting} resultTargeting={resultTargetingView}
-            sourceLabel={selectedDraft.parentId ? "Previous saved CV" : "Auto source"} />}
       </>}
       manual={<><CvManualModeLazy contextId={id} descriptionVersionId={workspace.context.currentDescriptionVersionId}
+        inlineQuotes={inlineQuotes}
         copySource={workspace.selected ? { kind: workspace.selected.kind, id: workspace.selected.id } : null}
         draft={selectedDraft?.editingMode === "manual" ? { id: selectedDraft.id, revision: selectedDraft.revision,
           content: selectedDraft.content, editingTargets: selectedDraft.editingTargets } : null} prefill={prefill}
         initialTheme={resolveCvTheme(selectedDraft?.editingMode === "manual" ? selectedDraft.content?.theme : defaultTheme)}
         skillChoices={library?.success ? library.data.entries.filter(entry => entry.kind === "skill" && entry.status === "active")
           .flatMap(entry => entry.skillItems ?? []) : []} />
-      </>} />
-    <section id="cv-current-cv" role="region" aria-label="Current CV" className="space-y-2">
+      </>}
+      compare={selectedDraft?.editingMode === "refine" && selectedDraft.content && selectedDraft.refinementSourceContent
+        ? <CvEditionComparison source={CvContentSchema.parse(selectedDraft.refinementSourceContent)}
+            result={CvContentSchema.parse(selectedDraft.content)}
+            sourceTargets={selectedDraft.refinementSourceTargets} resultTargets={selectedDraft.editingTargets}
+            sourceTargeting={comparisonSource?.sourceTargeting} resultTargeting={resultTargetingView}
+            sourceLabel={selectedDraft.parentId ? "Previous saved CV" : "Auto source"} /> : null}
+      history={(workspace.baselines.length > 0 || workspace.editions.length > 0)
+        ? <CvHistory contextId={id} selected={workspace.selected} initialBaselines={workspace.baselines}
+            initialEditions={workspace.editions} initialOlder={workspace.older} /> : null} />
     {!selectedDraft?.content && <div className="border border-line-muted p-4 text-14">
-      <h2 className="font-semibold">Current CV</h2>
       {selectedBaseline?.status === "ready" && selectedBaseline.content ? <>
         <p>Selected Auto result · {CvContentSchema.parse(selectedBaseline.content).name}</p>
         {selectedBaseline.engineContract.render === CV_RENDER_VERSION
@@ -195,10 +232,9 @@ export default async function CvContextPage({ params, searchParams }: { params: 
           : <p>This saved result used an earlier PDF layout. Update Auto to preview it with the current layout.</p>}
       </> : <p>No ready CV is selected yet. Choose Auto or Manual to begin.</p>}
     </div>}
-    {selectedDraft?.content && <details id="cv-context-feedback" open className="border border-line-muted p-4 text-14">
-      <summary className="cursor-pointer font-semibold">Current CV · {selectedDraft.editingMode ?? "saved"} version {selectedDraft.revision}</summary>
+    {selectedDraft?.content && <div id="cv-context-feedback" className="border border-line-muted p-4 text-14">
       <div className="mt-3 space-y-2 border-b border-line-muted pb-3">
-        <h2 className="font-semibold">Feedback and final approval</h2>
+        <h2 tabIndex={-1} className="font-semibold">Feedback and final approval</h2>
         <p>{CvContentSchema.parse(selectedDraft.content).name} · {selectedDraft.finalisedAt ? "Finalised PDF ready" : processing
           ? "Build in progress; saved wording remains available" : "Saved wording ready for review"}</p>
         {selectedRoleVersion && <p className="text-12 text-muted">Based on role description version {selectedRoleVersion.version}; current role description is version {workspace.description?.version}. Your saved wording remains on its earlier source.</p>}
@@ -217,7 +253,7 @@ export default async function CvContextPage({ params, searchParams }: { params: 
         <div className="mt-3 border border-warn p-3 text-14"><p className="font-medium">Headings to verify</p>
           <ul className="mt-2 list-disc pl-5">{cvManualHeadingWarnings(CvContentSchema.parse(selectedDraft.content),
             selectedDraft.librarySnapshot).map(warning => <li key={warning.id}>{warning.text}</li>)}</ul></div>}
-      <div className="mt-3"><CvAssessmentPanel id={selectedDraft.id} revision={selectedDraft.revision}
+      <div className="mt-3"><CvAssessmentPanel checkQuote={{ charge: correctionQuote.charge, units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.check, priceVersion: correctionQuote.priceVersion }} id={selectedDraft.id} revision={selectedDraft.revision}
         checkSuccessHash="cv-context-feedback"
         baseHash={cvDraftEditBaseHash(selectedDraft.content, selectedDraft.targetingBrief)}
         assessment={selectedDraft.assessment} current={cvAssessmentCurrent(selectedDraft.assessment,
@@ -225,29 +261,7 @@ export default async function CvContextPage({ params, searchParams }: { params: 
         finalised={!!selectedDraft.finalisedAt} hasFinalPdf={hasFinalPdf} approvalMode={approvalMode}
         busy={selectedDraft.status === "queued" || selectedDraft.status === "generating"}
         hasContent content={CvContentSchema.parse(selectedDraft.content)} library={selectedDraft.librarySnapshot} /></div>
-    </details>}
+    </div>}
     </section>
-    {(workspace.baselines.length > 0 || refinedEditions.length > 0 || manualEditions.length > 0) &&
-      <details className="border border-line-muted p-4 text-14"><summary className="cursor-pointer font-semibold">Saved CV history</summary>
-        {workspace.baselines.length > 0 && <div className="mt-3"><h2 className="font-medium">Auto results</h2><ul className="space-y-2">
-          {workspace.baselines.map(row => <li key={row.id} className="flex flex-wrap items-center gap-2">
-            <CvSelectEdition contextId={id} kind="baseline" id={row.id} label="Select this Auto result" />
-            {row.status === "ready" && <a className="underline" href={`/api/cv/baseline/${row.id}/pdf`} target="_blank" rel="noopener noreferrer">Open saved Auto PDF</a>}
-            <span>{workspace.selected?.kind === "baseline" && workspace.selected.id === row.id ? "Current · " : ""}
-              {row.status}{row.descriptionVersionId ? ` · role version ${rebaseVersionById.get(row.descriptionVersionId) ?? "earlier"}` : ""}
-              {` · ${new Date(row.publishedAt ?? row.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}`}</span>
-          </li>)}</ul></div>}
-        {(refinedEditions.length > 0 || manualEditions.length > 0) && <div className="mt-3"><h2 className="font-medium">Saved editions</h2><ul className="space-y-2">
-          {[...refinedEditions, ...manualEditions].map(edition => <li key={edition.id} className="flex flex-wrap items-center gap-2">
-            <CvSelectEdition contextId={id} kind="draft" id={edition.id}
-              label={`Select ${edition.editingMode} edition V${edition.revision}`} />
-            <Link className="underline" href={`/cv/${edition.id}`}>Open details</Link>
-            <span>{workspace.selected?.kind === "draft" && workspace.selected.id === edition.id ? "Current · " : ""}
-              {edition.status}{edition.finalisedAt ? " · final PDF saved" : ""}
-              {` · ${edition.createdAt.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}`}</span>
-          </li>)}</ul></div>}
-      </details>}
-    {workspace.older && <Link className="inline-flex min-h-11 items-center text-14 underline"
-      href={`/cv/context/${id}?baselinesBefore=${encodeURIComponent(workspace.older.baselines)}&editionsBefore=${encodeURIComponent(workspace.older.editions)}`}>Older saved editions</Link>}
   </div>;
 }

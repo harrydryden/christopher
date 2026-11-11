@@ -38,6 +38,19 @@ const library: CvLibrary = groupCvLibrary({
 const plan = { summary: "Operations leader", sections: [{ entryId: "e1", bullets: ["Led"] }], gaps: [] };
 
 describe("canonical evidence", () => {
+  it("retains accepted skill tags for display without making them their own proof", () => {
+    const derived: CvLibrary = { name: "Candidate", contact: "", profile: "", entries: [{ id: "sk", kind: "skill",
+      heading: "Tools", details: "SQL\nPower BI", skillItems: ["SQL", "Power BI"] }],
+      careerProjection: { version: 1, presentation: "chronological", display: {}, sourceMap: Object.fromEntries(
+        ["row:0", "skill:0"].map(key => [`entry:sk:${key}`, { recordId: "sk", recordRevision: 1,
+          assertionId: "accepted", assertionRevision: 1, publicText: false, origin: "accepted_suggestion" as const }])) } };
+    const evidence = canonicalEvidence(derived);
+    expect(evidence.entries[0]!.displayOnlySkillLabelsNotEvidence).toEqual(["SQL"]);
+    expect(cvTailoringEvidence(derived).map(row => row.text)).toEqual(["Power BI", "Power BI"]);
+    expect(cvEvidenceItems(derived).find(row => row.id === "entry:sk")!.text).not.toContain("SQL");
+    expect(canonicalEvidenceItems(evidence).find(row => row.id === "entry:sk")!.text).not.toContain("SQL");
+    expect(derived.entries[0]!.skillItems).toEqual(["SQL", "Power BI"]);
+  });
   it("writes every citable row once, under its entry, with the ids the validators accept", () => {
     const evidence = canonicalEvidence(library);
     const flat = cvTailoringEvidence(library);

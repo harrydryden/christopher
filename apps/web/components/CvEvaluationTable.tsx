@@ -12,7 +12,6 @@ const CV_CHANGE_TYPES: readonly CvChange[] = [
   "Comment",
 ];
 import { CvContentBlockLink } from "./CvWorkspace";
-import { CvDisclosure } from "./CvDisclosure";
 
 const colours = {
   Red: "border-danger text-danger",
@@ -183,7 +182,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                         Edit {source.label}
                       </a>)}
                     </div>
-                    <CvDisclosure label={`evidence for item ${row.number}`}>
+                    <section aria-label={`Evidence for item ${row.number}`} className="mt-3 space-y-1 border-l-2 border-line-muted pl-3">
                       {!row.suggestion.includes(row.reason) && (
                         <p className="text-12 text-muted">{row.reason}</p>
                       )}
@@ -199,7 +198,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                           {source}
                         </p>
                       ))}
-                    </CvDisclosure>
+                    </section>
                   </td>
                   <td className="px-2 py-4">
                     {row.change === "Comment" ? <NotRated /> : <Strength value={row.evidence} />}

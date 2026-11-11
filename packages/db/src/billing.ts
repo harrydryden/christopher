@@ -7,11 +7,14 @@ import {
   creditGrants,
   creditLedger,
   creditReservations,
+  cvAiUsage,
+  cvDrafts,
   type BillingPlan,
   type BillingStatus,
   type CreditGrantSource,
 } from "./schema";
 import { setSubscriptionStatus } from "./subscriptions";
+import type { CvAiAction } from "./cv-ai-usage";
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type BillingWriter = Db | Transaction;
@@ -135,7 +138,8 @@ export async function getBillingSummary(database: BillingWriter, userId: string,
       coalesce(sum(g.remaining) filter (where g.source = 'welcome' and (g.expires_at is null or g.expires_at > ${now})), 0)::int as welcome,
       coalesce(sum(g.remaining) filter (where g.source = 'topup' and (g.expires_at is null or g.expires_at > ${now})), 0)::int as purchased,
       coalesce(sum(g.remaining) filter (where g.source = 'admin' and (g.expires_at is null or g.expires_at > ${now})), 0)::int as gifted,
-      (select count(*)::int from credit_reservations r where r.user_id = ${userId}::uuid and r.status = 'reserved') as reserved,
+      ((select count(*)::int from credit_reservations r where r.user_id = ${userId}::uuid and r.status = 'reserved') +
+       (select count(*)::int from cv_ai_usage a where a.user_id = ${userId}::uuid and a.charge_kind = 'role_credit' and a.status = 'reserved')) as reserved,
       (select count(*)::int from company_subscriptions s where s.user_id = ${userId}::uuid and s.status = 'active') as active_companies
     from credit_grants g where g.user_id = ${userId}::uuid`),
   ]);
@@ -221,8 +225,30 @@ export async function assertCanActivateCompanies(database: BillingWriter, userId
 }
 
 /** Reserve exactly one credit before a new AI-written CV is queued. Idempotent by draft. */
-export async function reserveCvCredit(writer: BillingWriter, userId: string, draftId: string, now = new Date()): Promise<void> {
-  if (isRootDatabase(writer)) return writer.transaction(tx => reserveCvCredit(tx, userId, draftId, now));
+export async function reserveCvCredit(writer: BillingWriter, userId: string, draftId: string,
+  now = new Date(), action: CvAiAction = "whole_cv",
+  expectedQuote?: { charge: "role_credit" | "allowance"; units: number; priceVersion: number }): Promise<void> {
+  if (isRootDatabase(writer)) return writer.transaction(tx => reserveCvCredit(tx, userId, draftId, now, action, expectedQuote));
+  const [draft] = await writer.select({ id: cvDrafts.id, userId: cvDrafts.userId }).from(cvDrafts)
+    .where(eq(cvDrafts.id, draftId)).limit(1);
+  if (draft?.userId !== undefined && draft.userId !== userId) {
+    const { CvAiUsageError } = await import("./cv-ai-usage");
+    throw new CvAiUsageError("source", "This CV is unavailable to this account.");
+  }
+  if (draft) {
+    const [legacy] = await writer.select({ status: creditReservations.status }).from(creditReservations)
+      .where(eq(creditReservations.draftId, draftId)).limit(1);
+    if (legacy?.status === "reserved" && expectedQuote &&
+      (expectedQuote.charge !== "role_credit" || expectedQuote.units !== 0 || expectedQuote.priceVersion !== 1)) {
+      const { CvAiUsageError } = await import("./cv-ai-usage");
+      throw new CvAiUsageError("request_conflict", "The quoted AI cost changed. Reload before requesting this work.");
+    }
+    if (legacy?.status !== "reserved") {
+      const { reserveCvAiUsageForDraft } = await import("./cv-ai-usage");
+      await reserveCvAiUsageForDraft(writer, { userId, draftId, action, now, expectedQuote });
+      return;
+    }
+  }
   await ensureFreeEntitlement(writer, userId);
   const [existing] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, draftId)).limit(1).for("update");
   if (existing?.status === "reserved" || existing?.status === "consumed") return;
@@ -257,8 +283,21 @@ export async function reserveCvCredit(writer: BillingWriter, userId: string, dra
 
 export async function consumeCvCredit(writer: BillingWriter, draftId: string, now = new Date()): Promise<boolean> {
   if (isRootDatabase(writer)) return writer.transaction(tx => consumeCvCredit(tx, draftId, now));
+  const [newHold] = await writer.select({ id: cvAiUsage.id }).from(cvAiUsage)
+    .where(and(eq(cvAiUsage.sourceKind, "draft"), eq(cvAiUsage.sourceId, draftId), eq(cvAiUsage.status, "reserved"))).limit(1);
+  if (newHold) {
+    const { settleCvAiUsageForDraft } = await import("./cv-ai-usage");
+    return settleCvAiUsageForDraft(writer, draftId, "ready", now);
+  }
+  const [probe] = await writer.select({ userId: creditReservations.userId }).from(creditReservations)
+    .where(eq(creditReservations.draftId, draftId)).limit(1);
+  if (!probe) return false;
+  await lockBilling(writer, probe.userId);
   const [reservation] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, draftId)).limit(1).for("update");
   if (!reservation || reservation.status !== "reserved") return false;
+  const [revoked] = await writer.select({ id: creditLedger.id }).from(creditLedger)
+    .where(and(eq(creditLedger.grantId, reservation.grantId), eq(creditLedger.kind, "revoke"))).limit(1);
+  if (revoked) throw new BillingLimitError("cv_credits_exhausted", "The credit for this CV was refunded. Request a new role credit before continuing.");
   await writer.update(creditReservations).set({ status: "consumed", settledAt: now }).where(eq(creditReservations.draftId, draftId));
   await writer.insert(creditLedger).values({
     userId: reservation.userId,
@@ -273,16 +312,28 @@ export async function consumeCvCredit(writer: BillingWriter, draftId: string, no
 
 export async function releaseCvCredit(writer: BillingWriter, draftId: string, reason = "Build did not complete", now = new Date()): Promise<boolean> {
   if (isRootDatabase(writer)) return writer.transaction(tx => releaseCvCredit(tx, draftId, reason, now));
+  const [newHold] = await writer.select({ id: cvAiUsage.id }).from(cvAiUsage)
+    .where(and(eq(cvAiUsage.sourceKind, "draft"), eq(cvAiUsage.sourceId, draftId), eq(cvAiUsage.status, "reserved"))).limit(1);
+  if (newHold) {
+    const { settleCvAiUsageForDraft } = await import("./cv-ai-usage");
+    return settleCvAiUsageForDraft(writer, draftId, "failed", now);
+  }
+  const [probe] = await writer.select({ userId: creditReservations.userId }).from(creditReservations)
+    .where(eq(creditReservations.draftId, draftId)).limit(1);
+  if (!probe) return false;
+  await lockBilling(writer, probe.userId);
   const [reservation] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, draftId)).limit(1).for("update");
   if (!reservation || reservation.status !== "reserved") return false;
-  await writer.update(creditGrants).set({ remaining: sql`${creditGrants.remaining} + 1` }).where(eq(creditGrants.id, reservation.grantId));
+  const [revoked] = await writer.select({ id: creditLedger.id }).from(creditLedger)
+    .where(and(eq(creditLedger.grantId, reservation.grantId), eq(creditLedger.kind, "revoke"))).limit(1);
+  if (!revoked) await writer.update(creditGrants).set({ remaining: sql`${creditGrants.remaining} + 1` }).where(eq(creditGrants.id, reservation.grantId));
   await writer.update(creditReservations).set({ status: "released", settledAt: now }).where(eq(creditReservations.draftId, draftId));
   await writer.insert(creditLedger).values({
     userId: reservation.userId,
     grantId: reservation.grantId,
     draftId,
     kind: "release",
-    delta: 1,
+    delta: revoked ? 0 : 1,
     idempotencyKey: `release:${draftId}`,
     note: reason.slice(0, 500),
   }).onConflictDoNothing();
@@ -292,6 +343,12 @@ export async function releaseCvCredit(writer: BillingWriter, draftId: string, re
 /** Move a held credit to an evidence-quiz continuation without charging twice. */
 export async function transferCvCredit(writer: BillingWriter, fromDraftId: string, toDraftId: string): Promise<boolean> {
   if (isRootDatabase(writer)) return writer.transaction(tx => transferCvCredit(tx, fromDraftId, toDraftId));
+  const [newHold] = await writer.select({ id: cvAiUsage.id }).from(cvAiUsage)
+    .where(and(eq(cvAiUsage.sourceKind, "draft"), eq(cvAiUsage.sourceId, fromDraftId), eq(cvAiUsage.status, "reserved"))).limit(1);
+  if (newHold) {
+    const { transferCvAiUsageForDraft } = await import("./cv-ai-usage");
+    return transferCvAiUsageForDraft(writer, fromDraftId, toDraftId);
+  }
   const [reservation] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, fromDraftId)).limit(1).for("update");
   if (!reservation || reservation.status !== "reserved") return false;
   const [target] = await writer.select().from(creditReservations).where(eq(creditReservations.draftId, toDraftId)).limit(1).for("update");
@@ -411,10 +468,18 @@ export async function reconcileCompanyCapacity(writer: BillingWriter, userId: st
 /** Revoke only unspent top-up credits after a full refund or dispute. */
 export async function revokeCvGrant(writer: BillingWriter, externalRef: string, note: string): Promise<number> {
   if (isRootDatabase(writer)) return writer.transaction(tx => revokeCvGrant(tx, externalRef, note));
+  const [owner] = await writer.select({ userId: creditGrants.userId }).from(creditGrants).where(and(
+    eq(creditGrants.source, "topup"), eq(creditGrants.externalRef, externalRef),
+  )).limit(1);
+  if (!owner) return 0;
+  await lockBilling(writer, owner.userId);
   const [grant] = await writer.select().from(creditGrants).where(and(
     eq(creditGrants.source, "topup"), eq(creditGrants.externalRef, externalRef),
   )).limit(1).for("update");
-  if (!grant || grant.remaining <= 0) return 0;
+  if (!grant) return 0;
+  const [prior] = await writer.select({ id: creditLedger.id }).from(creditLedger)
+    .where(eq(creditLedger.idempotencyKey, `revoke:${externalRef}`)).limit(1);
+  if (prior) return 0;
   await writer.update(creditGrants).set({ remaining: 0 }).where(eq(creditGrants.id, grant.id));
   await writer.insert(creditLedger).values({
     userId: grant.userId,

@@ -59,7 +59,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.execute(sql`delete from tasks`);
   await db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_skill_suggestion_runs, cv_drafts, ai_calls, ai_reservations, worker_events, settings`);
-  await db.execute(sql`truncate credit_ledger, credit_reservations, credit_grants, billing_accounts cascade`);
+  await db.execute(sql`truncate cv_ai_usage, credit_ledger, credit_reservations, credit_grants, billing_accounts cascade`);
   deps.userSettings = (async () => ({ aiBudgetUsd: 1000, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
   deps.aiClient = undefined;
 });
@@ -206,7 +206,7 @@ it("narrates every motion of a clean build, with the figures and the cost of eac
   expect(saved.failure).toBeNull();
   expect(saved.buildCheckpoint).toBeNull();
   expect(saved.progressAt).not.toBeNull();
-  expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("consumed");
+  expect((await db.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, draft.id)))[0]?.status).toBe("consumed");
   expect(await aiCallsByStage()).toEqual({ rubric: 1, author: 1, review: 1 });
 });
 
@@ -343,7 +343,7 @@ it("returns the credit when an internal budget limit prevents a build", async ()
   expect(refused.status).toBe("failed");
   expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", retryable: false, action: "raise_budget", budgetLimit: "account", motion: "admit_budget" });
   expect(refused.error).toContain("your budget of $0.01 has");
-  expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("released");
+  expect((await db.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, draft.id)))[0]?.status).toBe("released");
   const rows = await steps(draft.id);
   expect(motions(rows)).toEqual(["load_inputs", "admit_budget"]);
   const admit = rows[1]!;
@@ -378,7 +378,7 @@ it("stops an unfunded Anthropic review without retrying and releases a held app 
     expect(failed.failure).toMatchObject({ kind: "provider_billing_exhausted", resolvedBy: "user", retryable: false, action: "check_provider_billing", motion: "assess_batch" });
     expect(failed.error).toContain("Anthropic API account needs credit");
     expect(failed.error).not.toContain(privateError);
-    expect((await db.select().from(schema.creditReservations).where(eq(schema.creditReservations.draftId, draft.id)))[0]?.status).toBe("released");
+    expect((await db.select().from(schema.cvAiUsage).where(eq(schema.cvAiUsage.sourceId, draft.id)))[0]?.status).toBe("released");
     expect((await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.draftId, draft.id))).map(row => row.kind)).toEqual(["reserve", "release"]);
     expect(scripted.count("review")).toBe(1);
     expect((await taskRow()).status).toBe("done");

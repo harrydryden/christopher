@@ -3,7 +3,7 @@ import { CvLibrarySchema, MAX_CV_SKILL_DRAFT_CONTEXT_BYTES, cvDraftContextHighli
   cvSkillEvidenceRows, cvSkillSuggestionInputHash, groundedCvSkillSuggestions, isCvSkillDraftContext, type TaskPayloads } from "@col/core";
 import { estimateCostUsd } from "@col/ai";
 import { CvTargetingBriefSchema, cvEligibleSkillLibrary, cvSkillSourcePolicy } from "@col/core/cv-targeting";
-import { cvDrafts, cvSkillSuggestionRuns, latestCvLibrary, type Db, type Task } from "@col/db";
+import { cvDrafts, cvSkillSuggestionRuns, latestCvLibrary, settleCvAiUsage, type Db, type Task } from "@col/db";
 import { openAccountAiPass } from "../account-ai-pass";
 import type { WorkerDeps } from "../context";
 import type { TaskRunContext } from "../queue";
@@ -33,9 +33,13 @@ export async function handleSuggestCvSkills(task: Task, deps: WorkerDeps, ctx?: 
           status = "failed"; suggestions = []; error = "Your Experience or target role changed. Refresh suggestions.";
         }
       }
-      return tx.update(cvSkillSuggestionRuns).set({ status, suggestions, error, updatedAt: deps.now() })
+      // Empty proposals are useful feedback, but never a usable first AI output to charge for.
+      const rows = await tx.update(cvSkillSuggestionRuns).set({ status, suggestions, error, updatedAt: deps.now() })
         .where(and(eq(cvSkillSuggestionRuns.id, runId), eq(cvSkillSuggestionRuns.userId, userId), eq(cvSkillSuggestionRuns.status, "queued")))
         .returning({ id: cvSkillSuggestionRuns.id });
+      if (rows.length) await settleCvAiUsage(tx, { usageId: runId, source: { kind: "skills_run", id: runId },
+        outcome: status === "ready" && suggestions.length ? "ready" : "failed" });
+      return rows;
     });
     return written.length ? { status, count: suggestions.length } : { skipped: "suggestion run superseded" };
   };

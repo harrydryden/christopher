@@ -145,7 +145,8 @@ const CareerProjectionSchema = z.object({
   conflictChoices: z.array(CareerCvChoiceOverrideSchema).max(100).optional(),
   display: z.record(z.string(), CvCareerDisplaySchema),
   sourceMap: z.record(z.string(), z.object({ recordId: z.string(), recordRevision: z.number().int().positive(),
-    assertionId: z.string().nullable(), assertionRevision: z.number().int().positive().nullable(), publicText: z.boolean() })),
+    assertionId: z.string().nullable(), assertionRevision: z.number().int().positive().nullable(), publicText: z.boolean(),
+    origin: z.literal("accepted_suggestion").optional() })),
 });
 export const CvLibrarySchema = z.object({
   careerProjection: CareerProjectionSchema.optional(),

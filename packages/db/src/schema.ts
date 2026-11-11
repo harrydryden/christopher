@@ -94,6 +94,8 @@ export const BILLING_STATUSES = ["active", "past_due", "cancelled"] as const;
 export const CREDIT_GRANT_SOURCES = ["welcome", "monthly", "topup", "admin"] as const;
 export const CREDIT_RESERVATION_STATUSES = ["reserved", "consumed", "released"] as const;
 export const CREDIT_LEDGER_KINDS = ["grant", "reserve", "release", "consume", "transfer", "revoke"] as const;
+export const CV_AI_ACTIONS = ["inline_correction", "inline_refine", "inline_tailor", "skills", "check", "whole_cv"] as const;
+export const CV_AI_USAGE_STATUSES = ["reserved", "consumed", "released"] as const;
 
 // ---------------------------------------------------------------------------
 // Accounts and sessions
@@ -301,6 +303,54 @@ export const creditLedger = pgTable(
   },
   (t) => [index("credit_ledger_user_created_idx").on(t.userId, t.createdAt)],
 );
+
+/** One durable vacancy identity can have several application contexts and CV editions. */
+export const cvOpportunities = pgTable("cv_opportunities", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  /** Only a verified posting reference may populate this; never a title or description hash. */
+  canonicalRef: text("canonical_ref"),
+  /** A legacy draft without a posting/context keeps access within its own ancestry. */
+  legacyRootDraftId: uuid("legacy_root_draft_id"),
+  firstSuccessOperationId: uuid("first_success_operation_id"),
+  firstSuccessAt: ts("first_success_at"),
+  grandfatherProof: text("grandfather_proof"),
+  createdAt: tsNow("created_at"),
+}, t => [
+  uniqueIndex("cv_opportunities_user_job_uidx").on(t.userId, t.jobId).where(sql`${t.jobId} is not null`),
+  uniqueIndex("cv_opportunities_user_ref_uidx").on(t.userId, t.canonicalRef).where(sql`${t.canonicalRef} is not null`),
+  uniqueIndex("cv_opportunities_user_legacy_uidx").on(t.userId, t.legacyRootDraftId).where(sql`${t.legacyRootDraftId} is not null`),
+  index("cv_opportunities_user_idx").on(t.userId, t.createdAt),
+]);
+
+/** A single provider operation holds either one role credit or both editing windows. */
+export const cvAiUsage = pgTable("cv_ai_usage", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  opportunityId: uuid("opportunity_id").notNull().references(() => cvOpportunities.id, { onDelete: "cascade" }),
+  requestKey: text("request_key").notNull(),
+  inputHash: text("input_hash").notNull(),
+  action: text("action", { enum: CV_AI_ACTIONS }).notNull(),
+  priceVersion: integer("price_version").notNull(),
+  chargeKind: text("charge_kind", { enum: ["role_credit", "allowance"] }).notNull(),
+  units: integer("units").notNull(),
+  grantId: uuid("grant_id").references(() => creditGrants.id, { onDelete: "restrict" }),
+  sourceKind: text("source_kind", { enum: ["draft", "inline_run", "skills_run"] }).notNull(),
+  sourceId: uuid("source_id").notNull(),
+  fiveHourStart: ts("five_hour_start"),
+  weekStart: ts("week_start"),
+  status: text("status", { enum: CV_AI_USAGE_STATUSES }).notNull().default("reserved"),
+  reservedAt: tsNow("reserved_at"),
+  settledAt: ts("settled_at"),
+}, t => [
+  uniqueIndex("cv_ai_usage_user_request_uidx").on(t.userId, t.requestKey),
+  index("cv_ai_usage_user_source_idx").on(t.userId, t.sourceKind, t.sourceId),
+  uniqueIndex("cv_ai_usage_first_claim_uidx").on(t.opportunityId)
+    .where(sql`${t.chargeKind} = 'role_credit' and ${t.status} in ('reserved','consumed')`),
+  index("cv_ai_usage_account_window_idx").on(t.userId, t.fiveHourStart, t.weekStart, t.status),
+  index("cv_ai_usage_opportunity_idx").on(t.opportunityId, t.status),
+]);
 
 /** Stripe retries events; this receipt makes local fulfilment idempotent too. */
 export const billingEvents = pgTable("billing_events", {
@@ -1162,6 +1212,7 @@ export const cvApplicationContexts = pgTable("cv_application_contexts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  opportunityId: uuid("opportunity_id").references(() => cvOpportunities.id, { onDelete: "set null" }),
   /** A repeated request key reopens its context; a deliberate new application supplies a new key. */
   requestKey: text("request_key").notNull(),
   jobTitle: text("job_title").notNull(),
@@ -1191,6 +1242,7 @@ export const cvDrafts = pgTable("cv_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  opportunityId: uuid("opportunity_id").references(() => cvOpportunities.id, { onDelete: "set null" }),
   jobTitle: text("job_title").notNull(),
   companyName: text("company_name").notNull(),
   jobDescription: text("job_description").notNull(),
@@ -1733,3 +1785,4 @@ export const cvShareComments = pgTable("cv_share_comments", {
 ]);
 export type CvShareComment = typeof cvShareComments.$inferSelect;
 export type NewCvShareComment = typeof cvShareComments.$inferInsert;
+export { cvInlineEditRuns } from "./cv-inline-edit-schema";

@@ -442,7 +442,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         <button type="button" className={buttonClass("ghost")} onClick={() => void copyOriginal()}>Copy original draft</button>
       </div>
       {copyMessage && <p role="status" className="text-12 text-muted">{copyMessage}</p>}
-      <details><summary className="cursor-pointer text-12 underline">Show original draft text</summary><textarea readOnly aria-label="Original unsaved Experience draft" className={`mt-2 w-full ${input}`} rows={8} value={JSON.stringify(recovery.original, null, 2)} /></details>
+      <section><h3 className="text-12 font-semibold">Original draft text</h3><textarea readOnly aria-label="Original unsaved Experience draft" className={`mt-2 w-full ${input}`} rows={8} value={JSON.stringify(recovery.original, null, 2)} /></section>
       {recovery.conflicts.map(conflict => <div key={conflict.key} className="space-y-2 border-t border-line-muted pt-3">
         <h3 className="text-14 font-semibold">{conflict.label}</h3>
         <div className="grid gap-2 md:grid-cols-2">

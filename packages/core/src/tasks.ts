@@ -11,6 +11,7 @@ import type { ScoreBatchRecord } from "./score-batch";
 import type { CvSkillDraftContext } from "./cv-skill-draft-context";
 
 export interface TaskPayloads {
+  edit_cv_text: { userId: string; runId: string };
   extract_document: { sourceId: string; documentId: string };
   verify_company: { sourceId?: string; candidateId: string };
   monitor_source: { sourceId: string };
@@ -130,6 +131,7 @@ export const GATE_REEVALUATION_VERSION = 2;
  * the lane cannot disagree about which types count.
  */
 export const INTERACTIVE_TASK_TYPES = [
+  "edit_cv_text",
   "generate_cv", "suggest_cv_skills", "discover", "tag_reason", "reevaluate_gate", "admit_scores", "import_posting", "review_library", "draft_evidence", "import_library_document", "import_role_description",
 ] as const satisfies readonly TaskType[];
 
@@ -143,6 +145,7 @@ export const SCAN_TASK_TYPES = ["scan_company", "run_daily"] as const satisfies 
  * cannot slip through with a default.
  */
 const TASKS: { [T in TaskType]: { priority: number; dedupe: (p: TaskPayloads[T]) => string | null } } = {
+  edit_cv_text: { priority: 1, dedupe: p => `edit_cv_text:${p.runId}` },
   extract_document: { priority: 5, dedupe: (p) => `extract_document:${p.documentId}` },
   verify_company: { priority: 5, dedupe: (p) => `verify_company:${p.candidateId}` },
   monitor_source: { priority: 5, dedupe: (p) => `monitor_source:${p.sourceId}` },
@@ -257,6 +260,7 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   scan_company: 3 * 60_000,
   generate_cv: cvBuildDeadlineMs(),
   suggest_cv_skills: 4 * 60_000,
+  edit_cv_text: 3 * 60_000,
   discover: 5 * 60_000,
   // A page fetch, a browser render when the page needs one, and one model call.
   import_posting: 4 * 60_000,

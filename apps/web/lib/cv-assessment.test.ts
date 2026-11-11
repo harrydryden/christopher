@@ -159,8 +159,8 @@ it("shows evidence questions and actual unsupported wording with a guided finali
   expect(html).toContain("<em>Owned a £10m budget</em>");
   expect(html).toContain("Item");
   expect(html).not.toContain("<blockquote");
-  expect(html).toContain("<details");
-  expect(html).toContain("View full assessment");
+  expect(html).not.toContain("<details");
+  expect(html).toContain("Full assessment");
 });
 it("never displays a stale score as a current assessment", () => {
   const html = renderToStaticMarkup(

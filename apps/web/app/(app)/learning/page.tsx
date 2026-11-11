@@ -23,7 +23,7 @@ import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
 export const dynamic = "force-dynamic";
 
-export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string | string[]; tagsPage?: string | string[]; error?: string }> }) {
+export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string | string[]; view?: string; tagsPage?: string | string[]; error?: string }> }) {
   const user = await requireUser();
   const unverified = needsEmailConfirmation(user);
   const sp = await searchParams;
@@ -48,6 +48,14 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
   const isLatest = !unavailableVersion && (!hasRequestedVersion || (profile && profile.version === versions[0]?.version));
   const previousVersion = profile ? versions.find(version => version.version < profile.version) : undefined;
   const previousProfile = previousVersion ? await getPreferenceProfile(user.id, previousVersion.version) : null;
+
+  if (sp.view === "compare") return <div className="max-w-5xl space-y-5">
+    <PageHeader title="Compare profile versions" />
+    <Link prefetch={false} href={requestedVersion ? `/learning?v=${requestedVersion}` : "/learning"}
+      className="inline-flex min-h-11 items-center text-14 underline">Back to Search profile</Link>
+    {profile && previousProfile ? <ProfileComparison previous={previousProfile} current={profile} />
+      : <p role="status" className="text-14">No previous saved version is available to compare.</p>}
+  </div>;
 
   return (
     <div className="space-y-6">
@@ -96,7 +104,8 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
               {profile.model && ` · ${profile.model}`}
             </p>
             <SafeMarkdown markdown={profile.markdown} />
-            {previousProfile && <ProfileComparison previous={previousProfile} current={profile} />}
+            {previousProfile && <Link prefetch={false} href={`/learning?view=compare&v=${profile.version}`}
+              className="inline-flex min-h-11 items-center text-14 font-semibold underline">Compare with previous version</Link>}
           </div>
         ) : (
           <EmptyState title="No profile yet" description={unverified

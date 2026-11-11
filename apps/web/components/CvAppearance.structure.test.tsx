@@ -20,3 +20,18 @@ it("keeps the selected CV structure when a colour preset changes", () => {
   expect(JSON.parse(container.querySelector<HTMLInputElement>('input[name="theme"]')!.value).experienceLayout).toBe("project");
   act(() => root.unmount()); container.remove();
 });
+
+it("keeps every appearance control visible beside a compact, current-theme sample", () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  act(() => root.render(<CvAppearance value={{ ...DEFAULT_CV_THEME, introPanel: true }} name="theme" />));
+  const sample = container.querySelector('[aria-label="Palette sample"]')!;
+  expect(sample.textContent).toContain("Profile · A concise introduction.");
+  expect(sample.textContent).toContain("Experience");
+  expect(sample.textContent?.match(/Healthcare/g)).toHaveLength(1);
+  expect(sample.textContent).not.toContain("Executive Summary");
+  expect(container.querySelectorAll("details")).toHaveLength(0);
+  for (const name of ["Font", "Maximum pages", "Structure", "Profile card fill"])
+    expect(container.querySelector(`[aria-label="${name}"]`)).not.toBeNull();
+  act(() => root.unmount()); container.remove();
+});

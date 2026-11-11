@@ -39,8 +39,7 @@ it("uses one Layout control with separate mounted Refine and Manual appearance b
     refine={<Mode mode="refine" />} manual={<Mode mode="manual" />} />));
   const choose = (label: string) => act(() => [...container.querySelectorAll<HTMLButtonElement>("button")]
     .find(button => button.textContent?.startsWith(label))!.click());
-  const layout = container.querySelector<HTMLDetailsElement>("#cv-context-layout")!;
-  act(() => { layout.open = true; });
+  const layout = container.querySelector<HTMLElement>("#cv-context-layout")!;
   const font = () => container.querySelector<HTMLSelectElement>('select[aria-label="Font"]')!;
   act(() => { font().value = "Arial"; font().dispatchEvent(new Event("change", { bubbles: true })); });
   expect(container.textContent).toContain("refine font: Arial");
@@ -56,8 +55,8 @@ it("maps a legacy fragment once and permits later mode switches without replayin
   act(() => root.render(<CvContextModes initialMode="auto" auto={<p>Auto</p>}
     refine={<p>Refine</p>} manual={<p>Manual</p>} />));
   expect(container.querySelector<HTMLButtonElement>("#cv-mode-refine")?.getAttribute("aria-pressed")).toBe("true");
-  const layout = container.querySelector<HTMLDetailsElement>("#cv-context-layout")!;
-  expect(layout.open).toBe(true);
+  const layout = container.querySelector<HTMLElement>("#cv-context-layout")!;
+  expect(layout.hidden).toBe(false);
   act(() => container.querySelector<HTMLButtonElement>("#cv-mode-manual")!.click());
   expect(container.querySelector<HTMLButtonElement>("#cv-mode-manual")?.getAttribute("aria-pressed")).toBe("true");
   act(() => container.querySelector<HTMLButtonElement>("#cv-mode-auto")!.click());
@@ -121,6 +120,30 @@ it("ignores a malformed fragment that replaces a scheduled item focus", () => {
     window.dispatchEvent(new HashChangeEvent("hashchange")); });
   window.history.replaceState(null, "", "#%ZZ");
   expect(() => act(() => { for (const callback of frames.splice(0)) callback(0); })).not.toThrow();
+  window.history.replaceState(null, "", window.location.pathname);
+  vi.unstubAllGlobals();
+});
+
+it("keeps a dirty wording buffer while History and Compare are open, then focuses a legacy layout link", () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+  act(() => root.render(<CvContextModes initialMode="refine" auto={<p>Auto</p>}
+    refine={<label>Wording <textarea defaultValue="Saved" data-cv-mode-dirty="true" /></label>}
+    manual={<p>Manual</p>} history={<p>Saved CV history rows</p>} compare={<p>Two saved versions</p>} />));
+  const wording = container.querySelector("textarea")!;
+  act(() => { wording.value = "My unsaved wording"; });
+  const click = (name: string) => act(() => [...container.querySelectorAll<HTMLButtonElement>("button")]
+    .find(button => button.textContent === name)!.click());
+  click("History");
+  expect(container.querySelector<HTMLElement>("#cv-history")?.hidden).toBe(false);
+  click("Compare");
+  expect(container.querySelector<HTMLElement>("#cv-compare")?.hidden).toBe(false);
+  click("Edit current CV");
+  expect(container.querySelector("textarea")).toBe(wording);
+  expect(wording.value).toBe("My unsaved wording");
+  act(() => { window.history.pushState(null, "", "#cv-panel-appearance"); window.dispatchEvent(new HashChangeEvent("hashchange")); });
+  act(() => { for (const callback of frames.splice(0)) callback(0); });
+  expect(document.activeElement?.id).toBe("cv-layout-heading");
   window.history.replaceState(null, "", window.location.pathname);
   vi.unstubAllGlobals();
 });

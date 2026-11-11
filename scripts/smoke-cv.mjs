@@ -333,7 +333,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("heading", { name: "Experience", exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/library");
     page.off("dialog", leaving);
-    await page.goto(`${baseUrl}/cv/library`);
+    await page.goto(`${baseUrl}/library?view=records`);
     assert.equal(new URL(page.url()).pathname, "/library");
     // A career fact is available as soon as it is saved. Work, employer and their relationship
     // are owned records; no legacy job confirmation, AI task or credit is involved.
@@ -363,8 +363,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await career.getByRole("button", { name: "Restore", exact: true }).waitFor();
     await career.getByRole("button", { name: "Undo last change", exact: true }).click();
     await career.getByRole("button", { name: "Archive", exact: true }).waitFor();
-    await career.getByText("More record types", { exact: true }).click();
-    await career.getByRole("button", { name: "Add organisation", exact: true }).click();
+    await career.getByRole("combobox", { name: "Add", exact: true }).selectOption("organisation");
     await career.getByRole("textbox", { name: "Name or title", exact: true }).fill("Smoke Co");
     await career.getByRole("button", { name: "Add to Experience", exact: true }).click();
     await career.getByRole("heading", { name: "Smoke Co", exact: true }).waitFor();
@@ -429,7 +428,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const appearance = page.getByRole("group", { name: "Appearance", exact: true });
     await appearance.getByRole("button", { name: "Gold", exact: true }).click();
     await Promise.all([
-      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings/cv"),
       page.locator("form").filter({ has: appearance }).getByRole("button", { name: "Save", exact: true }).click(),
     ]);
     assert.equal((await setting("cvTheme")).value.primary, "#ffcc00");
@@ -506,10 +505,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const splitResponse = await splitPreview;
     assert.equal(splitResponse.status(), 200);
     assert.deepEqual(splitResponse.request().postDataJSON().content.sections.at(-1).skillItems, combinedSkills);
-    await page.getByRole("button", { name: "Show preview on this page", exact: true }).click().catch(async error => {
-      throw new Error(`${error.message}\nPreview state: ${await page.locator('[aria-label="CV preview"]').innerText()}`);
-    });
-    await page.getByRole("button", { name: "Hide preview on this page", exact: true }).click();
+    assert.equal(await page.getByRole("link", { name: "Open current preview", exact: true }).getAttribute("target"), "_blank");
     await page.getByRole("button", { name: "Remove skill section", exact: true }).click();
     await page.getByLabel("Add section from Experience", { exact: true }).selectOption("library-skills");
     await page.getByRole("button", { name: "Remove skill 2 from new section", exact: true }).click();
@@ -524,8 +520,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const skillResponse = await previewWithSkill;
     assert.equal(skillResponse.status(), 200);
     assert.deepEqual(skillResponse.request().postDataJSON().content.sections.at(-1).skillItems, tenSkills);
-    await page.getByRole("button", { name: "Show preview on this page", exact: true }).click();
-    await page.getByRole("button", { name: "Hide preview on this page", exact: true }).click();
+    assert.equal(await page.getByRole("link", { name: "Open current preview", exact: true }).getAttribute("target"), "_blank");
     for (let index = 10; index > 1; index--) {
       await page.getByRole("button", { name: `Remove skill ${index} from new section`, exact: true }).click();
     }
@@ -561,10 +556,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("tab", { name: "Write", exact: true }).click();
     assert.equal(await page.locator("#cv-job-description").isVisible(), false);
 
-    // The current edit has one primary save; a fresh rewrite is available under More with its cost.
+    // The current edit has one primary save and a separately quoted rewrite.
     assert.equal(await page.getByRole("button", { name: "Save changes · free", exact: true }).count(), 1);
-    await page.getByText("More options", { exact: true }).click();
-    assert.equal(await page.getByRole("button", { name: "Rewrite from Experience · 1 credit", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Rewrite from Experience · 1 role credit", exact: true }).count(), 1);
     assert.match(await page.locator("main").innerText(), /Save your wording now; Check the saved CV when ready/);
 
     // The wording option sits with the words it remembers, on the Content tab, and is still
@@ -580,7 +574,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       .click();
     await page.getByRole("button", { name: "Gold", exact: true }).click();
     await page.getByRole("tab", { name: "Review", exact: true }).click();
-    await page.getByText("View full assessment", { exact: true }).click();
+    await page.getByRole("heading", { name: "Full assessment", exact: true }).waitFor();
     await page.getByRole("table").waitFor();
     assert.deepEqual(await page.getByRole("columnheader").allTextContents(), [
       "Item",
@@ -653,15 +647,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       await page.getByRole("table").locator("tbody tr td").first().textContent(),
       "2",
     );
-    await page
-      .getByRole("button", { name: "Show evidence for item 2", exact: true })
-      .click();
-    assert.equal(
-      await page
-        .getByRole("button", { name: "Hide evidence for item 2", exact: true })
-        .getAttribute("aria-expanded"),
-      "true",
-    );
+    await page.getByRole("region", { name: "Evidence for item 2", exact: true }).waitFor();
     await page
       .getByRole("table").getByRole("link", { name: "Edit Director · Example", exact: true })
       .click();
@@ -685,7 +671,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("tab", { name: "Review", exact: true }).click();
     await page.getByRole("button", { name: "All 2", exact: true }).click();
     assert.equal(await page.getByRole("table").isVisible(), true);
-    assert.equal(await page.getByText("View full assessment", { exact: true }).count(), 1);
+    assert.equal(await page.getByRole("heading", { name: "Full assessment", exact: true }).isVisible(), true);
     assert.equal(await page.locator("blockquote").count(), 0);
     for (const tab of ["Write", "Review", "Appearance"]) {
       await page.getByRole("tab", { name: tab, exact: true }).click();
@@ -1012,7 +998,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       .waitFor({ timeout: 60_000 });
     assert.equal(droppedRefresh, true);
     // The narrative outlives the build: collapsed on the Content tab, with its elapsed time.
-    await page.getByRole("button", { name: "Show Build details", exact: true }).click();
+    await page.getByRole("region", { name: "Build details", exact: true }).waitFor();
     await page.getByRole("button", { name: "Show build log", exact: true }).click();
     const log = await page.getByRole("list", { name: "Build narrative", exact: true }).innerText();
     assert.match(log, /Saved as version \d{2}-[A-Z][a-z]{2}-V\d+/);
@@ -1120,30 +1106,29 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.match(await tableRow().innerText(), /Applying/i);
     assert.match(await tableRow().innerText(), /Ready · V1/);
     await tableRow().getByRole("button", { name: "Table role 1", exact: true }).click();
-    const expansion = page.getByRole("row").filter({ has: page.getByRole("button", { name: "Archive CV", exact: true }) });
-    await expansion.waitFor();
-    assert.equal(await expansion.getByRole("combobox", { name: "Choose the update", exact: true }).count(), 1);
+    const task = page.getByRole("region", { name: "Application: Table role 1", exact: true });
+    await task.waitFor();
+    assert.equal(await task.getByRole("combobox", { name: "Choose the update", exact: true }).count(), 1);
     await page.screenshot({
       path: "tmp/cv-review-tabs/applications-desktop.png",
       fullPage: true,
     });
 
     // Archive, restore and delete, one row at a time, through the same action the CV list used.
-    await expansion.getByRole("button", { name: "Archive CV", exact: true }).click();
-    await page.getByRole("button", { name: "Restore previous CV", exact: true }).waitFor();
-    assert.match(await tableRow().innerText(), /previous archived/);
+    await task.getByRole("button", { name: "Archive CV", exact: true }).click();
+    await task.getByRole("button", { name: "Restore previous CV", exact: true }).waitFor();
     assert.equal(
       (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is not null", [tableIds])).rows[0].n,
       1,
     );
-    await page.getByRole("button", { name: "Restore previous CV", exact: true }).click();
-    await tableRow().getByRole("link", { name: "Open CV workspace", exact: true }).waitFor().catch(async (error) => {
+    await task.getByRole("button", { name: "Restore previous CV", exact: true }).click();
+    await task.getByRole("link", { name: "Open CV workspace", exact: true }).waitFor().catch(async (error) => {
       throw new Error(
         `${error.message}\nTable state: ${await page.locator("main").innerText()}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
       );
     });
-    assert.match(await tableRow().innerText(), /Ready · V1/);
-    assert.equal(new URL(await tableRow().getByRole("link", { name: "Open CV workspace", exact: true }).getAttribute("href"), baseUrl).pathname, `/cv/${tableIds[0]}`);
+    assert.match(await task.innerText(), /Ready · V1/);
+    assert.equal(new URL(await task.getByRole("link", { name: "Open CV workspace", exact: true }).getAttribute("href"), baseUrl).pathname, `/cv/${tableIds[0]}`);
     assert.equal(
       (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is null", [tableIds])).rows[0].n,
       1,
@@ -1165,7 +1150,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const cancelledDeletion = new Promise((resolve, reject) =>
       page.once("dialog", (dialog) => { dialog.dismiss().then(resolve, reject); }),
     );
-    await page.getByRole("button", { name: "Delete CV", exact: true }).click();
+    await task.getByRole("button", { name: "Delete CV", exact: true }).click();
     await cancelledDeletion;
     assert.equal(
       (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[])", [tableIds])).rows[0].n,
@@ -1174,9 +1159,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const confirmedDeletion = new Promise((resolve, reject) =>
       page.once("dialog", (dialog) => { dialog.accept().then(resolve, reject); }),
     );
-    await page.getByRole("button", { name: "Delete CV", exact: true }).click();
+    await task.getByRole("button", { name: "Delete CV", exact: true }).click();
     await confirmedDeletion;
     // With no CV the role falls back to Shortlisted and offers a free workspace entry.
+    await task.getByRole("button", { name: "Back to applications", exact: true }).click();
     await tableRow().getByRole("button", { name: "Prepare CV", exact: true }).waitFor({ timeout: 60_000 }).catch(async (error) => {
       throw new Error(
         `${error.message}\nDelete UI: ${await page.locator("main").innerText()}\nErrors: ${JSON.stringify(errors)}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
@@ -1330,7 +1316,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Preview current edits", exact: true }).click();
     const legacyResponse = await legacyPreview;
     assert.equal(legacyResponse.status(), 200);
-    await page.getByRole("button", { name: "Show preview on this page", exact: true }).click();
+    assert.equal(await page.getByRole("link", { name: "Open current preview", exact: true }).getAttribute("target"), "_blank");
     assert.deepEqual(legacyResponse.request().postDataJSON().content.sections.at(-1).skillItems, legacyLabels.slice(0, 10));
 
     // This is a saved proposal produced by the scripted fixture, not a provider call. The browser

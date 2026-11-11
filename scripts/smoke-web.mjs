@@ -50,7 +50,7 @@ const PAGES = [
   // The attention list and the resolution on the item the smoke company raises: no source yet.
   ["/health", ["Needs attention", "Needs you", "No careers page to scan", "Re-discover"]],
   ["/settings", ["Preferences", "What work are you looking for?", "Writing preferences are on the"]],
-  ["/settings/cv", ["Default CV appearance", "Back to Preferences", "These defaults apply to future CVs"]],
+  ["/settings/cv", ["Default CV appearance", "Back to Preferences"]],
   ["/account", ["Account", "Sign-in methods"]],
   ["/admin", ["Admin", "Registration", "Accounts"]],
   ["/admin/settings", ["System settings", "Schedule"]],

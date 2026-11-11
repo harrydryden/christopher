@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { CvContent, CvLibrary } from "./cv";
-import { CvContentSchema, CvLibrarySchema, groupCvLibrary } from "./cv";
+import { BulletSignpostSchema, CvContentSchema, CvLibrarySchema, groupCvLibrary } from "./cv";
 import { canonicalJson } from "./cv-review";
 import { CvTargetingChoicesSchema } from "./cv-targeting";
 import { CvThemeSchema, resolveCvTheme } from "./cv-theme";
@@ -96,6 +96,7 @@ export const CvRefinementSchema = z.object({
   kind: z.enum(["exact_wording", "instruction", "structured"]),
   target: z.object({ type: z.enum(["summary", "section", "bullet", "skill", "selection", "appearance"]), id: uuid.optional() }),
   text: z.string().max(40_000).optional(),
+  bulletSignpost: BulletSignpostSchema.optional(),
   structured: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("targeting"), choices: CvTargetingChoicesSchema }),
     z.object({ kind: z.literal("appearance"), theme: CvThemeSchema }),
@@ -113,15 +114,29 @@ export const CvRefinementSchema = z.object({
     ctx.addIssue({ code: "custom", message: "Structured refinements need validated choices." });
   if (row.kind !== "structured" && row.structured)
     ctx.addIssue({ code: "custom", message: "Wording refinements cannot carry structured choices." });
+  if (row.bulletSignpost !== undefined && (row.kind !== "exact_wording" || row.target.type !== "bullet"))
+    ctx.addIssue({ code: "custom", path: ["bulletSignpost"], message: "Only an exact bullet edit can set its title." });
 });
 export type CvRefinementV1 = z.infer<typeof CvRefinementSchema>;
 export type CvRefinementConflict = { id: string; targetId?: string; reason: "missing_target" | "changed_source" | "changed_role" | "cannot_fit" | "duplicate_target" };
 
+function withBulletSignpost(section: CvContent["sections"][number], index: number,
+  bulletSignpost: string | null | undefined): CvContent["sections"][number] {
+  if (bulletSignpost === undefined) return section;
+  const signposts = section.bulletSignposts?.slice() ?? section.bullets.map(() => null);
+  signposts[index] = bulletSignpost;
+  return { ...section, bulletSignposts: signposts };
+}
+
 /** One free exact edit changes only its stable target on the selected saved edition. */
 export function cvProjectOneExactWording(input: { content: CvContent; targets: CvEditingTargets;
-  target: { type: "summary" | "section" | "bullet" | "skill"; id: string }; text: string }): CvContent {
+  target: { type: "summary" | "section" | "bullet" | "skill"; id: string }; text: string;
+  bulletSignpost?: string | null }): CvContent {
   const targets = validateCvEditingTargets(input.content, input.targets);
   if (!input.text.trim()) throw new Error("Give this CV item wording before saving it.");
+  if (input.bulletSignpost !== undefined && input.target.type !== "bullet")
+    throw new Error("Only a bullet can have a title.");
+  const bulletSignpost = input.bulletSignpost === undefined ? undefined : BulletSignpostSchema.parse(input.bulletSignpost);
   const content = structuredClone(input.content);
   if (input.target.type === "summary" && input.target.id === targets.summaryId) {
     content.summary = input.text;
@@ -137,8 +152,8 @@ export function cvProjectOneExactWording(input: { content: CvContent; targets: C
     }
     const bullet = ids.bulletIds.indexOf(input.target.id);
     if (input.target.type === "bullet" && bullet >= 0) {
-      content.sections[index] = { ...section,
-        bullets: section.bullets.map((value, position) => position === bullet ? input.text : value) };
+      content.sections[index] = withBulletSignpost({ ...section,
+        bullets: section.bullets.map((value, position) => position === bullet ? input.text : value) }, bullet, bulletSignpost);
       return CvContentSchema.parse(content);
     }
     const skill = ids.skillIds.indexOf(input.target.id);
@@ -187,9 +202,10 @@ export function cvApplyExactLocks(input: { content: CvContent; targets: CvEditin
       const section = content.sections[sectionIndex]!;
       const bulletIndex = sectionTargets.bulletIds.indexOf(targetId ?? "");
       if (lock.target.type === "bullet" && bulletIndex >= 0) {
-        content.sections[sectionIndex] = { ...section,
+        content.sections[sectionIndex] = withBulletSignpost({ ...section,
           bullets: section.bullets.map((old, i) => i === bulletIndex ? text : old),
-          bulletSources: undefined };
+          bulletSources: text === section.bullets[bulletIndex] ? section.bulletSources : undefined },
+          bulletIndex, lock.bulletSignpost);
         applied = true;
         break;
       }
@@ -434,8 +450,9 @@ export function cvApplyGeneratedExactLocks(input: { candidate: CvContent; source
       });
       if (matches.length !== 1) { issue("missing_target"); continue; }
       const bulletIndex = matches[0]!;
-      content.sections[sectionIndex] = { ...section,
-        bullets: section.bullets.map((value, index) => index === bulletIndex ? text : value) };
+      content.sections[sectionIndex] = withBulletSignpost({ ...section,
+        bullets: section.bullets.map((value, index) => index === bulletIndex ? text : value) },
+        bulletIndex, lock.bulletSignpost);
     } else if (lock.target.type === "skill" && owner.skillIds.includes(id) && section.skillItems) {
       const sourceIndex = owner.skillIds.indexOf(id);
       const sourceSection = input.source.sections.find(item => item.entryId === owner.entryId)!;

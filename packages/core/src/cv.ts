@@ -28,7 +28,7 @@ const skillItemsSchema = (max: number) => z.array(skillItemSchema).min(1).max(ma
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
 const SkillItemsSchema = skillItemsSchema(CV_SKILL_GUIDANCE.libraryPerSection);
 const GeneratedSkillItemsSchema = skillItemsSchema(CV_LIMITS.skillsPerSection);
-const BulletSignpostSchema = z.string().trim().min(1).max(60)
+export const BulletSignpostSchema = z.string().trim().min(1).max(60)
   .refine(value => !/[\r\n]/.test(value), "Keep each competency signpost on one line.").nullable();
 const signpostsMatchBullets = (section: { bullets: string[]; bulletSignposts?: Array<string | null> }) =>
   section.bulletSignposts === undefined || section.bulletSignposts.length === section.bullets.length;

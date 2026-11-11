@@ -80,7 +80,7 @@ it("saves one exact edit on the selected Auto producer without applying a pendin
   const requestKey = crypto.randomUUID();
   const source = { kind: "draft" as const, id: producer!.id, revision: producer!.revision };
   const edit = { target: { type: "bullet" as const, id: targets.sections[0]!.bulletIds[1]! },
-    text: "My exact second result", order: 1, requestKey };
+    text: "Original second", bulletSignpost: "  New result title  ", order: 1, requestKey };
   expect((await saveAndUpdateCvExactRefinement(opened.contextId, instruction.version, source, edit)).ok)
     .toBe(false);
   expect((await database.select().from(schema.cvRefinementEvents)).filter(row =>
@@ -93,7 +93,7 @@ it("saves one exact edit on the selected Auto producer without applying a pendin
   expect(child?.content?.summary).toBe("Original Auto summary");
   expect(child?.content?.sections[0]?.bullets).toEqual(["Original first", edit.text]);
   expect(child?.content?.sections[0]?.bulletSources).toEqual(content.sections[0]!.bulletSources);
-  expect(child?.content?.sections[0]?.bulletSignposts).toEqual(["Delivery", "Results"]);
+  expect(child?.content?.sections[0]?.bulletSignposts).toEqual(["Delivery", "New result title"]);
   expect(child?.appliedRefinements).toHaveLength(1);
   expect(child?.refinementSnapshot).toMatchObject([
     { kind: "instruction", text: "Make the summary more concise" },
@@ -103,6 +103,8 @@ it("saves one exact edit on the selected Auto producer without applying a pendin
   expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
   expect(await saveAndUpdateCvExactRefinement(opened.contextId, instruction.version, source, edit))
     .toMatchObject({ ok: true, draftId: saved.draftId, charged: false });
+  expect((await saveAndUpdateCvExactRefinement(opened.contextId, instruction.version, source,
+    { ...edit, bulletSignpost: null })).ok).toBe(false);
   expect((await saveAndUpdateCvExactRefinement(opened.contextId, instruction.version, source,
     { ...edit, text: "Changed payload" })).ok).toBe(false);
   expect((await database.select().from(schema.cvDrafts)).filter(row => row.refinedResultKey?.startsWith("exact:")))
@@ -115,16 +117,28 @@ it("saves one exact edit on the selected Auto producer without applying a pendin
   if (!second.ok) return;
   const [later] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, second.draftId));
   expect(later?.content?.sections[0]?.bullets[1]).toBe("Updated exact second result");
+  expect(later?.content?.sections[0]?.bulletSignposts).toEqual(["Delivery", "New result title"]);
   expect(later?.refinementSnapshot?.filter(row => row.kind === "exact_wording")).toHaveLength(1);
   expect(later?.refinementSnapshot?.at(-1)).toMatchObject({ id: child!.refinementSnapshot!.at(-1)!.id,
-    version: 2, text: "Updated exact second result" });
+    version: 2, text: "Updated exact second result", bulletSignpost: "New result title" });
   expect(later?.appliedRefinements?.filter(row => row.id === child!.refinementSnapshot!.at(-1)!.id))
     .toEqual([{ id: child!.refinementSnapshot!.at(-1)!.id, version: 2 }]);
   expect((await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, saved.draftId)))[0]?.content)
     .toEqual(child?.content);
   expect((await saveAndUpdateCvExactRefinement(opened.contextId, instruction.version, source, edit)).ok).toBe(false);
+  const cleared = await saveAndUpdateCvExactRefinement(opened.contextId, second.version,
+    { kind: "draft", id: second.draftId, revision: second.revision }, {
+      target: edit.target, text: "Updated exact second result", bulletSignpost: null,
+      order: 1, requestKey: crypto.randomUUID(),
+    });
+  expect(cleared).toMatchObject({ ok: true, charged: false, version: 4 });
+  if (!cleared.ok) return;
+  const [clearedDraft] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, cleared.draftId));
+  expect(clearedDraft?.content?.sections[0]?.bulletSignposts).toEqual(["Delivery", null]);
+  expect(clearedDraft?.refinementSnapshot?.at(-1)).toMatchObject({ id: child!.refinementSnapshot!.at(-1)!.id,
+    version: 3, bulletSignpost: null });
   expect(await selectCvEdition(opened.contextId, "baseline", claimed.baselineId)).toMatchObject({ ok: true });
-  const fromBaseline = await saveAndUpdateCvExactRefinement(opened.contextId, second.version,
+  const fromBaseline = await saveAndUpdateCvExactRefinement(opened.contextId, cleared.version,
     { kind: "baseline", id: claimed.baselineId }, {
       target: { type: "summary", id: targets.summaryId }, text: "Exact first Auto edit",
       order: 2, requestKey: crypto.randomUUID(),
@@ -138,6 +152,15 @@ it("saves one exact edit on the selected Auto producer without applying a pendin
   expect(fromAuto?.content?.summary).toBe("Exact first Auto edit");
   expect(await database.select().from(schema.tasks)).toHaveLength(1);
   expect(await database.select().from(schema.creditReservations)).toHaveLength(1);
+  const generic = await saveCvRefinement(opened.contextId, fromBaseline.version, {
+    id: clearedDraft!.refinementSnapshot!.at(-1)!.id, sourceKind: "baseline", sourceId: claimed.baselineId,
+    kind: "exact_wording", target: edit.target, text: "A later body edit", order: 1,
+  });
+  expect(generic).toMatchObject({ ok: true });
+  const [latestEvent] = await database.select().from(schema.cvRefinementEvents)
+    .where(eq(schema.cvRefinementEvents.stableId, clearedDraft!.refinementSnapshot!.at(-1)!.id))
+    .orderBy(sql`${schema.cvRefinementEvents.version} desc`).limit(1);
+  expect(latestEvent?.refinement.bulletSignpost).toBeNull();
 });
 
 it("keeps generated Refine wording and applied instruction history while an unrelated instruction stays pending", async () => {
@@ -560,7 +583,7 @@ it("rebases only chosen exact anchors to the current JD and leaves a changed fac
   const firstRule = await saveCvRefinement(opened.contextId, 0, { sourceKind: "baseline",
     sourceId: first.baselineId, kind: "exact_wording",
     target: { type: "bullet", id: oldTargets.sections[0]!.bulletIds[0] },
-    text: "Cut the backlog by 20%", order: 0 });
+    text: "Cut the backlog by 20%", bulletSignpost: "Operational impact", order: 0 });
   expect(firstRule).toMatchObject({ ok: true, version: 1 });
   const secondRule = await saveCvRefinement(opened.contextId, 1, { sourceKind: "baseline",
     sourceId: first.baselineId, kind: "exact_wording",
@@ -611,6 +634,11 @@ it("rebases only chosen exact anchors to the current JD and leaves a changed fac
     preview.previewKey, [compatibleId]);
   expect(applied).toMatchObject({ ok: true, version: 3, rebasedIds: [compatibleId],
     conflicts: [{ id: preview.items[1]!.id, reason: "changed_source" }] });
+  const [rebasedEvent] = await database.select().from(schema.cvRefinementEvents)
+    .where(eq(schema.cvRefinementEvents.stableId, compatibleId))
+    .orderBy(sql`${schema.cvRefinementEvents.version} desc`).limit(1);
+  expect(rebasedEvent?.refinement).toMatchObject({ bulletSignpost: "Operational impact",
+    target: { type: "bullet", id: nextTargets.sections[0]!.bulletIds[1] } });
   const later = await previewCvRefinementRebase(opened.contextId, 3, first.baselineId, second.baselineId);
   expect(later.ok).toBe(true);
   if (later.ok) expect(later.items).toMatchObject([{ id: compatibleId, status: "current" },

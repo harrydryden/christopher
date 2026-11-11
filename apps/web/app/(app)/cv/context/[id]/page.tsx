@@ -114,7 +114,9 @@ export default async function CvContextPage({ params, searchParams }: { params: 
       if (!ids || ids.entryId !== section.entryId) return [];
       return [{ type: "section" as const, id: ids.sectionId, label: `${section.heading} · heading`, sourceText: section.heading, entryId: section.entryId },
         ...section.bullets.map((bullet, position) => ({ type: "bullet" as const, id: ids.bulletIds[position],
-          label: `${section.heading} · bullet ${position + 1}`, sourceText: bullet, entryId: section.entryId })),
+          label: `${section.heading} · bullet ${position + 1}`, sourceText: bullet,
+          sourceSignpost: section.bulletSignposts?.[position] ?? null,
+          proseBullet: section.kind !== "skill", entryId: section.entryId })),
         ...(section.skillItems ?? []).map((skill, position) => ({ type: "skill" as const, id: ids.skillIds[position],
           label: `${section.heading} · skill ${position + 1}`, sourceText: skill, entryId: section.entryId }))];
     }),

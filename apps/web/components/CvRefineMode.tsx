@@ -13,7 +13,7 @@ import { generateRefinedCv, resetCvRefinement, saveAndUpdateCvExactRefinement, s
   selectCvEdition } from "@/app/actions/cv-editing";
 
 export type RefinementTargetOption = { type: CvRefinementV1["target"]["type"]; id?: string; label: string;
-  sourceText: string; entryId?: string };
+  sourceText: string; sourceSignpost?: string | null; proseBullet?: boolean; entryId?: string };
 
 export function CvRefineMode({ contextId, source: incomingSource, initialVersion, targets: incomingTargets, refinements,
   appliedRefinements = [],
@@ -36,6 +36,8 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
   const [kind, setKind] = useState<"exact_wording" | "instruction">("exact_wording");
   const [text, setText] = useState(() => incomingTargets[0]?.sourceText ?? "");
   const [textBase, setTextBase] = useState(() => incomingTargets[0]?.sourceText ?? "");
+  const [bulletTitle, setBulletTitle] = useState(() => incomingTargets[0]?.sourceSignpost ?? "");
+  const [bulletTitleBase, setBulletTitleBase] = useState(() => incomingTargets[0]?.sourceSignpost ?? "");
   const buffers = useRef({ exact: incomingTargets[0]?.sourceText ?? "", instruction: "" });
   const bufferBases = useRef({ exact: incomingTargets[0]?.sourceText ?? "", instruction: "" });
   const exactIntent = useRef<{ signature: string; key: string } | null>(null);
@@ -52,9 +54,12 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [awaitingChild, setAwaitingChild] = useState<{ id: string; revision: number } | null>(null);
-  const wordingDirty = text !== textBase;
+  const titleDirty = targetIndex < targets.length && targets[targetIndex]?.type === "bullet" &&
+    targets[targetIndex]?.proseBullet &&
+    bulletTitle.trim() !== bulletTitleBase;
+  const wordingDirty = text !== textBase || (kind === "exact_wording" && titleDirty);
   const anyWordingDirty = wordingDirty || buffers.current.exact !== bufferBases.current.exact ||
-    buffers.current.instruction !== bufferBases.current.instruction;
+    buffers.current.instruction !== bufferBases.current.instruction || titleDirty;
   const target = targets[targetIndex];
   // Skill sections mirror their printable labels in bullets for provenance. Show the item once;
   // retain the mirrored bullet target in the secondary picker for existing remembered rules.
@@ -77,6 +82,7 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
     buffers.current = { exact: targets[index]?.sourceText ?? "", instruction: "" };
     bufferBases.current = { ...buffers.current };
     setText(nextText); setTextBase(nextText);
+    setBulletTitle(targets[index]?.sourceSignpost ?? ""); setBulletTitleBase(targets[index]?.sourceSignpost ?? "");
     setError(null); setEditingId(null); setTargetIndex(index);
     requestAnimationFrame(() => document.getElementById("cv-refine-wording")?.focus());
   }
@@ -97,10 +103,12 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
       const selectedIndex = incomingTargets.findIndex(option => option.type === target?.type && option.id === target.id);
       if (selectedIndex < 0) { setError("The saved item changed. Refresh this CV before editing again."); return; }
       const savedText = incomingTargets[selectedIndex]!.sourceText;
+      const savedTitle = incomingTargets[selectedIndex]!.sourceSignpost ?? "";
       setBase({ source: incomingSource, targets: incomingTargets, sourceContent: incomingContent,
         sourceTargets: incomingSourceTargets, targetingView: incomingTargetingView, sourceTheme: incomingTheme });
       setVersion(initialVersion); setTargetIndex(selectedIndex);
       setText(savedText); setTextBase(savedText); setKind("exact_wording");
+      setBulletTitle(savedTitle); setBulletTitleBase(savedTitle);
       buffers.current.exact = savedText; bufferBases.current.exact = savedText;
       setAwaitingChild(null);
       return;
@@ -120,6 +128,8 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
       incomingContent?.sections[index]?.kind === "skill").map(row => [row.sectionId, row.skillIds]) ?? []));
     const nextText = incomingTargets[0]?.sourceText ?? "";
     setText(nextText); setTextBase(nextText); setKind("exact_wording");
+    setBulletTitle(incomingTargets[0]?.sourceSignpost ?? "");
+    setBulletTitleBase(incomingTargets[0]?.sourceSignpost ?? "");
     buffers.current = { exact: nextText, instruction: "" };
     bufferBases.current = { exact: nextText, instruction: "" };
   }, [sourceChanged, incomingSource, incomingTargets, incomingContent, incomingSourceTargets,
@@ -140,14 +150,19 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
           row.target.type === exactTarget.type && row.target.id === exactTarget.id);
         const rememberedId = editingId ?? remembered?.id;
         const exactOrder = remembered?.order ?? order;
-        const signature = JSON.stringify({ contextId, version, source, target: exactTarget, text, rememberedId, exactOrder });
+        const bulletSignpost = target.type === "bullet" && target.proseBullet && titleDirty
+          ? bulletTitle.trim() || null : undefined;
+        const signature = JSON.stringify({ contextId, version, source, target: exactTarget, text,
+          bulletSignpost, rememberedId, exactOrder });
         if (exactIntent.current?.signature !== signature) exactIntent.current = { signature, key: crypto.randomUUID() };
         const result = await saveAndUpdateCvExactRefinement(contextId, version,
           { kind: source.kind, id: source.id, revision: source.revision },
           { ...(rememberedId ? { id: rememberedId } : {}), target: exactTarget, text, order: exactOrder,
+            ...(bulletSignpost !== undefined ? { bulletSignpost } : {}),
             requestKey: exactIntent.current.key });
         if (!result.ok) setError(result.error);
-        else { exactIntent.current = null; setVersion(result.version); setTextBase(text); bufferBases.current.exact = text; setEditingId(null);
+        else { exactIntent.current = null; setVersion(result.version); setTextBase(text); bufferBases.current.exact = text;
+          setBulletTitleBase(bulletTitle.trim()); setEditingId(null);
           setAwaitingChild({ id: result.draftId, revision: result.revision });
           setNotice("CV updated. This wording is remembered for this role."); router.refresh(); }
       } else {
@@ -199,6 +214,9 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
       setFocus("wording"); setKind(row.kind);
       setTargetIndex(Math.max(0, targets.findIndex(option => option.type === row.target.type && option.id === row.target.id)));
       setText(row.text ?? ""); setTextBase(row.text ?? "");
+      const currentTitle = targets.find(option => option.type === row.target.type && option.id === row.target.id)?.sourceSignpost ?? "";
+      setBulletTitle(row.bulletSignpost !== undefined ? row.bulletSignpost ?? "" : currentTitle);
+      setBulletTitleBase(row.bulletSignpost !== undefined ? row.bulletSignpost ?? "" : currentTitle);
       if (row.kind === "exact_wording") buffers.current.exact = row.text ?? "";
       else buffers.current.instruction = row.text ?? "";
       if (row.kind === "exact_wording") bufferBases.current.exact = row.text ?? "";
@@ -257,7 +275,8 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
               finally { setPending(false); }
             }}>Restore original saved edition</button>}
         <button type="button" className="min-h-11 border border-line-muted px-3" onClick={async () => {
-          try { await navigator.clipboard.writeText(text); setNotice("Unsaved wording copied."); }
+          try { await navigator.clipboard.writeText(target?.type === "bullet" && bulletTitle.trim()
+            ? `${bulletTitle.trim()}\n${text}` : text); setNotice("Unsaved wording copied."); }
           catch { setError("Could not copy automatically. Select the wording above and copy it before changing editions."); }
         }}>Copy unsaved wording</button>
       </div>}
@@ -279,7 +298,9 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
             data-cv-source-entry={option.entryId} data-cv-source-summary={option.type === "summary" ? "true" : undefined}>
             <div className="flex flex-wrap items-center gap-2">
               <p className="min-w-0 flex-1 whitespace-pre-wrap"><strong>{option.type === "section" ? "Heading" : option.label}</strong>
-                {!visibleTargets.includes(option) && " · Historical mirrored target"}{option.sourceText ? ` · ${option.sourceText}` : ""}</p>
+                {!visibleTargets.includes(option) && " · Historical mirrored target"}
+                {option.type === "bullet" && option.sourceSignpost ? ` · ${option.sourceSignpost}` : ""}
+                {option.sourceText ? ` · ${option.sourceText}` : ""}</p>
               <button type="button" className="min-h-11 border border-line-muted px-3" aria-pressed={targetIndex === index}
                 disabled={pending || !!awaitingChild}
                 onClick={() => chooseTarget(index)}>
@@ -299,6 +320,11 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
                   disabled={pending || !!awaitingChild}
                   onChange={() => chooseKind("instruction")} /> Give a writing instruction</label>
               </fieldset>
+              {kind === "exact_wording" && target?.type === "bullet" && target.proseBullet &&
+                <div className="space-y-1"><label htmlFor="cv-refine-bullet-title" className="block font-medium">Bullet title (optional)</label>
+                  <input id="cv-refine-bullet-title" className="min-h-11 w-full border border-line-muted bg-raised px-3"
+                    type="text" maxLength={60} value={bulletTitle} disabled={pending || !!awaitingChild || sourceChanged}
+                    onChange={event => setBulletTitle(event.target.value)} /></div>}
               <label htmlFor="cv-refine-wording" className="block font-medium">
                 {kind === "exact_wording" ? "Exact wording" : "Instruction for this role"}</label>
               <textarea id="cv-refine-wording" className="min-h-24 w-full border border-line-muted bg-raised p-3" value={text}

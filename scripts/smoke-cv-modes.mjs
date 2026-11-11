@@ -136,6 +136,45 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await refine.getByRole("status").filter({hasText:"Refined CV ready"}).waitFor();
     refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
     assert.equal(refined.content.theme.maxPages,2,"Shared Layout persists as a role refinement");
+    // A prose bullet's short title and body are one free, stable-target edit. Clearing the title
+    // must remove it from the saved CV without changing the body or starting model work.
+    await refine.getByRole("button",{name:"Wording or instruction",exact:true}).click();
+    const proseBullet=refine.locator('section[data-cv-source-entry="role"]').filter({hasText:"bullet 1"});
+    await proseBullet.getByRole("button",{name:"Edit wording",exact:true}).click();
+    const bulletBody=refine.getByLabel("Exact wording",{exact:true});
+    const bulletTitle=refine.getByLabel("Bullet title (optional)",{exact:true});
+    assert.equal(await bulletTitle.inputValue(),"");
+    await bulletBody.fill("Reduced the backlog by 20% through clearer service planning");
+    await bulletTitle.fill("Service delivery");
+    await refine.getByRole("button",{name:"Save and update CV · free",exact:true}).click();
+    await page.waitForFunction(() => {
+      const input=document.querySelector('#cv-mode-panel-refine #cv-refine-bullet-title');
+      return input && !input.disabled && input.value==="Service delivery";
+    });
+    refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
+    let savedBullet=refined.content.sections.find(row=>row.entryId==="role");
+    assert.equal(savedBullet.bullets[0],"Reduced the backlog by 20% through clearer service planning");
+    assert.equal(savedBullet.bulletSignposts?.[0],"Service delivery");
+    assert.deepEqual(await workCounts(),initialWork,"Adding a bullet title and body is free");
+    const signpostDir="/tmp/cv-signpost-browser";
+    await mkdir(signpostDir,{recursive:true});
+    const titledPreview=await context.request.get(`${baseUrl}/api/cv/${refined.id}/pdf?preview=1`);
+    assert.equal(titledPreview.status(),200,"The titled saved edition renders a PDF preview");
+    await writeFile(`${signpostDir}/titled-preview.pdf`,await titledPreview.body());
+    await bulletTitle.fill("");
+    await refine.getByRole("button",{name:"Save and update CV · free",exact:true}).click();
+    await page.waitForFunction(() => {
+      const input=document.querySelector('#cv-mode-panel-refine #cv-refine-bullet-title');
+      return input && !input.disabled && input.value==="";
+    });
+    refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
+    savedBullet=refined.content.sections.find(row=>row.entryId==="role");
+    assert.equal(savedBullet.bulletSignposts?.[0]??null,null,"Clearing the title removes it from the saved CV");
+    assert.equal(savedBullet.bullets[0],"Reduced the backlog by 20% through clearer service planning");
+    assert.deepEqual(await workCounts(),initialWork,"Clearing a bullet title is free");
+    const clearedPreview=await context.request.get(`${baseUrl}/api/cv/${refined.id}/pdf?preview=1`);
+    assert.equal(clearedPreview.status(),200,"The cleared saved edition renders a PDF preview");
+    await writeFile(`${signpostDir}/cleared-preview.pdf`,await clearedPreview.body());
     await page.getByRole("button",{name:"Manual This version only",exact:true}).click();
     const manual=page.locator("#cv-mode-panel-manual");
     await manual.getByRole("button",{name:"Copy selected CV into Manual · free",exact:true}).waitFor();

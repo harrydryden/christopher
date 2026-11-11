@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CvEditingMode } from "@col/core/cv-editing-modes";
 import { CvContextLayout } from "./CvContextLayout";
 import { cvSectionEntryId } from "@/lib/cv-content-links";
+import { TaskNavigation } from "./TaskNavigation";
 
 /** Primary modes stay mounted after a visit so local wording survives a mode switch. */
 export function CvContextModes({ initialMode, auto, refine, manual, history, compare, roleDetails }: {
@@ -97,18 +98,15 @@ export function CvContextModes({ initialMode, auto, refine, manual, history, com
   const tabs = [{ id: "auto" as const, label: "Auto", hint: "From Experience and this role" },
     { id: "refine" as const, label: "Refine", hint: "Remembered for this role" },
     { id: "manual" as const, label: "Manual", hint: "This version only" }];
+  const tasks = [
+    { id: "document", label: "Edit current CV", panelId: "cv-document" },
+    ...(history ? [{ id: "history" as const, label: "History", panelId: "cv-history" }] : []),
+    ...(compare ? [{ id: "compare" as const, label: "Compare", panelId: "cv-compare" }] : []),
+    ...(roleDetails ? [{ id: "role" as const, label: "Role details", panelId: "cv-role-details" }] : []),
+  ] as const;
   return <CvContextLayout mode={mode} visible={view === "document"} chooseRefine={() => select("refine")}><div className="space-y-4">
-    <nav aria-label="CV tasks" className="flex flex-wrap gap-3 text-14">
-      <button type="button" className="min-h-11 underline" aria-current={view === "document" ? "page" : undefined}
-        onClick={() => setView("document")}>Edit current CV</button>
-      {history && <button type="button" className="min-h-11 underline" aria-current={view === "history" ? "page" : undefined}
-        onClick={() => setView("history")}>History</button>}
-      {compare && <button type="button" className="min-h-11 underline" aria-current={view === "compare" ? "page" : undefined}
-        onClick={() => setView("compare")}>Compare</button>}
-      {roleDetails && <button type="button" className="min-h-11 underline" aria-current={view === "role" ? "page" : undefined}
-        onClick={() => setView("role")}>Role details</button>}
-    </nav>
-    <div hidden={view !== "document"}>
+    <TaskNavigation label="CV tasks" idPrefix="cv-task" items={tasks} active={view} onSelect={setView} />
+    <div id="cv-document" role="tabpanel" aria-labelledby="cv-task-tab-document" hidden={view !== "document"}>
     <div role="group" aria-label="CV editing mode" className="grid gap-2 sm:grid-cols-3">
       {tabs.map(tab => <button key={tab.id} type="button"
         id={`cv-mode-${tab.id}`} aria-controls={`cv-mode-panel-${tab.id}`} aria-pressed={mode === tab.id}
@@ -122,8 +120,8 @@ export function CvContextModes({ initialMode, auto, refine, manual, history, com
       {visited.has(tab.id) ? tab.id === "auto" ? auto : tab.id === "refine" ? refine : manual : null}
     </section>)}
     </div>
-    {history && <section id="cv-history" tabIndex={-1} aria-label="Saved CV history" hidden={view !== "history"}>{history}</section>}
-    {compare && <section id="cv-compare" tabIndex={-1} aria-label="Compare saved CVs" hidden={view !== "compare"}>{compare}</section>}
-    {roleDetails && <section id="cv-role-details" tabIndex={-1} aria-label="Role details" hidden={view !== "role"}>{roleDetails}</section>}
+    {history && <section id="cv-history" role="tabpanel" aria-labelledby="cv-task-tab-history" tabIndex={-1} hidden={view !== "history"}>{history}</section>}
+    {compare && <section id="cv-compare" role="tabpanel" aria-labelledby="cv-task-tab-compare" tabIndex={-1} hidden={view !== "compare"}>{compare}</section>}
+    {roleDetails && <section id="cv-role-details" role="tabpanel" aria-labelledby="cv-task-tab-role" tabIndex={-1} hidden={view !== "role"}>{roleDetails}</section>}
   </div></CvContextLayout>;
 }

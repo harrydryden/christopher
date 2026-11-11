@@ -107,7 +107,7 @@ export function CareerConflictReview({ detail: incoming, decide }: { detail: Car
     <div className="grid gap-3 md:grid-cols-2">{detail.statements.map((row, index) => <article key={row.id} className="min-w-0 border border-line-faint bg-raised p-4">
       <h3 className="text-16 font-semibold">Statement {index + 1}</h3>
       {detail.decision?.choice === "choose" && detail.decision.fingerprint === detail.fingerprint && detail.decision.selectedAssertionId === row.id &&
-        <p className="mt-1 text-12 font-semibold text-success">Used for future CVs</p>}
+        <p className="mt-1 text-12 font-semibold text-ok">Used for future CVs</p>}
       <p className="mt-2 whitespace-pre-wrap break-words text-14">{row.text}</p>
       {row.context && <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-13">
         <dt>Detail</dt><dd>{row.context.attribute}</dd><dt>Scope</dt><dd>{row.context.scope}</dd>
@@ -176,7 +176,7 @@ export function CareerConflictReview({ detail: incoming, decide }: { detail: Car
       }}>Discard draft and open the updated review</button>
     </div>}
     {error && <div role="alert" className="text-13 text-danger">{error} <button type="button" className="min-h-11 underline" onClick={() => router.refresh()}>Refresh saved review</button></div>}
-    {notice && <p role="status" className="text-13 text-success">{notice}</p>}
+    {notice && <p role="status" className="text-13 text-ok">{notice}</p>}
     {awaiting && <p role="status" className="text-13 text-muted">Updating this review… <button type="button" className="min-h-11 underline" onClick={() => router.refresh()}>Refresh saved review</button></p>}
     <section className="border-t border-line-muted pt-3"><h3 className="text-13 font-semibold">Decision history</h3>
       <ol className="space-y-2 text-13">{detail.history.map(item => <li key={item.revision}>{new Date(item.createdAt).toLocaleString("en-GB")} · {item.choice === "dismiss" ? "Not a conflict" : item.choice === "later" ? "Review later" : item.choice === "reopen" ? "Restored to review" : item.choice === "choose" ? "Used one statement" : item.choice === "correct" ? "Corrected details" : "Kept both with context"}</li>)}</ol>

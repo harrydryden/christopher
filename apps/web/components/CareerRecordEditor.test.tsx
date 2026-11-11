@@ -47,7 +47,7 @@ it("keeps an unsaved detail while opening named perspectives and history tasks",
     input.placeholder === "What did you do or achieve?")!;
   act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(detail, "Retained work detail");
     detail.dispatchEvent(new Event("input", { bubbles: true })); });
-  const nav = container.querySelector('nav[aria-label="Experience tasks"]')!;
+  const nav = container.querySelector('[role="tablist"][aria-label="Experience tasks"]')!;
   act(() => [...nav.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Perspectives")!.click());
   expect(detail.closest("div[hidden]")).not.toBeNull();
   act(() => [...nav.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "History and recovery")!.click());

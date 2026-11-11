@@ -10,7 +10,7 @@ export type ButtonSize = "sm" | "md";
 // `ds-press` is the shared press behaviour: the hard shadow collapses and the
 // button shifts +2,+2, so it reads as physically pushed down onto the page.
 const BASE =
-  "ds-press inline-flex min-h-11 items-center justify-center gap-1.5 border-2 font-mono font-semibold leading-[1.4] " +
+  "ds-press inline-flex min-h-11 min-w-0 max-w-full items-center justify-center gap-1.5 border-2 font-mono font-semibold leading-[1.4] whitespace-normal break-words text-center " +
   "transition-colors duration-[120ms] ease-step-2 disabled:opacity-40 disabled:pointer-events-none";
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {

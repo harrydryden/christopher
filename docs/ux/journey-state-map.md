@@ -146,3 +146,7 @@ Contract: [ADR 0008](../adr/0008-role-entitlements-and-contextual-editing.md). T
 No accordions, `details`, “More options” or explainer paragraphs remain in the scoped CV, Experience, Applications and opportunity preparation surfaces. Essential controls remain visible; infrequent controls move to clearly named task screens. The writing menu is the explicit exception. Admin screens are not part of this redesign.
 
 The local validation covers Manual-based AI, duplicate role accounting, successive direct edits, scoped tool requests, accepting/dismissing/stale suggestions, quota with continued free saving, source/history/reset handovers, 390 px/320 px writing controls and unchanged final PDF bytes; see ADR 0008 for exact suite scope and broad-run exceptions. Compare completion steps and wrong turns in a later real-person study; no comprehension claims follow from automated browser results.
+
+## Shared frontend interaction follow-up
+
+The [design system](../DESIGN-SYSTEM.md) now defines the common task-navigation and save-state contracts used across the CV and Experience workspaces. Local tasks share keyboard navigation and linked panels while retaining unsent input. Save acknowledgement refers to the submitted snapshot; subsequent edits remain visibly unsaved. Phone layouts preserve readable source text as well as containing controls within the viewport. These changes consolidate the existing tasks rather than changing their AI, credit, evidence or finalisation policies. Human task comprehension remains to be evaluated with the protocol above.

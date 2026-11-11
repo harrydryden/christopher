@@ -75,7 +75,7 @@ export function ReasonTagList({ recent, options, disabled, page = 1, totalPages 
   }
 
   return <div>
-    {savedNotice && <p ref={noticeRef} role="status" tabIndex={-1} className="mb-3 text-14 text-success">{savedNotice}</p>}
+    {savedNotice && <p ref={noticeRef} role="status" tabIndex={-1} className="mb-3 text-14 text-ok">{savedNotice}</p>}
     {pager("top")}
     {rows.length === 0 && (totalDecisions === 0
       ? <EmptyState title="No decisions yet" description="Shortlist or skip a role to start recording your preferences." />

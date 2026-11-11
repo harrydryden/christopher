@@ -81,7 +81,7 @@ export function CvAboutContactForm({ initial }: { initial: Snapshot }) {
       <div className="sm:col-span-2">{field("profile", "About you", { maxLength: 5000, rows: 5 })}</div>
       {newer && dirty && <p role="status" className="text-14 sm:col-span-2">Saved details changed elsewhere. Your entries are still here. Copy anything you need before loading the saved version.</p>}
       {error && <p role="alert" className="text-14 text-danger sm:col-span-2">{error}</p>}
-      {message && !dirty && <p role="status" className="text-14 text-success sm:col-span-2">{message}</p>}
+      {message && !dirty && <p role="status" className="text-14 text-ok sm:col-span-2">{message}</p>}
       <div className="flex flex-wrap gap-2 sm:col-span-2">
         <button type="submit" disabled={pending || !dirty} className="min-h-11 rounded bg-ink px-4 py-2 text-white disabled:opacity-50">{pending ? "Saving…" : "Save contact details"}</button>
         {newer && dirty && <button type="button" disabled={pending} onClick={() => { setBase(initial); setValues(initial.values); setError(null); setMessage(null); }}

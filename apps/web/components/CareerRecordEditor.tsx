@@ -8,6 +8,7 @@ import { saveCareerChange, undoCareerChange } from "@/app/actions/career";
 import { buttonClass } from "./Button";
 import { inputClass, labelClass, selectClass } from "./Field";
 import { SkillTagPicker, skillKey } from "./SkillTagPicker";
+import { TaskNavigation } from "./TaskNavigation";
 
 type RecordKind = CareerRecordView["kind"];
 const kinds: Array<[RecordKind, string]> = [
@@ -332,12 +333,12 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
             onClick={() => void retryRef.current?.()}>Retry save</button>}</div>}
         {lastChange && <button type="button" className="min-h-11 text-13 underline" disabled={busy || dirty}
           onClick={() => void undo(lastChange)}>Undo last change</button>}
-        <nav aria-label="Experience tasks" className="flex flex-wrap gap-2">
-          {([ ["record", "Edit record"], ["perspectives", "Perspectives"], ["history", "History and recovery"] ] as const).map(([view,label]) =>
-            <button key={view} type="button" className={buttonClass(taskView === view ? "primary" : "secondary")}
-              aria-current={taskView === view ? "page" : undefined} onClick={() => setTaskView(view)}>{label}</button>)}
-        </nav>
-        <div hidden={taskView !== "record"}>
+        <TaskNavigation label="Experience tasks" idPrefix="career-task" items={[
+          { id: "record", label: "Edit record", panelId: "career-task-panel-record" },
+          { id: "perspectives", label: "Perspectives", panelId: "career-task-panel-perspectives" },
+          { id: "history", label: "History and recovery", panelId: "career-task-panel-history" },
+        ] as const} active={taskView} onSelect={setTaskView} />
+        <div id="career-task-panel-record" role="tabpanel" aria-labelledby="career-task-tab-record" hidden={taskView !== "record"}>
         <fieldset className="grid gap-3 border border-line-muted p-4 sm:grid-cols-2"><legend className="px-1 text-14 font-semibold">Details</legend>
           <label className="grid gap-1 sm:col-span-2"><span className={labelClass}>Title</span><input className={inputClass} maxLength={250}
             value={fields.title} onChange={event => changeFields({ ...fields, title: event.target.value })} onBlur={() => void saveRecord()} /></label>
@@ -436,7 +437,7 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
               placeholder="e.g. Confidential healthcare client" /></label>}
         </section>
         </div>
-        <section hidden={taskView !== "perspectives"} className="border-t border-line-muted pt-2">
+        <section id="career-task-panel-perspectives" role="tabpanel" aria-labelledby="career-task-tab-perspectives" hidden={taskView !== "perspectives"} className="border-t border-line-muted pt-2">
           <h4 className="text-14 font-semibold">Perspectives on this work</h4>
           <ul className="divide-y divide-line-faint">{selected.perspectives.filter(row => !row.archived).map(row =>
             <li key={row.id} className="flex flex-wrap items-center gap-2 py-2 text-13"><span className="min-w-0 flex-1">{row.label}{row.note ? ` · ${row.note}` : ""}</span>
@@ -456,7 +457,7 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
             <button type="button" className={buttonClass("secondary")} disabled={busy || !perspectiveLabel.trim()}
               onClick={() => void savePerspective()}>{perspectiveId ? "Update perspective" : "Save perspective"}</button></div>
         </section>
-        <section hidden={taskView !== "history"} className="space-y-3">
+        <section id="career-task-panel-history" role="tabpanel" aria-labelledby="career-task-tab-history" hidden={taskView !== "history"} className="space-y-3">
         {selected.assertions.some(row => row.status === "proposed") &&
           <section className="border-t border-line-muted pt-2"><h4 className="text-14 font-semibold">Suggested wording</h4>
             {selected.assertions.filter(row => row.status === "proposed").map(row => <p key={row.id}

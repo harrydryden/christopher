@@ -19,8 +19,9 @@ const { chromium } = createRequire(new URL("../apps/worker/package.json", import
 
 export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-modes-browser", port = 3118 }) {
   const url = new URL(databaseUrl);
-  if (!["localhost", "127.0.0.1"].includes(url.hostname) || !/^\/col_cv_modes_browser_\d+$/.test(url.pathname))
-    throw new Error("Use a dedicated local col_cv_modes_browser_<date> database.");
+  if (!["localhost", "127.0.0.1"].includes(url.hostname) ||
+    !/^\/(?:col_cv_modes_browser|col_frontend_design_browser)_\d+$/.test(url.pathname))
+    throw new Error("Use a dedicated local CV modes or frontend design browser database.");
   const { db, pool } = createDb(databaseUrl, { max: 3 });
   const secret = `synthetic-browser-only-${randomUUID()}-${randomUUID()}`;
   let browser, web, page;
@@ -91,6 +92,10 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await page.screenshot({path:`${outDir}/refine-desktop.png`,fullPage:true});
     resources.afterRefine = await jsResources();
     await refine.getByLabel("Summary",{exact:true}).fill("Operations leader focused on reliable delivery");
+    const taskTabs=page.getByRole("tablist",{name:"CV tasks",exact:true});
+    const editTask=taskTabs.getByRole("tab",{name:"Edit current CV",exact:true});
+    assert.equal(await editTask.getAttribute("id"),"cv-task-tab-document");
+    assert.equal(await editTask.getAttribute("aria-controls"),"cv-document");
     started=performance.now();
     await refine.getByRole("button",{name:"Save Summary and update CV · free",exact:true}).click();
     await refine.getByRole("status").filter({hasText:/CV updated|saved and updated/i}).waitFor();
@@ -100,6 +105,23 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     assert.deepEqual(await workCounts(),initialWork,"Exact Refine is free");
     const firstExactEdition=refined.id;
     await refine.getByLabel("Summary",{exact:true}).fill("Operations leader focused on reliable delivery and service quality");
+    await taskTabs.getByRole("tab",{name:"Compare",exact:true}).waitFor();
+    await editTask.focus();
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await taskTabs.getByRole("tab",{name:"History",exact:true}).getAttribute("aria-selected"),"true");
+    assert.equal(await page.locator("#cv-history").isVisible(),true);
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await taskTabs.getByRole("tab",{name:"Compare",exact:true}).getAttribute("aria-selected"),"true");
+    assert.equal(await page.locator("#cv-compare").isVisible(),true);
+    await page.keyboard.press("Home");
+    assert.equal(await editTask.getAttribute("aria-selected"),"true");
+    assert.equal(await refine.getByLabel("Summary",{exact:true}).inputValue(),
+      "Operations leader focused on reliable delivery and service quality",
+      "Keyboard task navigation preserves the unsaved Refine field");
+    await page.keyboard.press("End");
+    assert.equal(await taskTabs.getByRole("tab",{name:"Role details",exact:true}).getAttribute("aria-selected"),"true");
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await editTask.getAttribute("aria-selected"),"true","ArrowRight wraps to the first task");
     await refine.getByRole("button",{name:"Save Summary and update CV · free",exact:true}).click();
     await refine.getByRole("status").filter({hasText:/CV updated|saved and updated/i}).waitFor();
     refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
@@ -110,10 +132,10 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await page.getByRole("region",{name:"Current CV",exact:true}).getByText(`refine · version ${refined.revision}`,{exact:true}).waitFor();
     assert.equal(await refine.getByRole("button",{name:"Apply saved refinements · free",exact:true}).count(),0,"An applied exact edit has no redundant Apply step");
     await refine.getByLabel("Summary",{exact:true}).fill("Unsaved wording retained during source recovery");
-    await page.getByRole("button",{name:"History",exact:true}).click();
+    await page.getByRole("tab",{name:"History",exact:true}).click();
     const recoveryHistory=page.locator("#cv-history");
     await recoveryHistory.getByRole("button").first().click();
-    await page.getByRole("button",{name:"Edit current CV",exact:true}).click();
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
     await refine.getByRole("button",{name:"Restore original saved edition",exact:true}).click();
     await refine.getByRole("status").filter({hasText:"Your original saved edition is selected again"}).waitFor();
     assert.equal(await refine.getByLabel("Summary",{exact:true}).inputValue(),"Unsaved wording retained during source recovery");
@@ -208,12 +230,12 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await approval.getByRole("button",{name:"Review final PDF and warnings",exact:true}).click();
     await approval.getByText("Save your CV edits before reviewing the final PDF.",{exact:true}).waitFor();
     const roleDetails=page.locator("#cv-role-details");
-    await page.getByRole("button",{name:"Role details",exact:true}).click();
+    await page.getByRole("tab",{name:"Role details",exact:true}).click();
     const updatedDescription="Lead operations, plan delivery and improve service performance across the organisation. Coordinate international service teams.";
     await roleDetails.getByLabel("Role description for this application",{exact:true}).fill(updatedDescription);
     await roleDetails.getByRole("button",{name:"Update saved role description · free",exact:true}).click();
     await roleDetails.getByRole("status").filter({hasText:"Role description saved"}).waitFor();
-    await page.getByRole("button",{name:"Edit current CV",exact:true}).click();
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
     assert.equal(await manual.getByRole("textbox",{name:"Summary",exact:true}).inputValue(),"My final wording for this application","Role updates preserve dirty Manual wording");
     assert.deepEqual(await workCounts(),initialWork,"Saving role details creates no model work");
     started=performance.now(); await manual.getByRole("button",{name:"Save Manual CV · free",exact:true}).click();
@@ -258,7 +280,7 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await page.reload();
     assert.equal(await page.locator("#cv-mode-panel-auto").getByRole("status")
       .filter({hasText:"Your Experience has changed."}).count(),0,"A fresh Auto result must not report false Experience drift from normalisation or layout defaults");
-    await page.getByRole("button",{name:"Role details",exact:true}).click();
+    await page.getByRole("tab",{name:"Role details",exact:true}).click();
     await roleDetails.getByRole("button",{name:"Review source changes",exact:true}).click();
     await roleDetails.getByText(/compatible (?:remembered )?change/i).first().waitFor();
     assert.equal(await roleDetails.getByLabel("From saved Auto result",{exact:true}).inputValue(),claim.id,"The remembered source is selected automatically");
@@ -274,12 +296,12 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     assert.deepEqual(await workCounts(),updatedWork,"Preview/apply source bindings are free");
     const retainedPdf=await context.request.get(`${baseUrl}/api/cv/${saved.id}/pdf`);
     assert.deepEqual(await retainedPdf.body(),pdf.bytes,"Source updates and partial rebase preserve the final Manual PDF");
-    await page.getByRole("button",{name:"Edit current CV",exact:true}).click();
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
     await page.getByRole("button",{name:"Refine Remembered for this role",exact:true}).click();
-    await page.getByRole("button",{name:"History",exact:true}).click();
+    await page.getByRole("tab",{name:"History",exact:true}).click();
     const history=page.locator("#cv-history");
     await history.getByRole("button",{name:`Select refine edition V${refined.revision}`,exact:true}).click();
-    await page.getByRole("button",{name:"Edit current CV",exact:true}).click();
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
     await refine.getByRole("button",{name:"Remembered choices",exact:true}).click();
     await refine.getByRole("button",{name:"Reset all",exact:true}).click();
     await refine.getByRole("status").filter({hasText:"All refinements reset."}).waitFor();
@@ -296,6 +318,34 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await page.keyboard.press("Enter");
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,"No mobile overflow");
     await page.screenshot({path:`${outDir}/mobile.png`,fullPage:true});
+    await page.setViewportSize({width:320,height:760});
+    await taskTabs.getByRole("tab",{name:"Role details",exact:true}).evaluate(tab => {
+      tab.textContent="Role details · InternationalProgrammeDeliveryLeadership";
+    });
+    const narrowTasks=await taskTabs.getByRole("tab").evaluateAll(tabs => tabs.map(tab => ({
+      width:tab.getBoundingClientRect().width,height:tab.getBoundingClientRect().height,
+      right:tab.getBoundingClientRect().right,
+    })));
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,
+      "Long task labels do not overflow a 320px viewport");
+    assert.equal(narrowTasks.every(tab => tab.height>=44 && tab.right<=320),true,
+      "Each wrapped task stays visible with a 44px keyboard target");
+    const sourceWidths=await page.locator("#cv-mode-panel-refine section[data-cv-source-entry]").evaluateAll(rows =>
+      rows.filter(row => row.querySelector('button[aria-pressed]')).map(row =>
+        row.querySelector("div > p")?.getBoundingClientRect().width ?? 0));
+    assert.ok(sourceWidths.length>0 && sourceWidths.every(width=>width>=160),
+      `Source wording stays readable above Choose at 320px: ${JSON.stringify(sourceWidths)}`);
+    await page.screenshot({path:`${outDir}/mobile-320-long-label.png`,fullPage:true});
+    await page.goto(`${baseUrl}/settings`);
+    const sharedField=page.getByRole("spinbutton",{name:"Show closed roles for (days)",exact:true});
+    await sharedField.focus();
+    const focusRing=await sharedField.evaluate(input => {
+      const style=getComputedStyle(input);
+      return {width:style.outlineWidth,kind:style.outlineStyle,color:style.outlineColor,offset:style.outlineOffset};
+    });
+    assert.deepEqual(focusRing,{width:"2px",kind:"solid",color:"rgb(37, 89, 58)",offset:"3px"},
+      "Shared Field inputs retain the global visible green keyboard focus ring");
+    await page.screenshot({path:`${outDir}/field-focus-320.png`,fullPage:true});
     await page.goto(`${baseUrl}/cv/${saved.id}`);
     await page.getByLabel("Application date",{exact:true}).fill("2026-11-02");
     await page.getByRole("button",{name:"Record application",exact:true}).click();
@@ -320,7 +370,7 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const databaseUrl = process.env.CV_MODES_DATABASE_URL;
-  if (!databaseUrl) throw new Error("Set CV_MODES_DATABASE_URL to an isolated col_cv_modes_browser_<date> database.");
+  if (!databaseUrl) throw new Error("Set CV_MODES_DATABASE_URL to an isolated local CV modes browser database.");
   verifyCvEditingModes({ databaseUrl }).then(result => {
     console.log(`Editing modes browser smoke passed: ${JSON.stringify(result.timings)}`);
   }).catch(error => { console.error(error); process.exitCode = 1; });

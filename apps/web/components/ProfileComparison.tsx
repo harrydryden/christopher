@@ -23,7 +23,7 @@ function SectionDiff({ title, rows, added, removed, identityChanged = false, tru
       <ol aria-label={`${title} changes`} className="min-w-0 space-y-1">
         {rows.map((row, index) => row.kind === "omitted"
           ? <li key={index} className="text-12 text-muted">{row.count} comparison {row.count === 1 ? "group" : "groups"} omitted</li>
-          : <li key={index} className={`flex min-w-0 gap-2 border-l-2 px-2 py-1 ${row.kind === "added" ? "border-success bg-success/10" : row.kind === "removed" ? "border-danger bg-danger/10" : "border-line-muted"}`}>
+          : <li key={index} className={`flex min-w-0 gap-2 border-l-2 bg-raised px-2 py-1 ${row.kind === "added" ? "border-ok" : row.kind === "removed" ? "border-danger" : "border-line-muted"}`}>
             <span className="w-16 shrink-0 text-12 font-semibold">{row.kind === "added" ? "Added" : row.kind === "removed" ? "Removed" : "Context"}</span>
             <span className="min-w-0 break-all whitespace-pre-wrap font-mono text-12">{row.lines.map(line => line === "" ? "(blank line)" : line).join("\n")}</span>
           </li>)}

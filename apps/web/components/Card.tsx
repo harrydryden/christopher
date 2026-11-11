@@ -17,14 +17,14 @@ export function Card({
   bodyClassName?: string;
 }) {
   return (
-    <section className={`bg-raised ${raised ? "border-2 border-line shadow-hard-3" : "border border-line-faint"} ${className}`}>
+    <section className={`min-w-0 bg-raised ${raised ? "border-2 border-line shadow-hard-3" : "border border-line-faint"} ${className}`}>
       {(title || actions) && (
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line-faint px-4 py-3">
-          {title && <h2 className="text-16 font-semibold text-fg">{title}</h2>}
-          {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-line-faint px-4 py-3">
+          {title && <h2 className="min-w-0 break-words text-16 font-semibold text-fg">{title}</h2>}
+          {actions && <div className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-2 sm:w-auto">{actions}</div>}
         </header>
       )}
-      <div className={bodyClassName}>{children}</div>
+      <div className={`min-w-0 ${bodyClassName}`}>{children}</div>
     </section>
   );
 }

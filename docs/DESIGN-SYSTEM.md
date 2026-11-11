@@ -16,7 +16,7 @@ to write an arbitrary value.
 
 ## Functional reading and interaction
 
-Functional labels, navigation, table headers and buttons use IBM Plex Mono at 13–14px or above. Keep the pixel face for brand headings rather than small action text. Shared buttons have a minimum 44px target. On phones, fields use 16px text to remain readable and avoid focus zoom; buttons and disclosure summaries have a 44px minimum height. Preserve visible keyboard focus on links, fields, summaries and editable text.
+Functional labels, navigation, table headers and buttons use IBM Plex Mono at 13–14px or above. Keep the pixel face for brand headings rather than small action text. Shared buttons have a minimum 44px target. On phones, fields use 16px text to remain readable and avoid focus zoom; buttons, tabs and checkbox labels have a 44px minimum target. Preserve visible keyboard focus on links, fields and editable text. Do not suppress the shared outline with a component-level `focus:outline-none`.
 
 The desktop sidebar becomes a labelled Menu disclosure on phones, with one navigation tree. Escape closes it and returns focus to its trigger. Roles, Companies, Applications and Experience are primary destinations; Preferences, Search profile and Needs attention are a quieter secondary group. Account and the plan readout remain at the foot. Core work lists must keep the item and its actions together at 320px and 390px; evidence editing has one input per field rather than hidden duplicate required controls. Dense secondary metadata may remain smaller, but must not carry the primary action or only explanation.
 
@@ -55,10 +55,10 @@ utility, not the raw value.
 | Sunken | `bg-sunken` | `#f2f2f2` | Table heads, expanded rows, hover, the verify banner |
 | Ink | `text-fg` | `#000` | Main information |
 | Muted | `text-muted` | `#444` | Support text, table heads, ghost buttons (9.7:1) |
-| Faint | `text-faint` | `#888` | Placeholders — the dimmest legible step (3.5:1) |
-| Line | `border-line` | `#000` | The structural 2px border: cards, buttons, tables |
+| Faint | `text-faint` | `#888` | Non-essential placeholders only (3.5:1); never the only label or instruction |
+| Line | `border-line` | `#000` | Emphasised outlines and 2px control borders |
 | Line muted | `border-line-muted` | `#bbb` | Input borders, filter bars, the status strip's 1px rule |
-| Line faint | `border-line-faint` | `#ddd` | Table row rules |
+| Line faint | `border-line-faint` | `#ddd` | Ordinary card outlines, page rules and table dividers |
 | Track | `bg-track` | `#ddd` | Unfilled fit cells, favicon fallbacks |
 | Highlight | `bg-highlight` | `#f2f2f2` | The keyboard cursor row (its 4px left rule is brand green) |
 | Accent | `bg-accent` / `text-accent-fg` | `#e8fecc` on `#25593a` | Primary buttons, selected tabs |
@@ -95,9 +95,7 @@ Each is at least 5:1 on white.
 
 ## Typography
 
-Silkscreen (pixel, uppercase by typeface) for page and brand section titles,
-compact badges and numerals near the mark. Never for a paragraph or primary action label.
-IBM Plex Mono for all body text and controls. Both are self-hosted through
+Silkscreen (pixel, uppercase by typeface) is reserved for brand moments and numerals near the mark. Functional page headings, card titles, badges and controls use IBM Plex Mono. Narrative career answers and CV drafts use the system sans face through `ds-prose`; neither pixel type nor dense mono text should impede sustained reading. Silkscreen and IBM Plex Mono are self-hosted through
 `next/font` in `app/layout.tsx`: Silkscreen at 400 only (there is no pixel bold;
 a pixel element in a bold context such as a `<th>` carries `ds-pixel` itself),
 Plex Mono at 400, 500 and 600 with a system monospace fallback stack rather than
@@ -126,8 +124,7 @@ Sizes are named for their pixel value, because the scale is small and literal.
 
 ## Shape and spacing
 
-Radius 0 everywhere; the radius scale is empty. Borders are 2px structurally,
-1px for hairlines, 4px for emphasis. Shadows are hard offsets with no blur:
+Radius 0 everywhere; the radius scale is empty. Ordinary cards and separators use 1px faint borders. Inputs and buttons use 2px borders, with 4px reserved for deliberate emphasis. Shadows are hard offsets with no blur:
 `shadow-hard-1` (2px), `shadow-hard-2` (4px, primary and danger buttons),
 `shadow-hard-3` (8px, the raised sign-in card, which sits on white beside the
 green panel carrying the wordmark). `inset-shadow-cursor` is the 4px
@@ -170,6 +167,35 @@ opacity.
 
 ---
 
+## Workflow and state contracts
+
+Customer CV, Experience, opportunity and application tasks do not hide essential controls in accordions, details elements or “More options”. Put a distinct task on a named destination; keep the current task’s controls visible. The phone Menu is navigation, and the three-action writing menu is the expressly approved contextual exception. Admin diagnostics are separate from customer work.
+
+Use `TaskNavigation` for local tasks that share a workspace: CV Edit/History/Compare/Role details, Experience Records/Import/Writing, import methods and record editing tasks. A tab selects a panel, not an editing policy. Auto/Refine/Manual remain separate mode choices. Use ordinary links for real route navigation. Preserve existing fragment IDs, and link every tab to its panel with `aria-controls` and `aria-labelledby`.
+
+Task switches must retain dirty buffers. Keep visited editors mounted and hide inactive panels; do not use the selected tab as a remount key. A task change must not submit, queue AI or write data. Heavy editors may load on first visit, with an accessible loading state, but subsequent visits reuse the mounted editor. Pending work and source refreshes must distinguish an acknowledged child save from an external version change. Preserve or explicitly recover unsaved work instead of silently replacing it.
+
+| State | Required behaviour |
+| --- | --- |
+| Empty | Name what is missing and show a direct next action. Do not display an unexplained disabled primary action. |
+| Editing | Keep the current document and task identifiable; inputs retain their values across task switches. |
+| Saving | Prevent duplicate submission; retain text typed while the submitted snapshot is in flight. |
+| Saved | Acknowledge the saved snapshot only. If newer edits exist, show “You have unsaved changes.” rather than claiming the visible draft is saved. |
+| Validation failure | Focus the invalid native control; link the error to the form/action and preserve all inputs. |
+| Retry | Clear the obsolete error while the retry is pending; show the new result when it settles. |
+| Source changed | Preserve the local buffer and provide the workflow’s recovery action. Do not present a stale buffer as the current saved CV. |
+| Background work | Show the current stage without exposing provider diagnostics to ordinary users; completion must not overwrite active edits. |
+
+These primitives standardise presentation and interaction, not business policy. Role credits, AI allowances, explicit proposal use, finalisation consent and immutable PDF rules remain governed by [ADR0008](adr/0008-role-entitlements-and-contextual-editing.md). The wider task/state inventory is in the [journey map](ux/journey-state-map.md).
+
+## Frontend implementation discipline
+
+Reuse shared primitives before adding local variants. Keep server-rendered content on the server and introduce client boundaries only for interaction; avoid importing server utilities through a client barrel. Prefer event-driven state updates, stable IDs and one owner for each editable buffer. Independent data reads can run together; do not add network work to navigation or input handlers. Keep long labels and nested flex/grid children shrinkable, and use existing status tokens (`ok`, `warn`, `danger`, `info`) rather than undefined aliases such as `success`.
+
+Verify behaviour rather than merely matching classes: keyboard focus and tab order, retained input after task switches and failed saves, fast edits during save acknowledgement, and actual 320px/390px layout. A successful build and component suite cannot establish visual quality or human comprehension by themselves. Route bundle budgets remain unchanged for this consolidation; deferred panels must not make ordinary navigation silently load every editor.
+
+---
+
 ## The mark
 
 The mark is a C-shaped path and a point. The path is the wordmark's own C — a
@@ -177,7 +203,7 @@ square pixel C with its corners cut by one stroke — drawn on a 24×24 cell til
 with 2-cell strokes, and a 4×4 point sits at its opening on the baseline, lower
 right, where the path leads: a course, and where it arrives. The point is at the
 opening rather than the centre because a point inside a C reads as a copyright
-sign. With the wordmark it is the only graphic in the product. The glyph rows live in
+sign. Together with the wordmark it provides the product’s brand artwork. The glyph rows live in
 `components/brand/mark-cells.ts` and are the single source: `Mark.tsx`,
 `MarkSmall.tsx` and `Wordmark.tsx` render them on the page, and
 `scripts/generate-brand-assets.ts` renders the favicon, the installed-app icons,
@@ -246,9 +272,7 @@ the page can never drift.
 
 ## Iconography
 
-There is no icon set, and adding one would break the system. Company favicons
-are the only pictorial elements (14–16px squares, falling back to a grey
-square). Status is carried by badges with text, links by underline, external
+There is no general-purpose icon library. Company favicons are 14–16px squares, falling back to a grey square. The contextual CV writing action uses three pixel stars with the exact tooltip “Help me write”; it opens the three approved text actions and has no shortcut hint. Status is carried by badges with text, links by underline, external
 links by " ↗", keys by `<kbd>`. The one chevron — on `<select>` — is drawn as two
 CSS triangles by the `ds-select` utility. If a glyph is unavoidable, draw it on
 the 16-cell grid in `currentColor`.
@@ -261,13 +285,15 @@ the 16-cell grid in `currentColor`.
 
 | Component | Notes |
 | --- | --- |
-| `Button` | Silkscreen uppercase. `primary` light green on brand green with a 4px shadow, `secondary` raised with a full-contrast border, `danger` the danger hue, `ghost` muted text that underlines. `buttonClass()` for links and submit buttons that cannot be a `<Button>`. |
-| `Card` | 2px border on `bg-raised`, pixel title bar, `raised` for the 8px shadow. |
+| `Button` | Readable 13–14px mono, minimum 44px target, wrapping labels and native button semantics. `primary` light green on brand green with a 4px shadow, `secondary` raised with a full-contrast border, `danger` the danger hue, `ghost` muted text that underlines. `buttonClass()` for links and submit buttons that cannot be a `<Button>`. |
+| `Card` | Quiet 1px faint border on `bg-raised`, 16px functional heading; `raised` explicitly adds the 2px outline and 8px shadow. Titles and action rows wrap independently. |
 | `Badge` | Outline and text in one tone; the tone helpers map app states to roles. `toneText` gives the same tone as ink alone, for secondary text under a badge. |
-| `PageHeader` | Silkscreen 20px title over a 2px rule. |
-| `EmptyState` | Dashed 2px border, pixel title. |
+| `PageHeader` | Functional 20px h1 above a faint 1px rule. Actions occupy their own full-width row on phones and wrap alongside the title on larger screens. |
+| `EmptyState` | Dashed 2px border, readable 16px h2, brief explanation and one next action. Content stays inside narrow screens. |
 | `table.tsx` | `Table`/`THead`/`TBody`/`TR`/`TH`/`TD` plus `FitBar`, the ten stepped cells. `TR highlighted` is the keyboard cursor. |
 | `Field` | `Field`/`Input`/`Textarea`/`Select`/`Checkbox`, and the `inputClass`, `selectClass` and `labelClass` strings for server components that style raw inputs. |
+| `TaskNavigation` | Controlled, labelled task tabs with linked panels, roving tab stop, Arrow/Home/End navigation and disabled-item skipping. Callers supply a valid enabled active task and retain panel state. |
+| `SettingsForm` | Native validation, pending protection, linked errors, retry and truthful saved/unsaved acknowledgement. Does not reset edits made while a request is pending. |
 | `NavLink` / `WorkspaceNav` | Sidebar items are light green on the brand green; the active one is a light-green block with green text. Workspace links underline over a dotted rule. |
 | `CompanyNotepad` | The company note. A `contenteditable` in the `Field` control shape — 2px muted border on the page ground, full-contrast on focus — with a Bold / Bullet list toolbar, `Saved HH:MM` or `Unsaved changes`, and a primary Save. `ds-notepad` draws the bullets and paragraph rhythm the browser's own `ul`/`p` would otherwise lose to preflight. Stored text is converted through `lib/notes-markdown`, never `innerHTML`. |
 | `Mark` | The mark on its 24-cell tile: the sign-in panel and the app icons. Above. |
@@ -302,3 +328,21 @@ point, the uppercase wordmark justified to 50 cells and the 32ms beat.
 The CV document palettes in `components/CvAppearance.tsx` and `lib/cv-pdf.ts`
 are deliberately **not** part of this system. A CV is a document the user styles
 for an employer, not app chrome, and it keeps its own colours.
+
+## Frontend consolidation — 11 November 2026
+
+This pass consolidates shared interaction and layout patterns; it is not a claim that every screen has undergone a new visual redesign.
+
+| Area reviewed | Implemented change | Behavioural evidence |
+| --- | --- | --- |
+| Shared controls and surfaces | Shrinkable, wrapping Button/Card/PageHeader/EmptyState; consistent field targets, disabled/invalid treatment and shared focus outline; contextual Refine text stacks above its action on phones | Native control/heading semantics and the component suite; production phone/focus checks below |
+| CV and Experience task navigation | One `TaskNavigation` primitive across CV tasks, Experience tasks, import sources and career-record editing tasks | Arrow/Home/End navigation, disabled-item skipping, stable panel links and retained unsent text |
+| Save acknowledgement and recovery | `SettingsForm` links errors, clears obsolete retry errors and distinguishes submitted content from newer unsaved edits | Validation, failed retry, typing during saves and externally associated controls covered |
+| Status and visual language | Replace undefined `success` utilities with existing `ok` tokens; align documented typography, borders and contextual writing icon with implementation | Existing affected component tests; no new colour or spacing scale |
+| Frontend maintenance | Keep task state controlled, panel identity stable and server/client boundaries narrow; document one set of reusable contracts | All workspace typechecks and production build pass; existing route budgets unchanged |
+
+Local verification: **327 tests across 74 component files passed**, as did all workspace typechecks and the production build. Final targeted status/navigation and responsive Refine passes also passed 18 and 23 tests respectively. These overlap with the component suite and are not an additional independent coverage total. Every route passed the existing JavaScript budget: CV workspace 136,504/138,000 gzip bytes, Experience 125,553/142,000, About 114,125/115,000 and shared root 102,482/104,000. Both production browser suites passed on the final build. The CV modes journey checks Arrow/Home/End task switching, retained dirty Refine wording, current-version saves, source/history recovery, immutable final PDF bytes and application recording. At 320px and 390px it verifies contained controls; at 320px it also checks readable source rows (at least 160px wide), 44px task targets and the computed 2px green Field focus outline with 3px offset. Screenshots were inspected after correcting the squeezed Refine text/action row. The wider smoke covers page rendering, security headers, legacy CV and tailoring flows, Applications, direct career capture, recommendations and Experience review. No browser console errors were reported by the modes journey.
+
+Verification logs: `/tmp/col-frontend-components.log`, `/tmp/col-frontend-types.log`, `/tmp/col-frontend-build-final.log`, `/tmp/col-frontend-budget-final.log`, `/tmp/col-frontend-design-modes-final.log` and `/tmp/col-frontend-design-web-fresh.log`. The final broad smoke used a fresh migrated sibling database after a provisional reused fixture database produced state collisions; its assertions were retained. Screenshot artefacts are under `/tmp/cv-modes-browser/`, including `mobile-320-long-label.png` and `field-focus-320.png`. These local paths are diagnostic artefacts, not permanent repository assets. Hosted checks remain pending at this checkpoint.
+
+Human comprehension and usability evaluation remain outstanding: use the task protocol in the journey map to check whether people identify the current CV, understand edit scope and recover without assistance. Automated acceptance and screenshots cannot answer those questions. No production deployment or live AI qualification is part of this frontend pass.

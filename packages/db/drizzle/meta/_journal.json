@@ -498,6 +498,13 @@
       "when": 1793620808000,
       "tag": "0072_career_record",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1793620809000,
+      "tag": "0073_career_review",
+      "breakpoints": true
     }
   ]
 }

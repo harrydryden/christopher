@@ -11,6 +11,8 @@ import { resendVerification } from "@/app/actions/account";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
 import { PlanReadout } from "@/components/BillingOverview";
 import { getBillingSummary } from "@/lib/billing/service";
+import { getCareerReviewSummary } from "@col/db";
+import { db } from "@/lib/db";
 // The banner and every control it disables say one sentence, from one place.
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { NavLink } from "@/components/NavLink";
@@ -24,6 +26,12 @@ export const dynamic = "force-dynamic";
 async function HealthNavLink({ userId, href, children }: { userId: string; href: string; children: ReactNode }) {
   const count = await countHealthItems(userId);
   return <NavLink secondary href={href} count={count} countTitle={`${count} ${count === 1 ? "item needs" : "items need"} your attention`}>{children}</NavLink>;
+}
+
+async function ExperienceNavLink({ userId }: { userId: string }) {
+  const { activeCount } = await getCareerReviewSummary(db(), userId);
+  return <NavLink href="/library" count={activeCount}
+    countTitle={`${activeCount} Experience ${activeCount === 1 ? "detail needs" : "details need"} a decision`}>Experience</NavLink>;
 }
 
 async function ScanBanner({ userId }: { userId: string }) {
@@ -62,11 +70,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex flex-1 flex-col md:flex-row">
         <WorkspaceMenu mobilePlan={<Suspense fallback={null}><BillingReadout pending={billing} mobile /></Suspense>}>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
-            {PRIMARY_NAV_ITEMS.map((item) => (
-              <NavLink key={item.href} href={item.href}>
-                {item.label}
-              </NavLink>
-            ))}
+            {PRIMARY_NAV_ITEMS.map((item) => item.href === "/library" ?
+              <Suspense key={item.href} fallback={<NavLink href={item.href}>{item.label}</NavLink>}>
+                <ExperienceNavLink userId={user.id} />
+              </Suspense> : <NavLink key={item.href} href={item.href}>{item.label}</NavLink>)}
           </nav>
           <nav aria-label="Workspace tools" className="mt-3 flex flex-wrap gap-0.5 border-t border-brand-ink-muted pt-3 md:block md:space-y-0.5">
             {[...SECONDARY_NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (

@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/PageHeader";
+import Link from "next/link";
 import { Card } from "@/components/Card";
 import { SettingsForm } from "@/components/SettingsForm";
 import { inputClass, labelClass } from "@/components/Field";
@@ -62,6 +63,7 @@ export default async function LibraryPage({ searchParams }: {
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Experience" />
+      <Link prefetch={false} href="/library/review" className="inline-flex min-h-11 items-center text-13 underline">Review saved details</Link>
       {!library && <div className="space-y-2"><p className="ds-prose max-w-3xl text-16">Start from a document or add a role, project or other activity yourself. You can review imported suggestions before adding them.</p>
         <a href="#experience-manual" className="inline-flex min-h-11 items-center text-14 font-semibold underline">Add a career detail yourself</a></div>}
       {!library && <LibraryImportCard openLinkedIn={openLinkedIn} />}

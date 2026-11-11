@@ -452,10 +452,9 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
             <button type="button" className={buttonClass("secondary")} disabled={busy || !perspectiveLabel.trim()}
               onClick={() => void savePerspective()}>{perspectiveId ? "Update perspective" : "Save perspective"}</button></div>
         </details>
-        {(workspace.conflicts.length > 0 || selected.assertions.some(row => row.status === "proposed")) &&
+        {selected.assertions.some(row => row.status === "proposed") &&
           <details className="border-t border-line-muted pt-2"><summary className="min-h-11 cursor-pointer text-13 underline">Optional writing and fact suggestions</summary>
             <p className="text-12 text-muted">Suggestions do not change your saved facts or block a CV.</p>
-            {workspace.conflicts.map(conflict => <p key={conflict.id} className="mt-2 text-13">{conflict.reason} · <a className="underline" href={`#career-record-${conflict.subjectId}`}>Review the affected record</a></p>)}
             {selected.assertions.filter(row => row.status === "proposed").map(row => <p key={row.id}
               id={`career-assertion-${row.id}`} className="mt-2 scroll-mt-20 text-13">Suggested: {row.text}</p>)}
           </details>}

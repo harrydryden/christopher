@@ -3,6 +3,7 @@ export * from "./cv-writing-preferences";
 import { CV_LIMITS, CV_SKILL_GUIDANCE } from "./cv-format";
 export * from "./cv-format";
 import { z } from "zod";
+import { CareerCvChoiceOverrideSchema } from "./career-record";
 
 import { CvThemeSchema, DEFAULT_CV_THEME } from "./cv-theme";
 export * from "./cv-theme";
@@ -140,6 +141,8 @@ export const CvCareerDisplaySchema = z.object({
 });
 const CareerProjectionSchema = z.object({
   version: z.number().int().nonnegative(), presentation: z.enum(["chronological", "project", "hybrid"]),
+  // IDs only: disputed statements must never leak into the model's source material through metadata.
+  conflictChoices: z.array(CareerCvChoiceOverrideSchema).max(100).optional(),
   display: z.record(z.string(), CvCareerDisplaySchema),
   sourceMap: z.record(z.string(), z.object({ recordId: z.string(), recordRevision: z.number().int().positive(),
     assertionId: z.string().nullable(), assertionRevision: z.number().int().positive().nullable(), publicText: z.boolean() })),

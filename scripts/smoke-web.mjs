@@ -10,6 +10,7 @@ import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
 import { verifyApplicationsWorkspace } from "./smoke-applications.mjs";
 import { verifyEvidenceConversation } from "./smoke-evidence.mjs";
 import { verifyCareerRecommendations } from "./smoke-career-recommendations.mjs";
+import { verifyCareerReview } from "./smoke-career-review.mjs";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { disposableAdmin, startWeb } from "./lib/web.mjs";
@@ -307,6 +308,8 @@ async function main() {
 
   try { await verifyCareerRecommendations(`http://127.0.0.1:${PORT}`, DATABASE_URL, SECRET); }
   catch (error) { failures.push(`Career recommendations browser flow: ${error.stack ?? error.message}`); }
+  try { await verifyCareerReview(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  catch (error) { failures.push(`Career review browser flow: ${error.stack ?? error.message}`); }
 
   // The disposable account takes its sessions, settings and drafts with it, and the throwaway
   // company takes its subscription.

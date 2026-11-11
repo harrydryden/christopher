@@ -90,6 +90,7 @@ export default async function CvContextPage({ params, searchParams }: { params: 
     ? { id: selectedBaseline.id, status: selectedBaseline.status, sourceDraftId: selectedBaseline.sourceDraftId,
       rendererCurrent: selectedBaseline.engineContract.render === CV_RENDER_VERSION } : null}
     knownLibraryDrift={knownLibraryDrift} knownRoleDrift={knownRoleDrift}
+    initialChoices={selectedBaseline?.librarySnapshot?.careerProjection?.conflictChoices}
     />;
   const manualEditions = workspace.editions.filter(edition => edition.editingMode === "manual");
   const refinedEditions = workspace.editions.filter(edition => edition.editingMode === "refine");

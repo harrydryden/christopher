@@ -175,7 +175,9 @@ export async function saveCareerChangeIn(tx: Tx, userId: string, raw: unknown,
         const prior = await ownedAssertion(tx, userId, operation.id);
         if (prior.revision !== operation.expectedRevision) throw new CareerWriteConflict();
         const [row] = await tx.update(careerAssertions).set({ text: operation.text, ...(operation.publicText !== undefined ? { publicText: operation.publicText } : {}), facets: operation.facets,
-          context: operation.context, revision: prior.revision + 1, updatedAt: new Date() })
+          context: operation.context, ...(trustedProvenance[operation.id]
+            ? { provenance: trustedProvenance[operation.id] } : {}),
+          revision: prior.revision + 1, updatedAt: new Date() })
           .where(eq(careerAssertions.id, operation.id)).returning();
         remember("assertion", operation.id, prior, row, row!.revision);
         break;

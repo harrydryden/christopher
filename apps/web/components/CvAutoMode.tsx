@@ -2,26 +2,53 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { openCvAutoEdition, openOrClaimAutoCv } from "@/app/actions/cv-editing";
+import { openCvAutoEdition, openOrClaimAutoCv, readAutoCvSourceChoices } from "@/app/actions/cv-editing";
+import type { CareerCvChoiceOverride, CareerCvProjection } from "@col/core/career-record";
 
 type Baseline = { id: string; status: "queued" | "ready" | "failed"; sourceDraftId: string | null;
   rendererCurrent?: boolean };
 
-export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = false, knownRoleDrift = false }: {
+export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = false, knownRoleDrift = false,
+  initialChoices = [] }: {
   contextId: string; selectedBaseline: Baseline | null;
   knownLibraryDrift?: boolean; knownRoleDrift?: boolean;
+  initialChoices?: CareerCvChoiceOverride[];
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [sourceReview, setSourceReview] = useState<CareerCvProjection["reviewConflicts"] | null>(null);
+  const [choiceDraft, setChoiceDraft] = useState<CareerCvChoiceOverride[] | null>(null);
+  const [choicesOpen, setChoicesOpen] = useState(false);
+  const [loadingChoices, setLoadingChoices] = useState(false);
+  const [choicesError, setChoicesError] = useState<string | null>(null);
+  const choices = choiceDraft ?? initialChoices;
+  async function loadChoices() {
+    if (loadingChoices || pending) return;
+    setChoicesOpen(true); setLoadingChoices(true); setChoicesError(null);
+    try {
+      const result = await readAutoCvSourceChoices(contextId);
+      if (result.ok) setSourceReview(result.conflicts);
+      else setChoicesError(result.error);
+    } catch { setChoicesError("Could not load Experience choices. Your selections are unchanged."); }
+    finally { setLoadingChoices(false); }
+  }
+  function choose(group: CareerCvProjection["reviewConflicts"][number], chosenAssertionId: string) {
+    setChoiceDraft([...choices.filter(choice => choice.groupKey !== group.groupKey),
+      ...(chosenAssertionId ? [{ groupKey: group.groupKey, fingerprint: group.fingerprint, chosenAssertionId }] : [])]);
+  }
   async function update() {
-    if (pending) return;
+    if (pending || loadingChoices) return;
     if (document.querySelector('[data-cv-mode-dirty="true"]') &&
       !window.confirm("Update Auto while another mode has unsaved wording? Your text remains on this page, but the selected edition may change.")) return;
     setPending(true); setError(null); setNotice(null);
     try {
-      const result = await openOrClaimAutoCv(contextId, "update");
+      const result = await openOrClaimAutoCv(contextId, "update", choices);
+      if (result.sourceReview) {
+        setSourceReview(result.sourceReview);
+        if (result.sourceReview.length) setChoicesOpen(true);
+      }
       if (!result.ok) setError(result.error);
       else {
         setNotice(result.status === "ready" ? "Your saved Auto CV is ready. No new CV credit was used."
@@ -63,7 +90,42 @@ export function CvAutoMode({ contextId, selectedBaseline, knownLibraryDrift = fa
       {knownLibraryDrift && "Your Experience has changed. "}
       Update Auto only when you want a new result from the current inputs; the selected saved CV stays available.
     </p>}
-    <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending} onClick={update}>
+    <details open={choicesOpen} onToggle={event => {
+      const open = event.currentTarget.open;
+      setChoicesOpen(open);
+      if (open && sourceReview === null && !choicesError) void loadChoices();
+    }}>
+      <summary className="min-h-11 cursor-pointer py-3">Experience choices{choices.length ? ` · ${choices.length} for this CV` : " · optional"}</summary>
+      <div className="space-y-3 border border-line-muted p-3">
+        <p className="text-12 text-muted">Choose a statement for the next Auto build, or leave disputed details out. You can build and finalise without resolving Experience reviews.</p>
+        {loadingChoices && <p role="status">Loading choices…</p>}
+        {sourceReview?.map(group => <fieldset key={group.conflictId} disabled={pending || loadingChoices} className="min-w-0 border border-line-muted p-3">
+          <legend className="px-1 font-semibold">{group.title}</legend>
+          <label className="flex min-h-11 items-center gap-2">
+            <input type="radio" name={`cv-source-${group.conflictId}`} value=""
+              checked={!choices.some(choice => choice.groupKey === group.groupKey && choice.fingerprint === group.fingerprint)}
+              onChange={() => choose(group, "")} />Leave these details out
+          </label>
+          {group.statements.map(statement => <label key={statement.id} className="flex min-h-11 items-center gap-2 py-2">
+            <input type="radio" name={`cv-source-${group.conflictId}`} value={statement.id}
+              checked={choices.some(choice => choice.groupKey === group.groupKey && choice.fingerprint === group.fingerprint && choice.chosenAssertionId === statement.id)}
+              onChange={() => choose(group, statement.id)} />
+            <span className="min-w-0 break-words">{statement.text}</span>
+          </label>)}
+          <a className="inline-flex min-h-11 items-center text-12 underline" href={`/library/review?conflict=${encodeURIComponent(group.conflictId)}`} target="_blank" rel="noreferrer">Review in Experience ↗</a>
+        </fieldset>)}
+        {sourceReview?.length === 0 && <p className="text-12">No disputed details need a choice for this build.</p>}
+        {sourceReview && choices.some(choice => !sourceReview.some(group => group.groupKey === choice.groupKey && group.fingerprint === choice.fingerprint)) &&
+          <p role="status" className="text-12 text-warn">Some saved choices no longer match this list. Choose a replacement or reset CV-only choices before building again.</p>}
+        {choicesError && <p role="alert" className="text-danger">{choicesError}</p>}
+        <div className="flex flex-wrap gap-3">
+          <button type="button" className="min-h-11 underline" disabled={pending || loadingChoices} onClick={loadChoices}>Refresh choices</button>
+          {choices.length > 0 && <button type="button" className="min-h-11 underline" disabled={pending || loadingChoices}
+            onClick={() => setChoiceDraft([])}>Reset CV-only choices</button>}
+        </div>
+      </div>
+    </details>
+    <button type="button" className="min-h-11 border border-line-muted px-4" disabled={pending || loadingChoices} onClick={update}>
       {pending ? "Checking current inputs…" : selectedBaseline ? "Update Auto from current inputs" : "Create Auto CV"}
     </button>
     <p className="text-12 text-muted">A saved result is free; generating a new Auto CV uses one CV credit. Refine and Manual edits stay separate.</p>

@@ -23,6 +23,8 @@ export { captureLibraryAdditionsIn } from "./career-library-bridge";
 export { captureDirectCareerAnswerIn } from "./career-library-bridge";
 export { reviseDirectCareerAnswerIn } from "./career-library-bridge";
 export { publishCareerCompatibilityIn } from "./career-record";
+export { getCareerReviewSummary, listCareerReviewIssues, getCareerConflictDetail,
+  decideCareerConflict } from "./career-review";
 export { claimableTaskSql, workloadMetrics } from "./scaling";
 export { topStatements, resetStatements, formatStatementTotals, type StatementTotal, type StatementTotals } from "./pg-stat";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";

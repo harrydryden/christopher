@@ -86,6 +86,8 @@ export type CareerDisplayEntry = { recordId: string; kind: "role" | "engagement"
   publicLabel: string | null; groupRecordId: string | null };
 export type CareerCvProjection = { careerVersion: number; presentation: CareerPresentation; library: CvLibrary;
   sourceMap: CareerSourceMap; display: Record<string, CareerDisplayEntry>;
+  reviewConflicts: Array<{ conflictId: string; groupKey: string; fingerprint: string;
+    recordId: string; title: string; statements: Array<{ id: string; text: string }> }>;
   excluded: Array<{ recordId: string; assertionId?: string; reason: "confidential" | "capacity" | "ineligible" | "conflict" }> };
 
 /** Shared conflict identity for the live workspace and a retained historical CV snapshot. */
@@ -101,6 +103,46 @@ export function careerConflictingGroups<T extends { id: string; subjectId: strin
   return [...groups].filter(([, rows]) => new Set(rows.map(row => row.context!.value.toLowerCase())).size > 1)
     .map(([key, rows]) => ({ key, rows }));
 }
+
+export const CareerConflictChoiceSchema = z.enum(["choose", "keep_both_context", "correct", "dismiss", "later", "reopen"]);
+export type CareerConflictChoice = z.infer<typeof CareerConflictChoiceSchema>;
+export const CareerConflictEditSchema = z.object({ id: z.string().uuid(), expectedRevision: z.number().int().positive(),
+  text: z.string().trim().min(1).max(40_000), publicText: z.string().trim().min(1).max(4000).nullable(),
+  facets: z.array(CareerFacetSchema).max(7), context: CareerAssertionContextSchema });
+export const CareerConflictDecisionInputSchema = z.object({ conflictId: z.string().regex(/^[0-9a-f]{64}$/),
+  expectedFingerprint: z.string().regex(/^[0-9a-f]{64}$/), expectedDecisionRevision: z.number().int().nonnegative(),
+  requestKey: z.string().trim().min(1).max(120), choice: CareerConflictChoiceSchema,
+  selectedAssertionId: z.string().uuid().optional(), edits: z.array(CareerConflictEditSchema).max(20).optional(),
+}).superRefine((value, ctx) => {
+  if (value.choice === "choose" && !value.selectedAssertionId) ctx.addIssue({ code: "custom", message: "Choose one statement." });
+  if (["keep_both_context", "correct"].includes(value.choice) && !value.edits?.length)
+    ctx.addIssue({ code: "custom", message: "Provide the corrected statement details." });
+  if (value.choice === "correct" && value.edits?.length !== 1)
+    ctx.addIssue({ code: "custom", message: "Correct one statement at a time." });
+  if (value.choice === "keep_both_context" && value.edits?.some(edit => edit.context === null))
+    ctx.addIssue({ code: "custom", message: "Give each retained statement an explicit context." });
+  if (!["keep_both_context", "correct"].includes(value.choice) && value.edits?.length)
+    ctx.addIssue({ code: "custom", message: "This decision does not edit statements." });
+  if (value.choice !== "choose" && value.selectedAssertionId) ctx.addIssue({ code: "custom", message: "Only a chosen statement needs an ID." });
+});
+export type CareerConflictDecisionInput = z.infer<typeof CareerConflictDecisionInputSchema>;
+export const CareerCvChoiceOverrideSchema = z.object({ groupKey: z.string().min(1).max(500),
+  fingerprint: z.string().regex(/^[0-9a-f]{64}$/), chosenAssertionId: z.string().uuid() });
+export type CareerCvChoiceOverride = z.infer<typeof CareerCvChoiceOverrideSchema>;
+export type CareerReviewSummary = { needsReview: boolean; activeCount: number; deferredCount: number };
+export type CareerReviewIssue = { id: string; subjectId: string; title: string; fingerprint: string;
+  status: "active" | "deferred" | "decided"; decisionRevision: number;
+  choice: CareerConflictChoice | null; statementCount: number };
+export type CareerReviewList = { summary: CareerReviewSummary; items: CareerReviewIssue[]; nextCursor: string | null };
+export type CareerConflictDetail = { id: string; groupKey: string; fingerprint: string;
+  subjectId: string; subjectTitle: string; active: boolean; effectiveConfidential: boolean;
+  statements: CareerAssertionView[]; decisionRevision: number;
+  decision: { choice: CareerConflictChoice; selectedAssertionId: string | null; fingerprint: string; createdAt: string } | null;
+  history: Array<{ revision: number; choice: CareerConflictChoice; selectedAssertionId: string | null;
+    fingerprint: string; createdAt: string }>; historyNextCursor: number | null };
+export type CareerConflictDecisionResult = { ok: true; decisionRevision: number; careerVersion: number | null;
+  summary: CareerReviewSummary } | { ok: false; error: string };
+
 
 /** Privacy travels from private client/work context to its work descendants, not to unrelated roles. */
 export function careerPrivateRecordIds(records: Array<{ id: string; confidential: boolean }>,

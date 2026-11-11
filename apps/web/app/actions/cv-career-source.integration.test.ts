@@ -5,7 +5,7 @@ import { createDb, grantCvCredits, lockAccountScoreInput, saveCareerChange, save
 import { runMigrations } from "@col/db/migrate";
 import { createTestDb } from "@/test/db";
 import { signInTestUser } from "@/test/auth";
-import { createCvApplicationContext, openOrClaimAutoCv } from "./cv-editing";
+import { createCvApplicationContext, openOrClaimAutoCv, readAutoCvSourceChoices, retryFailedAutoCv } from "./cv-editing";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -128,4 +128,84 @@ it("uses an edited imported story as a user fact without relabelling the origina
   const [draft] = await database.select().from(schema.cvDrafts);
   expect(draft!.librarySnapshot.entries.find(entry => entry.id === record!.id)?.details).toContain(authored[0]!.text);
   expect(draft!.librarySnapshot.entries.find(entry => entry.id === record!.id)?.details).toContain("Managed customer support");
+});
+
+async function conflictedSetup(onlyDisputed = false) {
+  const { recordId, contextId } = await setup();
+  const firstId = crypto.randomUUID();
+  const secondId = crypto.randomUUID();
+  const context = { attribute: "team size", scope: "operations", period: "2025", value: "5" };
+  const saved = await saveCareerChange(database, userId, { expectedRevision: 1, requestKey: crypto.randomUUID(), operations: [
+    ...(onlyDisputed ? [{ type: "edit_record" as const, id: recordId, expectedRevision: 1, fields: fields("") }] : []),
+    { type: "add_assertion", id: firstId, subjectId: recordId, text: "Led a team of 5", publicText: null, facets: [], context },
+    { type: "add_assertion", id: secondId, subjectId: recordId, text: "Led a team of 10", publicText: null,
+      facets: [], context: { ...context, value: "10" } },
+  ] });
+  if (!saved.ok) throw new Error(saved.error);
+  expect(saved.conflicts).toHaveLength(1);
+  const read = await readAutoCvSourceChoices(contextId);
+  if (!read.ok) throw new Error(read.error);
+  expect(read.conflicts).toHaveLength(1);
+  return { recordId, contextId, firstId, secondId, context, group: read.conflicts[0]! };
+}
+
+it("keeps pending conflicts advisory while Auto builds from unaffected details", async () => {
+  const { contextId, recordId } = await conflictedSetup();
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  const result = await openOrClaimAutoCv(contextId, "update");
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, charged: true, sourceReview: [expect.anything()] });
+  const [draft] = await database.select().from(schema.cvDrafts);
+  expect(draft?.librarySnapshot.entries.find(entry => entry.id === recordId)?.details).toBe("Reduced backlog by 20%");
+  // Diagnostics are for the person. Raw disputed prose must not enter the model through metadata.
+  expect(JSON.stringify(draft?.librarySnapshot)).not.toContain("Led a team of");
+  const events = await database.execute(sql`select id from career_review_events where user_id = ${userId}::uuid`);
+  expect(events.rows).toHaveLength(0);
+});
+
+it("offers a CV-only choice when every fact is disputed and pins it through duplicate requests and retry", async () => {
+  const { contextId, firstId, secondId, group } = await conflictedSetup(true);
+  const empty = await openOrClaimAutoCv(contextId, "update");
+  expect(empty).toMatchObject({ ok: false, error: expect.stringContaining("continue in Manual"), sourceReview: [expect.anything()] });
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvAutoBaselines)).toHaveLength(0);
+  const choices = [{ groupKey: group.groupKey, fingerprint: group.fingerprint, chosenAssertionId: firstId }];
+  const result = await openOrClaimAutoCv(contextId, "update", choices);
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, charged: true });
+  if (!result.ok || !result.draftId || !result.baselineId) return;
+  const duplicate = await openOrClaimAutoCv(contextId, "update", choices);
+  expect(duplicate).toMatchObject({ ok: true, charged: false, draftId: result.draftId });
+  const [draft] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, result.draftId));
+  expect(draft?.librarySnapshot.careerProjection?.conflictChoices).toEqual(choices);
+  expect(JSON.stringify(draft?.librarySnapshot)).toContain("Led a team of 5");
+  expect(JSON.stringify(draft?.librarySnapshot)).not.toContain("Led a team of 10");
+  const second = await openOrClaimAutoCv(contextId, "update", [{ ...choices[0]!, chosenAssertionId: secondId }]);
+  expect(second).toMatchObject({ ok: true, charged: true });
+  expect(second.ok && second.baselineId).not.toBe(result.baselineId);
+  await database.update(schema.tasks).set({ status: "done" });
+  await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.id, draft!.id));
+  await database.update(schema.cvAutoBaselines).set({ status: "failed" }).where(eq(schema.cvAutoBaselines.id, result.baselineId));
+  const retried = await retryFailedAutoCv(contextId, result.baselineId);
+  expect(retried, JSON.stringify(retried)).toMatchObject({ ok: true, draftId: result.draftId });
+  const [again] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(again?.librarySnapshot).toEqual(draft?.librarySnapshot);
+  const events = await database.execute(sql`select id from career_review_events where user_id = ${userId}::uuid`);
+  expect(events.rows).toHaveLength(0);
+});
+
+it("refuses stale or foreign CV-only choices before reserving a credit", async () => {
+  const { contextId, firstId, secondId, group, context } = await conflictedSetup();
+  const choice = { groupKey: group.groupKey, fingerprint: group.fingerprint, chosenAssertionId: firstId };
+  const unknown = await openOrClaimAutoCv(contextId, "update", [{ ...choice, chosenAssertionId: crypto.randomUUID() }]);
+  expect(unknown.ok).toBe(false);
+  await saveCareerChange(database, userId, { expectedRevision: 2, requestKey: crypto.randomUUID(), operations: [
+    { type: "edit_assertion", id: secondId, expectedRevision: 1, text: "Led a team of 12", publicText: null,
+      facets: [], context: { ...context, value: "12" } },
+  ] });
+  const stale = await openOrClaimAutoCv(contextId, "update", [choice]);
+  expect(stale).toMatchObject({ ok: false, error: expect.stringMatching(/changed|reload|refresh/i) });
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
+  expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
+  const other = await signInTestUser(database, process.env.SESSION_SECRET!, "other-career@example.com");
+  session = other.cookie;
+  expect(await readAutoCvSourceChoices(contextId)).toMatchObject({ ok: false });
 });

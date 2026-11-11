@@ -8,6 +8,10 @@
       "types": "./src/career-record.ts",
       "default": "./src/career-record.ts"
     },
+    "./career-conflicts": {
+      "types": "./src/career-conflicts.ts",
+      "default": "./src/career-conflicts.ts"
+    },
     "./catalogue-recommendations": {
       "types": "./src/catalogue-recommendations.ts",
       "default": "./src/catalogue-recommendations.ts"

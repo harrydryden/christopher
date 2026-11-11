@@ -1103,6 +1103,26 @@ export const careerObjectVersions = pgTable("career_object_versions", {
   createdAt: tsNow("created_at"),
 }, t => [uniqueIndex("career_object_versions_identity_uidx").on(t.userId, t.objectKind, t.objectId, t.revision)]);
 
+/** Immutable account decisions; material choices pin a career head revision for historical CVs. */
+export const careerReviewEvents = pgTable("career_review_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  conflictId: text("conflict_id").notNull(),
+  groupKey: text("group_key").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  decisionRevision: integer("decision_revision").notNull(),
+  choice: text("choice", { enum: ["choose", "keep_both_context", "correct", "dismiss", "later", "reopen"] }).notNull(),
+  selectedAssertionId: uuid("selected_assertion_id"),
+  statementSnapshot: jsonb("statement_snapshot").$type<Record<string, unknown>[]>().notNull(),
+  careerVersion: integer("career_version"),
+  requestKey: text("request_key").notNull(),
+  intentHash: text("intent_hash").notNull(),
+  createdAt: tsNow("created_at"),
+}, t => [uniqueIndex("career_review_events_user_request_uidx").on(t.userId, t.requestKey),
+  uniqueIndex("career_review_events_group_revision_uidx").on(t.userId, t.conflictId, t.decisionRevision),
+  index("career_review_events_history_idx").on(t.userId, t.conflictId, t.decisionRevision.desc()),
+  index("career_review_events_source_idx").on(t.userId, t.careerVersion.desc())]);
+
 /**
  * The evidence review of one library entry: what each row was classified as, which facets are
  * covered, what to ask for next, and the score code computed from all of it.

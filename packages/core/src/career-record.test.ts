@@ -1,5 +1,16 @@
 import { expect, it } from "vitest";
-import { CareerDatesSchema, careerPrivateRecordIds } from "./career-record";
+import { CareerConflictDecisionInputSchema, CareerDatesSchema, careerPrivateRecordIds } from "./career-record";
+
+it("requires explicit context to keep both statements while permitting a direct correction to remove mistaken context", () => {
+  const edit = { id: "11111111-1111-4111-8111-111111111111", expectedRevision: 1,
+    text: "Led a team", publicText: null, facets: [], context: null };
+  const decision = { conflictId: "a".repeat(64), expectedFingerprint: "b".repeat(64),
+    expectedDecisionRevision: 0, requestKey: "explicit-context", edits: [edit] };
+  expect(CareerConflictDecisionInputSchema.safeParse({ ...decision, choice: "keep_both_context" }).success).toBe(false);
+  expect(CareerConflictDecisionInputSchema.safeParse({ ...decision, choice: "correct" }).success).toBe(true);
+  expect(CareerConflictDecisionInputSchema.safeParse({ ...decision, choice: "keep_both_context",
+    edits: [{ ...edit, context: { attribute: "team size", scope: "Sales", period: "2024", value: "5" } }] }).success).toBe(true);
+});
 
 it.each([
   { start: "2024", end: "2023", current: false },

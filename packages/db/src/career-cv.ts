@@ -1,11 +1,14 @@
+import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { careerConflictingGroups, careerPrivateRecordIds, CareerRecordFieldsSchema, CareerProvenanceSchema, type CareerAssertionContext, type CareerCvProjection,
+import { careerConflictingGroups, careerPrivateRecordIds, CareerRecordFieldsSchema, CareerProvenanceSchema, type CareerAssertionContext,
+  careerCanonicalJson, type CareerCvChoiceOverride, type CareerCvProjection,
   type CareerDisplayEntry, type CareerPresentation, type CareerSourceMap } from "@col/core/career-record";
+import { careerConflictFingerprint } from "@col/core/career-conflicts";
 import { CvLibrarySchema, responsibilityRows, type CvLibrary } from "@col/core/cv";
 import type { Db } from "./client";
 import { ensureCareerBackfill } from "./career-backfill";
 import { latestCvLibrary } from "./cv-library";
-import { careerHeads, users } from "./schema";
+import { careerHeads, careerReviewEvents, users } from "./schema";
 
 type Stored = { object_kind: "record" | "link" | "assertion" | "perspective"; object_id: string;
   snapshot: Record<string, unknown> };
@@ -18,9 +21,22 @@ type AssertionRow = { id: string; subjectId: string; revision: number; text: str
   status: "usable" | "proposed" | "retracted"; provenance: ReturnType<typeof CareerProvenanceSchema.parse>;
   facets: string[]; context: CareerAssertionContext; createdAt: string };
 type PerspectiveRow = { label: string; assertionIds: string[]; archivedAt: string | null };
-type Selection = { recordIds?: string[]; assertionIds?: string[]; roleText?: string; priorityTerms?: string[] };
+type Selection = { recordIds?: string[]; assertionIds?: string[]; roleText?: string; priorityTerms?: string[];
+  conflictChoices?: CareerCvChoiceOverride[] };
+
+export class CareerCvChoiceError extends Error {
+  readonly userFacing = true as const;
+  constructor() { super("These Experience choices changed. Review them before updating the CV."); }
+}
 
 const flattened = (value: string) => value.replace(/\s+/g, " ").trim();
+const cvAssertionText = (row: AssertionRow, confidential: boolean, qualifyContext = true): string | null => {
+  if (confidential) return row.publicText ? flattened(row.publicText) : null;
+  const body = flattened(row.text);
+  if (!row.context || !qualifyContext) return body;
+  const { attribute, value, scope, period } = row.context;
+  return `${body} [${attribute}: ${value}; ${scope}${period ? `; ${period}` : ""}]`;
+};
 const terms = (value: string) => [...new Set((value.toLocaleLowerCase("en-GB").match(/[\p{L}\p{N}]{3,}/gu) ?? []))];
 const relevance = (value: string, role: Set<string>, priorities: Set<string>) => {
   const words = new Set(terms(value));
@@ -92,6 +108,16 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
       toId: link.toId, kind: link.kind, confidential: link.confidential, archived: !!link.archivedAt })));
     const wantedRecords = selection.recordIds ? new Set(selection.recordIds) : null;
     const wantedAssertions = selection.assertionIds ? new Set(selection.assertionIds) : null;
+    const canonicalChoices = [...(selection.conflictChoices ?? [])].sort((a, b) => a.groupKey.localeCompare(b.groupKey));
+    const requestedChoices = new Map(canonicalChoices.map(choice => [choice.groupKey, choice]));
+    if (requestedChoices.size !== (selection.conflictChoices?.length ?? 0) || requestedChoices.size > 100)
+      throw new CareerCvChoiceError();
+    const chosenEvents = await tx.execute<{ group_key: string; fingerprint: string; choice: string;
+      selected_assertion_id: string | null }>(sql`select distinct on (group_key)
+      group_key, fingerprint, choice, selected_assertion_id from career_review_events
+      where user_id = ${userId}::uuid and career_version <= ${careerVersion}
+      order by group_key, career_version desc, decision_revision desc`);
+    const decisions = new Map(chosenEvents.rows.map(row => [row.group_key, row]));
     const roleTerms = new Set(terms(selection.roleText ?? ""));
     const priorityTerms = new Set((selection.priorityTerms ?? []).flatMap(terms));
     if (wantedRecords?.size && [...wantedRecords].some(id => !byId.has(id))) throw new Error("CV selection contains an unknown Experience item.");
@@ -99,14 +125,38 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
       throw new Error("CV selection contains an unknown Experience fact.");
     // Resolve explicit structured conflicts against this historical snapshot, not today's mutable rows.
     const unresolved = new Set<string>();
-    for (const { rows: group } of careerConflictingGroups(assertions.filter(row => !byId.get(row.subjectId)?.archivedAt))) {
-      const chosen = group.filter(row => wantedAssertions?.has(row.id));
-      if (chosen.length === 1) {
-        for (const row of group) if (row.id !== chosen[0]!.id) unresolved.add(row.id);
-      } else {
+    const reviewConflicts: CareerCvProjection["reviewConflicts"] = [];
+    for (const { key, rows: group } of careerConflictingGroups(assertions.filter(row => !byId.get(row.subjectId)?.archivedAt))) {
+      const fingerprint = careerConflictFingerprint(key, group);
+      const override = requestedChoices.get(key);
+      if (override && (override.fingerprint !== fingerprint || !group.some(row => row.id === override.chosenAssertionId)))
+        throw new CareerCvChoiceError();
+      requestedChoices.delete(key);
+      const global = decisions.get(key);
+      const validGlobal = global?.fingerprint === fingerprint ? global : null;
+      const chosen = override?.chosenAssertionId ??
+        (validGlobal?.choice === "choose" ? validGlobal.selected_assertion_id : null) ??
+        (group.filter(row => wantedAssertions?.has(row.id)).length === 1
+          ? group.find(row => wantedAssertions?.has(row.id))?.id : null);
+      if (chosen) {
+        for (const row of group) if (row.id !== chosen) unresolved.add(row.id);
+      } else if (validGlobal?.choice !== "dismiss") {
         for (const row of group) unresolved.add(row.id);
       }
+      const record = byId.get(group[0]!.subjectId);
+      const privateRecord = privateIds.has(group[0]!.subjectId);
+      if (record && (!wantedRecords || wantedRecords.has(record.id)) &&
+        (!privateRecord || (record.fields.publicLabel && group.some(row => row.publicText))) &&
+        (!validGlobal || !["choose", "dismiss"].includes(validGlobal.choice) || override)) {
+        if (reviewConflicts.length >= 100) continue;
+        reviewConflicts.push({ conflictId: createHash("sha256").update(careerCanonicalJson(key)).digest("hex"),
+          groupKey: key, fingerprint, recordId: record.id,
+          title: privateRecord ? record.fields.publicLabel! : record.fields.title,
+          statements: group.filter(row => !privateRecord || row.publicText)
+            .map(row => ({ id: row.id, text: privateRecord ? row.publicText! : row.text })) });
+      }
     }
+    if (requestedChoices.size) throw new CareerCvChoiceError();
     const perspectiveBoost = new Map<string, number>();
     if (roleTerms.size || priorityTerms.size) for (const perspective of perspectives) {
       const score = relevance(perspective.label, roleTerms, priorityTerms);
@@ -162,7 +212,7 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
             !available.some(item => flattened(item.text) === flattened(line))) rows.push({ text: line, assertion: null });
       }
       for (const assertion of labelEvidence) {
-        const text = confidential ? assertion.publicText : assertion.text;
+        const text = cvAssertionText(assertion, confidential, record.kind !== "skill");
         if (text) rows.push({ text: flattened(text), assertion });
         else if (confidential) excluded.push({ recordId: record.id, assertionId: assertion.id, reason: "confidential" });
       }
@@ -192,9 +242,25 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
           : relevance(b.text, roleTerms, priorityTerms) + (b.assertion ? perspectiveBoost.get(b.assertion.id) ?? 0 : 0)
             - relevance(a.text, roleTerms, priorityTerms) - (a.assertion ? perspectiveBoost.get(a.assertion.id) ?? 0 : 0)
             || a.index - b.index);
-      const selected = rankedRows.slice(0, 20);
+      const selected: typeof rankedRows = [];
+      let selectedCharacters = 0;
+      for (const row of rankedRows.slice(0, 20)) {
+        const fits = record.kind === "skill" ? row.text.length <= 150
+          : selectedCharacters + row.text.length + (selected.length ? 1 : 0) <= 40_000;
+        if (!fits) {
+          excluded.push({ recordId: record.id,
+            ...(row.assertion ? { assertionId: row.assertion.id } : {}), reason: "capacity" });
+          continue;
+        }
+        selectedCharacters += row.text.length + (selected.length ? 1 : 0);
+        selected.push(row);
+      }
       for (const row of rankedRows.slice(20)) excluded.push({ recordId: record.id,
         ...(row.assertion ? { assertionId: row.assertion.id } : {}), reason: "capacity" });
+      if (!selected.length) {
+        excluded.push({ recordId: record.id, reason: "capacity" });
+        continue;
+      }
       const company = candidateCompany(record, byId, links) ?? "Organisation not specified";
       const experience = ["role", "engagement", "project", "contribution"].includes(record.kind);
       if (experience) employment.push({ id: record.id, company, jobTitle: title,
@@ -206,10 +272,23 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
         : record.kind === "qualification" ? "education" : record.kind === "learning" ? "training"
           : record.kind === "skill" ? "skill" : "interest";
       const supportTexts = kind === "skill" ? available.filter(row => !row.facets.includes("skill"))
-        .map(row => confidential ? row.publicText : row.text).filter((text): text is string => !!text) : [];
-      const skillNarrative = kind === "skill"
+        .map(row => cvAssertionText(row, confidential)).filter((text): text is string => !!text) : [];
+      const skillNarrativeRows = kind === "skill"
         ? [...new Set([...(confidential ? [] : responsibilityRows(record.fields.originalNarrative)),
-          ...supportTexts.map(flattened)].filter(text => !disputedText.has(flattened(text))))].join("\n") || null : null;
+          ...supportTexts.map(flattened)].filter(text => !disputedText.has(flattened(text))))] : [];
+      const boundedNarrative: string[] = [];
+      let narrativeCharacters = 0;
+      for (const text of skillNarrativeRows) {
+        if (narrativeCharacters + text.length + (boundedNarrative.length ? 1 : 0) > 40_000) {
+          const source = available.find(row => !row.facets.includes("skill") &&
+            flattened(cvAssertionText(row, confidential) ?? "") === flattened(text));
+          excluded.push({ recordId: record.id, ...(source ? { assertionId: source.id } : {}), reason: "capacity" });
+          continue;
+        }
+        narrativeCharacters += text.length + (boundedNarrative.length ? 1 : 0);
+        boundedNarrative.push(text);
+      }
+      const skillNarrative = boundedNarrative.join("\n") || null;
       entries.push({ id: record.id, kind, heading: title,
         details: skillNarrative ?? selected.map(row => row.text).join("\n"),
         ...(experience ? { employmentId: record.id, confirmedResponsibilities: selected.map(row => row.text) } : {}),
@@ -223,7 +302,7 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
       }
       if (skillNarrative) for (const [index, text] of responsibilityRows(skillNarrative).entries()) {
         const cited = available.find(row => !row.facets.includes("skill") &&
-          flattened(confidential ? row.publicText ?? "" : row.text) === flattened(text));
+          flattened(cvAssertionText(row, confidential) ?? "") === flattened(text));
         sourceMap[`entry:${record.id}:row:${index}`] = { recordId: record.id,
           recordRevision: record.revision, assertionId: cited?.id ?? null,
           assertionRevision: cited?.revision ?? null, publicText: confidential };
@@ -242,8 +321,9 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
       preferredWording: base?.content.preferredWording,
       facetedRows: base?.content.facetedRows,
       theme: base?.content.theme, structuredExperience: true, employment, entries,
-      careerProjection: { version: careerVersion, presentation, display, sourceMap } });
-    return { careerVersion, presentation, library, sourceMap, display, excluded };
+      careerProjection: { version: careerVersion, presentation, display, sourceMap,
+        ...(canonicalChoices.length ? { conflictChoices: canonicalChoices } : {}) } });
+    return { careerVersion, presentation, library, sourceMap, display, excluded, reviewConflicts };
   }, { isolationLevel: "repeatable read" });
 }
 

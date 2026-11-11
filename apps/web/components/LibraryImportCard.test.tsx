@@ -8,7 +8,9 @@ it("offers LinkedIn PDF separately from a CV and keeps paste as an export fallba
   expect(html).toContain('id="library-import-linkedin"');
   expect(html).toContain('aria-label="Import source"');
   expect(html).not.toContain("<details");
-  expect(html).toContain('aria-current="true"');
+  expect(html).toContain('role="tablist" aria-label="Import source"');
+  expect(html).toContain('role="tab"');
+  expect(html).toContain('aria-selected="true"');
   expect(html).toContain('name="kind" value="linkedin"');
   expect(html).toContain('id="library-linkedin-pdf"');
   expect(html).toContain('accept="application/pdf,.pdf"');

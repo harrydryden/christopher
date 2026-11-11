@@ -454,11 +454,11 @@ export function CvRefineMode({ contextId, source: incomingSource, initialVersion
           const titleId = `cv-refine-title-${option.id}`;
           return <section key={`${option.type}:${option.id}`} className="border-b border-line-muted py-2"
             data-cv-source-entry={option.entryId} data-cv-source-summary={option.type === "summary" ? "true" : undefined}>
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="min-w-0 flex-1 whitespace-pre-wrap"><strong>{option.type === "section" ? "Heading" : option.label}</strong>
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <p className="min-w-0 w-full flex-1 whitespace-pre-wrap break-words sm:w-auto"><strong>{option.type === "section" ? "Heading" : option.label}</strong>
                 {!visibleTargets.includes(option) && " · Historical mirrored target"}
                 {focus === "instructions" && option.sourceText ? ` · ${option.sourceText}` : ""}</p>
-              {focus === "instructions" && <button type="button" className="min-h-11 border border-line-muted px-3" aria-pressed={targetIndex === index}
+              {focus === "instructions" && <button type="button" className="min-h-11 self-start border border-line-muted px-3 sm:self-auto" aria-pressed={targetIndex === index}
                 disabled={pending || !!awaitingChild}
                 onClick={() => chooseTarget(index)}>
                 {targetIndex === index ? "Editing" : "Choose for instruction"}</button>}

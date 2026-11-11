@@ -6,6 +6,7 @@ import { inputClass, labelClass } from "@/components/Field";
 import { LibraryImportForm } from "@/components/LibraryImportForm";
 import { UPLOAD_ACCEPT } from "@/lib/library-upload";
 import { importLibraryDocument } from "@/app/actions/library-import";
+import { TaskNavigation } from "./TaskNavigation";
 
 /**
  * Start a Library from a document that already exists.
@@ -19,20 +20,17 @@ import { importLibraryDocument } from "@/app/actions/library-import";
 export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { showTitle?: boolean; openLinkedIn?: boolean }) {
   const [source, setSource] = useState<"cv" | "linkedin" | "paste" | "website">(openLinkedIn ? "linkedin" : "cv");
   const choices = [
-    { id: "cv", label: "CV or career document" },
-    { id: "linkedin", label: "LinkedIn PDF export" },
-    { id: "paste", label: "Pasted text" },
-    { id: "website", label: "Your website or portfolio" },
+    { id: "cv", label: "CV or career document", panelId: "library-import-cv" },
+    { id: "linkedin", label: "LinkedIn PDF export", panelId: "library-import-linkedin" },
+    { id: "paste", label: "Pasted text", panelId: "library-import-paste" },
+    { id: "website", label: "Your website or portfolio", panelId: "library-import-website" },
   ] as const;
   return (
     <Card title={showTitle ? "Start from a document or page" : undefined}>
       <div className="grid gap-2">
-        <nav aria-label="Import source" className="flex flex-wrap gap-2">
-          {choices.map(choice => <button key={choice.id} type="button" aria-current={source === choice.id ? "true" : undefined}
-            onClick={() => setSource(choice.id)} className={`min-h-11 border px-3 text-14 ${source === choice.id ? "border-ink font-semibold" : "border-line-muted"}`}>{choice.label}</button>)}
-        </nav>
+        <TaskNavigation label="Import source" idPrefix="library-import-source" items={choices} active={source} onSelect={setSource} />
 
-        <section id="library-import-cv" hidden={source !== "cv"} className="border-t border-line-muted pt-2">
+        <section id="library-import-cv" role="tabpanel" aria-labelledby="library-import-source-tab-cv" hidden={source !== "cv"} className="border-t border-line-muted pt-2">
           <h3 className="text-14 font-medium">CV or career document</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
@@ -48,7 +46,7 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
           </div>
         </section>
 
-        <section id="library-import-linkedin" hidden={source !== "linkedin"} className="border-t border-line-muted pt-2">
+        <section id="library-import-linkedin" role="tabpanel" aria-labelledby="library-import-source-tab-linkedin" hidden={source !== "linkedin"} className="border-t border-line-muted pt-2">
           <h3 className="text-14 font-medium">LinkedIn PDF export</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-13 text-muted">Upload only your own profile. This is a dated export, not a check of your live LinkedIn page.</p>
@@ -71,7 +69,7 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
           </div>
         </section>
 
-        <section hidden={source !== "paste"} className="border-t border-line-muted pt-2">
+        <section id="library-import-paste" role="tabpanel" aria-labelledby="library-import-source-tab-paste" hidden={source !== "paste"} className="border-t border-line-muted pt-2">
           <h3 className="text-14 font-medium">Pasted text</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">
@@ -87,7 +85,7 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
           </div>
         </section>
 
-        <section hidden={source !== "website"} className="border-t border-line-muted pt-2">
+        <section id="library-import-website" role="tabpanel" aria-labelledby="library-import-source-tab-website" hidden={source !== "website"} className="border-t border-line-muted pt-2">
           <h3 className="text-14 font-medium">Your website or portfolio</h3>
           <div className="grid gap-2 pb-4">
           <p className="text-12 text-muted">

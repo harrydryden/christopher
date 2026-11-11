@@ -7,7 +7,7 @@ export function CareerConflictSnapshot({ detail }: { detail: CareerConflictDetai
     <div className="grid gap-3 md:grid-cols-2">{detail.statements.map((row, index) => <article key={row.id} className="min-w-0 border border-line-faint bg-raised p-4">
       <h3 className="text-16 font-semibold">Statement {index + 1}</h3>
       {detail.decision?.choice === "choose" && detail.decision.fingerprint === detail.fingerprint && detail.decision.selectedAssertionId === row.id &&
-        <p className="mt-1 text-12 font-semibold text-success">Used for future CVs</p>}
+        <p className="mt-1 text-12 font-semibold text-ok">Used for future CVs</p>}
       <p className="mt-2 whitespace-pre-wrap break-words text-14">{row.text}</p>
       {row.context && <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-13">
         <dt>Detail</dt><dd>{row.context.attribute}</dd><dt>Scope</dt><dd>{row.context.scope}</dd>

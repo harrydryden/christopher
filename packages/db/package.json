@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./catalogue-recommendations": {
+      "types": "./src/catalogue-recommendations.ts",
+      "default": "./src/catalogue-recommendations.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"

@@ -120,7 +120,7 @@ const GATES: Record<string, Record<string, Gate>> = {
     saveCvRefinement: "user", saveAndUpdateCvExactRefinement: "user", resetCvRefinement: "user", previewCvRefinementRebase: "user",
     applyCvRefinementRebase: "user", createManualCvEdition: "user",
     saveManualCvEdition: "user", selectCvEdition: "user", openCvAutoEdition: "user",
-    openOrClaimAutoCv: "user", retryFailedAutoCv: "verified", generateRefinedCv: "verified",
+    openOrClaimAutoCv: "user", readAutoCvSourceChoices: "user", retryFailedAutoCv: "verified", generateRefinedCv: "verified",
   },
   "actions/cv-finalisation.ts": { prepareCvFinalisation: "user", approveCvFinalisation: "user" },
   "actions/cv-pending-skills.ts": { decideCvPendingSkill: "verified" },
@@ -175,6 +175,10 @@ const GATES: Record<string, Record<string, Gate>> = {
   },
   "actions/setup.ts": { dismissSetupChecklist: "user" },
   "actions/suggestions.ts": { acceptSuggestion: "verified", rejectSuggestion: "verified", findMoreSuggestions: "verified" },
+  "actions/recommendations.ts": { decideCatalogueRecommendation: "user" },
+  "actions/career.ts": { getCareerWorkspace: "user", saveCareerChange: "user", undoCareerChange: "user" },
+  "actions/career-review.ts": { getCareerReviewSummary: "user", listCareerReviewIssues: "user",
+    getCareerConflictDetail: "user", decideCareerConflict: "user" },
 };
 
 const classified = Object.entries(GATES).flatMap(([module, exports]) => Object.entries(exports).map(([name, gate]) => ({ module, name, gate })));

@@ -1,6 +1,7 @@
 "use server";
 
 import { createHash, randomUUID } from "node:crypto";
+import { CareerCvChoiceOverrideSchema, type CareerCvChoiceOverride, type CareerCvProjection } from "@col/core/career-record";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { CV_PROMPT_IDS, PROMPTS, promptSetVersion, resolveRoute, routedModel } from "@col/ai/prompt-registry";
 import { CV_REVIEW_VERSION, type CvJobSource } from "@col/core/cv-assessment";
@@ -11,13 +12,14 @@ import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvRefinedResultKey, 
   cvRefinementDependencies, cvEditingTargetsFor, cvProjectOneExactWording,
   validateCvEditingTargetTransition, CvRefinementSchema,
   type CvAutoInputV1, type CvRefinementV1, type CvEditingTargets } from "@col/core/cv-editing-modes";
-import { BulletSignpostSchema, CvContentSchema, CvLibrarySchema, CvThemeSchema, DEFAULT_CV_THEME, groupCvLibrary, isKnownModel, modelForCallSite,
+import { BulletSignpostSchema, CvContentSchema, CvLibrarySchema, CvThemeSchema, DEFAULT_CV_THEME, groupCvLibrary, isEmptyCvExperienceError, isKnownModel, modelForCallSite,
   type CvContent, type CvLibrary } from "@col/core";
 import { canonicalJson, cvAssessmentCurrent, validateCvRubric } from "@col/core/cv-review";
 import { cvPreviewRefinementRebase, type CvRefinementRebaseItem } from "@col/core/cv-refinement-rebase";
 import { appendCvRefinement, currentCvRefinements, attachCvAutoBaselineDraft, claimCvAutoBaseline, cvApplicationContexts, cvAutoBaselines,
   cvContextDescriptions, cvDrafts, jobs, companies, userJobs, users, nextCvRevision, reserveCvCredit,
   resolveCvApplicationContext } from "@col/db";
+import { latestCareerCvEvidence, ensureCareerBackfill, lockAccountScoreInput } from "@col/db";
 import type { Db } from "@col/db";
 import { cvTailoringPlans, saveCvTailoringPlan } from "@col/db";
 import { updateCvContextDescription } from "@col/db";
@@ -102,8 +104,9 @@ export async function updateCvApplicationDescription(contextId: string, expected
 }
 
 export type AutoCvResult = { ok: true; status: "ready" | "queued" | "failed" | "missing";
-  baselineId?: string; draftId?: string | null; updateAvailable?: boolean | null; charged: boolean }
-  | { ok: false; error: string };
+  baselineId?: string; draftId?: string | null; updateAvailable?: boolean | null; charged: boolean;
+  sourceReview?: CareerCvProjection["reviewConflicts"] }
+  | { ok: false; error: string; sourceReview?: CareerCvProjection["reviewConflicts"] };
 
 export type CvRefinementResult = { ok: true; version: number } | { ok: false; error: string };
 export type CvRebasePreviewResult = { ok: true; version: number; toDescriptionVersionId: string;
@@ -884,12 +887,42 @@ export async function selectCvEdition(contextId: string, kind: "baseline" | "dra
   }
 }
 
+/** Optional source choices are loaded on demand, without generating or reserving a credit. */
+export async function readAutoCvSourceChoices(contextId: string): Promise<{
+  ok: true; conflicts: CareerCvProjection["reviewConflicts"];
+} | { ok: false; error: string }> {
+  const user = await requireUser();
+  try {
+    if (!uuid.test(contextId)) throw new UserFacingError("This application could not be found.");
+    const [description] = await db().select({ text: cvContextDescriptions.text })
+      .from(cvApplicationContexts).innerJoin(cvContextDescriptions,
+        and(eq(cvContextDescriptions.id, cvApplicationContexts.currentDescriptionVersionId),
+          eq(cvContextDescriptions.contextId, cvApplicationContexts.id), eq(cvContextDescriptions.userId, user.id)))
+      .where(and(eq(cvApplicationContexts.id, contextId), eq(cvApplicationContexts.userId, user.id)));
+    if (!description) throw new UserFacingError("This application has no saved role description.");
+    await ensureCareerBackfill(db(), user.id);
+    const career = await db().transaction(async tx => {
+      await lockAccountScoreInput(tx as unknown as Db, user.id, "shared");
+      return latestCareerCvEvidence(tx as unknown as Db, user.id, { roleText: description.text });
+    });
+    return { ok: true, conflicts: career.reviewConflicts };
+  } catch (error) {
+    const result = actionError(error, "Could not load Experience choices. Your saved CV is unchanged.");
+    return { ok: false, error: result.ok ? "Could not load Experience choices." : result.error };
+  }
+}
+
 /** `open` never reserves; `update` is the person's deliberate request for the current inputs. */
-export async function openOrClaimAutoCv(contextId: string, intent: "open" | "update"): Promise<AutoCvResult> {
+export async function openOrClaimAutoCv(contextId: string, intent: "open" | "update",
+  conflictChoices: CareerCvChoiceOverride[] = []): Promise<AutoCvResult> {
   const user = intent === "update" ? await requireVerifiedUser() : await requireUser();
+  let sourceReview: CareerCvProjection["reviewConflicts"] | undefined;
   try {
     if (!uuid.test(contextId) || (intent !== "open" && intent !== "update"))
       throw new UserFacingError("This application could not be found.");
+    const parsedChoices = CareerCvChoiceOverrideSchema.array().max(100).safeParse(conflictChoices);
+    if (!parsedChoices.success || new Set(parsedChoices.data.map(choice => choice.groupKey)).size !== parsedChoices.data.length)
+      throw new UserFacingError("Reload Experience choices before updating Auto.");
     if (intent === "open") {
       const [context] = await db().select().from(cvApplicationContexts)
         .where(and(eq(cvApplicationContexts.id, contextId), eq(cvApplicationContexts.userId, user.id)));
@@ -911,7 +944,10 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
         draftId: held.sourceDraftId, updateAvailable: null, charged: false }
         : { ok: true, status: "missing", charged: false };
     }
+    await ensureCareerBackfill(db(), user.id);
     const outcome = await db().transaction(async tx => {
+      // A build pins both career facts and contact/preferences while their writers wait.
+      await lockAccountScoreInput(tx as unknown as Db, user.id, "shared");
       await lockCvBuildCapacity(tx, user.id);
       const [context] = await tx.select().from(cvApplicationContexts)
         .where(and(eq(cvApplicationContexts.id, contextId), eq(cvApplicationContexts.userId, user.id))).for("update");
@@ -921,16 +957,18 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
           eq(cvContextDescriptions.contextId, context.id), eq(cvContextDescriptions.userId, user.id)));
       if (!description) throw new UserFacingError("Reload the current role description before updating Auto.");
       const latest = await latestLibrary(tx, user.id);
-      if (!latest) throw new UserFacingError("Save your Experience before generating an Auto CV.");
       const settings = await getSettingsFor(user.id, tx);
+      const career = await latestCareerCvEvidence(tx as unknown as Db, user.id,
+        { roleText: description.text, conflictChoices: parsedChoices.data }, settings.cvTheme?.experienceLayout);
+      sourceReview = career.reviewConflicts;
       const model = settings.cvModel;
       if (!isKnownModel(model) || model === modelForCallSite(settings, "A3"))
         throw new UserFacingError("Choose a supported CV model in Settings before generating.");
-      const explicitTheme = settings.cvTheme ?? (canonicalJson(CvThemeSchema.parse(latest.content.theme ?? DEFAULT_CV_THEME))
-        !== canonicalJson(DEFAULT_CV_THEME) ? latest.content.theme : undefined);
-      const theme = { ...(latest.content.theme ?? DEFAULT_CV_THEME),
+      const explicitTheme = settings.cvTheme ?? (canonicalJson(CvThemeSchema.parse(career.library.theme ?? DEFAULT_CV_THEME))
+        !== canonicalJson(DEFAULT_CV_THEME) ? career.library.theme : undefined);
+      const theme = { ...(explicitTheme ?? career.library.theme ?? DEFAULT_CV_THEME),
         maxPages: explicitTheme?.maxPages ?? 2, bodySizePt: explicitTheme?.bodySizePt ?? 12 };
-      const library = groupCvLibrary(CvLibrarySchema.parse({ ...latest.content,
+      const library = groupCvLibrary(CvLibrarySchema.parse({ ...career.library,
         ...(settings.cvWritingPreferences ?? {}), theme }));
       const routes = Object.fromEntries(CV_PROMPT_IDS.map(id => {
         const route = resolveRoute(PROMPTS[id], settings.stageRoutes);
@@ -972,8 +1010,11 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
       const [draft] = await tx.insert(cvDrafts).values({ userId: user.id, contextId: context.id,
         descriptionVersionId: description.id, editingMode: "auto", autoBaselineId: claim.baseline.id,
         jobId: context.jobId, jobTitle: context.jobTitle, companyName: context.companyName,
-        jobDescription: description.text, jobSource: description.source, libraryVersion: latest.version,
-        librarySnapshot: library, model, revision, status: "queued", buildCheckpoint: {
+        jobDescription: description.text, jobSource: description.source, libraryVersion: latest?.version ?? 0,
+        librarySnapshot: library, careerVersion: career.careerVersion,
+        careerSourceMap: career.sourceMap, careerDisplay: career.display,
+        careerPresentation: career.presentation,
+        model, revision, status: "queued", buildCheckpoint: {
           tailoringEnabled: true, quizCompleted: true, ...(rubricCheckpoint ?? {}),
         } }).returning({ id: cvDrafts.id });
       await attachCvAutoBaselineDraft(tx, { userId: user.id, baselineId: claim.baseline.id, draftId: draft!.id });
@@ -984,10 +1025,14 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
       return { status: "queued" as const, baselineId: claim.baseline.id, draftId: draft!.id, charged: true };
     });
     revalidatePath("/cv");
-    return { ok: true, ...outcome };
+    return { ok: true, ...outcome, sourceReview };
   } catch (error) {
+    if (isEmptyCvExperienceError(error)) return { ok: false, sourceReview,
+      error: sourceReview?.length
+        ? "Choose a statement for this CV below, add another work detail, or continue in Manual. You can leave Experience reviews for later."
+        : "Add a work detail to Experience, or continue in Manual to write your CV." };
     const result = actionError(error, "Could not update Auto. Please try again.");
-    return { ok: false, error: result.ok ? "Could not update Auto." : result.error };
+    return { ok: false, error: result.ok ? "Could not update Auto." : result.error, sourceReview };
   }
 }
 

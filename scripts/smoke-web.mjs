@@ -9,6 +9,8 @@ import { verifyCvWorkspace } from "./smoke-cv.mjs";
 import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
 import { verifyApplicationsWorkspace } from "./smoke-applications.mjs";
 import { verifyEvidenceConversation } from "./smoke-evidence.mjs";
+import { verifyCareerRecommendations } from "./smoke-career-recommendations.mjs";
+import { verifyCareerReview } from "./smoke-career-review.mjs";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { disposableAdmin, startWeb } from "./lib/web.mjs";
@@ -55,10 +57,9 @@ const PAGES = [
   ["/admin/health", ["Operations"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
-  ["/library", ["Experience", "About you", "Work history", "Education, training, skills and interests", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
-    "Experience", "Education, training, skills and interests", "Review evidence", "How evidence is scored",
+  ["/library", ["Experience", "Your career record", "About you and contact", "No career details saved yet",
     "Start from a document or page", "CV or career document", "LinkedIn PDF export", "Pasted text", "Your website or portfolio",
-    "Nothing is added to Experience until you review and confirm it.",
+    "Your own facts are ready to use when saved",
     "A LinkedIn link alone does not read your profile.",
     "Writing preferences", "Writing style", "Saved phrasing", "No Experience saved yet"]],
   ["/applications", ["Applications", "Active", "Closed", "Due this week", "Stage breakdown", "What the stages mean"]],
@@ -298,12 +299,17 @@ async function main() {
 
   try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`CV browser flow: ${error.stack ?? error.message}`); }
-  try { await verifyCvTailoringWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  try { await verifyCvTailoringWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId, SECRET); }
   catch (error) { failures.push(`CV tailoring browser flow: ${error.stack ?? error.message}`); }
   try { await verifyApplicationsWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`Applications browser flow: ${error.stack ?? error.message}`); }
   try { await verifyEvidenceConversation(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`Evidence conversation browser flow: ${error.stack ?? error.message}`); }
+
+  try { await verifyCareerRecommendations(`http://127.0.0.1:${PORT}`, DATABASE_URL, SECRET); }
+  catch (error) { failures.push(`Career recommendations browser flow: ${error.stack ?? error.message}`); }
+  try { await verifyCareerReview(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  catch (error) { failures.push(`Career review browser flow: ${error.stack ?? error.message}`); }
 
   // The disposable account takes its sessions, settings and drafts with it, and the throwaway
   // company takes its subscription.

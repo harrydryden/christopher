@@ -345,7 +345,7 @@ it("upgrades the role's existing application when the submitted CV is recorded, 
 
   await database.update(schema.cvDrafts).set({
     status: "ready",
-    content: { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] },
+    content: { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: draft!.librarySnapshot.entries[0]!.id, kind: "experience", heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] },
   }).where(eq(schema.cvDrafts.id, draft!.id));
   await completeAssessment(draft!.id);
 
@@ -589,7 +589,7 @@ it("records the PDF finalising kept, rendering it no second time", async () => {
   await saveLibrary();
   await expect(requestCv({ ok: true }, form({ jobId: job.id, description: DESCRIPTION }))).rejects.toThrow("redirect:/cv/");
   const [draft] = await database.select().from(schema.cvDrafts);
-  const content = { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] };
+  const content = { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: draft!.librarySnapshot.entries[0]!.id, kind: "experience" as const, heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] };
   await database.update(schema.cvDrafts).set({ status: "ready", content }).where(eq(schema.cvDrafts.id, draft!.id));
   let renders = 0;
   rendering.during = async () => { renders++; };
@@ -623,7 +623,7 @@ it("refuses a finalised application when its approved PDF is missing", async () 
   await saveLibrary();
   await expect(requestCv({ ok: true }, form({ jobId: job.id, description: DESCRIPTION }))).rejects.toThrow("redirect:/cv/");
   const [draft] = await database.select().from(schema.cvDrafts);
-  const content = { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] };
+  const content = { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: draft!.librarySnapshot.entries[0]!.id, kind: "experience" as const, heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] };
   await database.update(schema.cvDrafts).set({ status: "ready", content }).where(eq(schema.cvDrafts.id, draft!.id));
   await completeAssessment(draft!.id);
 

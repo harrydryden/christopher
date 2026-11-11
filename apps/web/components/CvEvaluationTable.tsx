@@ -178,6 +178,10 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                           Add evidence for this
                         </a>
                       )}
+                      {row.careerSources?.map(source => <a key={source.href} href={source.href}
+                        className="block text-12 font-medium text-fg underline underline-offset-2">
+                        Edit {source.label}
+                      </a>)}
                     </div>
                     <CvDisclosure label={`evidence for item ${row.number}`}>
                       {!row.suggestion.includes(row.reason) && (

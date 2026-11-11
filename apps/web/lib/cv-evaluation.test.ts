@@ -11,7 +11,7 @@ import {
   rubricFixture,
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
-import { CV_CHANGE_TYPES, cvCommentRows, cvEvaluationRows, libraryDriftSentence } from "./cv-evaluation";
+import { CV_CHANGE_TYPES, cvCareerSourceLinks, cvCommentRows, cvEvaluationRows, libraryDriftSentence } from "./cv-evaluation";
 import { CV_PROFILE_ID, cvSectionBlockId } from "./cv-content-links";
 const library: CvLibrary = {
   name: "Example",
@@ -27,6 +27,31 @@ const library: CvLibrary = {
     },
   ],
 };
+
+it("links each cited career fact to its exact saved source, without guessing from a heading", () => {
+  const recordId = "8af5c7c8-f98f-44f8-984a-6389df14b738";
+  const first = "a768cd2a-9586-4855-8096-9999ce9b2eaa";
+  const second = "9ed80928-8a2f-4194-a4d6-5ea92cfd8ad4";
+  const source = (assertionId: string) => ({ recordId, recordRevision: 2, assertionId,
+    assertionRevision: 1, publicText: false });
+  const snapshot: CvLibrary = { ...library,
+    entries: [{ id: recordId, kind: "experience", heading: "Service redesign",
+      details: "Reduced delays\nImproved handover" }],
+    careerProjection: { version: 2, presentation: "project",
+    display: { [recordId]: { recordId, kind: "project", title: "Service redesign", organisationLabel: null,
+      dates: { start: "2020", end: null, current: true }, publicLabel: null, groupRecordId: null } },
+    sourceMap: { [`entry:${recordId}:row:0`]: source(first), [`entry:${recordId}:row:1`]: source(second) } } };
+  const row = { id: "need", requirement: "Delivery", currentText: [], change: "Gap" as const,
+    suggestion: "Evidence", contentLinks: [], evidence: "Weak" as const, experience: "Weak" as const,
+    reason: "Missing", sources: [], sourceRefs: [
+      { id: `entry:${recordId}`, quote: "Reduced delays" },
+      { id: `entry:${recordId}`, quote: "Improved handover" },
+      { id: "unknown", quote: "Something else" }] };
+  expect(cvCareerSourceLinks(row, snapshot)).toEqual([
+    { href: `/library?record=${recordId}&assertion=${first}#career-assertion-${first}`, label: "Source 1 in Service redesign" },
+    { href: `/library?record=${recordId}&assertion=${second}#career-assertion-${second}`, label: "Source 2 in Service redesign" },
+  ]);
+});
 const content = materialiseCv(library, {
   summary: "Operations leader",
   sections: [{ entryId: "job", bullets: ["Led a team"] }],

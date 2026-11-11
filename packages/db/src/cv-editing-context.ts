@@ -114,7 +114,9 @@ export async function publishCvAutoBaseline(tx: Tx, input: { userId: string; bas
     throw new CvContextConflict("A newer Auto build owns this baseline claim.");
   const [source] = await tx.select({ id: cvDrafts.id, userId: cvDrafts.userId,
     contextId: cvDrafts.contextId, descriptionVersionId: cvDrafts.descriptionVersionId,
-    autoBaselineId: cvDrafts.autoBaselineId, editingMode: cvDrafts.editingMode })
+    autoBaselineId: cvDrafts.autoBaselineId, editingMode: cvDrafts.editingMode,
+    careerVersion: cvDrafts.careerVersion, careerSourceMap: cvDrafts.careerSourceMap,
+    careerDisplay: cvDrafts.careerDisplay, careerPresentation: cvDrafts.careerPresentation })
     .from(cvDrafts).where(and(eq(cvDrafts.id, input.sourceDraftId), eq(cvDrafts.userId, input.userId)));
   if (!source || source.contextId !== row.contextId || source.descriptionVersionId !== row.descriptionVersionId
     || source.autoBaselineId !== row.id || source.editingMode !== "auto")
@@ -123,6 +125,8 @@ export async function publishCvAutoBaseline(tx: Tx, input: { userId: string; bas
   if (row.status !== "queued") throw new CvContextConflict("This Auto baseline needs an explicit retry.");
   const [published] = await tx.update(cvAutoBaselines).set({ status: "ready", sourceDraftId: input.sourceDraftId,
     content, assessment: input.assessment ?? null, librarySnapshot, tailoringPlan,
+    careerVersion: source.careerVersion, careerSourceMap: source.careerSourceMap,
+    careerDisplay: source.careerDisplay, careerPresentation: source.careerPresentation,
     editingTargets, publishedAt: new Date() })
     .where(and(eq(cvAutoBaselines.id, row.id), eq(cvAutoBaselines.userId, input.userId), eq(cvAutoBaselines.status, "queued")))
     .returning();

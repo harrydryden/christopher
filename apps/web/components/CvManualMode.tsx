@@ -7,6 +7,7 @@ import type { CvEditingTargets } from "@col/core/cv-editing-modes";
 import type { CvTheme } from "@col/core/cv-theme-values";
 import { createManualCvEdition, saveManualCvEdition } from "@/app/actions/cv-editing";
 import { useCvContextLayout } from "./CvContextLayout";
+import { SkillTagPicker, skillKey } from "./SkillTagPicker";
 
 type Kind = CvContent["sections"][number]["kind"];
 type Item = { id: string; text: string; sources?: string[]; signpost?: string | null };
@@ -37,11 +38,12 @@ function sectionsFrom(draft: Draft | null): Section[] {
 }
 
 /** A Manual edition starts empty and only becomes renderable after the person's first valid Save. */
-export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, copySource = null, initialTheme }: {
+export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, copySource = null, initialTheme, skillChoices = [] }: {
   contextId: string; descriptionVersionId: string | null; draft: Draft | null;
   prefill: { name: string; contact: string; summary: string };
   copySource?: { kind: "baseline" | "draft"; id: string } | null;
   initialTheme?: CvTheme;
+  skillChoices?: readonly string[];
 }) {
   const router = useRouter();
   const [base, setBase] = useState<Draft | null>(draft);
@@ -167,6 +169,15 @@ export function CvManualMode({ contextId, descriptionVersionId, draft, prefill, 
               onClick={() => setSections(rows => { const next = [...rows]; [next[index], next[index + 1]] = [next[index + 1]!, next[index]!]; return next; })}>↓</button></div>
           <label className="block space-y-1"><span>Heading</span><input className="min-h-11 w-full border border-line-muted bg-raised px-3" maxLength={250}
             value={row.heading} onChange={event => updateSection(index, current => ({ ...current, heading: event.target.value }))} /></label>
+          {row.kind === "skill" && <SkillTagPicker label={`Choose skills for ${row.heading || `section ${index + 1}`}`}
+            selected={row.skills.map(item => item.text).filter(Boolean)}
+            choices={[...skillChoices, ...sections.flatMap(section => section.skills.map(item => item.text))]}
+            limit={20} showSelected={false}
+            onAdd={label => updateSection(index, current => skillKey(label) && !current.skills.some(item => skillKey(item.text) === skillKey(label))
+              ? { ...current, skills: [...current.skills.filter(item => item.text.trim()), { id: uuid(), text: label }],
+                mirroredBulletIds: [...current.skills.map((item, position) => item.text.trim() ? current.mirroredBulletIds[position] : null).filter((id): id is string => !!id), uuid()] }
+              : current)}
+            onRemove={() => {}} />}
           {(row.kind === "skill" ? row.skills : row.bullets).map((item, position) => <div key={item.id} className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-start">
             <label className="col-span-3 w-full space-y-1 sm:min-w-0 sm:flex-1"><span>{row.kind === "skill" ? `Skill ${position + 1}` : `Bullet ${position + 1}`}</span>
               <textarea className="min-h-11 w-full border border-line-muted bg-raised p-2" value={item.text}

@@ -50,3 +50,23 @@ it("can save a genuine first Manual section without Auto or an AI call", async (
     sections: [{ kind: "experience", heading: "My project work", bullets: ["Built the monthly report for my team."] }] });
   expect(call[3]).toBeUndefined();
 });
+
+it("keeps a chosen comma-containing skill as one ordered Manual label", async () => {
+  vi.mocked(saveManualCvEdition).mockResolvedValue({ ok: true, draftId: "manual-child" });
+  act(() => root.render(<CvManualMode contextId="context" descriptionVersionId={version}
+    draft={{ id: "manual-starter", revision: 1, content: null, editingTargets: null }}
+    prefill={{ name: "Alex Morgan", contact: "London", summary: "Operations analyst" }}
+    skillChoices={["Planning, delivery", "SQL"]} />));
+  act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Add section")!.click());
+  const type = [...container.querySelectorAll<HTMLSelectElement>("select")].find(select =>
+    select.closest("label")?.textContent?.includes("Type"))!;
+  act(() => { type.value = "skill"; type.dispatchEvent(new Event("change", { bubbles: true })); });
+  const heading = [...container.querySelectorAll<HTMLInputElement>("input")].find(input =>
+    input.closest("label")?.textContent?.includes("Heading"))!;
+  enter(heading, "Delivery skills");
+  act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Add Planning, delivery"]')!.click());
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent?.startsWith("Save Manual CV"))!.click());
+  expect(vi.mocked(saveManualCvEdition).mock.calls[0]?.[2]).toMatchObject({ sections: [{
+    kind: "skill", heading: "Delivery skills", skillItems: ["Planning, delivery"], bullets: ["Planning, delivery"] }] });
+});

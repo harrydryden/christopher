@@ -265,6 +265,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(queuedContinuations, 1);
     await page.goto(`${baseUrl}/cv/${evidencePausedId}`);
     await page.getByRole("heading", { name: "Could your Experience say more?" }).waitFor();
+    assert.equal(await page.getByRole("textbox", { name: "Your answer (optional)", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Save facts and continue", exact: true }).count(), 1);
+    assert.equal(await page.locator('input[name^="confirmed:"]').count(), 0);
     assert.equal(await page.getByRole("button", { name: /Save (changes|as new revision) · free/ }).count(), 0);
     await page.getByRole("tab", { name: "Review" }).click();
     assert.equal(await page.getByRole("button", { name: "Check saved CV" }).count(), 0);
@@ -298,99 +301,26 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Experience", exact: true }).getAttribute("aria-current"), "page");
     // Applications owns the CV pages now; on Library it must not be the current entry.
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Applications", exact: true }).getAttribute("aria-current"), null);
-    await page.getByText("Review evidence", { exact: true }).click();
-    await page.getByText("How evidence is scored", { exact: true }).click();
-    await page.getByRole("heading", { name: "Scoring guide", exact: true }).waitFor();
-    assert.equal(await page.getByText("A strong row says", { exact: true }).count(), 1);
-    const experienceTab = page.getByRole("tab", { name: "Work history", exact: true });
-    const educationTab = page.getByRole("tab", { name: "Education, training & skills", exact: true });
+    await page.getByText("About you and contact", { exact: true }).click();
     const introTab = page.getByRole("tab", { name: "About you", exact: true });
-    assert.equal(await experienceTab.getAttribute("aria-selected"), "true");
-    await introTab.click();
+    assert.equal(await introTab.getAttribute("aria-selected"), "true");
+    assert.equal(await page.getByRole("tab", { name: "Work history", exact: true }).count(), 0,
+      "work facts use the career record, not a second legacy editor");
+    assert.equal(await page.getByRole("tab", { name: "Education, training & skills", exact: true }).count(), 0,
+      "supporting career facts use the same career record");
     await page.getByText("Writing preferences", { exact: true }).click();
     // Writing preferences live on the Library, beside the wording they shape (SPEC: writing preferences on the Library page).
     assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 1);
     // Saving is the person's own act: there is no save control until there is something to save,
     // and then it is pinned above the fold with a way to discard.
-    assert.equal(await page.getByRole("button", { name: "Save Experience", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Save About you", exact: true }).count(), 0);
     await page.getByRole("textbox", { name: "Website", exact: true }).fill("https://example.com/portfolio");
-    await page.getByText("Unsaved changes", { exact: true }).waitFor();
+    await page.getByText("Unsaved About you changes", { exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Discard", exact: true }).count(), 1);
-    await experienceTab.click();
-    await educationTab.click();
-    assert.equal(await page.getByRole("heading", { name: "Work history", exact: true }).isVisible(), false);
-    await page.getByRole("button", { name: "Add education, training, skill or interest", exact: true }).click();
-    const skills = page.getByRole("textbox", { name: "Individual skills:", exact: true });
-    const skillNames = ["Financial Planning & Analysis", "P&L Management", "Unit Economics", "Product Operations", "Customer Success", "Customer Support"];
-    await skills.fill(skillNames.join(", "));
-    await page.getByText("6/20 individual skills", { exact: true }).waitFor();
-    await skills.blur();
-    assert.equal(await skills.inputValue(), skillNames.join("\n"));
-    await skills.fill("A".repeat(120));
-    await page.getByText("Skill 1 is approaching 150 characters.", { exact: true }).waitFor();
-    await skills.fill("A".repeat(150));
-    assert.equal((await skills.inputValue()).length, 150);
-    await skills.fill("A".repeat(151));
-    assert.equal((await skills.inputValue()).length, 151, "over-limit paste remains intact for correction");
-    await page.getByText("Skill 1 is 151 characters; the limit is 150. Move supporting detail to Details.", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Save Experience", exact: true }).isDisabled(), true);
-    await skills.fill("SQL\nPython");
-    await experienceTab.click();
-    assert.equal(await skills.isVisible(), false);
-    await experienceTab.press("ArrowRight");
-    assert.equal(await educationTab.getAttribute("aria-selected"), "true");
-    assert.equal(await skills.inputValue(), "SQL\nPython");
-    await introTab.click();
     assert.equal(await page.getByRole("textbox", { name: "Website", exact: true }).inputValue(), "https://example.com/portfolio");
-    await experienceTab.click();
-
-    // What a CV can be built from, said on the Library by the rule generation itself applies: a
-    // job, one responsibility and its confirmation, each answered in turn. A job in employment
-    // history is active by being there; there is no status to set.
-    const readyLine = page.getByRole("status").filter({ hasText: /To build a CV|Your confirmed evidence/ });
-    assert.match(await readyLine.innerText(), /^To build a CV, add a job/);
-    await page.getByRole("button", { name: "Add job", exact: true }).click();
-    // The employment grid is a table here and stacked cards on a phone, so both copies of each
-    // field exist in the DOM and only the one for this viewport is visible.
-    await page.locator('input[aria-label="Job 1 company"]:visible').fill("Smoke Co");
-    await page.locator('input[aria-label="Job 1 title"]:visible').fill("Operations Lead");
-    const smokeJob = page.locator("section[data-job-id]").filter({ hasText: "Operations Lead · Smoke Co" });
-    await smokeJob.getByText("Edit evidence rows directly · 0/20", { exact: true }).click();
-    await smokeJob.getByRole("button", { name: "Add new responsibility or outcome", exact: true }).click();
-    // The row that was just added takes the caret, so it can be typed into straight away.
-    assert.match(await page.evaluate(() => document.activeElement?.id ?? ""), /^responsibility-/);
-    await page
-      .getByRole("textbox", { name: "Smoke Co Operations Lead evidence 1", exact: true })
-      .fill("Ran the smoke estate end to end every morning.");
-    assert.match(await smokeJob.innerText(), /0 of 1 confirmed/);
-    assert.equal(await readyLine.innerText(), "To build a CV, confirm Smoke Co’s rows");
-    // The row's Type is one dropdown that takes several types at once.
-    const typeMenu = smokeJob.getByRole("button", { name: "Type of row 1", exact: true });
-    assert.equal(await typeMenu.count(), 1);
-    // A menu of the six types, each toggled on its own, left with Escape back on the trigger.
-    await typeMenu.click();
-    await page.getByRole("menuitemcheckbox", { name: "Outcomes", exact: true }).click();
-    await page.getByRole("menuitemcheckbox", { name: "Metrics moved", exact: true }).click();
-    assert.equal(await page.getByRole("menuitemcheckbox", { name: "Outcomes", exact: true }).getAttribute("aria-checked"), "true");
-    await page.keyboard.press("Escape");
-    assert.equal(await page.getByRole("menu").count(), 0);
-    assert.match(await typeMenu.innerText(), /OUTCOMES[\s\S]*METRICS MOVED/i);
-    assert.equal(await smokeJob.getByRole("combobox", { name: /^Status:/ }).count(), 0);
-    // Removing a job archives its rows and says so, and the way back is at the foot of the tab.
-    page.once("dialog", (dialog) => { assert.match(dialog.message(), /You can restore it from Archived jobs below\./); return dialog.accept(); });
-    await smokeJob.getByRole("button", { name: "Remove Smoke Co Operations Lead", exact: true }).click();
-    const archived = page.locator("details").filter({ hasText: "Archived jobs (1)" });
-    await archived.locator("summary").click();
-    assert.match(await archived.innerText(), /Operations Lead · Smoke Co.*· 1 row/s);
-    await archived.getByRole("button", { name: /^Restore / }).click();
-    assert.equal(await page.locator('input[aria-label="Job 1 company"]:visible').inputValue(), "Smoke Co");
-    await smokeJob.getByRole("button", { name: "Confirm all", exact: true }).click();
-    assert.match(await smokeJob.innerText(), /1 of 1 confirmed/);
-    assert.equal(await readyLine.innerText(), "Your confirmed evidence can be used in future CVs.");
-
-    // An incomplete field in the other tab must be revealed when saving.
-    await page.getByRole("button", { name: "Save Experience", exact: true }).click();
-    assert.equal(await educationTab.getAttribute("aria-selected"), "true");
+    // About stays a deliberate Save while factual career details autosave independently.
+    await page.getByRole("button", { name: "Save About you", exact: true }).click();
+    await page.getByRole("textbox", { name: "Bio", exact: true }).fill("Leading complex delivery teams.");
 
     // Nothing typed here leaves by accident: an in-app link asks first, and declining stays put.
     const declined = new Promise((resolve) =>
@@ -405,8 +335,96 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.goto(`${baseUrl}/cv/library`);
     await page.getByRole("heading", { name: "Experience", exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/library");
-    await page.getByRole("navigation", { name: "Workspace tools" }).getByRole("link", { name: "Preferences", exact: true }).click();
     page.off("dialog", leaving);
+    // A career fact is available as soon as it is saved. Work, employer and their relationship
+    // are owned records; no legacy job confirmation, AI task or credit is involved.
+    const career = page.getByRole("region", { name: "Career record" });
+    const beforeCareerTasks = (await pool.query("select count(*)::int n from tasks where payload->>'userId' = $1::text", [userId])).rows[0].n;
+    const beforeCareerCalls = (await pool.query("select count(*)::int n from ai_calls where user_id = $1", [userId])).rows[0].n;
+    await career.getByRole("textbox", { name: "Name or title", exact: true }).fill("Operations Lead");
+    await career.getByRole("button", { name: "Add to Experience", exact: true }).click();
+    await career.getByRole("heading", { name: "Operations Lead", exact: true }).waitFor();
+    const roleId = new URL(page.url()).searchParams.get("record");
+    assert.match(roleId ?? "", /^[0-9a-f-]{36}$/i);
+    await career.getByRole("combobox", { name: "Arrangement", exact: true }).selectOption("contract");
+    const story = career.getByRole("textbox", { name: "Your original story", exact: true });
+    await story.fill("Led a morning operations handover across the service estate.");
+    await story.blur();
+    await career.getByRole("status").filter({ hasText: "Saved" }).waitFor();
+    await career.getByRole("textbox", { name: "Add a detail", exact: true }).fill("Ran the smoke estate end to end every morning.");
+    await career.getByRole("button", { name: "Save detail · free", exact: true }).click();
+    await career.getByRole("textbox", { name: "Saved detail", exact: true }).waitFor();
+    const savedRole = (await pool.query("select kind, fields from career_records where user_id = $1 and id = $2", [userId, roleId])).rows[0];
+    assert.equal(savedRole.kind, "role");
+    assert.equal(savedRole.fields.arrangement, "contract");
+    assert.match(savedRole.fields.originalNarrative, /morning operations handover/);
+    assert.equal((await pool.query("select count(*)::int n from career_assertions where user_id = $1 and subject_id = $2 and status = 'usable'", [userId, roleId])).rows[0].n, 1);
+    assert.equal(await career.getByRole("button", { name: "Confirm all", exact: true }).count(), 0);
+    await career.getByRole("button", { name: "Archive", exact: true }).click();
+    await career.getByRole("button", { name: "Restore", exact: true }).waitFor();
+    await career.getByRole("button", { name: "Undo last change", exact: true }).click();
+    await career.getByRole("button", { name: "Archive", exact: true }).waitFor();
+    await career.getByText("More record types", { exact: true }).click();
+    await career.getByRole("button", { name: "Add organisation", exact: true }).click();
+    await career.getByRole("textbox", { name: "Name or title", exact: true }).fill("Smoke Co");
+    await career.getByRole("button", { name: "Add to Experience", exact: true }).click();
+    await career.getByRole("heading", { name: "Smoke Co", exact: true }).waitFor();
+    const companyId = new URL(page.url()).searchParams.get("record");
+    await career.getByRole("navigation", { name: "Career records" }).getByRole("link", { name: "Operations Lead", exact: true }).click();
+    await career.getByRole("heading", { name: "Operations Lead", exact: true }).waitFor();
+    await career.getByRole("combobox", { name: "Relationship", exact: true }).selectOption("employed_by");
+    await career.getByRole("combobox", { name: "With", exact: true }).selectOption(companyId);
+    await career.getByRole("button", { name: "Link records", exact: true }).click();
+    await career.getByText("Employed by · Smoke Co", { exact: true }).waitFor();
+    assert.equal((await pool.query("select count(*)::int n from career_links where user_id = $1 and from_id = $2 and to_id = $3 and kind = 'employed_by'", [userId, roleId, companyId])).rows[0].n, 1);
+    await career.getByRole("combobox", { name: "Add", exact: true }).selectOption("skill");
+    await career.getByRole("textbox", { name: "Name or title", exact: true }).fill("Delivery skills");
+    await career.getByRole("button", { name: "Add to Experience", exact: true }).click();
+    await career.getByRole("heading", { name: "Delivery skills", exact: true }).waitFor();
+    const skillId = new URL(page.url()).searchParams.get("record");
+    await career.getByRole("textbox", { name: "New skill label", exact: true }).fill("Planning, delivery");
+    await career.getByRole("button", { name: "Add skill", exact: true }).click();
+    await career.getByRole("button", { name: "Remove Planning, delivery", exact: true }).waitFor();
+    assert.equal((await pool.query("select count(*)::int n from career_assertions where user_id = $1 and subject_id = $2 and text = $3 and status = 'usable' and facets ? 'skill'", [userId, skillId, "Planning, delivery"])).rows[0].n, 1);
+    await career.getByRole("textbox", { name: "New skill label", exact: true }).fill("SQL");
+    await career.getByRole("button", { name: "Add skill", exact: true }).click();
+    await career.getByRole("button", { name: "Remove SQL", exact: true }).waitFor();
+    await career.getByRole("textbox", { name: "Name or title", exact: true }).fill("Analysis skills");
+    await career.getByRole("button", { name: "Add to Experience", exact: true }).click();
+    await career.getByRole("heading", { name: "Analysis skills", exact: true }).waitFor();
+    const secondSkillId = new URL(page.url()).searchParams.get("record");
+    await career.getByRole("button", { name: "Add Planning, delivery", exact: true }).click();
+    await career.getByRole("button", { name: "Remove Planning, delivery", exact: true }).waitFor();
+    assert.equal((await pool.query("select count(*)::int n from career_assertions where user_id = $1 and subject_id = $2 and text = $3 and status = 'usable' and facets ? 'skill'", [userId, secondSkillId, "Planning, delivery"])).rows[0].n, 1);
+    await page.reload();
+    await career.getByRole("button", { name: "Remove Planning, delivery", exact: true }).waitFor();
+    if (process.env.SMOKE_SCREENSHOT_DIR) {
+      await mkdir(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "skill tags fit a phone viewport");
+      await page.screenshot({ path: `${process.env.SMOKE_SCREENSHOT_DIR}/experience-skill-tags-390.png`, fullPage: true });
+      await page.setViewportSize({ width: 320, height: 760 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "skill tags fit a narrow phone viewport");
+      await page.screenshot({ path: `${process.env.SMOKE_SCREENSHOT_DIR}/experience-skill-tags-320.png`, fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    }
+    await career.getByRole("navigation", { name: "Career records" }).getByRole("link", { name: "Operations Lead", exact: true }).click();
+    await career.getByRole("heading", { name: "Operations Lead", exact: true }).waitFor();
+    assert.equal((await pool.query("select count(*)::int n from tasks where payload->>'userId' = $1::text", [userId])).rows[0].n, beforeCareerTasks);
+    assert.equal((await pool.query("select count(*)::int n from ai_calls where user_id = $1", [userId])).rows[0].n, beforeCareerCalls);
+    if (process.env.SMOKE_SCREENSHOT_DIR) {
+      await mkdir(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true });
+      await page.screenshot({ path: `${process.env.SMOKE_SCREENSHOT_DIR}/experience-career-desktop.png`, fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: `${process.env.SMOKE_SCREENSHOT_DIR}/experience-career-mobile.png`, fullPage: true });
+      await page.setViewportSize({ width: 320, height: 760 });
+      await page.screenshot({ path: `${process.env.SMOKE_SCREENSHOT_DIR}/experience-career-narrow.png`, fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    }
+    await page.reload();
+    await career.getByRole("heading", { name: "Operations Lead", exact: true }).waitFor();
+    assert.equal(await career.getByRole("textbox", { name: "Saved detail", exact: true }).inputValue(), "Ran the smoke estate end to end every morning.");
+    await page.getByRole("navigation", { name: "Workspace tools" }).getByRole("link", { name: "Preferences", exact: true }).click();
     await page.getByText("Default CV appearance", { exact: true }).click();
     const appearance = page.getByRole("group", { name: "Appearance", exact: true });
     await appearance.getByRole("button", { name: "Gold", exact: true }).click();

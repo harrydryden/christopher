@@ -23,7 +23,7 @@ export default async function ReviewImportedRolePage({ params }: { params: Promi
     <PageHeader title="Review role" description="Check the extracted details before adding this role to Shortlisted." />
     <Link prefetch={false} href="/" className="mb-5 inline-flex min-h-11 items-center text-13 underline">← Back to Roles</Link>
     <p className="mb-4 break-all text-13 text-muted">Source: {from}</p>
-    {row.status === "queued" && <Card title="Import in progress"><RoleImportPoll /></Card>}
+    {row.status === "queued" && <Card title="Import in progress"><p role="status" className="text-14 text-muted">Extracting the role. This page updates automatically.</p><RoleImportPoll /></Card>}
     {row.status === "failed" && <Card title="Could not extract this role">
       <p role="alert" className="mb-3 text-14 text-danger">{row.error || "The import failed. You can try again."}</p>
       <SettingsForm action={retryRoleImport.bind(null, id)} submitLabel="Retry import" resetOnSuccess={false} />

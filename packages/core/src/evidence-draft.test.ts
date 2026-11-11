@@ -49,7 +49,7 @@ it("lets a first job be saved without invented evidence, while a CV still needs 
   const firstJob = CvLibrarySchema.parse({ name: "Example", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job-1", company: "Example Company", jobTitle: "Operations lead", startDate: "2022", endDate: "", current: true }],
     entries: [] });
-  expect(() => groupCvLibrary(firstJob)).toThrow("Confirm at least one responsibility");
+  expect(() => groupCvLibrary(firstJob)).toThrow("Add at least one work detail");
   const confirmed = appendConfirmedEvidence(firstJob, input, "Helped the team reduce handover time by around 20%.", "entry-1");
   expect(CvLibrarySchema.safeParse(confirmed).success).toBe(true);
   expect(groupCvLibrary(confirmed).entries).toHaveLength(1);

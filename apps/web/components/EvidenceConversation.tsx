@@ -13,7 +13,7 @@ type Props = {
   disabled?: boolean; onConfirmed?: (wording: string) => void; scopeId: string; destinationLabel?: string;
 };
 
-/** One question, one answer, one proposed row, and a separate exact-wording confirmation. */
+/** One question and optional proposed wording; saving the person's chosen text is the single factual action. */
 export function EvidenceConversation(props: Props) {
   const [answer, setAnswer] = useState(props.initialDraft?.answer ?? "");
   const [draft, setDraft] = useState<EvidenceDraftView | null>(props.initialDraft?.status === "dismissed" ? null : props.initialDraft ?? null);
@@ -69,7 +69,8 @@ export function EvidenceConversation(props: Props) {
         const next = await response.json() as Pick<EvidenceDraftView, "status" | "wording" | "error" | "attempt">;
         if (live && next.status !== "queued") {
           setDraft(current => current ? { ...current, ...next } : current);
-          if (wordingRevision.current === 0) setWording(next.wording ?? answer);
+          // The model's organisation remains a suggestion; the saved factual wording is the person's answer.
+          if (wordingRevision.current === 0) setWording(answer);
         }
       } catch { /* A transient poll error leaves the answer and retry route available. */ }
     };
@@ -86,7 +87,8 @@ export function EvidenceConversation(props: Props) {
         questionId: props.questionId, question: props.question, answer, destination: props.destination,
         baseVersion: props.baseVersion, facet: props.facet ?? null });
       if (!result.ok) { setError(`${result.error} You can still review and save your answer as written.`); setManualMode(true); setWording(answer); return; }
-      setDraft(result.draft); setWording(result.draft.wording ?? answer);
+      setDraft(result.draft); setWording(answer);
+      if (props.source === "cv_quiz") props.onConfirmed?.(answer);
       window.setTimeout(() => wordingRef.current?.focus(), 0);
     } catch { setError("Could not prepare a draft. You can still review and save your answer as written."); setManualMode(true); setWording(answer); }
     finally { setBusy(false); }
@@ -104,7 +106,7 @@ export function EvidenceConversation(props: Props) {
   }
 
   async function confirm() {
-    const exact = wording.trim();
+    const exact = (draft ? answer : wording).trim();
     if (!exact) { setError("Review some wording before confirming it."); wordingRef.current?.focus(); return; }
     setBusy(true); setError("");
     if (props.source === "cv_quiz") {
@@ -157,7 +159,7 @@ export function EvidenceConversation(props: Props) {
 
   return <section className="space-y-3 border-t border-line-muted pt-4" aria-label="Evidence question">
     <p className="ds-prose text-16 font-medium">{props.question}</p>
-    {done ? <p role="status" className="text-14 text-ok">{props.source === "library" ? "Saved to Experience." : "Wording confirmed for this CV question. Save evidence and continue when ready."}</p>
+    {done ? <p role="status" className="text-14 text-ok">{props.source === "library" ? "Saved to Experience." : "Wording ready for this CV question. Save facts and continue when ready."}</p>
       : skipped ? <div className="space-y-2"><p role="status" className="text-14 text-muted">Nothing further for this question.</p><button type="button" className="text-14 underline" disabled={!hydrated} onClick={() => { setSkipped(false); window.setTimeout(() => answerRef.current?.focus(), 0); }}>Return to this question</button></div>
       : <>
         <label className="block space-y-1.5"><span className="text-12 font-semibold">Your answer</span>
@@ -171,16 +173,20 @@ export function EvidenceConversation(props: Props) {
           <button type="button" className="text-14 underline" disabled={!hydrated || busy} onClick={() => void dismiss()}>Nothing further</button>
           {answer && <button type="button" className="text-14 text-muted underline" disabled={!hydrated || busy} onClick={() => { setAnswer(""); setError(""); }}>Discard answer</button>}
         </div> : <div className="space-y-3 border-l-2 border-accent pl-4">
-          <div><p className="text-12 font-semibold">Proposed wording</p><p className="text-12 text-muted">Your original answer is above. Edit the wording before you confirm it.</p></div>
+          <div><p className="text-12 font-semibold">Optional wording review</p>
+            <p className="text-12 text-muted">Your original answer is the saved fact. Organised wording is a suggestion only.</p></div>
           {draft?.status === "queued" && <p role="status" className="text-14">Preparing a draft… You can use your answer as written now.</p>}
           {draft?.status === "failed" && <p role="status" className="text-14 text-warn">{draft.error ?? "A draft was unavailable."}</p>}
+          {draft?.wording && draft.status === "drafted" && <blockquote className="border-l border-line-muted pl-3 text-14">
+            Suggested organisation: {draft.wording}</blockquote>}
           <label className="block space-y-1.5"><span className="text-12 font-semibold">Wording to save</span>
-            <textarea ref={wordingRef} rows={4} maxLength={2000} className={`ds-prose ${inputClass}`} value={wording}
-              onChange={event => { wordingRevision.current++; setWording(event.target.value); }} disabled={!hydrated || busy || props.disabled} />
+            <textarea ref={wordingRef} rows={4} maxLength={2000} className={`ds-prose ${inputClass}`} value={draft ? answer : wording}
+              onChange={event => { wordingRevision.current++; setWording(event.target.value); }} readOnly={!!draft}
+              disabled={!hydrated || busy || props.disabled} />
           </label>
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" className={buttonClass("primary")} disabled={!hydrated || busy || props.disabled} onClick={() => void confirm()}>{busy ? "Saving…" : props.source === "library" ? `Confirm and save to ${props.destinationLabel ?? "Experience"}` : `Confirm for ${props.destinationLabel ?? "this CV question"}`}</button>
-            <button type="button" className="text-14 underline" disabled={!hydrated || busy || props.disabled} onClick={() => { wordingRevision.current++; setWording(answer); }}>Use my answer as written</button>
+            <button type="button" className={buttonClass("primary")} disabled={!hydrated || busy || props.disabled} onClick={() => void confirm()}>{busy ? "Saving…" : props.source === "library" ? `Save to ${props.destinationLabel ?? "Experience"}` : `Use this wording for ${props.destinationLabel ?? "this CV question"}`}</button>
+            {!draft && <button type="button" className="text-14 underline" disabled={!hydrated || busy || props.disabled} onClick={() => { wordingRevision.current++; setWording(answer); }}>Use my answer as written</button>}
             {draft?.status === "failed" && <button type="button" className="text-14 underline" disabled={!hydrated || busy || props.disabled} onClick={() => void retry()}>Retry draft</button>}
             <button type="button" className="text-14 underline" disabled={!hydrated || busy} onClick={() => void editAnswer()}>Edit my answer</button>
             <button type="button" className="text-14 underline" disabled={!hydrated || busy} onClick={() => void dismiss()}>Nothing further</button>

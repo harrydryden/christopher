@@ -22,7 +22,10 @@ jobs:
   # Everything that only needs a database: the type surface and every suite.
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The complete worker + web suites run serially against this database. The
+    # measured hosted run passed every suite but reached 15 minutes at the report
+    # gate; leave runner/setup headroom without changing any test timeout or check.
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16

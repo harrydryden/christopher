@@ -57,7 +57,7 @@ const PAGES = [
   ["/cv", { redirectsTo: "/applications" }],
   ["/library", ["Experience", "About you", "Work history", "Education, training, skills and interests", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
     "Experience", "Education, training, skills and interests", "Review evidence", "How evidence is scored",
-    "Import a document", "CV or career document", "LinkedIn PDF export", "Pasted text", "Your website or portfolio",
+    "Start from a document or page", "CV or career document", "LinkedIn PDF export", "Pasted text", "Your website or portfolio",
     "Nothing is added to Experience until you review and confirm it.",
     "A LinkedIn link alone does not read your profile.",
     "Writing preferences", "Writing style", "Saved phrasing", "No Experience saved yet"]],
@@ -117,7 +117,7 @@ function cachePolicyFailures(path, res, kind = path.startsWith("/api/") ? "api" 
 /** Next's own `Vary` on pages and RSC; anything beyond it (above all `Cookie`) changes what a cache keys on. */
 const NEXT_VARY = new Set(["rsc", "next-router-state-tree", "next-router-prefetch", "next-router-segment-prefetch", "accept-encoding"]);
 
-/** The static security headers `next.config.ts` sends on every response, and the one `/share/` overrides. */
+/** The static security headers `next.config.ts` sends on every response, with stricter auth/share referrers. */
 function securityHeaderFailures(path, res, referrer = "strict-origin-when-cross-origin") {
   const failures = [];
   const expect = (name, test, wanted) => {
@@ -246,13 +246,14 @@ async function main() {
     }
   }
 
-  // The sign-in page carries the same headers before anyone has a session, and a share link sends
-  // no referrer at all: its URL is the credential. An unknown token still gets the share headers.
-  for (const [path, referrer] of [["/login", undefined], ["/share/not-a-real-token", "no-referrer"]]) {
+  // Authentication pages and share links carry credentials or recovery destinations. Their
+  // responses must suppress referrers; the ordinary signed-in pages above retain the general policy.
+  for (const path of ["/login", "/signup", "/forgot-password", "/reset-password", "/share/not-a-real-token"]) {
     try {
       const res = await fetch(`http://127.0.0.1:${PORT}${path}`, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
       await res.arrayBuffer();
-      const found = securityHeaderFailures(path, res, referrer);
+      const found = securityHeaderFailures(path, res, "no-referrer");
+      if (path !== "/share/not-a-real-token") found.push(...cachePolicyFailures(path, res));
       failures.push(...found);
       if (!found.length) console.log(`  ${res.status}  ${path}  (security headers)`);
     } catch (err) {

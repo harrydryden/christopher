@@ -56,11 +56,12 @@ export default async function LibraryPage({ searchParams }: {
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Experience" />
-      {!library && <p className="ds-prose max-w-3xl text-16">Start with a CV or career document if you have one. You can also add a job below and build your Experience a question at a time.</p>}
+      {!library && <div className="space-y-2"><p className="ds-prose max-w-3xl text-16">Start from a document or enter your work history yourself. You can review imported suggestions before adding them.</p>
+        <a href="#experience-manual" className="inline-flex min-h-11 items-center text-14 font-semibold underline">Enter work history yourself</a></div>}
       {!library && <LibraryImportCard openLinkedIn={openLinkedIn} />}
-      <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
+      <LibraryImportProposals imports={imports} version={library?.version ?? 0} needsName={!library && !(user.name ?? "").trim()} />
       {importProgress && <LibraryImportPoller pending={reading} signature={importProgress.signature} />}
-      <CvLibraryEditor
+      <section id="experience-manual" aria-label="Edit Experience" className="scroll-mt-20"><CvLibraryEditor
         library={content}
         version={library?.version ?? 0}
         evidence={evidence}
@@ -69,7 +70,7 @@ export default async function LibraryPage({ searchParams }: {
         returnTo={returnTo}
         openDrafts={openDrafts}
         scopeId={user.id}
-      />
+      /></section>
       {/* While a review is still to land, the page watches for it and refreshes itself. The
           refresh re-renders this server page around the editor, which keeps its unsaved text. */}
       {evidence.evaluating && library && (

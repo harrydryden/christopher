@@ -14,6 +14,7 @@
  * inserted. And LinkedIn is refused with what to do instead: the product does not crawl it.
  */
 import { revalidatePath } from "next/cache";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   LIBRARY_IMPORT_MIN_CHARS,
@@ -25,6 +26,7 @@ import {
 } from "@col/core";
 import {
   createLibraryImport,
+  activeTaskFor,
   LIBRARY_IMPORT_MAX_BYTES,
   LIBRARY_IMPORT_MAX_CHARS,
   pruneLibraryImports,
@@ -37,10 +39,12 @@ import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { LIBRARY_UPLOAD_MIMES, uploadKind } from "@/lib/library-upload";
-import { getOwnLibraryImport, reopenLibraryImport } from "@/lib/queries/library-imports";
+import { reopenLibraryImport } from "@/lib/queries/library-imports";
+import { libraryImportProposalKey } from "@/lib/library-import-proposal-key";
 import { cvViewerLibraryImportError } from "@/lib/cv-public-diagnostics";
 import { actionError, fail, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidate } from "@/lib/action-helpers";
+import { libraryImports } from "@col/db/schema";
 
 const MEGABYTES = `${Math.round(LIBRARY_IMPORT_MAX_BYTES / (1024 * 1024))} MB`;
 /** Items one accept form may name: every control on the largest proposal, and no more. */
@@ -71,40 +75,36 @@ export async function importLibraryDocument(form: FormData): Promise<ActionResul
   }
 
   try {
-    const row = await createLibraryImport(db(), input);
-    if (row.duplicate) {
-      // Already here. What to say depends on where the first one got to, and the one thing never
-      // to do is queue a second reading of words that are already being read.
-      //
-      // `unread` is the document as it arrived, untouched: only `completeLibraryImport` clears an
-      // upload's bytes, and it always stamps the row as processed at the same time.
-      const unread = !row.processedAt;
-      // Every success path revalidates: the form relies on the action's own response to show the
-      // page as it is now, and a person submitting again may be looking at a page from before.
-      if (unread && !row.resolvedAt) {
-        revalidatePath("/library");
-        return said("You have already imported this document. It is still being read.");
+    const result = await db().transaction(async tx => {
+      const created = await createLibraryImport(tx as unknown as Db, input);
+      if (!created.duplicate) {
+        await enqueue("import_library_document", { userId: user.id, importId: created.id }, tx);
+        return "new" as const;
       }
-      // Nothing was kept from it — a file that could not be converted keeps its refusal and no
-      // text — so there is nothing left to read, and the same upload would fail the same way.
-      if (!unread && !row.content) {
-        return fail(row.error ? cvViewerLibraryImportError(row.error, user.role === "admin")
-          : "Course of Life could not read that document. Try a different export of it, or paste the text instead.");
+      const [row] = await tx.select({ content: libraryImports.content, proposal: libraryImports.proposal,
+        error: libraryImports.error, resolvedAt: libraryImports.resolvedAt, processedAt: libraryImports.processedAt })
+        .from(libraryImports).where(and(eq(libraryImports.id, created.id), eq(libraryImports.userId, user.id))).for("update");
+      if (!row) throw new UserFacingError("That import changed. Refresh the page.");
+      if (!row.processedAt && !row.resolvedAt) {
+        // Repair a row stranded between insert and enqueue by an earlier release. A running task
+        // does not hold the queue's partial unique key, so check it before asking for a follow-up.
+        if (!(await activeTaskFor(tx as unknown as Db, `import_library_document:${created.id}`)))
+          await enqueue("import_library_document", { userId: user.id, importId: created.id }, tx);
+        return "reading" as const;
       }
-      // Read, and still waiting for them: what was found is on this page already.
-      if (row.proposal && !row.resolvedAt) {
-        revalidatePath("/library");
-        return said("You have already imported this document. What was found in it is below.");
-      }
-      // Finished with once — accepted, dismissed, or refused with the text kept — and now handed
-      // over again deliberately. Reading it again costs one call and no second upload.
-      await reopenLibraryImport(user.id, row.id);
-      await enqueue("import_library_document", { userId: user.id, importId: row.id });
-      revalidatePath("/library");
-      return said("You have already imported this document. Course of Life is reading it again.");
-    }
-    await enqueue("import_library_document", { userId: user.id, importId: row.id });
+      if (row.processedAt && !row.content) return { unreadableError: row.error };
+      if (row.proposal && !row.resolvedAt) return "proposed" as const;
+      if (!(await reopenLibraryImport(user.id, created.id, tx))) throw new UserFacingError("That import changed. Refresh the page.");
+      await enqueue("import_library_document", { userId: user.id, importId: created.id }, tx);
+      return "reopened" as const;
+    });
+    if (typeof result === "object") return fail(result.unreadableError
+      ? cvViewerLibraryImportError(result.unreadableError, user.role === "admin")
+      : "Course of Life could not read that document. Try a different export of it, or paste the text instead.");
     revalidatePath("/library");
+    if (result === "reading") return said("You have already imported this document. It is still being read.");
+    if (result === "proposed") return said("You have already imported this document. What was found in it is below.");
+    if (result === "reopened") return said("You have already imported this document. Course of Life is reading it again.");
     return said("Course of Life is reading your document. What it finds will appear here in a few minutes.");
   } catch (error) {
     return actionError(error, "That document could not be saved. Please try again.");
@@ -176,26 +176,34 @@ export async function acceptLibraryImport(importId: string, form: FormData): Pro
   const user = await requireUser();
   try {
     const id = zUuid().parse(importId);
-    const row = await getOwnLibraryImport(user.id, id);
-    if (!row || row.resolvedAt) return fail("That import is no longer waiting. Refresh the page.");
-    if (!row.proposal) return fail("That document has not been read yet. Wait for it to finish, or dismiss it.");
     const accepted = form.getAll("accept").map(String).slice(0, MAX_ACCEPTED);
     if (!accepted.length) return fail("Tick at least one item to add, or choose Dismiss.");
     const version = z.coerce.number().int().min(0).safeParse(form.get("version"));
     if (!version.success) return fail("Reload the page before adding these items.");
+    const expectedProposalKey = form.get("proposalKey");
+    if (typeof expectedProposalKey !== "string" || !/^[a-f0-9]{64}$/.test(expectedProposalKey))
+      return fail("That proposal changed. Reload the page before adding items.");
+    const firstLibraryName = String(form.get("name") ?? "").trim();
+    if (firstLibraryName.length > 200) return fail("Use a name of 200 characters or fewer.");
 
-    const { proposal, dropped } = validateLibraryProposal(row.content ?? "", row.proposal);
-    // The ticked items are named by their place in the proposal, so one that no longer anchors
-    // would move every id after it onto a different item. Nothing is added from a proposal that
-    // does not check out whole; it was read under an older, looser check, and is read afresh.
-    if (dropped) return fail("That proposal was read under an older check and no longer matches its document. Dismiss it and import the document again to read it afresh.");
     let added = { jobs: 0, rows: 0, education: 0, skills: 0 };
     await db().transaction(async tx => {
+      const [row] = await tx.select({ content: libraryImports.content, proposal: libraryImports.proposal,
+        resolvedAt: libraryImports.resolvedAt, processedAt: libraryImports.processedAt })
+        .from(libraryImports).where(and(eq(libraryImports.id, id), eq(libraryImports.userId, user.id))).for("update");
+      if (!row || row.resolvedAt) throw new UserFacingError("That import is no longer waiting. Refresh the page.");
+      if (!row.proposal || !row.processedAt) throw new UserFacingError("That document has not been read yet. Wait for it to finish, or dismiss it.");
+      if (libraryImportProposalKey(row) !== expectedProposalKey)
+        throw new UserFacingError("That proposal changed. Reload the page before adding items.");
+      const { proposal, dropped } = validateLibraryProposal(row.content ?? "", row.proposal);
+      // A stale proposal cannot be projected onto changed source text or re-ordered ids.
+      if (dropped) throw new UserFacingError("That proposal no longer matches its document. Dismiss it and import the document again.");
       await writeCvLibraryVersion(tx, user.id, version.data, current => {
-        if (!current && !(user.name ?? "").trim()) {
-          throw new UserFacingError("Add your name at the top of the Library and save it once, then add these items.");
+        if (!current && !(firstLibraryName || (user.name ?? "").trim())) {
+          throw new UserFacingError("Enter your name before adding these items.");
         }
-        const result = proposalToLibraryAdditions(current, proposal, accepted, { prefix: id, name: user.name ?? "" });
+        const result = proposalToLibraryAdditions(current, proposal, accepted,
+          { prefix: id, name: current ? current.name : firstLibraryName || user.name || "" });
         // A job carries no evidence on its own, and a Library is its blocks: an account with none
         // cannot start one from employment history alone.
         if (!result.library.entries.length) {
@@ -204,7 +212,7 @@ export async function acceptLibraryImport(importId: string, form: FormData): Pro
         added = result.added;
         return result.library;
       });
-      await resolveLibraryImport(tx as unknown as Db, user.id, id);
+      if (!(await resolveLibraryImport(tx as unknown as Db, user.id, id))) throw new UserFacingError("That import changed. Refresh the page.");
     });
     await pruneLibraryImports(db(), user.id);
     revalidate("/library", "/cv");
@@ -254,12 +262,16 @@ export async function retryLibraryImport(importId: string): Promise<ActionResult
   const user = await requireVerifiedUser();
   try {
     const id = zUuid().parse(importId);
-    const row = await getOwnLibraryImport(user.id, id);
-    if (!row || row.resolvedAt) return fail("That import is no longer waiting. Refresh the page.");
-    if (!row.error) return fail("There is nothing to try again for this import.");
-    if (!row.content) return fail("Course of Life no longer holds that document. Import it again, or paste its text.");
-    await reopenLibraryImport(user.id, id);
-    await enqueue("import_library_document", { userId: user.id, importId: id });
+    await db().transaction(async tx => {
+      const [row] = await tx.select({ resolvedAt: libraryImports.resolvedAt, error: libraryImports.error,
+        content: libraryImports.content, processedAt: libraryImports.processedAt })
+        .from(libraryImports).where(and(eq(libraryImports.id, id), eq(libraryImports.userId, user.id))).for("update");
+      if (!row || row.resolvedAt) throw new UserFacingError("That import is no longer waiting. Refresh the page.");
+      if (!row.error || !row.processedAt) throw new UserFacingError("There is nothing to try again for this import.");
+      if (!row.content) throw new UserFacingError("Course of Life no longer holds that document. Import it again, or paste its text.");
+      if (!(await reopenLibraryImport(user.id, id, tx))) throw new UserFacingError("That import changed. Refresh the page.");
+      await enqueue("import_library_document", { userId: user.id, importId: id }, tx);
+    });
     revalidatePath("/library");
     return said("Course of Life is reading your document again.");
   } catch (error) {

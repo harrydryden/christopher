@@ -20,13 +20,16 @@ vi.mock("next/headers", () => ({
   cookies: async () => ({ get: (name: string) => jar.has(name) ? { value: jar.get(name)! } : undefined, delete: (name: string) => jar.delete(name) }),
   headers: async () => new Headers({ host: "col.test" }),
 }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { beginLinkedInEmailVerification, completeLinkedInLink, unlinkLinkedIn } from "./linkedin";
+import { revalidatePath } from "next/cache";
 import { LINKEDIN_COOKIE, claimLinkedInCallback, settleLinkedInIdentity, startLinkedInTransaction } from "@/lib/linkedin-auth";
 
 beforeAll(() => runMigrations(database));
 afterAll(() => client.pool.end());
 beforeEach(async () => {
+  vi.mocked(revalidatePath).mockClear();
   process.env.ADMIN_EMAILS = "owner@example.com";
   delete process.env.GOOGLE_CLIENT_ID;
   delete process.env.GOOGLE_CLIENT_SECRET;
@@ -63,6 +66,7 @@ it("does not disconnect the last method or accept a LinkedIn session as alternat
   const [linkedInSession] = await database.insert(schema.sessions).values({ userId: owner.user.id, authProvider: "linkedin", expiresAt: new Date(Date.now() + 60_000) }).returning();
   current = { user: owner.user, sessionId: linkedInSession!.id };
   expect(await unlinkLinkedIn()).toMatchObject({ ok: false, error: expect.stringContaining("another sign-in method") });
+  expect(revalidatePath).not.toHaveBeenCalled();
   await database.update(schema.users).set({ passwordHash: await hashPassword("alternate password") }).where(eq(schema.users.id, owner.user.id));
   expect(await unlinkLinkedIn()).toMatchObject({ ok: false, error: expect.stringContaining("Sign in again") });
   const [stalePassword] = await database.insert(schema.sessions).values({ userId: owner.user.id, authProvider: "password", createdAt: new Date(Date.now() - 11 * 60_000), expiresAt: new Date(Date.now() + 60_000) }).returning();
@@ -71,6 +75,8 @@ it("does not disconnect the last method or accept a LinkedIn session as alternat
   const [freshPassword] = await database.insert(schema.sessions).values({ userId: owner.user.id, authProvider: "password", expiresAt: new Date(Date.now() + 60_000) }).returning();
   current = { user: owner.user, sessionId: freshPassword!.id };
   expect(await unlinkLinkedIn()).toMatchObject({ ok: true });
+  expect(revalidatePath).toHaveBeenCalledOnce();
+  expect(revalidatePath).toHaveBeenCalledWith("/account");
   expect(await database.select().from(schema.authAccounts).where(and(eq(schema.authAccounts.userId, owner.user.id), eq(schema.authAccounts.provider, "linkedin")))).toHaveLength(0);
   expect(await database.select().from(schema.sessions).where(eq(schema.sessions.id, linkedInSession!.id))).toHaveLength(0);
   expect(await database.select().from(schema.sessions).where(eq(schema.sessions.id, freshPassword!.id))).toHaveLength(1);

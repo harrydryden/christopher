@@ -17,6 +17,7 @@ export function SettingsForm({
   id,
   children,
   submitLabel = "Save",
+  pendingLabel = "Saving…",
   submitVariant = "primary",
   submitDisabled = false,
   submitDescribedBy,
@@ -32,6 +33,7 @@ export function SettingsForm({
   ) => Promise<ActionResult>;
   children?: ReactNode;
   submitLabel?: string;
+  pendingLabel?: string;
   submitVariant?: "primary" | "secondary";
   submitDisabled?: boolean;
   submitDescribedBy?: string;
@@ -121,7 +123,7 @@ export function SettingsForm({
       </p>}
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" variant={submitVariant} size="sm" disabled={isPending || submitDisabled} aria-describedby={submitDescribedBy}>
-          {isPending ? "Saving…" : submitLabel}
+          {isPending ? pendingLabel : submitLabel}
         </Button>
         {secondaryActions}
       </div>

@@ -3,8 +3,9 @@ import { confirmEmail } from "./actions";
 import { previewVerification } from "@/lib/accounts";
 import { getCurrentUser } from "@/lib/auth";
 import { AuthShell } from "@/components/AuthShell";
-import { Button } from "@/components/Button";
+import { AuthSubmitButton } from "@/components/AuthSubmitButton";
 import { Field, Input } from "@/components/Field";
+import { sanitizeNextPath } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 /** The link from the confirmation email. Confirming needs the account's password unless that account is already signed in here. */
-export default async function VerifyPage({ searchParams }: { searchParams: Promise<{ token?: string; error?: string }> }) {
+export default async function VerifyPage({ searchParams }: { searchParams: Promise<{ token?: string; error?: string; next?: string }> }) {
   const sp = await searchParams;
   const token = (sp.token ?? "").slice(0, 200);
   const [preview, current] = await Promise.all([token ? previewVerification(token) : null, getCurrentUser()]);
@@ -35,17 +36,19 @@ export default async function VerifyPage({ searchParams }: { searchParams: Promi
     <AuthShell title="Confirm your email" footer={<p><Link prefetch={false} href="/forgot-password" className="underline">Forgotten your password?</Link></p>}>
       <form action={confirmEmail} className="flex flex-col gap-3">
         <input type="hidden" name="token" value={token} />
+        {sp.next && <input type="hidden" name="next" value={sanitizeNextPath(sp.next)} />}
         <p className="text-14">
           Confirm <span className="text-fg">{preview.email}</span>
           {preview.pending ? " and finish setting up your account." : " for your account."}
         </p>
         {!own && (
-          <Field label="Password" htmlFor="password" hint="The password you chose when you signed up.">
-            <Input id="password" name="password" type="password" required autoFocus autoComplete="current-password" />
+          <Field label="Password" htmlFor="password">
+            <Input id="password" name="password" type="password" required autoFocus autoComplete="current-password" aria-describedby="verify-password-help" />
+            <span id="verify-password-help" className="text-12 text-muted">The password you chose when you signed up.</span>
           </Field>
         )}
         {error && <p className="text-14 text-danger" role="alert">{error}</p>}
-        <Button type="submit" variant="primary" className="mt-1 w-full">{own ? "Confirm email" : "Confirm and sign in"}</Button>
+        <AuthSubmitButton label={own ? "Confirm email" : "Confirm and sign in"} pendingLabel="Confirming…" />
       </form>
     </AuthShell>
   );

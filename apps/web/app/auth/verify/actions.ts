@@ -5,12 +5,14 @@ import { confirmEmailWithToken } from "@/lib/accounts";
 import { clientAddress, getCurrentUser, startSessionFromProof } from "@/lib/auth";
 import { withParams } from "@/lib/origin";
 import { LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
+import { sanitizeNextPath } from "@/lib/session";
 
 /** The confirmation link is completed by a POST, so a mail scanner following the link cannot spend it. */
 export async function confirmEmail(formData: FormData): Promise<void> {
   const token = String(formData.get("token") ?? "").slice(0, 200);
   const password = String(formData.get("password") ?? "");
-  const back = (error: string) => redirect(withParams("/auth/verify", { token, error }));
+  const next = sanitizeNextPath(String(formData.get("next") ?? "/"));
+  const back = (error: string) => redirect(withParams("/auth/verify", { token, error, next: next !== "/" ? next : undefined }));
   const address = await clientAddress();
   const reservation = await reserveRateLimits([{ key: `verify:ip:${address}`, limit: LIMITS.loginAddress }]);
   if (!reservation) back("rate_limited");
@@ -28,5 +30,5 @@ export async function confirmEmail(formData: FormData): Promise<void> {
     if (!result.user.passwordHash || !(await startSessionFromProof({ userId: result.user.id,
       proof: { provider: "password", expectedPasswordHash: result.user.passwordHash } }))) back("invalid");
   }
-  redirect("/account?verify=done");
+  redirect(next === "/" ? "/account?verify=done" : next);
 }

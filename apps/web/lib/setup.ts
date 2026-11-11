@@ -31,7 +31,7 @@ export interface SetupStep {
   progress?: string;
 }
 export interface MonitoringNotice {
-  state: "preferences" | "no-companies" | "attention" | "working" | "monitoring-paused" | "complete" | "waiting";
+  state: "email" | "preferences" | "no-companies" | "attention" | "working" | "monitoring-paused" | "complete" | "waiting";
   title: string;
   description: string;
   href: string;
@@ -65,6 +65,7 @@ export const GATE_NEEDS_KEYWORD_SENTENCE = "Enter at least one keyword.";
 /** Never infer that nothing ran from an empty roles table. */
 export function monitoringNotice(facts: SetupFacts): MonitoringNotice {
   const m = facts.monitoring;
+  if (!facts.emailConfirmed) return { state: "email", title: "Confirm your email to get started", description: "Open your confirmation email to start company checks and CV builds. You can choose your preferences while you wait.", href: "/account", action: "Confirm your email" };
   if (!facts.gateChosen) return { state: "preferences", title: "Choose the roles you want to see", description: "Set your keywords and locations, then follow a company. You can prepare your CV evidence later.", href: "/settings#keywords", action: "Choose preferences" };
   if (!m.activeCompanies) return { state: "no-companies", title: "Follow a company to start watching", description: facts.companiesFollowed ? "Your followed companies are paused. Resume one, or choose another company." : "Choose an employer you are interested in. Course of Life will find its careers page and check it for your roles.", href: facts.companiesFollowed ? "/companies" : "/suggestions", action: facts.companiesFollowed ? "Manage companies" : "Follow a company" };
   if (m.attentionCompanies > 0) return { state: "attention", title: `${m.attentionCompanies} ${m.attentionCompanies === 1 ? "company needs" : "companies need"} attention`, description: "A careers source is missing, awaiting confirmation or has an incomplete or unsuccessful scan. An empty list does not mean there are no suitable roles.", href: "/health", action: "Resolve on Health" };

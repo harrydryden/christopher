@@ -10,6 +10,7 @@ import { listOpenLibraryImports, getLibraryImport } from "@col/db";
 import { libraryImports } from "@col/db/schema";
 import { db } from "@/lib/db";
 import { libraryImportView, type LibraryImportView } from "@/lib/library-import";
+import { libraryImportProposalKey } from "@/lib/library-import-proposal-key";
 
 /**
  * The imports the page still has something to say about, newest first.
@@ -28,7 +29,10 @@ export async function listLibraryImports(userId: string, limit = 10, admin = fal
         .where(and(eq(libraryImports.userId, userId), inArray(libraryImports.id, failed))))
       .filter(row => row.kept).map(row => row.id))
     : new Set<string>();
-  return rows.map(row => libraryImportView(row, kept.has(row.id), new Date(), admin));
+  return rows.map(row => {
+    const view = libraryImportView(row, kept.has(row.id), new Date(), admin);
+    return { ...view, proposalKey: view.state === "proposed" ? libraryImportProposalKey(row) : null };
+  });
 }
 
 export interface LibraryImportProgress {
@@ -73,13 +77,13 @@ export async function getOwnLibraryImport(userId: string, id: string) {
  * proposal is the person's to accept or dismiss, and clearing one would throw away what they were
  * looking at. Scoped by account, like every write to this table.
  */
-export async function reopenLibraryImport(userId: string, id: string): Promise<boolean> {
-  const moved = await db()
+export async function reopenLibraryImport(userId: string, id: string, writer: Pick<ReturnType<typeof db>, "update"> = db()): Promise<boolean> {
+  const moved = await writer
     .update(libraryImports)
     // This row is reused for a new attempt. Its timestamp is the start of the reading shown on
     // the page, so an old failed upload gets a fresh fifteen-minute deadline when retried.
     .set({ error: null, proposal: null, processedAt: null, resolvedAt: null, createdAt: new Date() })
-    .where(and(eq(libraryImports.id, id), eq(libraryImports.userId, userId)))
+    .where(and(eq(libraryImports.id, id), eq(libraryImports.userId, userId), sql`${libraryImports.processedAt} is not null`))
     .returning({ id: libraryImports.id });
   return moved.length > 0;
 }

@@ -1,5 +1,8 @@
 # Paid launch readiness — 11 October 2026
 
+Historical snapshot. Use [the 5 November production plan](PRODUCTION-PLAN-2026-11-05.md) for current
+launch work, including auth/onboarding, Munito, recommendations, design, billing and domain checks.
+
 This is a handover of evidence and remaining decisions, not permission to turn on live payments. The
 review started from commit `f8b02db`. Keep the release commit and its check links with the final
 launch record; later changes need their own checks. Do not put secrets in this document.

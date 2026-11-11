@@ -66,33 +66,38 @@ export async function signup(formData: FormData): Promise<void> {
   let userId: string;
   let pending: boolean;
   let registeredPasswordHash: string | null;
+  let delivered = false;
   try {
     const result = await registerWithPassword({ email, name, password });
     userId = result.user.id;
     pending = result.pending;
     registeredPasswordHash = result.user.passwordHash;
-    await sendVerificationEmail(result.user, await emailLinkOrigin());
+    delivered = (await sendVerificationEmail(result.user, await emailLinkOrigin(), next)).delivered;
   } catch (error) {
     if (error instanceof Error && /already exists/.test(error.message)) back("exists");
+    if (error instanceof Error && /Registration is closed/.test(error.message)) back("closed");
     throw error;
   }
   // An administrator address signs in only once its confirmation link has been completed.
-  if (pending!) redirect(withParams("/signup", { pending: "1", email }));
+  if (pending!) redirect(withParams("/signup", { pending: "1", email,
+    next: next !== "/" ? next : undefined, error: delivered ? undefined : "delivery_failed" }));
   if (!registeredPasswordHash! || !(await startSessionFromProof({ userId: userId!,
     proof: { provider: "password", expectedPasswordHash: registeredPasswordHash! } }))) back("invalid_email");
+  if (!delivered) redirect(withParams("/account", { verify: "delivery_failed", next: next !== "/" ? next : undefined }));
   redirect(next);
 }
 
 /** Send a fresh confirmation link to an address whose registration is waiting on one. */
 export async function resendConfirmation(formData: FormData): Promise<void> {
   const email = normaliseEmail(String(formData.get("email") ?? ""));
+  const next = sanitizeNextPath(String(formData.get("next") ?? "/"));
   if (emailProblem(email)) redirect(withParams("/signup", { error: "invalid_email" }));
   const address = await clientAddress();
   if (!(await reserveRateLimits([
     { key: `reset:email:${email}`, limit: LIMITS.resetEmail },
     { key: `reset:ip:${address}`, limit: LIMITS.resetAddress },
   ]))) {
-    redirect(withParams("/signup", { pending: "1", email, error: "rate_limited" }));
+    redirect(withParams("/signup", { pending: "1", email, error: "rate_limited", next: next !== "/" ? next : undefined }));
   }
   // Silent about whether the address is known, like the reset form, and as quick either way: the
   // lookup and the send happen after the answer, so its timing says nothing about the address.
@@ -100,12 +105,12 @@ export async function resendConfirmation(formData: FormData): Promise<void> {
   after(async () => {
     try {
       const [user] = await db().select().from(users).where(eq(users.email, email)).limit(1);
-      if (user && !user.emailVerifiedAt) await sendVerificationEmail(user, origin);
+      if (user && !user.emailVerifiedAt) await sendVerificationEmail(user, origin, next);
     } catch (error) {
       console.error(JSON.stringify({ event: "confirmation_email_failed", error: error instanceof Error ? error.message : String(error) }));
     }
   });
-  redirect(withParams("/signup", { pending: "1", email, sent: "1" }));
+  redirect(withParams("/signup", { pending: "1", email, sent: "1", next: next !== "/" ? next : undefined }));
 }
 
 export async function logout(): Promise<void> {

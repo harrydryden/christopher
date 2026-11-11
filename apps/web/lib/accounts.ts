@@ -8,8 +8,8 @@
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, lockAccountScoreInput, normaliseEmail, promoteIfEntitled, type CreateUserResult, type Db } from "@col/db";
-import { authAccounts, authTokens, billingAccounts, cvVersions, sessions, users, type User } from "@col/db/schema";
-import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@col/core";
+import { authAccounts, authTokens, billingAccounts, cvVersions, sessions, settings as settingsTable, users, type User } from "@col/db/schema";
+import { hashPassword, needsRehash, passwordProblem, resolveSystemSettings, verifyPassword } from "@col/core";
 import { consumeAuthTokenIn, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
 import { sendEmail } from "./email";
@@ -18,6 +18,7 @@ import { googleAuthoritativeEmail, googleConfigured } from "./google";
 import { linkedinConfigured } from "./linkedin";
 import { getSystemSettings } from "./settings";
 import { UserFacingError } from "./validation";
+import { sanitizeNextPath } from "./session";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -53,6 +54,14 @@ export async function registrationAllowed(email: string): Promise<boolean> {
   return (await getSystemSettings()).registrationOpen;
 }
 
+/** Read current policy on the held connection after taking the policy writer's ava:users fence. */
+export async function registrationAllowedIn(tx: Pick<Db, "select">, email: string): Promise<boolean> {
+  if (isAdminEmail(email)) return true;
+  const rows = await tx.select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable)
+    .where(eq(settingsTable.key, "registrationOpen"));
+  return resolveSystemSettings(rows).registrationOpen;
+}
+
 /** A hash to verify against when no account matches, so a wrong email costs the same time as a wrong password. */
 let decoyHash: Promise<string> | null = null;
 function decoy(): Promise<string> {
@@ -66,7 +75,11 @@ export async function registerWithPassword(input: { email: string; password: str
   const passwordError = passwordProblem(input.password);
   if (passwordError) throw new Error(passwordError);
   const passwordHash = await hashPassword(input.password);
-  return createUser(db(), { email: input.email, name: input.name?.trim().slice(0, 200) || null, passwordHash }, { adminEmails: adminEmails() });
+  return db().transaction(async tx => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+    if (!(await registrationAllowedIn(tx as unknown as Db, input.email))) throw new Error("Registration is closed on this deployment.");
+    return createUser(tx as unknown as Db, { email: input.email, name: input.name?.trim().slice(0, 200) || null, passwordHash }, { adminEmails: adminEmails() });
+  });
 }
 
 export type PasswordSignIn = { status: "ok"; user: User; passwordHashProven: string } | { status: "unconfirmed" } | { status: "invalid" };
@@ -121,7 +134,6 @@ export async function signInWithGoogle(profile: GoogleProfile, proof?: { userId:
   }
   if (profile.emailVerified !== true) throw new Error("Google has not verified this email address, so it cannot be used to sign in.");
   if (emailProblem(email)) throw new Error("Google returned an unusable email address.");
-  const mayRegister = authoritative ? await registrationAllowed(email) : false;
   // The email lookup is only a lock hint. Once the score fence and the global users lock are held,
   // re-read both the subject and email. A newly appearing email restarts with its own score fence.
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -166,7 +178,7 @@ export async function signInWithGoogle(profile: GoogleProfile, proof?: { userId:
         return { kind: "existing" as const, userId: byEmail.id };
       }
       if (!authoritative) throw new GoogleEmailProofError();
-      if (!mayRegister) throw new Error("Registration is closed on this deployment.");
+      if (!(await registrationAllowedIn(tx as unknown as Db, email))) throw new Error("Registration is closed on this deployment.");
       const { user } = await createUser(tx as unknown as Db, { email, name: profile.name ?? null, emailVerified: true }, { adminEmails: adminEmails() });
       await tx.insert(authAccounts).values({ userId: user.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null });
       return { kind: "created" as const, user };
@@ -268,13 +280,13 @@ export async function resetPasswordWithToken(token: string, password: string): P
   });
 }
 
-export async function sendVerificationEmail(user: User, origin: string | null): Promise<{ delivered: boolean }> {
+export async function sendVerificationEmail(user: User, origin: string | null, next?: string): Promise<{ delivered: boolean }> {
   if (user.emailVerifiedAt || !origin) return { delivered: false };
   const token = await issueAuthToken(user.id, "email_verification");
   return sendEmail({
     to: user.email,
     subject: "Confirm your email for Course of Life",
-    text: `Confirm this address for your Course of Life account (the link works once, for a day, and asks for your password):\n${origin}/auth/verify?token=${token}\n\nIf you did not create an account, ignore this message.`,
+    text: `Confirm this address for your Course of Life account (the link works once, for a day, and asks for your password):\n${origin}/auth/verify?${new URLSearchParams({ token, ...(sanitizeNextPath(next) !== "/" ? { next: sanitizeNextPath(next) } : {}) })}\n\nIf you did not create an account, ignore this message.`,
   });
 }
 

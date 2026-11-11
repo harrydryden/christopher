@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { authAccounts, sessions, users } from "@col/db/schema";
 import { normaliseEmail } from "@col/db";
@@ -109,7 +110,7 @@ export async function unlinkLinkedIn(): Promise<ActionResult> {
   const current = session.user;
   const now = new Date();
   try {
-    return await db().transaction(async tx => {
+    const result = await db().transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
       const [user] = await tx.select().from(users).where(eq(users.id, current.id)).for("update").limit(1);
       const [active] = await tx.select().from(sessions).where(and(eq(sessions.id, session.sessionId), eq(sessions.userId, current.id), gt(sessions.expiresAt, now))).limit(1);
@@ -124,6 +125,8 @@ export async function unlinkLinkedIn(): Promise<ActionResult> {
       await tx.delete(sessions).where(and(eq(sessions.userId, current.id), eq(sessions.authProvider, "linkedin")));
       return { ok: true as const, message: "LinkedIn has been disconnected." };
     });
+    if (result.ok) revalidatePath("/account");
+    return result;
   } catch (error) {
     return actionError(error, "Could not disconnect LinkedIn. Try again.", "linkedin_unlink_failed");
   }

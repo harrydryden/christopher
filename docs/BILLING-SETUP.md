@@ -37,9 +37,14 @@ enable customer-controlled quantity changes: Course of Life previews and signs e
 itself, limits the company-block price to Search and caps it at five blocks. Intensive already
 reaches the 200-company technical ceiling.
 
-Run database migrations through `0060_evidence_drafts` before enabling Checkout. Test a plan purchase, each top-up,
+Run all checked-in database migrations for the release before enabling Checkout. Do not stop at a historical migration number. Test a plan purchase, each top-up,
 webhook retries, a failed renewal and a portal cancellation in Stripe test mode before copying the
 catalogue to live mode.
+
+Confirm that a real signed webhook reaches `/api/webhooks/stripe` without a browser session, and
+that an invalid signature makes no billing change. The endpoint authenticates Stripe's signature;
+it must not be gated by the customer's sign-in cookie. The current cross-cutting launch checklist
+is [the production plan](PRODUCTION-PLAN-2026-11-05.md).
 
 Before enabling live Checkout, run `pnpm check:launch-config --surface=web --mode=live` with the web
 deployment settings, then `pnpm check:launch-config --surface=worker --mode=live` with the worker

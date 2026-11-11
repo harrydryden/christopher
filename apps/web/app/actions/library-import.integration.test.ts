@@ -18,6 +18,7 @@ import { responsibilityRows, type CvLibrary } from "@col/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
 import { libraryImportView } from "@/lib/library-import";
+import { libraryImportProposalKey } from "@/lib/library-import-proposal-key";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -63,6 +64,12 @@ function form(values: Record<string, string | string[] | File>) {
     for (const item of Array.isArray(value) ? value : [value]) data.append(key, item as string);
   }
   return data;
+}
+
+async function acceptProposed(importId: string, data: FormData) {
+  const row = await getLibraryImport(database, user.id, importId);
+  data.set("proposalKey", libraryImportProposalKey(row!) ?? "");
+  return acceptLibraryImport(importId, data);
 }
 
 const tasks = () => database.select().from(schema.tasks);
@@ -264,7 +271,7 @@ it("asks an unverified account to confirm its email before reading anything", as
 it("adds the ticked items with their rows unconfirmed, through the Library's own save", async () => {
   const row = await proposed();
 
-  const result = await acceptLibraryImport(row.id, form({
+  const result = await acceptProposed(row.id, form({
     version: "0",
     accept: ["job-0", "job-0-row-0", "job-0-row-1", "education-0"],
   }));
@@ -289,11 +296,11 @@ it("adds the ticked items with their rows unconfirmed, through the Library's own
 it("adds only what was ticked, and refuses a form that ticked nothing", async () => {
   const row = await proposed();
 
-  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: [] })))
+  expect(await acceptProposed(row.id, form({ version: "0", accept: [] })))
     .toMatchObject({ ok: false, error: expect.stringContaining("Tick at least one item") });
   expect(await latestLibrary()).toBeUndefined();
 
-  await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0", "job-0-row-1"] }));
+  await acceptProposed(row.id, form({ version: "0", accept: ["job-0", "job-0-row-1"] }));
 
   const library = (await latestLibrary())!.content;
   expect(responsibilityRows(library.entries.find(entry => entry.kind === "experience")!.details)).toEqual([ROWS.handover]);
@@ -313,7 +320,7 @@ it("anchors the proposal against the document again before writing any of it", a
 
   // Items are named by their place in the proposal, so one that no longer anchors would move the
   // ids after it onto other items: nothing is added from a proposal that does not check out whole.
-  const result = await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0", "job-0-row-0", "education-0"] }));
+  const result = await acceptProposed(row.id, form({ version: "0", accept: ["job-0", "job-0-row-0", "education-0"] }));
 
   expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Dismiss it and import the document again") });
   expect(await latestLibrary()).toBeUndefined();
@@ -323,9 +330,9 @@ it("anchors the proposal against the document again before writing any of it", a
 it("adds the ticked items of a proposal that checks out whole", async () => {
   const row = await proposed();
   // The job alone would leave a library with no blocks at all, which is not a Library.
-  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0"] })))
+  expect(await acceptProposed(row.id, form({ version: "0", accept: ["job-0"] })))
     .toMatchObject({ ok: false, error: expect.stringContaining("a job on its own cannot start your Library") });
-  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0", "job-0-row-1", "education-0"] }))).toMatchObject({ ok: true });
+  expect(await acceptProposed(row.id, form({ version: "0", accept: ["job-0", "job-0-row-1", "education-0"] }))).toMatchObject({ ok: true });
   const library = (await latestLibrary())!.content;
   expect(library.employment).toHaveLength(1);
   expect(library.entries.find(entry => entry.kind === "experience")!.details).toBe(ROWS.handover);
@@ -342,7 +349,7 @@ it("refuses to write over a library that changed while the card was open", async
   await saveLibrary({ name: "Jane Okafor", contact: "", profile: "", structuredExperience: true, employment: [],
     entries: [{ id: "one", kind: "skill", status: "active", heading: "Skills", details: "Kanban", skillItems: ["Kanban"] }] });
 
-  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0"] })))
+  expect(await acceptProposed(row.id, form({ version: "0", accept: ["job-0"] })))
     .toMatchObject({ ok: false, error: expect.stringContaining("The library changed") });
   expect((await latestLibrary())!.version).toBe(1);
   expect((await getLibraryImport(database, user.id, row.id))!.resolvedAt).toBeNull();
@@ -357,7 +364,7 @@ it("adds to a library that already has the job rather than repeating it", async 
       employmentId: "job1", details: ROWS.handover, confirmedResponsibilities: [ROWS.handover] }],
   });
 
-  await acceptLibraryImport(row.id, form({ version: "1", accept: ["job-0", "job-0-row-0", "job-0-row-1"] }));
+  await acceptProposed(row.id, form({ version: "1", accept: ["job-0", "job-0-row-0", "job-0-row-1"] }));
 
   const library = (await latestLibrary())!.content;
   expect(library.employment).toHaveLength(1);
@@ -372,16 +379,19 @@ it("asks for a name before writing the first library of an account that has none
   const row = await proposed();
   auth.requireUser.mockImplementation(async () => ({ ...user, name: null }));
 
-  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0"] })))
-    .toMatchObject({ ok: false, error: expect.stringContaining("Add your name") });
+  expect(await acceptProposed(row.id, form({ version: "0", accept: ["job-0"] })))
+    .toMatchObject({ ok: false, error: expect.stringContaining("Enter your name") });
   expect(await latestLibrary()).toBeUndefined();
+  expect(await acceptProposed(row.id, form({ version: "0", name: "Jane Okafor", accept: ["job-0", "job-0-row-0"] })))
+    .toMatchObject({ ok: true });
+  expect((await latestLibrary())!.content.name).toBe("Jane Okafor");
 });
 
 it("will not touch another account's import, whichever way it is asked", async () => {
   const row = await proposed();
   auth.requireUser.mockImplementation(async () => other);
 
-  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0"] }))).toMatchObject({ ok: false });
+  expect(await acceptProposed(row.id, form({ version: "0", accept: ["job-0"] }))).toMatchObject({ ok: false });
   expect(await dismissLibraryImport(row.id)).toMatchObject({ ok: false });
   expect(await retryLibraryImport(row.id)).toMatchObject({ ok: false });
   expect((await getLibraryImport(database, user.id, row.id))!.resolvedAt).toBeNull();
@@ -417,4 +427,61 @@ it("reads a refused document again only while the text is still here", async () 
   await database.update(schema.libraryImports).set({ error: "There is no readable text in that PDF.", processedAt: new Date(), sourceBytes: null })
     .where(eq(schema.libraryImports.id, lost.id));
   expect(await retryLibraryImport(lost.id)).toMatchObject({ ok: false, error: expect.stringContaining("no longer holds that document") });
+});
+
+it("repairs an unread import stranded without a task and does not queue twice while running", async () => {
+  const row = await createLibraryImport(database, { userId: user.id, kind: "paste", content: DOCUMENT });
+  expect(await tasks()).toHaveLength(0);
+  expect(await importLibraryDocument(form({ kind: "paste", content: DOCUMENT }))).toMatchObject({ ok: true });
+  const [task] = await tasks();
+  expect(task).toMatchObject({ type: "import_library_document", status: "queued" });
+  await database.update(schema.tasks).set({ status: "running" }).where(eq(schema.tasks.id, task!.id));
+  expect(await importLibraryDocument(form({ kind: "paste", content: DOCUMENT }))).toMatchObject({ ok: true });
+  expect(await tasks()).toHaveLength(1);
+  expect((await getLibraryImport(database, user.id, row.id))!.processedAt).toBeNull();
+});
+
+it("keeps the failed import and its error if enqueue refuses a Retry", async () => {
+  const row = await createLibraryImport(database, { userId: user.id, kind: "paste", content: DOCUMENT });
+  const error = "Provider temporarily unavailable";
+  await database.update(schema.libraryImports).set({ error, processedAt: new Date() }).where(eq(schema.libraryImports.id, row.id));
+  await database.execute(sql`alter table tasks add constraint test_import_enqueue_refusal check (type <> 'import_library_document')`);
+  try {
+    expect(await retryLibraryImport(row.id)).toMatchObject({ ok: false });
+    expect(await getLibraryImport(database, user.id, row.id)).toMatchObject({ error, content: DOCUMENT, proposal: null });
+    expect((await getLibraryImport(database, user.id, row.id))!.processedAt).toBeInstanceOf(Date);
+  } finally {
+    await database.execute(sql`alter table tasks drop constraint test_import_enqueue_refusal`);
+  }
+  expect(await retryLibraryImport(row.id)).toMatchObject({ ok: true });
+  expect((await tasks()).filter(task => task.type === "import_library_document")).toHaveLength(1);
+});
+
+it("rolls back a first import and its bytes when the queue refuses the task", async () => {
+  await database.execute(sql`alter table tasks add constraint test_import_enqueue_refusal check (type <> 'import_library_document')`);
+  try {
+    expect(await importLibraryDocument(form({ kind: "paste", content: DOCUMENT }))).toMatchObject({ ok: false });
+    expect(await imports()).toHaveLength(0);
+    expect(await tasks()).toHaveLength(0);
+  } finally {
+    await database.execute(sql`alter table tasks drop constraint test_import_enqueue_refusal`);
+  }
+  expect(await importLibraryDocument(form({ kind: "paste", content: DOCUMENT }))).toMatchObject({ ok: true });
+  expect(await imports()).toHaveLength(1);
+  expect(await tasks()).toHaveLength(1);
+});
+
+it("refuses an old acceptance form after a retry produces a different proposal with the same item IDs", async () => {
+  const row = await proposed();
+  const old = await getLibraryImport(database, user.id, row.id);
+  const oldKey = libraryImportProposalKey(old!)!;
+  const replacement = { ...PROPOSAL, employment: [{ ...PROPOSAL.employment[0], responsibilities: [
+    PROPOSAL.employment[0]!.responsibilities[1]!, PROPOSAL.employment[0]!.responsibilities[0]!,
+  ] }] };
+  await database.update(schema.libraryImports).set({ proposal: replacement, processedAt: new Date(Date.now() + 1000) })
+    .where(eq(schema.libraryImports.id, row.id));
+  expect(await acceptLibraryImport(row.id, form({ version: "0", proposalKey: oldKey,
+    accept: ["job-0", "job-0-row-0"] }))).toMatchObject({ ok: false, error: expect.stringContaining("proposal changed") });
+  expect(await latestLibrary()).toBeUndefined();
+  expect((await getLibraryImport(database, user.id, row.id))!.resolvedAt).toBeNull();
 });

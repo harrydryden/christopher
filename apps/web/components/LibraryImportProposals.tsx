@@ -22,7 +22,7 @@ const IMPORT_SOURCE_LABELS: Record<LibraryImportView["kind"], string> = {
  * A responsibility sits under the job it belongs to and is added only with it — a library cannot
  * carry evidence for an employer it does not list — which is why unticking a job dims its rows.
  */
-export function LibraryImportProposals({ imports, version }: { imports: LibraryImportView[]; version: number }) {
+export function LibraryImportProposals({ imports, version, needsName = false }: { imports: LibraryImportView[]; version: number; needsName?: boolean }) {
   if (!imports.length) return null;
   return (
     <div className="grid gap-5">
@@ -70,6 +70,10 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
                 className="grid gap-4"
               >
                 <input type="hidden" name="version" value={version} />
+                <input type="hidden" name="proposalKey" value={view.proposalKey ?? ""} />
+                {needsName && <label className="grid gap-1 text-14 font-semibold">Your name
+                  <input name="name" required maxLength={200} autoComplete="name" className="min-h-11 rounded-md border border-line px-3 text-14" />
+                </label>}
 
                 {view.proposal.employment.map(job => (
                   <fieldset key={job.id} className="grid gap-2 border-2 border-line-muted p-3">

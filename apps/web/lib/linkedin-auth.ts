@@ -1,10 +1,9 @@
 /** Account-owned, browser-bound LinkedIn sign-in state. No provider access token is retained. */
 import { randomBytes } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { authAccounts, linkedinAuthTransactions, sessions, settings, users, type User } from "@col/db/schema";
+import { authAccounts, linkedinAuthTransactions, sessions, users, type User } from "@col/db/schema";
 import { ensureFreeEntitlement, isEntitledEmail, normaliseEmail, seedTagVocabulary, type Db } from "@col/db";
-import { resolveSystemSettings } from "@col/core";
-import { emailProblem, registrationAllowed } from "./accounts";
+import { emailProblem, registrationAllowed, registrationAllowedIn } from "./accounts";
 import { equalHash, sha256, type LinkedInIdentity } from "./linkedin";
 import { sanitizeNextPath } from "./session";
 
@@ -14,14 +13,6 @@ export const LINKEDIN_PENDING_MS = 60 * 60_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function random(): string { return randomBytes(32).toString("base64url"); }
-
-/** Reuse the held connection: asking the global pool from a transaction can deadlock it. */
-async function registrationAllowedIn(database: Pick<Db, "select">, email: string): Promise<boolean> {
-  if (isEntitledEmail(email)) return true;
-  const rows = await database.select({ key: settings.key, value: settings.value }).from(settings)
-    .where(eq(settings.key, "registrationOpen"));
-  return resolveSystemSettings(rows).registrationOpen;
-}
 
 export function parseLinkedInCookie(value: string | undefined): { id: string; secret: string } | null {
   if (!value) return null;

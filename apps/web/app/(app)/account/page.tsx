@@ -4,9 +4,10 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { inputClass, labelClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
+import { AuthSubmitButton } from "@/components/AuthSubmitButton";
 import { BillingOverview } from "@/components/BillingOverview";
-import { LinkedInDisconnectControl } from "@/components/LinkedInDisconnectControl";
 import { SettingsForm } from "@/components/SettingsForm";
+import { unlinkLinkedIn } from "@/app/actions/linkedin";
 import { linkedProviders } from "@/lib/accounts";
 import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
@@ -17,14 +18,19 @@ import { getBillingSummary } from "@/lib/billing/service";
 import { addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout } from "@/app/actions/billing";
 import { getCompanyCapacityQuote } from "@/lib/billing/company-capacity";
 import { redirect } from "next/navigation";
+import { sanitizeNextPath } from "@/lib/session";
+import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
 
 const NOTICES: Record<string, string> = {
   reset: "Your password has been reset and every other browser has been signed out.",
   "verify:done": "Your email address is confirmed.",
+  "verify:sent": "A new confirmation link was sent. Check your inbox.",
   "verify:invalid": "That confirmation link is no longer valid. Send a new one below.",
   "verify:required": "Confirm your email address before adding companies, running discovery or building CVs. The link asks for your password.",
+  "verify:delivery_failed": "We could not send your confirmation link. Try again below; if it still does not arrive, ask an administrator for help.",
+  "verify:rate_limited": "Too many confirmation requests. Wait an hour before trying again.",
   "billing:plan_started": "Checkout complete. Your plan will appear here once payment is confirmed.",
   "billing:credits_added": "Checkout complete. Your CV credits will appear here once payment is confirmed.",
   "billing:cancelled": "Checkout closed. No purchase was made.",
@@ -39,20 +45,25 @@ const NOTICES: Record<string, string> = {
   "billing:capacity_failed": "Company capacity could not be changed. Review your payment method or try again.",
 };
 
-export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string; verify?: string; billing?: string }> }) {
+async function AccountBilling({ userId }: { userId: string }) {
+  const [billing, capacityQuote] = await Promise.all([
+    getBillingSummary(userId), getCompanyCapacityQuote(userId).catch(() => null),
+  ]);
+  return <BillingOverview billing={billing} capacityQuote={capacityQuote}
+    actions={{ addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout }} />;
+}
+
+export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string; verify?: string; billing?: string; next?: string }> }) {
   const current = await getCurrentUser();
   if (!current) redirect("/login");
   const { user } = current;
   const sp = await searchParams;
+  const next = sp.next ? sanitizeNextPath(sp.next) : null;
   // `?verify=required` outlives the redirect that set it, so the notice it names is shown only
   // while that account really is held back.
   const key = sp.reset ? "reset" : sp.verify ? `verify:${sp.verify}` : sp.billing ? `billing:${sp.billing}` : null;
   const notice = key && (key !== "verify:required" || needsEmailConfirmation(user)) ? NOTICES[key] : null;
-  const [providers, billing, capacityQuote] = await Promise.all([
-    linkedProviders(user.id),
-    getBillingSummary(user.id),
-    getCompanyCapacityQuote(user.id).catch(() => null),
-  ]);
+  const providers = await linkedProviders(user.id);
   const canReauthenticateWithGoogle = googleConfigured() && providers.some(p => p.provider === "google");
   const canReauthenticateWithLinkedIn = linkedinConfigured() && providers.some(p => p.provider === "linkedin");
   const labelClassName = "flex flex-col gap-1.5 text-14";
@@ -60,9 +71,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   return (
     <div className="space-y-6">
       <PageHeader title="Account" />
-      {notice && <p role="status" className="border-2 border-ok px-3 py-2 text-14 text-ok">{notice}</p>}
-
-      <BillingOverview billing={billing} capacityQuote={capacityQuote} actions={{ addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout }} />
+      {notice && <p role="status" className={`border-2 px-3 py-2 text-14 ${sp.verify === "required" || sp.verify === "invalid" || sp.verify === "delivery_failed" || sp.verify === "rate_limited" ? "border-warn text-warn" : "border-ok text-ok"}`}>{notice}</p>}
 
       <Card title="Profile">
         <SettingsForm action={updateProfile}>
@@ -76,14 +85,19 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
             {" · "}Role: <span className="text-fg">{user.role}</span>
           </p>
         </SettingsForm>
-        {!user.emailVerifiedAt && (
+        {!user.emailVerifiedAt && emailConfigured() && (
           <form action={resendVerification} className="mt-3 flex flex-wrap items-center gap-3">
-            <Button type="submit" size="sm">Send confirmation email</Button>
+            {next && <input type="hidden" name="next" value={next} />}
+            <AuthSubmitButton label="Send confirmation email" pendingLabel="Sending…" size="sm" className="" />
             <span className="text-12 text-muted">The link asks for your password.</span>
-            {!emailConfigured() && <span className="text-12 text-warn">Email is not configured here; the link only reaches the server log.</span>}
           </form>
         )}
+        {!user.emailVerifiedAt && !emailConfigured() && <p className="mt-3 text-13 text-warn">Confirmation email is temporarily unavailable. Ask an administrator for help.</p>}
       </Card>
+
+      <Suspense fallback={<p role="status" className="text-13 text-muted">Loading plan and credits…</p>}>
+        <AccountBilling userId={user.id} />
+      </Suspense>
 
       <Card title={user.passwordHash ? "Change password" : "Set a password"}>
         <SettingsForm action={changePassword} submitLabel={user.passwordHash ? "Change password" : "Set password"}>
@@ -136,7 +150,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
                   : <span className="text-muted">confirm your account email before linking</span>
                 : <span className="text-muted">not configured on this deployment</span>}</div>
             {providers.some(p => p.provider === "linkedin")
-              ? <LinkedInDisconnectControl canDisconnect={!!user.passwordHash || (googleConfigured() && providers.some(p => p.provider === "google"))} />
+              ? !!user.passwordHash || canReauthenticateWithGoogle
+                ? <SettingsForm action={unlinkLinkedIn} submitLabel="Disconnect LinkedIn sign-in" pendingLabel="Disconnecting…" submitVariant="secondary" successMessage="LinkedIn sign-in disconnected. Your Experience and CVs are unchanged." />
+                : <p className="text-12 text-muted">Set a password or link another sign-in method before disconnecting LinkedIn.</p>
               : linkedinConfigured() && user.emailVerifiedAt &&
                 <p className="text-12 text-muted">You’ll confirm access to this account before linking.</p>}
           </li>

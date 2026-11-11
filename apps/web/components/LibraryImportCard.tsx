@@ -15,7 +15,7 @@ import { importLibraryDocument } from "@/app/actions/library-import";
  */
 export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { showTitle?: boolean; openLinkedIn?: boolean }) {
   return (
-    <Card title={showTitle ? "Import a document" : undefined}>
+    <Card title={showTitle ? "Start from a document or page" : undefined}>
       <div className="grid gap-2">
         <p className="text-14 text-muted">
           Choose one source. Nothing is added to Experience until you review and confirm it.
@@ -47,7 +47,6 @@ export function LibraryImportCard({ showTitle = true, openLinkedIn = false }: { 
             <li>Upload that PDF here (up to 5 MB).</li>
           </ol>
           <p className="text-12 text-muted">Save to PDF is unavailable for some members and in the mobile app. If you cannot export a PDF, paste text from your own profile below instead. A LinkedIn link alone does not read your profile.</p>
-          <p className="text-12 text-muted">You can import a CV or other career document alongside a LinkedIn export, one upload at a time. Review the suggested entries before adding them to Experience.</p>
           <a href="https://www.linkedin.com/help/linkedin/answer/a541960" target="_blank" rel="noopener noreferrer" className="w-fit text-12 underline">LinkedIn’s PDF export help</a>
           <LibraryImportForm action={importLibraryDocument} submitLabel="Import LinkedIn PDF" pendingLabel="Uploading…">
             <input type="hidden" name="kind" value="linkedin" />

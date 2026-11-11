@@ -62,6 +62,37 @@ test("web and worker checks require only their own settings", () => {
   assert.deepEqual(worker.errors, []);
 });
 
+test("auth launch requires deliberate administrators and a usable sender, without exposing their values", () => {
+  const result = launchConfigFindings({ ...ready, ADMIN_EMAILS: "", EMAIL_FROM: "Course of Life <you@example.com>" });
+  assert.ok(result.errors.some(item => item.startsWith("ADMIN_EMAILS")));
+  assert.ok(result.errors.some(item => item.startsWith("EMAIL_FROM")));
+  assert.ok(!JSON.stringify(result).includes("you@example.com"));
+  for (const value of ["owner@example.co.uk,", "invalid", "owner@example.com"]) {
+    assert.ok(launchConfigFindings({ ...ready, ADMIN_EMAILS: value }).errors.some(item => item.startsWith("ADMIN_EMAILS")));
+  }
+  assert.deepEqual(launchConfigFindings({ ...ready, ADMIN_EMAILS: "owner@example.co.uk, backup@example.co.uk" }).errors, []);
+});
+
+test("OAuth stays optional but partial configuration fails closed", () => {
+  for (const provider of ["GOOGLE", "LINKEDIN"]) {
+    for (const suffix of ["CLIENT_ID", "CLIENT_SECRET"]) {
+      const partial = launchConfigFindings({ ...ready, [`${provider}_${suffix}`]: "private-value" });
+      assert.ok(partial.errors.some(item => item.includes(`${provider}_CLIENT_ID`)));
+      assert.ok(!JSON.stringify(partial).includes("private-value"));
+    }
+    const complete = launchConfigFindings({ ...ready, [`${provider}_CLIENT_ID`]: "id", [`${provider}_CLIENT_SECRET`]: "secret" });
+    assert.deepEqual(complete.errors, []);
+    assert.ok(complete.attention.some(item => item.includes(`${provider} app approval`)));
+  }
+});
+
+test("auth email origins reject IP literals, internal hosts and embedded credentials", () => {
+  for (const APP_URL of ["https://127.0.0.1", "https://[::1]", "https://192.168.1.2", "https://intranet", "https://user:secret@courseof.life"]) {
+    assert.ok(launchConfigFindings({ ...ready, APP_URL }).errors.some(item => item.startsWith("APP_URL")));
+  }
+  assert.deepEqual(launchConfigFindings({ ...ready, APP_URL: "https://courseof.life" }).errors, []);
+});
+
 test("CLI rejects missing or unknown options", () => {
   for (const args of [[], ["--surface=web"], ["--surface=web", "--mode=live", "--unknown"]]) {
     const run = spawnSync(process.execPath, [fileURLToPath(new URL("./check-launch-config.mjs", import.meta.url)), ...args], { encoding: "utf8" });

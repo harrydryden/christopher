@@ -1,6 +1,6 @@
 # ADR 0008: One role credit, bounded AI assistance and direct editing
 
-Status: Accepted; coherence-reviewed implementation contract. Implementation and verification pending. 11 November 2026.
+Status: Accepted and implemented; local verification complete with the broad-run exceptions and affected reruns recorded below. Hosted checks and production release gates remain pending. 11 November 2026.
 
 This decision supersedes per-generation CV credit charging and the disclosure-heavy presentation in ADR 0005/0007 for the journeys below. It retains their account isolation, stable source identities, free durable saving, immutable editions/PDFs, optional checks and explicit source-update rules. It does not change subscription prices, launch advertising, deploy migrations or claim human usability validation.
 
@@ -133,4 +133,35 @@ This implementation reduces visible decisions and duplicate controls; it does no
 | U9 | Exhausted allowance still permits all free tasks and valid unchecked finalisation; usage/status reflects reservations/reset times accurately with no fake progress or hidden calls. |
 | U10 | Types, focused/full relevant suites, hosted gates, route budgets and prompt qualification status are recorded honestly. No production migration/deployment, paid call or human study is implied by local implementation. |
 
-Verification evidence is appended only after execution. Root coherence review accepted this contract before dependent runtime changes. Verification remains pending and must be appended from actual results.
+The coherence review accepted this contract before dependent runtime changes. Completed local evidence and outstanding release gates are recorded below.
+
+
+## 11. Local verification and remaining release gates
+
+Local implementation and the final production-browser journeys are complete. The suite results below distinguish broad-run checkpoints from their affected reruns; they do not claim that every suite was rerun wholesale against the final commit. Focused counts overlap the broad suites and must not be added together.
+
+| Area | Completed evidence |
+| --- | --- |
+| Core, AI and database packages | Complete local checkpoints: core 836/836, AI 210/210 and database 155/155. Scoped AI tests use fixtures or mocked provider responses; they do not qualify model quality. |
+| Web package | Latest complete run: 2,051 passed and one stale authorisation-inventory expectation failed out of 2,052. The current inventory recognises that deterministic Refine saves require account ownership, while AI work additionally requires verification. The affected authorisation/action/Refine/Role-details rerun passed 296/296 across four files (`/tmp/col-role-web-confirmed.log`), resolving the sole broad-run assertion failure. This is a broad checkpoint plus affected rerun, not a second full-web pass. Earlier legacy workflow fixtures were corrected to their intended Search tier and passed 67/67. |
+| Worker package | Latest complete run: 883 passed and one failed out of 884. The sole failure was PostgreSQL deadlock `40P01`: the scan gate sought a shared lock on `cv_drafts` while another transaction sought an exclusive lock on `jobs`; the competing owner is unconfirmed. The isolated SmartRecruiters regression passed 1/1, including two partial 10,000-listing scans with zero closures; the complete affected `apps/worker/src/e2e.test.ts` then passed 113/113 serially on an exclusive test database (`/tmp/col-role-worker-e2e-isolated.log`). No worker implementation or timeout was changed for that incident. This is a broad checkpoint plus a focused rerun, not a claimed all-green full rerun. The CV worker regression set separately passed 34/34, including publication metadata. |
+| Role charging and skills | Billing 14/14; mode-safe skill actions 12/12; skill projection/lock regression 1/1; affected Refine/authorisation 267/267; explicit Check 4/4. Cases include duplicate role access, legacy in-flight cutover, refund-safe holds, quote consent, selected-skill ancestry and free structured edits. |
+| Interface and navigation | Complete component checkpoint: 315/315 across 71 files (`/tmp/col-role-ui-last.log`). Later task-view/handover tests passed 68/68, save-to-approval tests 28/28, and reset/price-predicate UI tests 23/23. These are separate overlapping checkpoints. |
+| Release scripts | 149 passed; two optional database probes skipped because no database was configured for that command: the empty-database shared-account seed and the real-client relay statement counter. The separate database package suite above did run. |
+| Migration compatibility | Isolated populated 0073→0075 upgrade preserved career records/assertions/change history, historical CV fields and exact PDF bytes; only new nullable opportunity metadata was excluded from the old-column comparison. Rerunning migrations was a no-op. Fresh-schema integration databases also migrated successfully. |
+| Production browser journeys | Final inline fixture passed at 320 px and 390 px: selected text, Use change, stale-result refusal, Dismiss, one-time role charge, subsequent allowance, free saving and no console errors. The complete modes fixture also passed through source rebase/reset, immutable final PDF byte comparison and application recording. Logs: `/tmp/col-role-inline-complete.log` and `/tmp/col-role-modes-complete.log`; result files: `/tmp/cv-inline-browser/result.json` and `/tmp/cv-modes-browser/result.json`. These synthetic journeys made no live provider calls. The broader built-app smoke also passed with all pages rendered, including the legacy CV flow, tailoring, Applications, direct evidence capture, career recommendations and review (`/tmp/col-role-smoke-web-final-8.log`). |
+
+The production build at `2c07fadd` and all route budgets passed. Measured gzip bytes: `/cv/context/[id]` 135,942 / 138,000; `/settings/cv` 115,959 / 117,000; `/library/about` 114,126 / 115,000; shared root 102,481 / 104,000. The About task fell from 139,939 bytes before replacing the oversized editor. The new `/settings/cv` task inherits its 117,000-byte cap from the existing Settings surface; no existing route or shared cap was raised. The complete core rerun also passed 836/836 at this checkpoint.
+
+The normal evaluation-report validator passes **explicitly unverified**. The new scoped prompt registry is `1c2f007d32f7` (`cv.inline_edit` `d3ffd0ce38`; `cv.inline_verify` `5dd810d90b`). Historical live CV reports retain their original versions and are archived; they do not qualify these new operations. The fixture report in `docs/evaluations/cv-inline-edit-2026-11-11/` records zero live provider calls. `COL_EVAL_GATE_REQUIRE_VERIFIED=1` deliberately remains unsatisfied until a separately authorised live qualification is recorded.
+
+The acceptance scope is implemented and locally exercised as follows:
+
+| Acceptance | Delivered boundary and evidence |
+| --- | --- |
+| U1–U4 | Durable opportunity access and two-window accounting, quote consent, legacy grandfathering/cutover, failure/refund/cancellation fences and migration preservation are covered by database/action/worker tests. First Manual-based AI, subsequent quota and free saves also pass in the production browser. |
+| U5–U6 | Scoped generation and verification are separate bounded operations; selection, proposal acceptance/dismissal, stale source protection and Refine/Manual persistence are exercised with mocked providers and the production UI. Successful output never automatically overwrites the document. This is behavioural proof, not live linguistic-quality qualification. |
+| U7–U9 | Direct fields, named task destinations, visible filters/layout/allowances, no customer task accordions, quotation/recovery and optional finalisation are implemented. The final browser journeys cover mobile writing controls, source/reset handovers, free editing, immutable PDF bytes and application recording. Detailed build narratives remain server-gated administrator diagnostics; inert legacy components may retain old markup without being rendered on customer task routes. |
+| U10 | Local types, package checks, affected reruns, production build, budgets and browser proof are recorded above. Hosted checks are pending at this documentation checkpoint. The strict live qualification gate is intentionally still blocked. |
+
+**Not yet completed:** hosted release checks; separately authorised live qualification of the new prompts; operational cost calibration of the provisional allowances; human comprehension testing; owner-approved production migration/configuration/deployment. No production action or paid provider call was performed for this implementation. The deployment and rollback checklist in section 8 remains mandatory before activation.

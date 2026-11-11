@@ -127,7 +127,7 @@ Record completion without help, wrong turns, help requests, time to first usable
 
 ## Approved role access and direct editing follow-up (ADR 0008)
 
-Contract: [ADR 0008](../adr/0008-role-entitlements-and-contextual-editing.md). The following changes are specified, not yet claimed implemented or human-validated. They supersede disclosures and confirmation wording in older rows where inconsistent.
+Contract: [ADR 0008](../adr/0008-role-entitlements-and-contextual-editing.md). The following changes are implemented and locally exercised by the production-browser and automated checks recorded in ADR 0008. Hosted checks and the strict live prompt qualification gate remain pending; human comprehension is untested. These changes supersede disclosures and confirmation wording in older rows where inconsistent.
 
 | Task | Visible surface and next action | Accounting and recovery |
 | --- | --- | --- |
@@ -145,4 +145,4 @@ Contract: [ADR 0008](../adr/0008-role-entitlements-and-contextual-editing.md). T
 
 No accordions, `details`, “More options” or explainer paragraphs remain in the scoped CV, Experience, Applications and opportunity preparation surfaces. Essential controls remain visible; infrequent controls move to clearly named task screens. The writing menu is the explicit exception. Admin screens are not part of this redesign.
 
-Task validation must cover a first Manual-based AI request, duplicate role contexts, two successive direct edits, all three scoped tools, accepting/dismissing/stale suggestions, exhaustion while continuing free work, source update/history return, 390px/320px keyboard interaction and unchanged final PDF bytes. Compare completion steps and wrong turns in a later real-person study; no comprehension claims follow from automated browser results.
+The local validation covers Manual-based AI, duplicate role accounting, successive direct edits, scoped tool requests, accepting/dismissing/stale suggestions, quota with continued free saving, source/history/reset handovers, 390 px/320 px writing controls and unchanged final PDF bytes; see ADR 0008 for exact suite scope and broad-run exceptions. Compare completion steps and wrong turns in a later real-person study; no comprehension claims follow from automated browser results.

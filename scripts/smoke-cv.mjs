@@ -855,7 +855,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "a direct save must not queue model work");
     console.log(`  manual CV save: ${Math.round(performance.now() - saveStarted)} ms from click to persisted ready revision; no queued model work (local diagnostic)`);
     await page.getByRole("tab", { name: "Review", exact: true }).click();
-    await page.getByRole("button", { name: "Check saved CV", exact: true }).click();
+    await page.getByRole("button", { name: "Check saved CV · 1 role credit", exact: true }).click();
     await page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor().catch(async error => {
       const [row] = (await pool.query("select status from cv_drafts where id = $1", [childId])).rows;
       const tasks = (await pool.query("select status, error from tasks where payload->>'draftId' = $1", [childId])).rows;

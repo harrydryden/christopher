@@ -44,7 +44,7 @@ catalogue to live mode.
 Confirm that a real signed webhook reaches `/api/webhooks/stripe` without a browser session, and
 that an invalid signature makes no billing change. The endpoint authenticates Stripe's signature;
 it must not be gated by the customer's sign-in cookie. The current cross-cutting launch checklist
-is [the production plan](PRODUCTION-PLAN-2026-11-05.md).
+is [the production-readiness checklist](PRODUCTION-READINESS.md).
 
 Before enabling live Checkout, run `pnpm check:launch-config --surface=web --mode=live` with the web
 deployment settings, then `pnpm check:launch-config --surface=worker --mode=live` with the worker

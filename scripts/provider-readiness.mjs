@@ -1,5 +1,8 @@
 /** Read-only model access check. Never sends candidate data or starts a billed generation. */
-export async function providerReadiness({ apiKey, models, prices, fetcher = fetch }) {
+export async function providerReadiness({ apiKey, models, prices, provider = process.env.AI_PROVIDER, fetcher = fetch }) {
+  if (provider !== undefined && (typeof provider !== 'string' || provider.trim().toLowerCase() !== 'anthropic')) {
+    return { status: 'blocked', reason: 'AI_PROVIDER is unsupported. Only anthropic is implemented; Munito needs a qualified adapter before release.', models: [] };
+  }
   if (typeof apiKey !== 'string' || !apiKey.trim()) return { status: 'blocked', reason: 'ANTHROPIC_API_KEY is not configured in this execution environment.', models: [] };
   const results = [];
   for (const model of [...new Set(models)]) {

@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import { providerReadiness } from './provider-readiness.mjs';
 const prices = { 'claude-haiku-4-5': { input: 1, output: 5 } };
 
+test('unsupported provider selections cannot qualify Anthropic access or send credentials', async () => {
+  for (const provider of ['munito', 'unknown', '', '   ']) {
+    const result = await providerReadiness({ provider, apiKey: 'test-only', models: Object.keys(prices), prices,
+      fetcher: () => { throw new Error('must not fetch'); } });
+    assert.equal(result.status, 'blocked');
+    assert.deepEqual(result.models, []);
+  }
+});
+
 test('a missing credential is blocked, not a successful skipped evaluation', async () => {
   for (const apiKey of [undefined, '', '   ']) {
     const result = await providerReadiness({ apiKey, models: Object.keys(prices), prices, fetcher: () => { throw new Error('must not fetch'); } });

@@ -111,6 +111,26 @@ describe("career changes retain identity and recovery across real database trans
     const view = await getCareerWorkspace(db, owner, { recordId: id });
     expect(view.selected?.perspectives.map(row => row.id)).toEqual([perspectiveId]);
     expect(view.selected?.changes.map(row => row.id)).toEqual(expect.arrayContaining([added.changeId, changed.changeId]));
+    expect(view.selected?.changes.find(row => row.id === changed.changeId)?.changedIds).toEqual([factId]);
+    expect((await getCareerWorkspace(db, stranger, { recordId: id })).selected).toBeNull();
+  });
+
+  it("keeps a compact history of all changed objects and retains their undo snapshots", async () => {
+    const parent = randomUUID(), child = randomUUID(), fact = randomUUID(), relationship = randomUUID();
+    const saved = await save([record(parent, "Programme"), record(child, "Delivery"),
+      assertion(fact, child, "Delivered a service improvement"), link(relationship, child, parent)]);
+    const view = await getCareerWorkspace(db, owner, { recordId: child });
+    const change = view.selected?.changes.find(row => row.id === saved.changeId);
+    expect(change?.changedIds.slice().sort()).toEqual([parent, child, fact, relationship].sort());
+    expect(change).not.toHaveProperty("before");
+    expect(change).not.toHaveProperty("after");
+    const undone = success(await undoCareerChange(db, owner, { changeId: saved.changeId,
+      expectedRevision: saved.revision, requestKey: randomUUID() }));
+    expect(undone.changedIds.slice().sort()).toEqual([parent, child, fact, relationship].sort());
+    const restored = await getCareerWorkspace(db, owner);
+    expect(restored.records).toHaveLength(2);
+    expect(restored.records.every(row => row.archived)).toBe(true);
+    expect((await careerCvEvidence(db, owner, undone.revision)).library.entries).toHaveLength(0);
   });
 
   it("pages tied timestamps without losing records and can open an older selected record", async () => {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, gt, ilike, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, ilike, inArray, notInArray, isNull, lt, or, sql } from "drizzle-orm";
 import { CareerChangeSchema, CareerRecordFieldsSchema, CareerProvenanceSchema, careerCanonicalJson, careerConflictingGroups,
   careerPrivateRecordIds, type CareerAssertionView, type CareerChange,
   type CareerChangeResult, type CareerConflictView, type CareerRecordView, type CareerWorkspace,
@@ -281,7 +281,10 @@ export async function undoCareerChange(db: Db, userId: string, input: {
     const before: Record<string, Row | null> = {};
     const after: Record<string, Row | null> = {};
     const touched: Array<{ kind: ObjectKind; id: string; revision: number; row: Row }> = [];
-    for (const key of Object.keys(original.after).reverse()) {
+    const changedKeys = Object.keys(original.after);
+    const originalAssertions = changedKeys.filter(key => key.startsWith("assertion:")).map(key => key.slice(10));
+    const originalLinks = changedKeys.filter(key => key.startsWith("link:")).map(key => key.slice(5));
+    for (const key of changedKeys.reverse()) {
       const [kind, id] = key.split(":") as [ObjectKind, string];
       const expected = original.after[key] as Row | null;
       const previous = original.before[key] as Row | null;
@@ -294,10 +297,10 @@ export async function undoCareerChange(db: Db, userId: string, input: {
         if (!previous) {
           const [laterFact] = await tx.select({ id: careerAssertions.id }).from(careerAssertions)
             .where(and(eq(careerAssertions.userId, userId), eq(careerAssertions.subjectId, id),
-              sql`${careerAssertions.status} <> 'retracted'`, sql`not (${careerAssertions.id}::text = any(${Object.keys(original.after).filter(key => key.startsWith("assertion:")).map(key => key.slice(10))}::text[]))`)).limit(1);
+              sql`${careerAssertions.status} <> 'retracted'`, notInArray(careerAssertions.id, originalAssertions))).limit(1);
           const [laterLink] = await tx.select({ id: careerLinks.id }).from(careerLinks)
             .where(and(eq(careerLinks.userId, userId), or(eq(careerLinks.fromId, id), eq(careerLinks.toId, id)),
-              sql`${careerLinks.archivedAt} is null`, sql`not (${careerLinks.id}::text = any(${Object.keys(original.after).filter(key => key.startsWith("link:")).map(key => key.slice(5))}::text[]))`)).limit(1);
+              sql`${careerLinks.archivedAt} is null`, notInArray(careerLinks.id, originalLinks))).limit(1);
           if (laterFact || laterLink) throw new CareerWriteConflict("Newer facts or relationships use this item. Review them before undoing it.");
         }
         current = snapshot(row)!;
@@ -470,7 +473,9 @@ export async function getCareerWorkspace(db: Db, userId: string,
   const otherTitles = new Map(otherRows.map(row => [row.id, row.title]));
   const relatedKeys = chosen ? [`record:${chosen.id}`,
     ...allAssertionIds.map(row => `assertion:${row.id}`), ...allLinkIds.map(row => `link:${row.id}`)] : [];
-  const selectedChanges = chosen ? await tx.select().from(careerChanges).where(and(eq(careerChanges.userId, userId),
+  const selectedChanges = chosen ? await tx.select({ id: careerChanges.id, revision: careerChanges.revision,
+    changedKeys: sql<string[]>`array(select jsonb_object_keys(${careerChanges.after}))`,
+    undoOf: careerChanges.undoOf, createdAt: careerChanges.createdAt }).from(careerChanges).where(and(eq(careerChanges.userId, userId),
     options.changesCursor ? lt(careerChanges.revision, options.changesCursor) : undefined,
     sql`${careerChanges.after} ?| ARRAY[${sql.join(relatedKeys.map(key => sql`${key}`), sql`, `)}]::text[]`))
     .orderBy(desc(careerChanges.revision)).limit(31) : [];
@@ -491,7 +496,7 @@ export async function getCareerWorkspace(db: Db, userId: string,
         assertionIds: row.assertionIds, archived: !!row.archivedAt })),
     changes: selectedChanges.slice(0, 30)
       .map(row => ({ id: row.id, revision: row.revision,
-        changedIds: Object.keys(row.after).map(key => key.slice(key.indexOf(":") + 1)),
+        changedIds: row.changedKeys.map(key => key.slice(key.indexOf(":") + 1)),
         undoOf: row.undoOf, createdAt: row.createdAt.toISOString() })),
     assertionsNextCursor: selectedAssertions.length > 30 ? selectedAssertions[29]!.id : null,
     linksNextCursor: selectedLinks.length > 30 ? selectedLinks[29]!.id : null,

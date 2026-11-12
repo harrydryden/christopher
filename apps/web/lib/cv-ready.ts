@@ -9,6 +9,7 @@
  *
  * Nothing here gates anything. It says what is missing and names the block it is missing from.
  */
+import { jobEntry } from "./cv-library-rows";
 import { eligibleCvEvidence, employmentHeading, isActiveEvidence, responsibilityRows, type CvEvidenceStatus } from "@col/core/cv-helpers";
 import type { CvLibrary, Employment } from "@col/core/cv";
 
@@ -26,13 +27,8 @@ export interface CvJobReadiness {
   line: string;
 }
 
-/** The evidence block written for one job, if there is one. */
-function entryForJob(library: CvLibrary, employmentId: string) {
-  return library.entries.find(entry => entry.kind === "experience" && entry.employmentId === employmentId);
-}
-
 export function cvJobReadiness(library: CvLibrary, employmentId: string): CvJobReadiness {
-  const entry = entryForJob(library, employmentId);
+  const entry = jobEntry(library, employmentId);
   const rows = entry ? responsibilityRows(entry.details) : [];
   const confirmed = new Set(entry?.confirmedResponsibilities ?? []);
   const confirmedRows = rows.filter(row => confirmed.has(row)).length;
@@ -53,7 +49,7 @@ export function cvJobReadiness(library: CvLibrary, employmentId: string): CvJobR
 
 /** Every row of one job's evidence, as `Confirm all` would confirm them. */
 export function confirmableRows(library: CvLibrary, employmentId: string): string[] {
-  const entry = entryForJob(library, employmentId);
+  const entry = jobEntry(library, employmentId);
   return entry ? responsibilityRows(entry.details) : [];
 }
 
@@ -83,11 +79,11 @@ function labelFor(library: CvLibrary, entry: CvLibrary["entries"][number]): stri
  * stored with it either. A block whose parent role block is archived cannot be used either;
  * `groupCvLibrary` drops it.
  */
-function usable(library: CvLibrary, entry: CvLibrary["entries"][number]): boolean {
+function usable(entry: CvLibrary["entries"][number], activeIds: ReadonlySet<string>): boolean {
   return (
     responsibilityRows(entry.details).length > 0 &&
     !!eligibleCvEvidence(entry) &&
-    (!entry.roleId || library.entries.some(parent => parent.id === entry.roleId && isActiveEvidence(parent)))
+    (!entry.roleId || activeIds.has(entry.roleId))
   );
 }
 
@@ -99,7 +95,8 @@ function usable(library: CvLibrary, entry: CvLibrary["entries"][number]): boolea
  * sentence points at; an account with nothing written at all is told where to start instead.
  */
 export function cvLibraryReadiness(library: CvLibrary): CvLibraryReadiness {
-  const eligible = library.entries.filter(entry => usable(library, entry));
+  const activeIds = new Set(library.entries.filter(isActiveEvidence).map(entry => entry.id));
+  const eligible = library.entries.filter(entry => usable(entry, activeIds));
   if (eligible.length)
     return { ready: true, eligible: eligible.length, line: "Ready to build: yes" };
   const written = library.entries.filter(

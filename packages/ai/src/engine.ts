@@ -1,5 +1,5 @@
 import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@col/core/cv-assessment";
-import { CvBuildStop } from "@col/core/cv-build-failure";
+import { CvBuildStop, failureDuration } from "@col/core/cv-build-failure";
 import { mentionsDemographicAttribute, validateCvRubric } from "@col/core/cv-review";
 import { cvReviewBatches, libraryVerdictLines, mergeRetry, reviewBatchIssues, markUnverifiedFindings, retryScope, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
 import {
@@ -610,21 +610,14 @@ function cutFor(reason: unknown): Exclude<CallCut, "stalled"> {
   return "interrupted";
 }
 
-/** A duration as the sentence reads it: whole minutes when it is whole minutes, seconds otherwise. */
-function span(ms: number): string {
-  if (ms >= 60_000 && ms % 60_000 === 0) return `${ms / 60_000} minute${ms === 60_000 ? "" : "s"}`;
-  const seconds = Math.round(ms / 1000);
-  return `${seconds} second${seconds === 1 ? "" : "s"}`;
-}
-
 /**
  * What a stall was, said as it happened. Both begin "Stream timed out:", which is what the ledger's
  * outcome taxonomy matches a stall by.
  */
 export function stallMessage(stall: NonNullable<AiFailure["stall"]>): string {
   return stall.reason === "idle"
-    ? `Stream timed out: no events for ${span(stall.afterMs)}.`
-    : `Stream timed out: still open after ${span(stall.afterMs)}.`;
+    ? `Stream timed out: no events for ${failureDuration(stall.afterMs)}.`
+    : `Stream timed out: still open after ${failureDuration(stall.afterMs)}.`;
 }
 
 function cutMessage(cut: CallCut, reason: unknown, stall?: AiFailure["stall"]): string {

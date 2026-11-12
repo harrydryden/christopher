@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { CV_TOPUPS, PLAN_CATALOG, type BillingPlan, type CvTopupKey } from "@col/db";
+import { type BillingPlan, type CvTopupKey } from "@col/db";
 
 let client: Stripe | null = null;
 
@@ -51,19 +51,4 @@ export function planForPrice(priceId: string | null | undefined): Exclude<Billin
 export function packForPrice(priceId: string | null | undefined): CvTopupKey | null {
   if (!priceId) return null;
   return (Object.keys(topupPriceEnv) as CvTopupKey[]).find(pack => topupPriceId(pack) === priceId) ?? null;
-}
-
-/** Fails deployment configuration loudly before a customer reaches Checkout. */
-export function assertStripeCatalogue(): void {
-  const missing = [
-    ...Object.entries(planPriceEnv).filter(([plan]) => PLAN_CATALOG[plan as Exclude<BillingPlan, "free">].monthlyGbp > 0)
-      .filter(([, env]) => !process.env[env]?.trim()).map(([, env]) => env),
-    ...Object.entries(topupPriceEnv).filter(([, env]) => !process.env[env]?.trim()).map(([, env]) => env),
-  ];
-  if (missing.length) throw new Error(`Stripe price configuration is incomplete: ${missing.join(", ")}`);
-}
-
-export function topupDescription(pack: CvTopupKey): string {
-  const item = CV_TOPUPS[pack];
-  return `${item.credits} CV credits for £${item.priceGbp}`;
 }

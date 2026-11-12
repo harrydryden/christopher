@@ -22,6 +22,20 @@ import {
 } from "@col/core/cv-helpers";
 import type { CvLibrary, Employment } from "@col/core/cv";
 
+/**
+ * What the confirm asks before a job is removed.
+ *
+ * Removing a job archives its evidence rather than deleting it: the rows stay in the versions
+ * already saved and in the CVs already built, and are shown and counted nowhere else. That is
+ * worth a sentence and a confirm when there is anything to archive — and one more sentence for
+ * the way back, because a person who removes the wrong job needs to know there is one before they
+ * answer, not after.
+ */
+export function jobRemovalConfirm(job: Employment, rows: number): string {
+  const name = [job.company.trim(), job.jobTitle.trim()].filter(Boolean).join(" · ") || "this job";
+  return `Remove ${name} and archive its ${rows} ${rows === 1 ? "row" : "rows"}? They stay in earlier versions and in CVs already built. You can restore it from Archived jobs below.`;
+}
+
 type CvEntry = CvLibrary["entries"][number];
 
 /** The evidence block written for one job, if there is one yet. */

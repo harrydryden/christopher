@@ -1,3 +1,6 @@
+let usdFormat: Intl.NumberFormat | undefined;
+let countFormat: Intl.NumberFormat | undefined;
+
 /** Presentation helpers: relative time, currency, percentages. Pure functions, no I/O. */
 
 export function relativeTime(date: Date | null | undefined, now: Date = new Date()): string {
@@ -22,7 +25,7 @@ export function relativeTime(date: Date | null | undefined, now: Date = new Date
 }
 
 export function formatUsd(n: number): string {
-  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
+  return (usdFormat ??= new Intl.NumberFormat("en-GB", { style: "currency", currency: "USD", maximumFractionDigits: 2 })).format(n);
 }
 
 export function formatPercent(fraction: number, digits = 0): string {
@@ -31,7 +34,7 @@ export function formatPercent(fraction: number, digits = 0): string {
 
 /** Whole figures with thousands separators: token and call counts, which run to seven digits. */
 export function formatCount(n: number): string {
-  return new Intl.NumberFormat("en-GB").format(Math.round(n));
+  return (countFormat ??= new Intl.NumberFormat("en-GB")).format(Math.round(n));
 }
 
 /** "17 Sep". Read in UTC because a budget month and its reset marker are UTC. */

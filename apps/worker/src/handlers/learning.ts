@@ -15,11 +15,6 @@ import { loadUserSettings } from "../settings";
 /** What a handler finishes with when its account has no room left for the call it was about to make. */
 const BUDGET_SKIP = { skipped: "account ai budget exceeded" } as const;
 
-/** Every account carries the seed vocabulary; new accounts get it at creation, this covers older ones. */
-export async function ensureSeedTags(deps: WorkerDeps): Promise<void> {
-  for (const userId of await listUserIds(deps.db)) await seedTagVocabulary(deps.db, userId);
-}
-
 export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { decisionId } = task.payload as unknown as { decisionId: string };
   const [decision] = await deps.db.select().from(schema.decisions).where(eq(schema.decisions.id, decisionId)).limit(1);

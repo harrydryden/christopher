@@ -40,6 +40,14 @@ const buildable = (value: CvLibrary) => {
   }
 };
 
+it("requires a child's parent to remain active and present, without counting an empty parent", () => {
+  const child = { ...library().entries[0]!, roleId: "parent", confirmedResponsibilities: ["Led a team of nine."] };
+  const parent = { ...child, id: "parent", roleId: undefined, details: "", confirmedResponsibilities: [] };
+  expect(cvLibraryReadiness(library({ entries: [parent, child] })).eligible).toBe(1);
+  expect(cvLibraryReadiness(library({ entries: [{ ...parent, status: "inactive" }, child] })).eligible).toBe(0);
+  expect(cvLibraryReadiness(library({ entries: [child] })).eligible).toBe(0);
+});
+
 it("agrees with generation about confirmation and about evidence that has been archived", () => {
   const cases: [Partial<CvLibrary["entries"][number]>, boolean][] = [
     [{ confirmedResponsibilities: [] }, false],

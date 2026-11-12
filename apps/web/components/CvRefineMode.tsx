@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { inputSelection } from "@/lib/input-selection";
 import { useRouter } from "next/navigation";
 import type { CvRefinementConflict, CvRefinementV1 } from "@col/core/cv-editing-modes";
 import { cvNeedsAuthoredRebuild, cvRemovedAppliedRefinements } from "@col/core/cv-refinement-state";
@@ -21,11 +22,6 @@ type DirectDraft = { text: string; title: string };
 const targetKey = (option: RefinementTargetOption) => `${option.type}:${option.id ?? ""}`;
 const directFrom = (options: RefinementTargetOption[]) => Object.fromEntries(options.map(option =>
   [targetKey(option), { text: option.sourceText, title: option.sourceSignpost ?? "" }])) as Record<string, DirectDraft>;
-
-function inputSelection(id: string) {
-  const input = document.getElementById(id) as HTMLTextAreaElement | HTMLInputElement | null;
-  return input ? { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0 } : null;
-}
 
 export function CvRefineMode({ contextId, source: incomingSource, initialVersion, targets: incomingTargets, refinements,
   appliedRefinements = [],

@@ -6,8 +6,8 @@ import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTML
  * because server components style raw inputs directly in several places.
  */
 const fieldClass =
-  "w-full border-2 border-line-muted bg-bg py-2 font-mono text-14 text-fg " +
-  "placeholder:text-faint focus:border-line focus:outline-none";
+  "min-h-11 min-w-0 w-full border-2 border-line-muted bg-bg py-2 font-mono text-14 text-fg " +
+  "placeholder:text-faint focus:border-line disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:border-danger";
 export const inputClass = `${fieldClass} px-3`;
 
 // Reserve room for the CSS chevron without px-3 overriding its right padding.
@@ -31,7 +31,7 @@ export function Field({
 }) {
   const Tag = htmlFor ? "div" : "label";
   return (
-    <Tag className={`flex flex-col gap-1.5 text-14 ${className}`}>
+    <Tag className={`flex min-w-0 flex-col gap-1.5 text-14 ${className}`}>
       {label && (
         htmlFor
           ? <label htmlFor={htmlFor} className={labelClass}>{label}</label>
@@ -57,8 +57,8 @@ export function Select({ className = "", children, ...rest }: SelectHTMLAttribut
 
 export function Checkbox({ label, className = "", ...rest }: InputHTMLAttributes<HTMLInputElement> & { label: ReactNode }) {
   return (
-    <label className={`inline-flex cursor-pointer items-center gap-2 text-14 ${className}`}>
-      <input type="checkbox" className="h-4 w-4 m-0" {...rest} />
+    <label className={`inline-flex min-h-11 items-center gap-2 text-14 ${rest.disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"} ${className}`}>
+      <input type="checkbox" className="m-0 h-4 w-4 shrink-0" {...rest} />
       {label}
     </label>
   );

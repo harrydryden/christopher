@@ -16,11 +16,9 @@ import { companySortParams, nextCompanySort, parseCompanySort, type CompanySort,
 import { GateSetup } from "@/components/GateSetup";
 import { getSystemSettings } from "@/lib/settings";
 import { hasChosenGate } from "@/lib/queries/setup";
-import { needsEmailConfirmation, requireUser } from "@/lib/auth";
-import { CompanyManageMenu } from "@/components/CompanyManageMenu";
+import { requireUser } from "@/lib/auth";
 import { getWorkerStatus } from "@/lib/queries/health";
 import { nextScanSentence } from "./scan-line";
-import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { RefusalNotice } from "@/components/RefusalNotice";
 import { CompanyCapacityReadout } from "@/components/CompanyCapacityReadout";
 import { getCompanyEntitlement } from "@/lib/billing/service";
@@ -57,7 +55,6 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const [{ rows, total, page }, work, system, gateChosen, companyEntitlement] = await Promise.all([listCompanyPage(user.id, pageNumber(sp.page), "", order), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id), getCompanyEntitlement(user.id)]);
   const workerState = rows.some(row => row.activityState === "running") ? (await getWorkerStatus()).state : null;
   const now = new Date();
-  const unverified = needsEmailConfirmation(user);
 
   return (
     <div>
@@ -93,13 +90,13 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
           action={<Link prefetch={false} href="/suggestions" className={buttonLinkClass("primary")}>Discover companies</Link>}
         />
       ) : (<>
-        <details className="mb-3 text-13 text-muted">
-          <summary className="inline-flex min-h-11 cursor-pointer items-center underline">More ways to sort</summary>
+        <nav aria-label="Company sorting" className="mb-3 text-13 text-muted">
+          <span className="font-medium">Sort by</span>
           <div className="flex flex-wrap gap-3 pb-2">
             {([ ["source", "Source"], ["open", "Open roles"], ["shortlisted", "Shortlisted"] ] as const).map(([key, label]) =>
               <Link key={key} prefetch={false} href={`/companies?${new URLSearchParams(companySortParams(nextCompanySort(order, key)))}`} className="inline-flex min-h-11 items-center underline">{label}</Link>)}
           </div>
-        </details>
+        </nav>
         <div className="hidden md:block"><Table>
           <THead>
             <tr>
@@ -157,16 +154,10 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                     </>
                   )}
                   {discovering && <p className="mt-1 text-12 text-info">{activityLabel(activityType, activityState, workerState)}{activityState === "running" && workerState && workerState !== "healthy" && <> · <Link href="/health" className="underline">Check Health</Link></>}</p>}
-                  {(sourceType || lastScan) && <details className="mt-1 text-12 text-muted"><summary className="min-h-11 cursor-pointer py-2 underline">Monitoring details</summary>
-                    {sourceType && <p>Source: {sourceType}</p>}
-                    {lastScan && <p>Last check: {lastScan.startedAt.toLocaleString("en-GB", { timeZone: "Europe/London", dateStyle: "medium", timeStyle: "short" })} UK time · {scanStatusLabel(lastScan.status)}</p>}
-                  </details>}
+
                 </TD>
                 <TD>
-                  {/* Refresh is occasional, so it sits in the row's Manage menu rather than beside it. */}
-                  <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
-                    extra="refresh" running={activityState === "running"} monitoringIssue={activityState === "running" && workerState !== "healthy" ? workerState ?? undefined : undefined}
-                    blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
+                  <Link prefetch={false} href={`/companies/${company.id}#manage`} className="inline-flex min-h-11 items-center text-13 underline">Manage</Link>
                 </TD>
               </TR>
             ))}
@@ -182,9 +173,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   </Link>
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block min-h-11 truncate py-2 text-12 text-muted underline">{company.domain}</a>
                 </div>
-                <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
-                  extra="refresh" running={activityState === "running"} monitoringIssue={activityState === "running" && workerState !== "healthy" ? workerState ?? undefined : undefined}
-                  blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
+                <Link prefetch={false} href={`/companies/${company.id}#manage`} className="inline-flex min-h-11 items-center text-13 underline">Manage</Link>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-12">
                 {needsSource && !discovering && subscription.status === "active" ? <Badge tone="amber">no careers source</Badge>
@@ -198,10 +187,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                 <Link prefetch={false} href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</Link>
               </p>}
               <p className="mt-2 text-12 text-muted">{lastScan ? `${lastScan.status === "ok" ? "Checked" : scanStatusLabel(lastScan.status)} ${relativeTime(lastScan.startedAt, now)}` : needsSource ? "Waiting for a source" : "Never scanned"}</p>
-              {(sourceType || lastScan) && <details className="mt-2 text-12 text-muted"><summary className="min-h-11 cursor-pointer py-2 underline">Monitoring details</summary>
-                {sourceType && <p>Source: {sourceType}</p>}
-                {lastScan && <p>Last check: {lastScan.startedAt.toLocaleString("en-GB", { timeZone: "Europe/London", dateStyle: "medium", timeStyle: "short" })} UK time · {scanStatusLabel(lastScan.status)}</p>}
-              </details>}
+
               <div className="mt-3 grid grid-cols-3 gap-2 border-t border-line-faint pt-3 text-center text-12">
                 <Link prefetch={false} href={`/companies/${company.id}#roles`} className="min-h-11 underline"><strong className="block text-16">{openRoles}</strong>Open</Link>
                 <Link prefetch={false} href={`/companies/${company.id}?view=auto-matched#roles`} className="min-h-11 underline"><strong className="block text-16">{reviewRoles}</strong>Review</Link>

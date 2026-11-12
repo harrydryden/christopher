@@ -1,6 +1,3 @@
-"use client";
-
-import { useState } from "react";
 import { SORT_KEYS, STATUS_VALUES } from "@/lib/roles-filter-options";
 import type { RolesFilters } from "@/lib/queries/jobs";
 import { buttonClass } from "@/components/Button";
@@ -39,7 +36,6 @@ export function RolesFilterBar({
   companyOptions: Array<{ id: string; name: string }>;
   exportHref: string;
 }) {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const decided = decidedTab(view);
   const sortKeys = SORT_KEYS.filter(key => key !== "decided" || decided);
   const active: string[] = [];
@@ -78,15 +74,13 @@ export function RolesFilterBar({
         <button type="submit" className={buttonClass("primary")}>
           Update results
         </button>
-        <button type="button" aria-expanded={advancedOpen} aria-controls="role-filter-fields"
-          onClick={() => setAdvancedOpen(open => !open)} className={buttonClass("secondary")}>{advancedOpen ? "Hide filters" : `Filters${active.length ? ` (${active.length})` : ""}`}</button>
         {active.length > 0 && <a href={clearHref} className={buttonClass("ghost", "md", "no-underline")}>Clear filters</a>}
       </div>
       </div>
       {active.length > 0 && <div aria-label="Active filters" className="flex flex-wrap gap-1.5 text-12">
         {active.map(label => <span key={label} className="border border-line-muted px-2 py-1 text-muted">{label}</span>)}
       </div>}
-      {/* Availability stays reachable when the advanced panel is closed, including on phones. */}
+      {/* Keep filtering controls visible at every viewport width. */}
       <fieldset className="flex w-full flex-wrap items-center gap-2">
         <legend className="sr-only">Availability</legend>
         <span className={labelClass}>Availability</span>
@@ -97,7 +91,7 @@ export function RolesFilterBar({
           <input type="checkbox" name="since" value="7d" defaultChecked={filters.sinceDays !== null} className="h-4 w-4" />This week
         </label>}
       </fieldset>
-      <div id="role-filter-fields" className={`${advancedOpen ? "flex" : "hidden"} w-full flex-wrap items-end gap-3 border-t border-line-faint pt-3`}>
+      <div id="role-filter-fields" className="flex w-full flex-wrap items-end gap-3 border-t border-line-faint pt-3">
       <label className="flex flex-col gap-1.5">
         <span className={labelClass}>Location</span>
         <input type="text" name="location" defaultValue={filters.location} placeholder="e.g. London" className={`w-36 ${inputClass}`} />

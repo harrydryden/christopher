@@ -75,6 +75,7 @@ export function CvBuildLive({
   maxAttempts = null,
   medians = {},
   action,
+  diagnostics = false,
 }: {
   id: string;
   mode: "build" | "log";
@@ -87,6 +88,8 @@ export function CvBuildLive({
   medians?: CvMotionMedians;
   /** The way out of a stopped build, rendered by the server. */
   action?: ReactNode;
+  /** Set only by the server for administrators; customer progress never expands logs. */
+  diagnostics?: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -213,11 +216,12 @@ export function CvBuildLive({
   };
   if (mode === "build") {
     if (!build) return null;
-    return <CvBuildScreen steps={steps} now={now} context={context} medians={medians} reading={reading} build={build} action={action} connectionIssue={connectionIssue} />;
+    return <CvBuildScreen steps={steps} now={now} context={context} medians={medians} reading={reading} build={build} action={action} connectionIssue={connectionIssue} diagnostics={diagnostics} />;
   }
 
   if (!steps.length) return null;
   const adopted = adoptedRevision(steps);
+  if (!diagnostics && !reading.live && !adopted) return null;
   return (
     <section className="space-y-3 border-2 border-line bg-raised p-4">
       {connectionIssue && reading.live && <p role="status" className="border border-warn p-3 text-14 text-warn">Build log updates are unavailable. The last known activity is shown below; reconnecting automatically.</p>}
@@ -236,9 +240,9 @@ export function CvBuildLive({
       )}
       {/* Told only while open: closed, the log is not re-narrated on every tick of the clock, and
           on a finished CV its chunk is not even fetched until someone asks to read it. */}
-      <CvDisclosure label="build log" mountWhenOpen>
+      {diagnostics && <CvDisclosure label="build log" mountWhenOpen>
         <CvBuildLogBody steps={steps} now={now} context={context} live={reading.live} />
-      </CvDisclosure>
+      </CvDisclosure>}
     </section>
   );
 }

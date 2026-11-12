@@ -1,8 +1,7 @@
 import type { CvContent, CvLibrary } from "./cv";
 import type { CvRubric } from "./cv-assessment";
 import { canonicalJson } from "./cv-review";
-import { cvTailoringEvidence } from "./cv-tailoring";
-import { cvRefinementDependencies, validateCvEditingTargets,
+import { cvRefinementDependencies, cvStableEvidence, cvStableEvidenceId, validateCvEditingTargets,
   type CvEditingTargets, type CvRefinementV1 } from "./cv-editing-modes";
 
 export type CvRefinementRebaseReason = "changed_role" | "changed_source" | "missing_target" |
@@ -47,12 +46,12 @@ function mapTarget(from: CvRefinementRebaseSource, to: CvRefinementRebaseSource,
     const oldIndex = prior.ids.bulletIds.indexOf(target.id!);
     if (oldIndex < 0) return { reason: "missing_target" };
     if (next.bulletIds.includes(target.id!)) return { target };
-    const cited = refs(prior.section.bulletSources?.[oldIndex]);
+    const cited = refs(prior.section.bulletSources?.[oldIndex]).map(id => cvStableEvidenceId(from.library, id)).sort();
     if (!cited.length) return { reason: "ambiguous_target" };
     const oldMatches = prior.section.bullets.flatMap((_, i) =>
-      same(refs(prior.section.bulletSources?.[i]), cited) ? [i] : []);
+      same(refs(prior.section.bulletSources?.[i]).map(id => cvStableEvidenceId(from.library, id)).sort(), cited) ? [i] : []);
     const newMatches = nextSection.bullets.flatMap((_, i) =>
-      same(refs(nextSection.bulletSources?.[i]), cited) ? [i] : []);
+      same(refs(nextSection.bulletSources?.[i]).map(id => cvStableEvidenceId(to.library, id)).sort(), cited) ? [i] : []);
     if (oldMatches.length !== 1 || newMatches.length !== 1)
       return { reason: "ambiguous_target" };
     return { target: { type: "bullet", id: next.bulletIds[newMatches[0]!] } };
@@ -71,9 +70,9 @@ function mapTarget(from: CvRefinementRebaseSource, to: CvRefinementRebaseSource,
 function exactEvidence(from: CvRefinementRebaseSource, to: CvRefinementRebaseSource,
   ids: string[]): boolean {
   if (!ids.length) return false;
-  const old = new Map(cvTailoringEvidence(from.library).map(row => [row.id, row.text]));
-  const next = new Map(cvTailoringEvidence(to.library).map(row => [row.id, row.text]));
-  return ids.every(id => old.has(id) && next.has(id) && old.get(id) === next.get(id));
+  const old = new Map(cvStableEvidence(from.library).map(row => [row.id, [row.text, row.revision]]));
+  const next = new Map(cvStableEvidence(to.library).map(row => [row.id, [row.text, row.revision]]));
+  return ids.every(id => old.has(id) && next.has(id) && same(old.get(id), next.get(id)));
 }
 
 /** A proposed transfer is proof about the two immutable sources, never an index or text guess. */
@@ -96,6 +95,8 @@ export function cvPreviewRefinementRebase(input: { from: CvRefinementRebaseSourc
     }
     if (row.dependencies.originBaselineId && row.dependencies.originBaselineId !== from.id)
       return conflict("manual_origin");
+    if (row.structured?.kind === "skill_selection")
+      return conflict("changed_source"); // A source-checked role choice needs a new run on the new Auto input.
     if (row.dependencies.descriptionVersionId !== from.descriptionVersionId)
       return conflict("changed_role");
     const prior = cvRefinementDependencies({ content: from.content, targets: from.targets,

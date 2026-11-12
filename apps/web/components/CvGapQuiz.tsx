@@ -5,13 +5,12 @@ import type { ActionResult } from "@/lib/validation";
 import type { GapQuizForm, GapQuizLibrary } from "@/lib/cv-gap-quiz-library";
 import { Button } from "@/components/Button";
 import { Select } from "@/components/Field";
-import { EvidenceConversation } from "@/components/EvidenceConversation";
 import type { EvidenceDraftView } from "@/app/actions/evidence";
 
 const INITIAL: ActionResult = { ok: true };
 
 /**
- * The deliberate human checkpoint: optional answers, explicit destination and factual confirmation.
+ * Optional direct facts, with a destination the person chooses for each answer.
  *
  * `quiz` and `library` are shaped on the server (lib/cv-gap-quiz-library.ts): the destinations an
  * answer can be saved under and the one each question starts on, not the Library itself.
@@ -20,9 +19,6 @@ export function CvGapQuiz({
   quiz,
   library,
   action,
-  draftId,
-  openDrafts = [],
-  scopeId,
 }: {
   quiz: GapQuizForm;
   library: GapQuizLibrary;
@@ -43,7 +39,7 @@ export function CvGapQuiz({
         <h2 id="gap-quiz-title" className="text-18 font-semibold">Could your Experience say more?</h2>
         <p className="max-w-3xl text-14 text-muted">
           The role asks for evidence that your Experience does not yet show clearly. Add only facts you know are accurate.
-          Your confirmed wording will be saved to Experience and reused in future CVs. You can continue without adding anything.
+          Your own answer is ready to use once saved to Experience. You can continue without adding anything.
         </p>
       </header>
       <form method="post" className="space-y-5" onSubmit={async event => {
@@ -69,7 +65,6 @@ export function CvGapQuiz({
         <ol className="space-y-4" aria-label="Evidence questions">
           {quiz.questions.map((question, index) => {
             const destination = destinations[question.id] ?? question.destinationValue;
-            const [kind, destinationId] = destination.split(":");
             return (
               <li key={question.id} className="space-y-3 border border-line-muted bg-bg p-4">
                 <div className="space-y-1">
@@ -79,7 +74,7 @@ export function CvGapQuiz({
                 </div>
                 <label className="flex flex-col gap-1.5 text-14">
                   <span className="ds-label">Save this evidence under</span>
-                  <Select name={`destination:${question.id}`} value={destination} onChange={event => { setDestinations(current => ({ ...current, [question.id]: event.target.value })); setAnswers(current => { const next = { ...current }; delete next[question.id]; return next; }); }}>
+                  <Select name={`destination:${question.id}`} value={destination} onChange={event => setDestinations(current => ({ ...current, [question.id]: event.target.value }))}>
                     {library.employment.map(job => (
                       <option key={`employment:${job.id}`} value={`employment:${job.id}`}>{job.jobTitle} · {job.company}</option>
                     ))}
@@ -88,14 +83,11 @@ export function CvGapQuiz({
                     ))}
                   </Select>
                 </label>
-                <EvidenceConversation key={`${question.id}:${destination}`} source="cv_quiz" sourceId={draftId}
-                  question={question.prompt} questionId={question.id} baseVersion={quiz.libraryVersion}
-                  destination={{ kind: kind === "employment" ? "employment" : "evidence", id: destinationId ?? "" }}
-                  destinationLabel={kind === "employment" ? library.employment.find(item => item.id === destinationId)?.jobTitle ?? "the selected job" : library.entries.find(item => item.id === destinationId)?.heading ?? "the selected entry"}
-                  scopeId={scopeId}
-                  initialDraft={openDrafts.find(item => item.questionId === question.id && item.destination.kind === kind && item.destination.id === destinationId)}
-                  onConfirmed={wording => setAnswers(current => ({ ...current, [question.id]: wording }))} />
-                {answers[question.id] && <><input type="hidden" name={`answer:${question.id}`} value={answers[question.id]} /><input type="hidden" name={`confirmed:${question.id}`} value="on" /><p role="status" className="text-12 text-ok">Reviewed wording ready to save with this CV.</p></>}
+                <label className="grid gap-1.5 text-14"><span className="ds-label">Your answer (optional)</span>
+                  <textarea className="min-h-24 w-full border border-line-muted bg-bg p-3 text-14" maxLength={2000}
+                    name={`answer:${question.id}`} value={answers[question.id] ?? ""}
+                    onChange={event => setAnswers(current => ({ ...current, [question.id]: event.target.value }))}
+                    placeholder="Describe what you did or achieved in your own words." /></label>
               </li>
             );
           })}
@@ -103,7 +95,7 @@ export function CvGapQuiz({
         {!state.ok && <p role="alert" className="text-14 text-danger">{state.error}</p>}
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" name="decision" value="confirm" variant="primary" disabled={pending}>
-            {pending ? "Continuing…" : "Save evidence and continue"}
+            {pending ? "Continuing…" : "Save facts and continue"}
           </Button>
           <Button type="submit" name="decision" value="skip" variant="secondary" formNoValidate disabled={pending}>
             No further evidence — continue

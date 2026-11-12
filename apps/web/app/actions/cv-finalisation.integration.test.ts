@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
-import { createDb, schema, type Db } from "@col/db";
+import { createDb, saveCareerChange, schema, type Db } from "@col/db";
 import { runMigrations } from "@col/db/migrate";
 import { createTestDb } from "@/test/db";
 import { signInTestUser } from "@/test/auth";
@@ -115,4 +115,40 @@ it("does not approve across renderer releases or turn whitespace into a final CV
       cvDraftEditBaseHash(blank.content, blank.targetingBrief))).ok).toBe(false);
   } finally { if (previousCommit === undefined) delete process.env.RENDER_GIT_COMMIT;
     else process.env.RENDER_GIT_COMMIT = previousCommit; }
+});
+
+it.each(["auto", "refine", "manual"] as const)("finalises saved %s wording while Experience conflicts remain open and change", async editingMode => {
+  const row = await draft({ editingMode });
+  const recordId = crypto.randomUUID();
+  const firstId = crypto.randomUUID();
+  const secondId = crypto.randomUUID();
+  const context = { attribute: "revenue", scope: "project", period: "2025", value: "£1m" };
+  const saved = await saveCareerChange(database, userId, { expectedRevision: 0, requestKey: crypto.randomUUID(), operations: [
+    { type: "create_record", id: recordId, kind: "project", fields: {
+      title: "A separate project", originalNarrative: "", dates: { start: null, end: null, current: false },
+      arrangement: "contract", publicLabel: null, confidential: false, industries: [] } },
+    { type: "add_assertion", id: firstId, subjectId: recordId, text: "Delivered £1m revenue", publicText: null, facets: [], context },
+    { type: "add_assertion", id: secondId, subjectId: recordId, text: "Delivered £2m revenue", publicText: null, facets: [], context: { ...context, value: "£2m" } },
+  ] });
+  expect(saved.ok, JSON.stringify(saved)).toBe(true);
+  if (!saved.ok) return;
+  expect(saved.conflicts).toHaveLength(1);
+  const prepared = await prepareCvFinalisation(row.id, row.revision, cvDraftEditBaseHash(row.content, row.targetingBrief));
+  expect(prepared.ok, JSON.stringify(prepared)).toBe(true);
+  if (!prepared.ok) return;
+  // An account-level conflict changes while the user reviews the pinned PDF. It is not a CV edit.
+  const changed = await saveCareerChange(database, userId, { expectedRevision: saved.revision, requestKey: crypto.randomUUID(), operations: [
+    { type: "edit_assertion", id: secondId, expectedRevision: 1, text: "Delivered £3m revenue", publicText: null,
+      facets: [], context: { ...context, value: "£3m" } },
+  ] });
+  expect(changed.ok, JSON.stringify(changed)).toBe(true);
+  expect(await approveCvFinalisation(row.id, prepared.token, true)).toEqual({ ok: true });
+  const [final] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, row.id));
+  const [pdf] = await database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, row.id));
+  expect(final?.content).toEqual(row.content);
+  expect(final?.librarySnapshot).toEqual(row.librarySnapshot);
+  expect(final?.finalisedAt).not.toBeNull();
+  expect(pdf?.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  expect(await database.select().from(schema.creditReservations)).toHaveLength(0);
 });

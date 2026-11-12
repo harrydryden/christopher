@@ -11,20 +11,6 @@
  * except short strings, truncated, and anything unreadable falls back to the index.
  */
 import type { z } from "zod";
-import { employmentKey } from "@col/core/cv-helpers";
-
-/** The refusal core raises when two jobs in employment history are the same job. */
-const DUPLICATE_JOB = "This company, job title and date range already exist in employment history.";
-
-/**
- * What that refusal means when the job it collides with was removed.
- *
- * A removed job keeps its employment record — the evidence archived with it has to point at
- * something — so retyping it is refused by a rule about a row the person cannot see. Replaced
- * rather than prefixed: "already exist in employment history" is precisely the part that is not
- * true of anything on the screen, and repeating it is what made the refusal unanswerable.
- */
-const RESTORE_INSTEAD = "This job is in Archived jobs below; restore it instead of adding it again.";
 
 /** The field labels the editor puts above its controls. */
 const FIELDS: Record<string, string> = {
@@ -102,57 +88,12 @@ export function cvLibraryIssueLabel(path: readonly PropertyKey[], submitted: unk
   return FIELDS[section] ?? section;
 }
 
-/** Core's key for "the same job", over a submitted value read defensively. */
-const submittedJobKey = (job: unknown): string => employmentKey({
-  id: "",
-  company: text(at(job, "company"), 160),
-  jobTitle: text(at(job, "jobTitle"), 160),
-  // Compared exactly, as core compares them; an unreadable value simply fails to match.
-  startDate: at(job, "startDate") as string,
-  endDate: at(job, "endDate") as string,
-  current: at(job, "current") as boolean,
-});
-
-/**
- * Whether the job a duplicate refusal is about is one that was removed rather than one on screen.
- *
- * Removal archives a job's evidence and keeps the employment record under it, so a person who
- * removes a job and types it back in collides with a record that is real, stored and invisible.
- * The advice only applies when one side of the collision is that record and the other is not:
- * two jobs both on the screen are an ordinary duplicate and the plain refusal is the right one.
- *
- * The submitted value is untrusted, so every field is read defensively and anything unreadable
- * simply fails to match.
- */
-function duplicatesArchivedJob(submitted: unknown): boolean {
-  const employment = at(submitted, "employment");
-  const entries = at(submitted, "entries");
-  if (!Array.isArray(employment) || !Array.isArray(entries)) return false;
-  const archived = new Set<string>();
-  const shown = new Set<string>();
-  for (const entry of entries) {
-    const employmentId = at(entry, "employmentId");
-    if (at(entry, "kind") !== "experience" || typeof employmentId !== "string") continue;
-    (at(entry, "status") === "inactive" ? archived : shown).add(employmentId);
-  }
-  const removed = (job: unknown) => {
-    const id = at(job, "id");
-    return typeof id === "string" && archived.has(id) && !shown.has(id);
-  };
-  const groups = new Map<string, unknown[]>();
-  for (const job of employment) groups.set(submittedJobKey(job), [...(groups.get(submittedJobKey(job)) ?? []), job]);
-  return [...groups.values()].some(group => group.length > 1 && group.some(removed) && group.some(job => !removed(job)));
-}
-
 /** Every refusal in one sentence each, prefixed by what it is about. */
 export function cvLibraryIssues(error: z.ZodError, submitted: unknown): string {
   const seen = new Set<string>();
-  // Read once, and only when there is a duplicate to explain.
-  const restorable = error.issues.some(issue => issue.message === DUPLICATE_JOB) && duplicatesArchivedJob(submitted);
   for (const issue of error.issues) {
-    const message = restorable && issue.message === DUPLICATE_JOB ? RESTORE_INSTEAD : issue.message;
     const where = cvLibraryIssueLabel(issue.path, submitted);
-    seen.add(where ? `${where}: ${message}` : message);
+    seen.add(where ? `${where}: ${issue.message}` : issue.message);
   }
   return [...seen].join(" ");
 }

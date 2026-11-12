@@ -1,6 +1,7 @@
 import { cvSectionHeading, cvSectionTexts, cleanCvText } from "./cv-format";
 import { z } from "zod";
 import type { CvContent, CvLibrary } from "./cv";
+import { evidenceRows } from "./cv-helpers";
 
 export const CV_REVIEW_VERSION = "2026-09-12.1";
 const quote = z.string().trim().min(1).max(1600);
@@ -127,11 +128,17 @@ export function cvClaimItems(content: CvContent): CvClaimItem[] {
 }
 /** Caller supplies the grouped, confirmed library. Writing preferences are not evidence. */
 export function cvEvidenceItems(library: CvLibrary): CvTextItem[] {
+  const derived = Object.values(library.careerProjection?.sourceMap ?? {}).some(ref => ref.origin === "accepted_suggestion");
+  const factual = (entry: CvLibrary["entries"][number]) => [
+    ...evidenceRows(entry).filter((_, row) => library.careerProjection?.sourceMap[`entry:${entry.id}:row:${row}`]?.origin !== "accepted_suggestion"),
+    ...(entry.skillItems ?? []).filter((_, row) => library.careerProjection?.sourceMap[`entry:${entry.id}:skill:${row}`]?.origin !== "accepted_suggestion"),
+  ];
   return [
     { id: "source:profile", text: library.profile },
     ...library.entries.map((entry) => ({
       id: `entry:${entry.id}`,
-      text: [entry.heading, entry.details, ...(entry.skillItems ?? [])].join(
+      text: [entry.heading, ...(derived ? factual(entry)
+        : [entry.details, ...(entry.skillItems ?? [])])].join(
         "\n",
       ),
     })),

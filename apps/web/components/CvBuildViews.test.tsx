@@ -15,7 +15,7 @@ import { CvBuildScreen } from "./CvBuildViews";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-it("does not compute the detailed narrative on clock ticks until it is opened", async () => {
+it("does not compute customer diagnostic logs or expose a toggle on clock ticks", async () => {
   const date = new Date("2026-10-30T12:00:00.000Z");
   const steps: CvJournalStep[] = [{ id: "step-1", seq: 1, attempt: 1, stage: "writing", motion: "draft",
     title: "Writing", status: "running", startedAt: date, finishedAt: null, ms: null, detail: {}, error: null, failure: null }];
@@ -31,14 +31,10 @@ it("does not compute the detailed narrative on clock ticks until it is opened", 
     act(() => render(date.getTime()));
     act(() => render(date.getTime() + 1_000));
     expect(narrateBuild).not.toHaveBeenCalled();
-    const toggle = [...container.querySelectorAll("button")].find(button => button.textContent === "Show detailed build log")!;
-    await act(async () => toggle.click());
-    expect(narrateBuild).toHaveBeenCalledTimes(1);
-    act(() => render(date.getTime() + 2_000));
-    expect(narrateBuild).toHaveBeenCalledTimes(2);
-    await act(async () => toggle.click());
+    expect(container.querySelector('button[aria-expanded]')).toBeNull();
+    expect(container.querySelector('[aria-label="Build stages"]')).not.toBeNull();
     act(() => render(date.getTime() + 3_000));
-    expect(narrateBuild).toHaveBeenCalledTimes(2);
+    expect(narrateBuild).not.toHaveBeenCalled();
   } finally {
     act(() => root.unmount()); container.remove();
   }

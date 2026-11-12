@@ -228,13 +228,12 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
         </>}
       />
 
-      {(profileFacts.length > 0 || (profile?.tags.length ?? 0) > 0) && <details className="text-12 text-muted">
-        <summary className="min-h-11 cursor-pointer py-2 underline">Company profile details</summary>
+      {(profileFacts.length > 0 || (profile?.tags.length ?? 0) > 0) && <section aria-label="Company profile" className="text-12 text-muted">
         <div className="flex flex-wrap items-center gap-2 pb-2">
           {profileFacts.length > 0 && <span>{profileFacts.join(" · ")}</span>}
           {profile?.tags.map(tag => <Badge key={tag} tone="neutral">{tag}</Badge>)}
         </div>
-      </details>}
+      </section>}
 
       {workerStatus && <LocationChecksCard checks={roleLocations} worker={workerStatus} now={now} unverified={unverified} companyOnly />}
       {subscription.status === "active" && <DescriptionChecksCard companyId={company.id} unverified={unverified} />}

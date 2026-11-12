@@ -28,7 +28,10 @@ function sortLinksFor(path: string, view: RoleStatus, filters: RolesFilters): Pa
   return links;
 }
 
-export async function RoleWorkspace({ userId, searchParams, companyId }: { userId: string; searchParams: RawSearchParams; companyId?: string }) {
+export async function RoleWorkspace({ userId, searchParams, companyId, setupFacts }: {
+  userId: string; searchParams: RawSearchParams; companyId?: string;
+  setupFacts?: Promise<Awaited<ReturnType<typeof setupStatus>>>;
+}) {
   const sp = searchParams;
   const scoped = companyId ? { company: companyId } : {};
   const countsPending = fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
@@ -82,7 +85,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   const scopedEmpty = view === "auto-matched" && counts[view] === 0 && !!(companyId || filters.company);
   const selectedCompany = !companyId && filters.company ? options.find(company => company.id === filters.company) : null;
   const emptyNotice = !companyId && !filters.company && view === "auto-matched" && counts[view] === 0
-    ? monitoringNotice(await setupStatus(userId)) : null;
+    ? monitoringNotice(await (setupFacts ?? setupStatus(userId))) : null;
   const emptyDescription = scopedEmpty
     ? "No roles are waiting in Matched for this company. Its scan may still be pending or incomplete, or its roles may not match your preferences. Check the company's status and scan history."
     : emptyNotice?.state === "complete"
@@ -110,9 +113,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
           : emptyNotice ? <Link prefetch={false} href={emptyNotice.href} className={buttonLinkClass("secondary")}>{emptyNotice.action}</Link>
           : selectedCompany ? <Link prefetch={false} href={`/companies/${selectedCompany.id}`} className={buttonLinkClass("secondary")}>View company status</Link> : undefined} />} />
     {result.pageCount > 1 && <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-13">
-      {result.page > 1 && <Link prefetch={false} className="underline" href={href(result.page - 1)}>Previous</Link>}
+      {result.page > 1 && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={href(result.page - 1)}>Previous</Link>}
       <span>Page {result.page} of {result.pageCount}</span>
-      {result.page < result.pageCount && <Link prefetch={false} className="underline" href={href(result.page + 1)}>Next</Link>}
+      {result.page < result.pageCount && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={href(result.page + 1)}>Next</Link>}
     </nav>}
     {/* The stage legend lives on Applications, where stages are moved; a row's stage badge carries its meaning as a tooltip. */}
     {archivedResult && <div id="archived" className="mt-6">
@@ -121,9 +124,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
         <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} companies={archivedCompanies} archived hideCompany={!!companyId} historyScope={userId}
           emptyState={<EmptyState title="No archived roles" description="Roles you archived or that stopped matching." />} />
         {archivedResult.pageCount > 1 && <nav aria-label="Archived role pages" className="mt-4 flex items-center gap-4 text-13">
-          {archivedResult.page > 1 && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}
+          {archivedResult.page > 1 && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}
           <span>Page {archivedResult.page} of {archivedResult.pageCount}</span>
-          {archivedResult.page < archivedResult.pageCount && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page + 1)}>Next</Link>}
+          {archivedResult.page < archivedResult.pageCount && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={archivedHref(archivedResult.page + 1)}>Next</Link>}
         </nav>}
       </Card>
     </div>}

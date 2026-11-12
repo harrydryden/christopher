@@ -6,8 +6,9 @@
  * quiz and the document import — authenticate first and pass the session's account, and nothing
  * here checks it again.
  */
-import { desc, eq, sql } from "drizzle-orm";
-import { accountCanScore, cvLibraries, enqueueTask, lockAccountScoreInput } from "@col/db";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { accountCanScore, captureLibraryAdditionsIn, careerCvEvidence, careerHeads,
+  cvLibraries, enqueueTask, lockAccountScoreInput } from "@col/db";
 import { CvLibrarySchema, parseLibraryAdditions, retainArchivedEvidence, type CvLibrary } from "@col/core";
 import type { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -43,15 +44,28 @@ export async function writeCvLibraryVersion(
   userId: string,
   expectedVersion: number,
   build: (current: CvLibrary | null) => CvLibrary,
-  options: { review?: boolean } = {},
+  options: { review?: boolean; careerOrigin?: "direct_user" | "document" | "accepted_suggestion";
+    careerSourceId?: string; acceptedSuggestionCitations?: Record<string, { sourceId: string; quote: string }> } = {},
 ): Promise<number> {
   await lockAccountScoreInput(tx as unknown as ReturnType<typeof db>, userId, "exclusive");
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
   const latest = await latestLibrary(tx, userId);
   if ((latest?.version ?? 0) !== expectedVersion) throw new UserFacingError("The library changed. Reload before saving.");
   const version = (latest?.version ?? 0) + 1;
-  const content = parseLibraryAdditions(build(latest?.content ?? null));
-  await tx.insert(cvLibraries).values({ userId, version, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
+  const content = CvLibrarySchema.parse(retainArchivedEvidence(latest?.content,
+    parseLibraryAdditions(build(latest?.content ?? null))));
+  await captureLibraryAdditionsIn(tx, userId, latest?.content ?? null, content, version,
+    { kind: options.careerOrigin ?? "direct_user", sourceId: options.careerSourceId,
+      citations: options.acceptedSuggestionCitations });
+  await tx.insert(cvLibraries).values({ userId, version, content });
+  const [career] = await tx.select({ revision: careerHeads.revision }).from(careerHeads)
+    .where(eq(careerHeads.userId, userId)).limit(1);
+  if (career) {
+    const projection = await careerCvEvidence(tx as unknown as ReturnType<typeof db>, userId,
+      career.revision, {}, content.theme?.experienceLayout ?? "chronological");
+    await tx.update(cvLibraries).set({ content: projection.library })
+      .where(and(eq(cvLibraries.userId, userId), eq(cvLibraries.version, version)));
+  }
   if (await accountCanScore(tx as unknown as ReturnType<typeof db>, userId))
     await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
   // The evidence review of the version this save just wrote, for the writes the person did not

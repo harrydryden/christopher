@@ -23,15 +23,17 @@ vi.mock("@/lib/queries/applications", () => ({
   pipelineCompany: async () => null,
   pipelineStageCounts: async () => ({}),
 }));
-vi.mock("@/lib/queries/setup", () => ({ setupStatus: async () => ({}) }));
-vi.mock("@/lib/setup", () => ({ monitoringNotice: () => ({
+vi.mock("@/lib/queries/setup", () => ({ setupStatus: vi.fn(async () => ({})) }));
+vi.mock("@/lib/setup", () => ({ monitoringNotice: vi.fn(() => ({
   state: "no-companies", title: "Follow a company", description: "Choose a company.", href: "/suggestions", action: "Follow a company",
-}) }));
+})) }));
 vi.mock("./RolesFilterBar", () => ({ RolesFilterBar: () => createElement("div", { "data-role-filters": true }) }));
 vi.mock("./RolesTable", () => ({ RolesTable: () => createElement("div", { "data-role-table": true }) }));
 vi.mock("./RoleRefusalNotices", () => ({ RoleRefusalNotices: () => null }));
 
 import { RoleWorkspace } from "./RoleWorkspace";
+import { setupStatus } from "@/lib/queries/setup";
+import { monitoringNotice } from "@/lib/setup";
 
 const rendered = async (searchParams: Record<string, string>, companyId?: string) => {
   const content = await RoleWorkspace({ userId: "user-1", searchParams, companyId });
@@ -57,4 +59,17 @@ it("keeps the role workspace for an explicit search, a company view, or an exist
   state.counts = { "auto-matched": 0, "user-shortlisted": 0, "user-dismissed": 1, archived: 0 };
   state.options = [];
   expect(await rendered({})).toContain('aria-label="Role status"');
+});
+
+it("reuses the page's setup read for an empty Matched notice", async () => {
+  state.counts = { "auto-matched": 0, "user-shortlisted": 0, "user-dismissed": 0, archived: 0 };
+  state.options = [{ id: "company-1", name: "Example" }];
+  vi.mocked(setupStatus).mockClear();
+  vi.mocked(monitoringNotice).mockClear();
+  const facts = { source: "page read" } as never;
+  await RoleWorkspace({ userId: "user-1", searchParams: {}, setupFacts: Promise.resolve(facts) });
+  expect(monitoringNotice).toHaveBeenCalledWith(facts);
+  expect(setupStatus).not.toHaveBeenCalled();
+  await rendered({});
+  expect(setupStatus).toHaveBeenCalledOnce();
 });

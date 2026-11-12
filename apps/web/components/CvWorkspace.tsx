@@ -11,6 +11,7 @@ const tabs = [
   ["content", "Write"],
   ["evaluation", "Review"],
   ["appearance", "Appearance"],
+  ["role", "Role details"],
 ] as const;
 type CvTab = (typeof tabs)[number][0];
 const TabContext = createContext<{
@@ -94,8 +95,6 @@ export function CvWorkspace({
   children: ReactNode;
   description: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const [pinned, setPinned] = useState(false);
   const [selected, setSelected] = useState<CvTab>("content");
   const [focusRequest, setFocusRequest] = useState<{ id: string }>();
   function selectTab(tab: CvTab) {
@@ -114,7 +113,9 @@ export function CvWorkspace({
       } catch {
         return;
       }
-      if (id === "cv-panel-evaluation" || id === "cv-panel-appearance" || id === "cv-guided-review" || id.startsWith("cv-review-row-")) {
+      if (id === "cv-panel-role") {
+        selectTab("role");
+      } else if (id === "cv-panel-evaluation" || id === "cv-panel-appearance" || id === "cv-guided-review" || id.startsWith("cv-review-row-")) {
         selectTab(id === "cv-panel-appearance" ? "appearance" : "evaluation");
         setFocusRequest({ id });
       } else if (id === "cv-panel-content" || id.startsWith("cv-content-"))
@@ -123,7 +124,7 @@ export function CvWorkspace({
         // Server-action revalidation can drop the fragment. Keep this draft's active tab on reload.
         try {
           const saved = window.sessionStorage.getItem(`cv-workspace-tab:${window.location.pathname}`);
-          if (saved === "content" || saved === "evaluation" || saved === "appearance") setSelected(saved);
+          if (saved === "content" || saved === "evaluation" || saved === "appearance" || saved === "role") setSelected(saved);
         } catch { /* A blocked storage API should not block the workspace. */ }
       }
     }
@@ -157,7 +158,7 @@ export function CvWorkspace({
                 type="button"
                 role="tab"
                 id={`cv-tab-${tab}`}
-                aria-controls={`cv-panel-${tab}`}
+                aria-controls={tab === "role" ? "cv-job-description" : `cv-panel-${tab}`}
                 aria-selected={selected === tab}
                 tabIndex={selected === tab ? 0 : -1}
                 onClick={() => selectTab(tab)}
@@ -185,28 +186,20 @@ export function CvWorkspace({
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap items-center gap-2"><button
-            type="button"
-            aria-expanded={open}
-            aria-controls="cv-job-description"
-            onClick={() => setOpen((value) => !value)}
-            className="border border-line-muted px-3 py-2 text-14 font-medium text-fg hover:bg-sunken"
-          >
-            {open ? "Hide job description" : "Show job description"}
-          </button>
-          {open && <label className="flex items-center gap-1.5 text-12"><input type="checkbox" checked={pinned} onChange={event => setPinned(event.target.checked)} /> Pin beside writing</label>}</div>
+
         </div>
         <div
-          className={`grid items-start gap-5 ${open ? "lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.35fr)]" : "grid-cols-1"}`}
+          className="grid grid-cols-1 items-start gap-5"
         >
           <div data-cv-main className="min-w-0 space-y-4">
             {children}
           </div>
           <aside
             id="cv-job-description"
-            hidden={!open}
+            hidden={selected !== "role"}
             aria-labelledby="cv-job-description-title"
-            className={`min-w-0 border border-line-muted bg-sunken ${pinned ? "lg:sticky lg:top-6" : ""}`}
+            role="tabpanel"
+            className="min-w-0 border border-line-muted bg-sunken"
           >
             <h2
               id="cv-job-description-title"

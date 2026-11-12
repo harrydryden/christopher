@@ -51,8 +51,8 @@ export function CvEditionComparison({ source, result, sourceLabel, sourceTargets
     ["primary", "Primary colour"], ["background", "Background colour"], ["surface", "Panel colour"],
     ["pill", "Pill colour"], ["introPanel", "Summary panel"], ["skillPills", "Skill pills"] ] as const);
   const layoutChanges = layoutFields.filter(([field]) => sourceTheme[field] !== resultTheme[field]);
-  return <details className="border border-line-muted p-3 text-14">
-    <summary className="cursor-pointer font-medium">Compare {sourceLabel} with this saved result</summary>
+  return <section className="border border-line-muted p-3 text-14">
+    <h2 className="font-medium">Compare {sourceLabel} with this saved result</h2>
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
       <div className="border border-line-muted p-3"><h3 className="font-medium">{sourceLabel} summary</h3>
         <p className="mt-2 whitespace-pre-wrap">{source.summary}</p></div>
@@ -88,5 +88,5 @@ export function CvEditionComparison({ source, result, sourceLabel, sourceTargets
     {layoutChanges.length > 0 && <section className="mt-3 border border-line-muted p-3"><h3 className="font-medium">Layout changed</h3>
       <ul className="mt-1 list-disc pl-5">{layoutChanges.map(([field, label]) => <li key={field}>{label}: {String(sourceTheme[field] ?? "legacy")}
         {" → "}{String(resultTheme[field] ?? "legacy")}</li>)}</ul></section>}
-  </details>;
+  </section>;
 }

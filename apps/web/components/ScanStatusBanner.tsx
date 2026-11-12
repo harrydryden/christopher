@@ -121,10 +121,7 @@ export function ScanStatusBanner({ initial }: { initial: Reading }) {
   </>;
   return (
     <div className={`flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 ${focused ? "text-12 text-muted" : "text-13"}`}>
-      {focused && <details>
-        <summary className="cursor-pointer">Monitoring status</summary>
-        <p className="flex flex-wrap gap-x-2 py-2">{readings}</p>
-      </details>}
+      {focused && <Link prefetch={false} href="/companies" className="underline">Monitoring</Link>}
       {activity && <span role="status">
         {activity.href
           ? <Link prefetch={false} href={activity.href} className={`underline decoration-dotted ${focused ? "text-warn" : ""}`}>{activity.text}</Link>

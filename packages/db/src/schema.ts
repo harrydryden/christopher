@@ -18,6 +18,7 @@ import type { CvTailoringPlan } from "@col/core/cv-tailoring";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz, CvTargetingBriefV1 } from "@col/core";
 import type { CvPendingSkillProposal } from "@col/core/cv-pending-skills";
 import type { CvAutoInputV1, CvEditingMode, CvEditingTargets, CvRefinementV1 } from "@col/core/cv-editing-modes";
+import type { CareerRecordFields, CareerProvenance, CareerOperation, CareerAssertionContext, CareerSourceMap, CareerDisplayEntry, CareerPresentation } from "@col/core/career-record";
 import { APPLICATION_STATUSES, type ApplicationStatus } from "@col/core/role-workflow";
 import { EVIDENCE_RATINGS, LIBRARY_REVIEW_SOURCES, type EvidenceRating, type LibraryReviewSource } from "@col/core/library-review";
 import { LOGO_SOURCES } from "@col/core/logo-capture";
@@ -93,6 +94,8 @@ export const BILLING_STATUSES = ["active", "past_due", "cancelled"] as const;
 export const CREDIT_GRANT_SOURCES = ["welcome", "monthly", "topup", "admin"] as const;
 export const CREDIT_RESERVATION_STATUSES = ["reserved", "consumed", "released"] as const;
 export const CREDIT_LEDGER_KINDS = ["grant", "reserve", "release", "consume", "transfer", "revoke"] as const;
+export const CV_AI_ACTIONS = ["inline_correction", "inline_refine", "inline_tailor", "skills", "check", "whole_cv"] as const;
+export const CV_AI_USAGE_STATUSES = ["reserved", "consumed", "released"] as const;
 
 // ---------------------------------------------------------------------------
 // Accounts and sessions
@@ -300,6 +303,54 @@ export const creditLedger = pgTable(
   },
   (t) => [index("credit_ledger_user_created_idx").on(t.userId, t.createdAt)],
 );
+
+/** One durable vacancy identity can have several application contexts and CV editions. */
+export const cvOpportunities = pgTable("cv_opportunities", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  /** Only a verified posting reference may populate this; never a title or description hash. */
+  canonicalRef: text("canonical_ref"),
+  /** A legacy draft without a posting/context keeps access within its own ancestry. */
+  legacyRootDraftId: uuid("legacy_root_draft_id"),
+  firstSuccessOperationId: uuid("first_success_operation_id"),
+  firstSuccessAt: ts("first_success_at"),
+  grandfatherProof: text("grandfather_proof"),
+  createdAt: tsNow("created_at"),
+}, t => [
+  uniqueIndex("cv_opportunities_user_job_uidx").on(t.userId, t.jobId).where(sql`${t.jobId} is not null`),
+  uniqueIndex("cv_opportunities_user_ref_uidx").on(t.userId, t.canonicalRef).where(sql`${t.canonicalRef} is not null`),
+  uniqueIndex("cv_opportunities_user_legacy_uidx").on(t.userId, t.legacyRootDraftId).where(sql`${t.legacyRootDraftId} is not null`),
+  index("cv_opportunities_user_idx").on(t.userId, t.createdAt),
+]);
+
+/** A single provider operation holds either one role credit or both editing windows. */
+export const cvAiUsage = pgTable("cv_ai_usage", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  opportunityId: uuid("opportunity_id").notNull().references(() => cvOpportunities.id, { onDelete: "cascade" }),
+  requestKey: text("request_key").notNull(),
+  inputHash: text("input_hash").notNull(),
+  action: text("action", { enum: CV_AI_ACTIONS }).notNull(),
+  priceVersion: integer("price_version").notNull(),
+  chargeKind: text("charge_kind", { enum: ["role_credit", "allowance"] }).notNull(),
+  units: integer("units").notNull(),
+  grantId: uuid("grant_id").references(() => creditGrants.id, { onDelete: "restrict" }),
+  sourceKind: text("source_kind", { enum: ["draft", "inline_run", "skills_run"] }).notNull(),
+  sourceId: uuid("source_id").notNull(),
+  fiveHourStart: ts("five_hour_start"),
+  weekStart: ts("week_start"),
+  status: text("status", { enum: CV_AI_USAGE_STATUSES }).notNull().default("reserved"),
+  reservedAt: tsNow("reserved_at"),
+  settledAt: ts("settled_at"),
+}, t => [
+  uniqueIndex("cv_ai_usage_user_request_uidx").on(t.userId, t.requestKey),
+  index("cv_ai_usage_user_source_idx").on(t.userId, t.sourceKind, t.sourceId),
+  uniqueIndex("cv_ai_usage_first_claim_uidx").on(t.opportunityId)
+    .where(sql`${t.chargeKind} = 'role_credit' and ${t.status} in ('reserved','consumed')`),
+  index("cv_ai_usage_account_window_idx").on(t.userId, t.fiveHourStart, t.weekStart, t.status),
+  index("cv_ai_usage_opportunity_idx").on(t.opportunityId, t.status),
+]);
 
 /** Stripe retries events; this receipt makes local fulfilment idempotent too. */
 export const billingEvents = pgTable("billing_events", {
@@ -1027,6 +1078,101 @@ export const cvLibraries = pgTable("cv_libraries", {
   createdAt: tsNow("created_at"),
 }, t => [uniqueIndex("cv_libraries_user_version_uidx").on(t.userId, t.version)]);
 
+/** The private career record is independent of the bounded CV Library compatibility view. */
+export const careerHeads = pgTable("career_heads", {
+  userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  revision: integer("revision").notNull().default(0),
+  migratedLibraryVersion: integer("migrated_library_version"),
+  updatedAt: tsNow("updated_at"),
+});
+export const careerRecords = pgTable("career_records", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["organisation", "engagement", "role", "project", "contribution", "learning", "qualification", "skill", "other"] }).notNull(),
+  revision: integer("revision").notNull(),
+  fields: jsonb("fields").$type<CareerRecordFields>().notNull(),
+  provenance: jsonb("provenance").$type<CareerProvenance>().notNull(),
+  archivedAt: ts("archived_at"),
+  createdAt: tsNow("created_at"), updatedAt: tsNow("updated_at"),
+}, t => [index("career_records_user_kind_idx").on(t.userId, t.kind, t.updatedAt.desc())]);
+export const careerLinks = pgTable("career_links", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  fromId: uuid("from_id").notNull().references(() => careerRecords.id, { onDelete: "cascade" }),
+  toId: uuid("to_id").notNull().references(() => careerRecords.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["employed_by", "contracted_through", "delivered_for", "part_of", "contributed_to", "member_of"] }).notNull(),
+  revision: integer("revision").notNull(),
+  confidential: boolean("confidential").notNull().default(false),
+  publicLabel: text("public_label"),
+  archivedAt: ts("archived_at"),
+  createdAt: tsNow("created_at"), updatedAt: tsNow("updated_at"),
+}, t => [index("career_links_user_from_idx").on(t.userId, t.fromId), index("career_links_user_to_idx").on(t.userId, t.toId)]);
+export const careerAssertions = pgTable("career_assertions", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  subjectId: uuid("subject_id").notNull().references(() => careerRecords.id, { onDelete: "cascade" }),
+  revision: integer("revision").notNull(),
+  text: text("text").notNull(),
+  publicText: text("public_text"),
+  facets: jsonb("facets").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  context: jsonb("context").$type<CareerAssertionContext>(),
+  status: text("status", { enum: ["usable", "proposed", "retracted"] }).notNull(),
+  provenance: jsonb("provenance").$type<CareerProvenance>().notNull(),
+  createdAt: tsNow("created_at"), updatedAt: tsNow("updated_at"),
+}, t => [index("career_assertions_user_subject_idx").on(t.userId, t.subjectId), index("career_assertions_user_status_idx").on(t.userId, t.status)]);
+export const careerPerspectives = pgTable("career_perspectives", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  revision: integer("revision").notNull(),
+  label: text("label").notNull(),
+  note: text("note").notNull(),
+  assertionIds: jsonb("assertion_ids").$type<string[]>().notNull(),
+  archivedAt: ts("archived_at"),
+  createdAt: tsNow("created_at"), updatedAt: tsNow("updated_at"),
+}, t => [index("career_perspectives_user_idx").on(t.userId, t.updatedAt.desc())]);
+export const careerChanges = pgTable("career_changes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  revision: integer("revision").notNull(),
+  requestKey: text("request_key").notNull(),
+  intentHash: text("intent_hash").notNull(),
+  operations: jsonb("operations").$type<CareerOperation[]>().notNull(),
+  before: jsonb("before").$type<Record<string, unknown>>().notNull(),
+  after: jsonb("after").$type<Record<string, unknown>>().notNull(),
+  undoOf: uuid("undo_of"),
+  createdAt: tsNow("created_at"),
+}, t => [uniqueIndex("career_changes_user_request_uidx").on(t.userId, t.requestKey), uniqueIndex("career_changes_user_revision_uidx").on(t.userId, t.revision)]);
+export const careerObjectVersions = pgTable("career_object_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  objectKind: text("object_kind", { enum: ["record", "link", "assertion", "perspective"] }).notNull(),
+  objectId: uuid("object_id").notNull(),
+  revision: integer("revision").notNull(),
+  changeId: uuid("change_id").notNull().references(() => careerChanges.id, { onDelete: "cascade" }),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+  createdAt: tsNow("created_at"),
+}, t => [uniqueIndex("career_object_versions_identity_uidx").on(t.userId, t.objectKind, t.objectId, t.revision)]);
+
+/** Immutable account decisions; material choices pin a career head revision for historical CVs. */
+export const careerReviewEvents = pgTable("career_review_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  conflictId: text("conflict_id").notNull(),
+  groupKey: text("group_key").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  decisionRevision: integer("decision_revision").notNull(),
+  choice: text("choice", { enum: ["choose", "keep_both_context", "correct", "dismiss", "later", "reopen"] }).notNull(),
+  selectedAssertionId: uuid("selected_assertion_id"),
+  statementSnapshot: jsonb("statement_snapshot").$type<Record<string, unknown>[]>().notNull(),
+  careerVersion: integer("career_version"),
+  requestKey: text("request_key").notNull(),
+  intentHash: text("intent_hash").notNull(),
+  createdAt: tsNow("created_at"),
+}, t => [uniqueIndex("career_review_events_user_request_uidx").on(t.userId, t.requestKey),
+  uniqueIndex("career_review_events_group_revision_uidx").on(t.userId, t.conflictId, t.decisionRevision),
+  index("career_review_events_history_idx").on(t.userId, t.conflictId, t.decisionRevision.desc()),
+  index("career_review_events_source_idx").on(t.userId, t.careerVersion.desc())]);
+
 /**
  * The evidence review of one library entry: what each row was classified as, which facets are
  * covered, what to ask for next, and the score code computed from all of it.
@@ -1066,6 +1212,7 @@ export const cvApplicationContexts = pgTable("cv_application_contexts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  opportunityId: uuid("opportunity_id").references(() => cvOpportunities.id, { onDelete: "set null" }),
   /** A repeated request key reopens its context; a deliberate new application supplies a new key. */
   requestKey: text("request_key").notNull(),
   jobTitle: text("job_title").notNull(),
@@ -1095,6 +1242,7 @@ export const cvDrafts = pgTable("cv_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  opportunityId: uuid("opportunity_id").references(() => cvOpportunities.id, { onDelete: "set null" }),
   jobTitle: text("job_title").notNull(),
   companyName: text("company_name").notNull(),
   jobDescription: text("job_description").notNull(),
@@ -1122,6 +1270,10 @@ export const cvDrafts = pgTable("cv_drafts", {
   finalisedAt: ts("finalised_at"),
   libraryVersion: integer("library_version").notNull(),
   librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>().notNull(),
+  careerVersion: integer("career_version"),
+  careerSourceMap: jsonb("career_source_map").$type<CareerSourceMap>(),
+  careerDisplay: jsonb("career_display").$type<Record<string, CareerDisplayEntry>>(),
+  careerPresentation: text("career_presentation", { enum: ["chronological", "project", "hybrid"] }).$type<CareerPresentation>(),
   model: text("model").notNull(),
   status: text("status", { enum: ["queued", "generating", "awaiting_evidence", "awaiting_priorities", "ready", "failed"] }).notNull().default("queued"),
   buildStage: text("build_stage", { enum: ["analysing", "writing", "fitting", "assessing"] }),
@@ -1232,6 +1384,10 @@ export const cvAutoBaselines = pgTable("cv_auto_baselines", {
   content: jsonb("content").$type<CvContent>(),
   assessment: jsonb("assessment").$type<CvAssessment>(),
   librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>(),
+  careerVersion: integer("career_version"),
+  careerSourceMap: jsonb("career_source_map").$type<CareerSourceMap>(),
+  careerDisplay: jsonb("career_display").$type<Record<string, CareerDisplayEntry>>(),
+  careerPresentation: text("career_presentation", { enum: ["chronological", "project", "hybrid"] }).$type<CareerPresentation>(),
   tailoringPlan: jsonb("tailoring_plan").$type<CvTailoringPlan>(),
   editingTargets: jsonb("editing_targets").$type<CvEditingTargets>(),
   engineContract: jsonb("engine_contract").$type<CvAutoInputV1["contracts"] & { routes: CvAutoInputV1["routes"] }>().notNull(),
@@ -1629,3 +1785,4 @@ export const cvShareComments = pgTable("cv_share_comments", {
 ]);
 export type CvShareComment = typeof cvShareComments.$inferSelect;
 export type NewCvShareComment = typeof cvShareComments.$inferInsert;
+export { cvInlineEditRuns } from "./cv-inline-edit-schema";

@@ -50,7 +50,8 @@ export function CvBuildScreen({
   build,
   action,
   connectionIssue,
-}: CvBuildViewProps & { reading: CvProgressReading; build: CvProgressBuild; action?: ReactNode; connectionIssue?: boolean }) {
+  diagnostics = false,
+}: CvBuildViewProps & { reading: CvProgressReading; build: CvProgressBuild; action?: ReactNode; connectionIssue?: boolean; diagnostics?: boolean }) {
   const at = new Date(now);
   const fallback = (CV_MILESTONES as readonly string[]).includes(reading.stage ?? "") ? (reading.stage as CvMilestone) : null;
   return (
@@ -62,7 +63,7 @@ export function CvBuildScreen({
       now={now}
       current={currentMotionLine(steps, at, context, medians)}
       progress={cvBuildProgressLine(steps, at, medians)}
-      narrative={<CvActiveBuildDetail steps={steps} now={now} context={context} />}
+      narrative={diagnostics ? <CvActiveBuildDetail steps={steps} now={now} context={context} /> : undefined}
       connectionIssue={connectionIssue}
       action={build.phase === "stopped" ? action : undefined}
     />

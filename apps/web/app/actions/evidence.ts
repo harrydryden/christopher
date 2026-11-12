@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { appendConfirmedEvidence, evidenceDraftFingerprint, isActiveStoredEvidence, type EvidenceDraftInput } from "@col/core";
-import { cvDrafts, evidenceDrafts, type EvidenceDraft } from "@col/db";
+import { captureDirectCareerAnswerIn, ensureCareerBackfill, publishCareerCompatibilityIn,
+  careerHeads, cvDrafts, evidenceDrafts, type EvidenceDraft } from "@col/db";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -74,11 +75,27 @@ export async function requestEvidenceDraft(raw: unknown): Promise<{ ok: true; dr
   const user = await requireVerifiedUser();
   const parsed = RequestSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: "Add an answer, select its destination and try again." };
+  if (parsed.data.source === "cv_quiz") return { ok: false,
+    error: "Save your answer and continue this CV first. You can organise the fact in Experience afterwards." };
   try {
+    const fingerprint = evidenceDraftFingerprint({ ...parsed.data,
+      sourceId: parsed.data.sourceId ?? null, facet: parsed.data.facet ?? null });
+    const [replay] = await db().select().from(evidenceDrafts).where(and(
+      eq(evidenceDrafts.userId, user.id), eq(evidenceDrafts.fingerprint, fingerprint))).limit(1);
+    if (replay && replay.status !== "dismissed") return { ok: true, draft: view(replay) };
     const input = await verifiedInput(user.id, parsed.data);
-    const fingerprint = evidenceDraftFingerprint(input);
+    await ensureCareerBackfill(db(), user.id);
     const draft = await db().transaction(async tx => {
-      const [inserted] = await tx.insert(evidenceDrafts).values({ userId: user.id, fingerprint, input })
+      const current = await latestLibrary(tx, user.id);
+      if (!current || current.version !== input.baseVersion)
+        throw new UserFacingError("Experience changed while you answered. Reload it and try again.");
+      await captureDirectCareerAnswerIn(tx, user.id, current.content,
+        input.destination, input.answer, fingerprint);
+      const [head] = await tx.select({ revision: careerHeads.revision }).from(careerHeads)
+        .where(eq(careerHeads.userId, user.id)).limit(1);
+      const publishedVersion = head ? await publishCareerCompatibilityIn(tx, user.id, head.revision) : null;
+      const workerInput = { ...input, baseVersion: publishedVersion ?? input.baseVersion };
+      const [inserted] = await tx.insert(evidenceDrafts).values({ userId: user.id, fingerprint, input: workerInput })
         .onConflictDoNothing().returning();
       if (inserted) {
         await enqueue("draft_evidence", { userId: user.id, evidenceDraftId: inserted.id, attempt: 1 }, tx);
@@ -96,8 +113,14 @@ export async function requestEvidenceDraft(raw: unknown): Promise<{ ok: true; dr
       }
       return existing;
     });
+    revalidate("/library", "/cv");
     return { ok: true, draft: view(draft) };
   } catch (error) {
+    const fingerprint = evidenceDraftFingerprint({ ...parsed.data,
+      sourceId: parsed.data.sourceId ?? null, facet: parsed.data.facet ?? null });
+    const [completed] = await db().select().from(evidenceDrafts).where(and(
+      eq(evidenceDrafts.userId, user.id), eq(evidenceDrafts.fingerprint, fingerprint))).limit(1);
+    if (completed && completed.status !== "dismissed") return { ok: true, draft: view(completed) };
     const result = actionError(error, "Could not start an evidence draft. Your answer is still in the form.");
     return { ok: false, error: result.ok ? "Could not start an evidence draft." : result.error };
   }
@@ -143,7 +166,12 @@ export async function confirmEvidenceAnswerAsWritten(raw: unknown, wording: stri
       : fail("This answer was already saved with different wording.");
     const input = await verifiedInput(user.id, parsed.data);
     const fingerprint = evidenceDraftFingerprint(input);
+    await ensureCareerBackfill(db(), user.id);
     const version = await db().transaction(async tx => {
+      const source = await latestLibrary(tx, user.id);
+      if (!source || source.version !== input.baseVersion)
+        throw new UserFacingError("Experience changed while you answered. Reload it and try again.");
+      await captureDirectCareerAnswerIn(tx, user.id, source.content, input.destination, input.answer, fingerprint);
       const [inserted] = await tx.insert(evidenceDrafts).values({ userId: user.id, fingerprint, input,
         status: "accepted", acceptedWording: exact, resolvedAt: new Date() }).onConflictDoNothing().returning();
       const row = inserted ?? (await tx.select().from(evidenceDrafts).where(and(eq(evidenceDrafts.userId, user.id),
@@ -153,11 +181,11 @@ export async function confirmEvidenceAnswerAsWritten(raw: unknown, wording: stri
         if (row.acceptedWording !== exact) throw new UserFacingError("This answer was already saved with different wording.");
         return row.acceptedVersion ?? input.baseVersion + 1;
       }
-      // Returning to a skipped question is an explicit new confirmation of the same answer.
+      // The member's original answer is already a fact; this explicit own-wording edit is free.
       const savedVersion = await writeCvLibraryVersion(tx, user.id, input.baseVersion, current => {
         if (!current) throw new UserFacingError("Save Experience before adding an answer.");
         return appendConfirmedEvidence(current, input, exact, randomUUID());
-      });
+      }, { review: false });
       await tx.update(evidenceDrafts).set({ status: "accepted", acceptedWording: exact, acceptedVersion: savedVersion,
         resolvedAt: new Date(), updatedAt: new Date() }).where(eq(evidenceDrafts.id, row.id));
       return savedVersion;
@@ -196,6 +224,7 @@ export async function confirmEvidenceDraft(id: string, wording: string): Promise
   const exact = wording.trim();
   if (!exact || exact.length > 2000) return fail("Review one evidence row of up to 2,000 characters before saving.");
   try {
+    await ensureCareerBackfill(db(), user.id);
     const version = await db().transaction(async tx => {
       const [row] = await tx.select().from(evidenceDrafts)
         .where(and(eq(evidenceDrafts.id, id), eq(evidenceDrafts.userId, user.id))).for("update").limit(1);
@@ -208,17 +237,17 @@ export async function confirmEvidenceDraft(id: string, wording: string): Promise
       if (row.resolvedAt || row.status === "dismissed") throw new UserFacingError("This question was dismissed. Start a new answer to add evidence.");
       if (row.status !== "drafted" && row.status !== "failed" && row.status !== "queued")
         throw new UserFacingError("This answer is not ready to confirm.");
-      // The person's own answer is always available, including when the model is unavailable.
-      // A different edit is accepted only after the affirmative UI action displays that exact text.
-      const version = await writeCvLibraryVersion(tx, user.id, row.input.baseVersion, current => {
-        if (!current) throw new UserFacingError("Save Experience before adding an answer.");
-        try { return appendConfirmedEvidence(current, row.input, exact, randomUUID()); }
-        catch (error) { throw new UserFacingError(error instanceof Error ? error.message : "This evidence could not be saved."); }
-      });
-      await tx.update(evidenceDrafts).set({ status: "accepted", acceptedWording: exact,
-        acceptedVersion: version, resolvedAt: new Date(), updatedAt: new Date() })
+      if (exact !== row.input.answer)
+        throw new UserFacingError("The organised draft is a suggestion. Your original answer is already saved as a fact.");
+      const current = await latestLibrary(tx, user.id);
+      if (!current || current.version !== row.input.baseVersion)
+        throw new UserFacingError("Experience changed since this answer. Reload before saving it.");
+      await captureDirectCareerAnswerIn(tx, user.id, current.content, row.input.destination,
+        row.input.answer, row.fingerprint);
+      await tx.update(evidenceDrafts).set({ status: "accepted", acceptedWording: row.input.answer,
+        acceptedVersion: current.version, resolvedAt: new Date(), updatedAt: new Date() })
         .where(eq(evidenceDrafts.id, row.id));
-      return version;
+      return current.version;
     });
     revalidate("/library", "/cv");
     return { ok: true, version };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { approveCvFinalisation, prepareCvFinalisation } from "@/app/actions/cv-finalisation";
 
@@ -14,11 +14,21 @@ export function CvFinaliseControl({ id, revision, baseHash }: { id: string; revi
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [savingEdition, setSavingEdition] = useState(false);
+  const editionPending = () => !!document.querySelector('[data-cv-mode-pending="true"]');
+  useEffect(() => {
+    const update = () => setSavingEdition(editionPending());
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true,
+      attributeFilter: ["data-cv-mode-pending"] });
+    return () => observer.disconnect();
+  }, []);
   const dirty = () => [...document.querySelectorAll<HTMLElement>('[data-cv-editor-dirty="true"], [data-cv-mode-dirty="true"]')]
     .some(editor => editor.dataset.cvEditorId === id || editor.dataset.cvModeEditorId === id);
 
   async function prepare() {
-    if (pending) return;
+    if (pending || editionPending()) return;
     if (dirty()) { setError("Save your CV edits before reviewing the final PDF."); return; }
     setPending(true); setError(null); setPrepared(null); setAcknowledged(false);
     try {
@@ -30,7 +40,7 @@ export function CvFinaliseControl({ id, revision, baseHash }: { id: string; revi
   }
 
   async function approve() {
-    if (!prepared || pending || !acknowledged) return;
+    if (!prepared || pending || editionPending() || !acknowledged) return;
     if (dirty()) { setError("Save your CV edits and review the final PDF again."); setPrepared(null); return; }
     setPending(true); setError(null);
     try {
@@ -46,7 +56,7 @@ export function CvFinaliseControl({ id, revision, baseHash }: { id: string; revi
       <p className="text-14 font-semibold">Finalise this saved CV</p>
       <p className="text-12 text-muted">Checking is optional. Final approval measures and stores this exact PDF; it does not rewrite your wording or use a CV credit.</p>
     </div>
-    {!prepared && !done && <button type="button" className="min-h-11 border border-line-muted px-4 text-14" disabled={pending} onClick={prepare}>
+    {!prepared && !done && <button type="button" className="min-h-11 border border-line-muted px-4 text-14" disabled={pending || savingEdition} onClick={prepare}>
       {pending ? "Measuring PDF…" : "Review final PDF and warnings"}
     </button>}
     {prepared && !done && <div className="space-y-3">
@@ -57,8 +67,9 @@ export function CvFinaliseControl({ id, revision, baseHash }: { id: string; revi
         <ul className="mt-2 list-disc space-y-1 pl-5">{prepared.warnings.map(warning => <li key={warning.id}>{warning.text}</li>)}</ul>
       </div> : <p className="text-14">No finalisation warnings were found.</p>}
       <label className="flex min-h-11 items-center gap-2 text-14"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} /> I have reviewed this saved PDF and its warnings and choose to finalise it.</label>
-      <button type="button" className="min-h-11 border border-line-muted px-4 text-14" disabled={!acknowledged || pending} onClick={approve}>{pending ? "Finalising…" : "Finalise this CV"}</button>
+      <button type="button" className="min-h-11 border border-line-muted px-4 text-14" disabled={!acknowledged || pending || savingEdition} onClick={approve}>{pending ? "Finalising…" : "Finalise this CV"}</button>
     </div>}
+    {savingEdition && <p role="status" className="text-14">Updating the saved CV…</p>}
     {done && <p role="status" className="text-14">Finalised. The saved PDF is now available.</p>}
     {error && <p role="alert" className="text-14 text-danger">{error}</p>}
   </section>;

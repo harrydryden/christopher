@@ -50,11 +50,11 @@ export function cvManualHeadingWarnings(content: CvContent, library: CvLibrary):
     if (section.kind === "education" || section.kind === "training") {
       const source = entries.get(section.entryId);
       return source?.kind === section.kind && section.heading === source.heading ? []
-        : [{ id: `manual-heading:${section.entryId}`, text: "This qualification heading is manually worded and has not been verified against confirmed Experience." }];
+        : [{ id: `manual-heading:${section.entryId}`, text: "This qualification heading differs from saved Experience." }];
     }
     if (section.kind !== "experience") return [];
     const job = jobs.get(entries.get(section.entryId)?.employmentId ?? "");
     if (job && (section.heading === employmentHeading(job) || section.heading === employmentCvHeading(job))) return [];
-    return [{ id: `manual-heading:${section.entryId}`, text: "This experience heading is manually worded and has not been verified against confirmed employment details." }];
+    return [{ id: `manual-heading:${section.entryId}`, text: "This role heading differs from saved Experience." }];
   });
 }

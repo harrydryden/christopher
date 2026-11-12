@@ -15,6 +15,16 @@ export { reserveLocationRead, WORKDAY_LOCATION_READS_PER_HOUR } from "./location
 export { appendProfile, latestProfileFor, ProfileVersionConflictError } from "./profiles";
 export { lockScoreModelInput, lockAccountScoreInput, accountCanScore } from "./score-fence";
 export { latestCvLibrary } from "./cv-library";
+export { getCareerRecommendationProfile, type CareerRecommendationProfile } from "./career-recommendation-profile";
+export { getCareerWorkspace, saveCareerChange, saveCareerChangeIn, undoCareerChange, careerConflicts, CareerWriteConflict } from "./career-record";
+export { ensureCareerBackfill } from "./career-backfill";
+export { careerCvEvidence, latestCareerCvEvidence } from "./career-cv";
+export { captureLibraryAdditionsIn } from "./career-library-bridge";
+export { captureDirectCareerAnswerIn } from "./career-library-bridge";
+export { reviseDirectCareerAnswerIn } from "./career-library-bridge";
+export { publishCareerCompatibilityIn } from "./career-record";
+export { getCareerReviewSummary, listCareerReviewIssues, getCareerConflictDetail,
+  decideCareerConflict } from "./career-review";
 export { claimableTaskSql, workloadMetrics } from "./scaling";
 export { topStatements, resetStatements, formatStatementTotals, type StatementTotal, type StatementTotals } from "./pg-stat";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";
@@ -33,6 +43,10 @@ export { currentCvRefinements, appendCvRefinement, CvRefinementConflict } from "
 export { startCvBuildStep, finishCvBuildStep, failOpenCvBuildSteps, skipOpenCvBuildSteps, listCvBuildSteps, cvBuildStepsSignature, cvBuildMotionStats, type StartCvBuildStep, type FinishCvBuildStep, type CvBuildMotionStat } from "./cv-build-steps";
 
 export { cvRoleKey } from "./cv-role-key";
+export { CV_AI_PRICE_VERSION, CV_AI_UNITS, CV_AI_LIMITS, CvAiUsageError,
+  ensureCvOpportunityForContext, ensureCvOpportunityForDraft, attachCvOpportunityToContext,
+  reserveCvAiUsage, settleCvAiUsage, getCvAiAllowance, quoteCvAiAction,
+  type CvAiAction, type CvAiSource } from "./cv-ai-usage";
 
 export { upsertLibraryReviews, latestLibraryReviews, latestModelReviewsByEntry, libraryReviewsSignature, pruneLibraryReviews, type LibraryReviewUpsert } from "./library-reviews";
 
@@ -42,6 +56,7 @@ export { BOOTSTRAP_USER_ID, BOOTSTRAP_EMAIL, DEFAULT_ADMIN_EMAILS, SEED_TAGS, ad
 
 export { createLibraryImport, getLibraryImport, getLibraryImportForWorker, listOpenLibraryImports, completeLibraryImport, resolveLibraryImport, pruneLibraryImports, type CreateLibraryImportInput, type LibraryImportOutcome, type LibraryImportRow, type LibraryImportSummary } from "./library-imports";
 export { createCvShare, findLiveCvShareByHash, recordCvShareView, listCvShares, revokeCvShare, addCvShareComment, listCvShareComments, resolveCvShareComment, countOpenCvShareComments, CvShareClosedError, type AddCvShareCommentInput, type CreateCvShareInput, type CvShareRefusal, type LiveCvShare } from "./cv-shares";
+export * from "./cv-inline-edits";
 export {
   PLAN_CATALOG, CV_TOPUPS, COMPANY_BLOCK_SIZE, COMPANY_BLOCK_PRICE_GBP, TECHNICAL_COMPANY_LIMIT, WELCOME_CV_CREDITS,
   BillingLimitError, ensureFreeEntitlement, getBillingSummary, getCompanyEntitlement, assertCanActivateCompanies,

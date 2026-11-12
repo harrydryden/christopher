@@ -78,6 +78,10 @@ export function CvReviewControls({ id, rows, decision, factualRowIds, assessment
               setError("Save your CV edits before leaving for Experience.");
             }
           }}>Add evidence for this</a>}
+          {item.careerSources?.map(source => <a key={source.href} className="underline" href={source.href}
+            onClick={event => { if (document.querySelector('[data-cv-editor-dirty="true"]')) {
+              event.preventDefault(); setError("Save your CV edits before leaving for Experience.");
+            } }}>Edit {source.label}</a>)}
         </div>
         <div className="flex flex-wrap gap-2 pt-2">
           <button type="button" disabled={selected === 0} onClick={() => setSelected((value) => value - 1)} className="border border-line-muted px-3 py-1.5 text-12 disabled:opacity-50">Previous</button>

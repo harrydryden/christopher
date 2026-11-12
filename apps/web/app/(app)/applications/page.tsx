@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { z } from "zod";
-import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@col/core";
+import { ROLE_STAGES, ROLE_STAGE_LABELS, type RoleStage } from "@col/core";
 import { ApplicationsTable } from "@/components/ApplicationsTable";
-import { CvPastedApplicationEntry } from "@/components/CvPastedApplicationEntry";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { getCvWorkStatus } from "@/lib/work-status";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
+import { buttonLinkClass } from "@/components/Button";
 import { nextStep } from "@/lib/application-dates";
 import { requireUser } from "@/lib/auth";
 import {
@@ -54,8 +54,6 @@ export default async function ApplicationsPage({
     listPipeline(user.id, { filter, page, company: company ?? undefined, stage, focus, now }),
     getCvWorkStatus(user.id),
   ]);
-  const duePreview = !focus && !stage && result.due > 0
-    ? await listPipeline(user.id, { filter: "active", company: company ?? undefined, focus: "due", now }) : null;
   // The two lines a row can carry under its stage, worked out here so the table shows the words
   // the server computed rather than deriving them again against the viewer's clock. A next step
   // the person wrote answers "what do I owe" better than silence does, so it wins over the hint.
@@ -71,11 +69,21 @@ export default async function ApplicationsPage({
       return hint ? [[row.key, hint] as const] : [];
     }),
   );
-  const empty = focus ? { title: focus === "overdue" ? "No overdue steps" : "No steps due this week", description: "Add a dated next step to an application to see it here." }
+  const empty = focus ? { title: stage
+      ? `No ${ROLE_STAGE_LABELS[stage].toLowerCase()} steps ${focus === "overdue" ? "overdue" : "due this week"}`
+      : focus === "overdue" ? "No overdue steps" : "No steps due this week",
+    description: "Add a dated next step to an application to see it here." }
     : stage ? { title: `No ${ROLE_STAGE_LABELS[stage].toLowerCase()} roles` } : EMPTY[filter]!;
   const linkTo = (values: Record<string, string>) => `/applications?${new URLSearchParams({ ...values, ...(company ? { company: company.id } : {}) })}`;
   const segmentHref = (segment: string) =>
     linkTo({ filter: segment });
+  const emptyAction = focus || stage
+    ? <Link prefetch={false} href={linkTo({ filter })} className={buttonLinkClass("secondary", "sm")}>View applications</Link>
+    : company
+      ? <Link prefetch={false} href={`/applications?filter=${filter}`} className={buttonLinkClass("secondary", "sm")}>Show all companies</Link>
+      : filter === "closed"
+        ? <Link prefetch={false} href={segmentHref("active")} className={buttonLinkClass("secondary", "sm")}>View active applications</Link>
+        : <Link prefetch={false} href="/" className={buttonLinkClass("secondary", "sm")}>Find roles</Link>;
   const buildingRows = result.rows.filter((row) => row.cv?.status === "queued" || row.cv?.status === "generating");
   const building = buildingRows.length > 0;
   // A CV that is ready while its optional improvement still runs: the page keeps following it, so
@@ -94,46 +102,37 @@ export default async function ApplicationsPage({
       <PageHeader
         title={company ? `Applications at ${company.name}` : "Applications"}
         description={company ? <Link prefetch={false} href={`/applications?filter=${filter}`} className="underline">Show all companies</Link> : undefined}
+        actions={<Link prefetch={false} href="/applications/new" className={buttonLinkClass("secondary")}>Add a role</Link>}
       />
-      <CvPastedApplicationEntry />
-      {duePreview && duePreview.rows.length > 0 && <section aria-labelledby="needs-action-heading" className="border-l-2 border-warn pl-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="needs-action-heading" className="font-semibold">Needs action · {result.due}</h2>
-          <Link prefetch={false} href={linkTo({ filter: "active", focus: "due" })} className="min-h-11 text-13 underline">See all due work</Link>
+      <nav aria-label="Application filters" className="space-y-2 border-y border-line-muted py-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div role="group" aria-label="Progress" className="flex min-w-0 flex-wrap gap-2">
+            {PIPELINE_FILTERS.map((segment) => (
+              <Link prefetch={false} key={segment} href={segmentHref(segment)}
+                aria-current={segment === filter && !focus && !stage ? "page" : undefined}
+                className={buttonLinkClass(segment === filter && !focus && !stage ? "primary" : "secondary", "sm")}>
+                {PIPELINE_FILTER_LABELS[segment]} <span className="ml-1 tabular-nums">{result.counts[segment]}</span>
+              </Link>
+            ))}
+          </div>
+          <div role="group" aria-label="Next steps" className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-14">
+            <Link prefetch={false} href={linkTo({ filter: "active", focus: "due" })} aria-current={focus === "due" ? "page" : undefined}
+              className={`inline-flex min-h-11 items-center underline underline-offset-2 ${focus === "due" ? "font-semibold" : ""}`}>
+              Due this week <span className="ml-1 tabular-nums">{result.due}</span></Link>
+            {result.overdue > 0 && <Link prefetch={false} href={linkTo({ filter: "active", focus: "overdue" })} aria-current={focus === "overdue" ? "page" : undefined}
+              className={`inline-flex min-h-11 items-center underline underline-offset-2 ${focus === "overdue" ? "font-semibold" : ""}`}>
+              Overdue <span className="ml-1 tabular-nums">{result.overdue}</span></Link>}
+          </div>
         </div>
-        <ul className="space-y-1 text-13">{duePreview.rows.slice(0, 3).map(row => <li key={row.key}>
-          <Link prefetch={false} href={linkTo({ filter: "active", focus: "due", ...(row.jobId ? { job: row.jobId } : {}) })} className="underline">{row.jobTitle} · {row.companyName}</Link>
-          {nextStep(row, now) && <span className="text-muted"> · {nextStep(row, now)!.line}</span>}
-        </li>)}</ul>
-      </section>}
-      {/* A hint, like the stale one: the product sends nothing, it only reads differently here. */}
-      <nav aria-label="Next steps" className="flex flex-wrap gap-3 text-13">
-        <Link prefetch={false} href={linkTo({ filter: "active", focus: "due" })} aria-current={focus === "due" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Due this week ({result.due})</Link>
-        {result.overdue > 0 && <Link prefetch={false} href={linkTo({ filter: "active", focus: "overdue" })} aria-current={focus === "overdue" ? "page" : undefined} className="inline-flex min-h-11 items-center underline">Overdue ({result.overdue})</Link>}
-        {(focus || stage) && <Link prefetch={false} href={linkTo({ filter })} className="inline-flex min-h-11 items-center underline">Clear view</Link>}
-      </nav>
-      {/* The same shape as the roles tabs: links, so the segment is in the URL and shareable. */}
-      <nav aria-label="Application progress" className="mb-4 flex flex-wrap gap-2">
-        {PIPELINE_FILTERS.map((segment) => (
-          <Link prefetch={false}
-            key={segment}
-            href={segmentHref(segment)}
-            aria-current={segment === filter && !focus && !stage ? "page" : undefined}
-            className={`ds-pixel inline-flex min-h-11 items-center border-2 px-3 py-2 text-11 no-underline ${segment === filter && !focus && !stage ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}
-          >
-            {PIPELINE_FILTER_LABELS[segment]} <span className="ml-1 tabular-nums">{result.counts[segment]}</span>
-          </Link>
-        ))}
-      </nav>
-      <details className="text-13 text-muted">
-        <summary className="min-h-11 cursor-pointer py-2 font-medium underline">Stage breakdown</summary>
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          {STRIP_STAGES.map((stage) => <Link key={stage} prefetch={false} href={linkTo({ filter: "all", stage })} aria-current={stage === requestedStage && !focus ? "page" : undefined}
-            className="inline-flex min-h-11 items-center underline-offset-2 hover:underline">
-            {ROLE_STAGE_LABELS[stage]} <span className="ml-1 tabular-nums">{result.stages[stage]}</span>
+        <div role="group" aria-label="Application stages" className="flex flex-wrap gap-x-3 gap-y-1 text-13 text-muted">
+          {STRIP_STAGES.map((value) => <Link key={value} prefetch={false} href={linkTo({ filter: "all", stage: value })}
+            aria-current={value === stage ? "page" : undefined}
+            className={`inline-flex min-h-11 items-center underline underline-offset-2 ${value === stage ? "font-semibold text-fg" : ""}`}>
+            {ROLE_STAGE_LABELS[value]} <span className="ml-1 tabular-nums">{result.stages[value]}</span>
           </Link>)}
+          {(focus || stage) && <Link prefetch={false} href={linkTo({ filter })} className="inline-flex min-h-11 items-center text-fg underline">Clear view</Link>}
         </div>
-      </details>
+      </nav>
       {/* A CV on this page is still being written: the cells follow it without a reload. */}
       {(building || improvingRows.length > 0) && (
         <AutoRefresh scope="cv" initialVersion={cvWork.version} message={building ? buildingMessage : improvingMessage} />
@@ -144,7 +143,7 @@ export default async function ApplicationsPage({
         openKey={job}
         nextSteps={nextSteps}
         staleHints={staleHints}
-        emptyState={<EmptyState title={empty.title} description={empty.description} />}
+        emptyState={<EmptyState title={empty.title} description={empty.description} action={emptyAction} />}
       />
       {result.pageCount > 1 && (
         <Pagination
@@ -155,17 +154,6 @@ export default async function ApplicationsPage({
           label="Application pages"
         />
       )}
-      <details className="text-13 text-muted">
-        <summary className="cursor-pointer">What the stages mean</summary>
-        <dl className="mt-2 space-y-1">
-          {ROLE_STAGES.map((stage) => (
-            <div key={stage} className="flex flex-wrap gap-2">
-              <dt className="ds-pixel text-10 text-fg">{ROLE_STAGE_LABELS[stage]}</dt>
-              <dd>{ROLE_STAGE_DESCRIPTIONS[stage]}</dd>
-            </div>
-          ))}
-        </dl>
-      </details>
     </div>
   );
 }

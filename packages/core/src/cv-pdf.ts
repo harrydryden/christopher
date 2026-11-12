@@ -1,6 +1,6 @@
-import { cvSectionHeading, cvSectionTexts, cvSupportingTitle } from "./cv-format";
+import { cvDisplayGroups, cvSectionHeading, cvSectionTexts, cvSupportingTitle } from "./cv-format";
 import PDFDocument from "pdfkit";
-import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, cvMaxPages, CvContentSchema, CV_GROUPS, type CvContent, type CvFont, type CvTheme } from "./cv";
+import { DEFAULT_CV_THEME, cvForeground, cvMaxPages, CvContentSchema, type CvContent, type CvFont, type CvTheme } from "./cv";
 import { LIBERATION_SANS_BOLD, LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
 
 import { cleanCvText, measurePillRows, drawPillRow, PILL_STYLES } from "./cv-pdf-pills";
@@ -273,8 +273,8 @@ export async function renderCvPdfWithReport(
     doc.x = 44;
     doc.y = headerBottom + (targeted ? 5 : 8);
   }
-  const groups = CV_GROUPS;
-  const ordered = cvDisplaySections(content).map((item) => item.section);
+  const groups = cvDisplayGroups(content);
+  const ordered = groups.flatMap(group => group.sections.map(item => item.section));
   const skillSectionGap = 4;
   const skillPillStyle = targeted ? { ...PILL_STYLES.skill, fontSize: Math.max(11, bodySize - 1) } : PILL_STYLES.skill;
   const pageBodyHeight = doc.page.height - 55 - 44;
@@ -366,12 +366,12 @@ export async function renderCvPdfWithReport(
         : headerHeight + industryHeight + contentHeight + 6,
     };
   };
-  const supplementary = groups.slice(1).filter(group => ordered.some(section => section.kind === group.kind));
+  const supplementary = groups.filter(group => group.kind !== "experience");
   const names = supplementary.map(group => group.title);
   const supplementaryTitle = cvSupportingTitle(ordered.map(section => section.kind));
   let supplementaryStarted = false;
-  for (const { kind, title } of groups) {
-    const sections = ordered.filter((s) => s.kind === kind).map(measureSection);
+  for (const { kind, title, sections: groupSections } of groups) {
+    const sections = groupSections.map(item => measureSection(item.section));
     if (!sections.length) continue;
     const first = sections[0]!;
     const keepFirstSkillRow = kind === "skill" &&

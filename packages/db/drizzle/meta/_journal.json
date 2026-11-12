@@ -491,6 +491,34 @@
       "when": 1793620807000,
       "tag": "0071_linkedin_oidc",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1793620808000,
+      "tag": "0072_career_record",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1793620809000,
+      "tag": "0073_career_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1793620810000,
+      "tag": "0074_role_entitlements",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1793620811000,
+      "tag": "0075_cv_inline_edits",
+      "breakpoints": true
     }
   ]
 }

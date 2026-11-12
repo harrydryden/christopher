@@ -25,15 +25,14 @@ export function SetupChecklist({ checklist, variant }: { checklist: Checklist; v
         <span className="text-12 text-muted">Add a job link or PDF.</span>
       </a>
     </div>}
-    {firstUse && <p className="text-13 text-muted">Already have a CV or career document? <a href="/library" className="text-fg underline">Prepare Experience</a>. You can also enter your work history there yourself.</p>}
+    {firstUse && <a href="/library" className="inline-flex min-h-11 items-center text-13 underline">Add your Experience</a>}
     {!checklist.complete && <>
       {!firstUse && <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-14"><span className="font-semibold">{explanation ? "Start here" : "Monitoring setup"}</span> · {checklist.summary}</p>
         {!explanation && <form action={dismissSetupChecklist}><button type="submit" className="min-h-11 px-2 text-13 text-muted underline">Hide setup</button></form>}
       </div>}
       {!firstUse && next && <p className="text-14"><a href={next.href} className="font-semibold underline">{next.label}</a> · <span className="text-muted">{next.description}</span></p>}
-      <details className="text-13 text-muted">
-        <summary className="min-h-11 cursor-pointer py-3">All setup steps</summary>
+      <div className="text-13 text-muted">
         <ol className="grid gap-2 sm:grid-cols-2">
           {setupMilestones(checklist).map(step => <li key={step.id}>
             <a href={step.href} aria-current={step.state === "current" ? "step" : undefined} className="flex min-h-11 items-center gap-2 underline">
@@ -42,8 +41,7 @@ export function SetupChecklist({ checklist, variant }: { checklist: Checklist; v
             </a>
           </li>)}
         </ol>
-        <p className="mt-2">Optional: <a href="/settings#seed-profile">describe your ideal work</a> to improve ranking; <a href="/library">prepare your evidence Library</a> when you want to build a CV.</p>
-      </details>
+      </div>
     </>}
   </section>;
 }

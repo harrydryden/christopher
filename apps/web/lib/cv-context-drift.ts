@@ -1,13 +1,13 @@
-import { groupCvLibrary, type CvLibrary } from "@col/core/cv";
+import { groupCvLibrary, isEmptyCvExperienceError, type CvLibrary } from "@col/core/cv";
 import { canonicalJson } from "@col/core/cv-review";
 
 function factualLibrary(library: CvLibrary) {
   let comparable = library;
   try { comparable = groupCvLibrary(library); }
   catch (error) {
-    // A saved Manual edition can have no confirmed rows yet. Keep its profile,
+    // A saved Manual edition can have no saved source details yet. Keep its profile,
     // name and contact available to detect changes instead of erasing them.
-    if (!(error instanceof Error) || !error.message.startsWith("Confirm at least one responsibility or outcome"))
+    if (!isEmptyCvExperienceError(error))
       throw error;
   }
   const { theme: _theme, stylePreferences: _style, preferredWording: _wording, ...facts } = comparable;

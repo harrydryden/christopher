@@ -6,6 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const router = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("@/app/actions/cv-editing", () => ({ createManualCvEdition: vi.fn(), saveManualCvEdition: vi.fn() }));
+vi.mock("@/app/actions/cv-inline-ai", () => ({ requestCvInlineEdit: vi.fn(), readCvInlineEdit: vi.fn(),
+  latestCvInlineEdit: vi.fn(async () => ({ ok: false, error: "No pending suggestion." })), dismissCvInlineEdit: vi.fn() }));
 import { createManualCvEdition, saveManualCvEdition } from "@/app/actions/cv-editing";
 import { CvManualMode } from "./CvManualMode";
 
@@ -37,7 +39,7 @@ it("can save a genuine first Manual section without Auto or an AI call", async (
     prefill={{ name: "Alex Morgan", contact: "London", summary: "Operations analyst" }} />));
   const add = [...container.querySelectorAll("button")].find(button => button.textContent === "Add section")!;
   act(() => add.click());
-  const heading = [...container.querySelectorAll("input")].find(input => input.closest("label")?.textContent?.includes("Heading"))!;
+  const heading = container.querySelector<HTMLInputElement>('input[id^="cv-manual-heading-"]')!;
   enter(heading, "My project work");
   const bullet = [...container.querySelectorAll("textarea")].find(input => input.closest("label")?.textContent?.includes("Bullet 1"))!;
   enter(bullet, "Built the monthly report for my team.");
@@ -49,4 +51,23 @@ it("can save a genuine first Manual section without Auto or an AI call", async (
   expect(call[2]).toMatchObject({ name: "Alex Morgan", summary: "Operations analyst",
     sections: [{ kind: "experience", heading: "My project work", bullets: ["Built the monthly report for my team."] }] });
   expect(call[3]).toBeUndefined();
+});
+
+it("keeps a chosen comma-containing skill as one ordered Manual label", async () => {
+  vi.mocked(saveManualCvEdition).mockResolvedValue({ ok: true, draftId: "manual-child" });
+  act(() => root.render(<CvManualMode contextId="context" descriptionVersionId={version}
+    draft={{ id: "manual-starter", revision: 1, content: null, editingTargets: null }}
+    prefill={{ name: "Alex Morgan", contact: "London", summary: "Operations analyst" }}
+    skillChoices={["Planning, delivery", "SQL"]} />));
+  act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Add section")!.click());
+  const type = [...container.querySelectorAll<HTMLSelectElement>("select")].find(select =>
+    select.closest("label")?.textContent?.includes("Type"))!;
+  act(() => { type.value = "skill"; type.dispatchEvent(new Event("change", { bubbles: true })); });
+  const heading = container.querySelector<HTMLInputElement>('input[id^="cv-manual-heading-"]')!;
+  enter(heading, "Delivery skills");
+  act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Add Planning, delivery"]')!.click());
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button =>
+    button.textContent?.startsWith("Save Manual CV"))!.click());
+  expect(vi.mocked(saveManualCvEdition).mock.calls[0]?.[2]).toMatchObject({ sections: [{
+    kind: "skill", heading: "Delivery skills", skillItems: ["Planning, delivery"], bullets: ["Planning, delivery"] }] });
 });

@@ -3,13 +3,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { register } from "tsx/esm/api";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { insertSession, startWeb } from "./lib/web.mjs";
 const require = createRequire(import.meta.url);
 require("tsx/cjs");
-const { createDb, createUser, grantCvCredits, publishCvAutoBaseline } = require("../packages/db/src/index.ts");
+register();
+const { createDb, createUser, grantCvCredits, publishCvAutoBaseline, consumeCvCredit } = require("../packages/db/src/index.ts");
 const { runMigrations } = require("../packages/db/src/migrate.ts");
 const { cvEditingTargetsFor } = require("../packages/core/src/cv-editing-modes.ts");
 const { CvContentSchema, CvLibrarySchema } = require("../packages/core/src/cv.ts");
@@ -17,8 +19,9 @@ const { chromium } = createRequire(new URL("../apps/worker/package.json", import
 
 export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-modes-browser", port = 3118 }) {
   const url = new URL(databaseUrl);
-  if (!["localhost", "127.0.0.1"].includes(url.hostname) || !/^\/col_cv_modes_browser_\d+$/.test(url.pathname))
-    throw new Error("Use a dedicated local col_cv_modes_browser_<date> database.");
+  if (!["localhost", "127.0.0.1"].includes(url.hostname) ||
+    !/^\/(?:col_cv_modes_browser|col_frontend_design_browser)_\d+$/.test(url.pathname))
+    throw new Error("Use a dedicated local CV modes or frontend design browser database.");
   const { db, pool } = createDb(databaseUrl, { max: 3 });
   const secret = `synthetic-browser-only-${randomUUID()}-${randomUUID()}`;
   let browser, web, page;
@@ -64,11 +67,12 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
       sourceDraftId:claim.source_draft_id,content,librarySnapshot:library,editingTargets:targets}));
     await pool.query("update cv_drafts set status='ready',content=$1,editing_targets=$2 where id=$3",[JSON.stringify(content),JSON.stringify(targets),claim.source_draft_id]);
     await pool.query("update tasks set status='done' where payload->>'draftId'=$1",[claim.source_draft_id]);
-    const workCounts=async()=> (await pool.query("select (select count(*)::int from tasks where payload->>'userId'=$1::text) tasks,(select count(*)::int from credit_reservations where user_id=$1::uuid) credits",[user.id])).rows[0];
+    const workCounts=async()=> (await pool.query("select (select count(*)::int from tasks where payload->>'userId'=$1::text) tasks,(select count(*)::int from cv_ai_usage where user_id=$1::uuid and charge_kind='role_credit') credits,(select count(*)::int from cv_ai_usage where user_id=$1::uuid and charge_kind='allowance') edits",[user.id])).rows[0];
+    await consumeCvCredit(db,claim.source_draft_id);
     const initialWork=await workCounts();
     await page.reload();
     started=performance.now(); await page.getByRole("button",{name:/Update Auto/}).click();
-    await page.getByRole("status").filter({hasText:/ready|saved|credit/i}).first().waitFor();
+    await page.getByRole("status").filter({hasText:"Your saved Auto CV is ready. No new AI usage was charged."}).waitFor();
     timings.autoReuseMs=Math.round(performance.now()-started);
     assert.deepEqual(await workCounts(),initialWork,"Auto cache hit creates no work or credit reservation");
     await page.reload();
@@ -80,62 +84,120 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     resources.beforeModes = await jsResources();
     await page.getByRole("region",{name:"Current CV",exact:true}).waitFor();
     assert.equal(await page.getByRole("region",{name:"Current CV",exact:true}).count(),1,"There is one authoritative current CV surface");
-    assert.equal(await page.getByRole("link",{name:/Jump to Current CV/}).count(),1,"Current CV remains directly reachable above the editor");
     await page.getByRole("button",{name:"Refine Remembered for this role",exact:true}).click();
     const refine=page.locator("#cv-mode-panel-refine");
-    await refine.getByLabel("Exact wording",{exact:true}).waitFor();
-    assert.equal(await refine.getByLabel("Exact wording",{exact:true}).inputValue(),content.summary,"Exact editing starts with the current wording");
+    await refine.getByLabel("Summary",{exact:true}).waitFor();
+    assert.equal(await refine.getByLabel("Summary",{exact:true}).inputValue(),content.summary,"Exact editing starts with the current wording");
     assert.equal(await refine.locator('[data-cv-mode-dirty="true"]').count(),0,"Opening prefilled wording is not an unsaved edit");
     await page.screenshot({path:`${outDir}/refine-desktop.png`,fullPage:true});
     resources.afterRefine = await jsResources();
-    await refine.getByLabel("Exact wording",{exact:true}).fill("Operations leader focused on reliable delivery");
+    await refine.getByLabel("Summary",{exact:true}).fill("Operations leader focused on reliable delivery");
+    const taskTabs=page.getByRole("tablist",{name:"CV tasks",exact:true});
+    const editTask=taskTabs.getByRole("tab",{name:"Edit current CV",exact:true});
+    assert.equal(await editTask.getAttribute("id"),"cv-task-tab-document");
+    assert.equal(await editTask.getAttribute("aria-controls"),"cv-document");
     started=performance.now();
-    await refine.getByRole("button",{name:"Save and update CV · free",exact:true}).click();
+    await refine.getByRole("button",{name:"Save Summary and update CV · free",exact:true}).click();
     await refine.getByRole("status").filter({hasText:/CV updated|saved and updated/i}).waitFor();
     timings.exactRefineSaveMs=Math.round(performance.now()-started);
     let refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
     assert.equal(refined?.content.summary,"Operations leader focused on reliable delivery");
     assert.deepEqual(await workCounts(),initialWork,"Exact Refine is free");
     const firstExactEdition=refined.id;
-    await refine.getByLabel("Exact wording",{exact:true}).fill("Operations leader focused on reliable delivery and service quality");
-    await refine.getByRole("button",{name:"Save and update CV · free",exact:true}).click();
+    await refine.getByLabel("Summary",{exact:true}).fill("Operations leader focused on reliable delivery and service quality");
+    await taskTabs.getByRole("tab",{name:"Compare",exact:true}).waitFor();
+    await editTask.focus();
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await taskTabs.getByRole("tab",{name:"History",exact:true}).getAttribute("aria-selected"),"true");
+    assert.equal(await page.locator("#cv-history").isVisible(),true);
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await taskTabs.getByRole("tab",{name:"Compare",exact:true}).getAttribute("aria-selected"),"true");
+    assert.equal(await page.locator("#cv-compare").isVisible(),true);
+    await page.keyboard.press("Home");
+    assert.equal(await editTask.getAttribute("aria-selected"),"true");
+    assert.equal(await refine.getByLabel("Summary",{exact:true}).inputValue(),
+      "Operations leader focused on reliable delivery and service quality",
+      "Keyboard task navigation preserves the unsaved Refine field");
+    await page.keyboard.press("End");
+    assert.equal(await taskTabs.getByRole("tab",{name:"Role details",exact:true}).getAttribute("aria-selected"),"true");
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await editTask.getAttribute("aria-selected"),"true","ArrowRight wraps to the first task");
+    await refine.getByRole("button",{name:"Save Summary and update CV · free",exact:true}).click();
     await refine.getByRole("status").filter({hasText:/CV updated|saved and updated/i}).waitFor();
     refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
     assert.notEqual(refined.id,firstExactEdition,"Re-editing creates a separate saved edition");
     assert.equal(refined.content.summary,"Operations leader focused on reliable delivery and service quality");
     assert.equal((await pool.query("select count(distinct stable_id)::int n from cv_refinement_events where context_id=$1 and refinement->>'kind'='exact_wording'",[contextId])).rows[0].n,1,"Editing the same item updates its remembered rule, not a duplicate lock");
     assert.deepEqual(await workCounts(),initialWork,"Re-editing exact wording is free");
-    await page.getByRole("region",{name:"Current CV",exact:true}).getByText(`Current CV · refine version ${refined.revision}`,{exact:true}).waitFor();
+    await page.getByRole("region",{name:"Current CV",exact:true}).getByText(`refine · version ${refined.revision}`,{exact:true}).waitFor();
     assert.equal(await refine.getByRole("button",{name:"Apply saved refinements · free",exact:true}).count(),0,"An applied exact edit has no redundant Apply step");
-    await refine.getByLabel("Exact wording",{exact:true}).fill("Unsaved wording retained during source recovery");
-    const recoveryHistory=page.locator("details").filter({has:page.getByText("Saved CV history",{exact:true})});
-    if(await recoveryHistory.getAttribute("open")===null) await recoveryHistory.locator("summary").click();
+    await refine.getByLabel("Summary",{exact:true}).fill("Unsaved wording retained during source recovery");
+    await page.getByRole("tab",{name:"History",exact:true}).click();
+    const recoveryHistory=page.locator("#cv-history");
     await recoveryHistory.getByRole("button").first().click();
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
     await refine.getByRole("button",{name:"Restore original saved edition",exact:true}).click();
     await refine.getByRole("status").filter({hasText:"Your original saved edition is selected again"}).waitFor();
-    assert.equal(await refine.getByLabel("Exact wording",{exact:true}).inputValue(),"Unsaved wording retained during source recovery");
+    assert.equal(await refine.getByLabel("Summary",{exact:true}).inputValue(),"Unsaved wording retained during source recovery");
     await page.waitForFunction(()=>!document.body.textContent.includes("The selected edition changed while this refinement buffer was open"));
     assert.equal((await pool.query("select selected_id from cv_application_contexts where id=$1",[contextId])).rows[0].selected_id,refined.id);
-    await refine.getByLabel("Exact wording",{exact:true}).fill(refined.content.summary);
-    await refine.getByRole("button",{name:"Section and skill order",exact:true}).click();
+    await refine.getByLabel("Summary",{exact:true}).fill(refined.content.summary);
+    await refine.getByRole("button",{name:"Order",exact:true}).click();
     await refine.getByRole("button",{name:"Move Delivery up",exact:true}).click();
     await refine.getByRole("button",{name:"Remember order · free",exact:true}).click();
     await refine.getByText("This choice is remembered for this application.",{exact:true}).waitFor();
     await refine.getByRole("button",{name:"Apply saved refinements · free",exact:true}).click();
-    await refine.getByRole("status").filter({hasText:"Refined CV ready"}).waitFor();
+    await refine.getByRole("status").filter({hasText:/Refined CV ready/}).waitFor();
     refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
     assert.deepEqual(refined.content.sections.find(row=>row.kind==="skill").skillItems,["Delivery","Planning"]);
     assert.equal(refined.content.summary,"Operations leader focused on reliable delivery and service quality");
     assert.deepEqual(await workCounts(),initialWork,"Chained structured Refine is free");
     const layout=page.locator("#cv-context-layout");
-    if(await layout.getAttribute("open")===null) await layout.locator("summary").click();
     await layout.getByLabel("Maximum pages",{exact:true}).selectOption("2");
     await layout.getByRole("button",{name:"Remember this layout for this role · free",exact:true}).click();
     await refine.getByText("This choice is remembered for this application.",{exact:true}).waitFor();
     await refine.getByRole("button",{name:"Apply saved refinements · free",exact:true}).click();
-    await refine.getByRole("status").filter({hasText:"Refined CV ready"}).waitFor();
+    await refine.getByRole("status").filter({hasText:/Refined CV ready/}).waitFor();
     refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
     assert.equal(refined.content.theme.maxPages,2,"Shared Layout persists as a role refinement");
+    // A prose bullet's short title and body are one free, stable-target edit. Clearing the title
+    // must remove it from the saved CV without changing the body or starting model work.
+    await refine.getByRole("button",{name:"Edit document",exact:true}).click();
+    const proseBullet=refine.locator('section[data-cv-source-entry="role"]').filter({hasText:"bullet 1"});
+    const bulletBody=proseBullet.getByRole("textbox").last();
+    const bulletTitle=proseBullet.getByRole("textbox").first();
+    assert.equal(await bulletTitle.inputValue(),"");
+    await bulletBody.fill("Reduced the backlog by 20% through clearer service planning");
+    await bulletTitle.fill("Service delivery");
+    await proseBullet.getByRole("button",{name:/^Save .* and update CV/}).click();
+    await page.waitForFunction(() => {
+      const input=document.querySelector('#cv-mode-panel-refine input[id^="cv-refine-title-"]');
+      return input && !input.disabled && input.value==="Service delivery";
+    });
+    refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
+    let savedBullet=refined.content.sections.find(row=>row.entryId==="role");
+    assert.equal(savedBullet.bullets[0],"Reduced the backlog by 20% through clearer service planning");
+    assert.equal(savedBullet.bulletSignposts?.[0],"Service delivery");
+    assert.deepEqual(await workCounts(),initialWork,"Adding a bullet title and body is free");
+    const signpostDir="/tmp/cv-signpost-browser";
+    await mkdir(signpostDir,{recursive:true});
+    const titledPreview=await context.request.get(`${baseUrl}/api/cv/${refined.id}/pdf?preview=1`);
+    assert.equal(titledPreview.status(),200,"The titled saved edition renders a PDF preview");
+    await writeFile(`${signpostDir}/titled-preview.pdf`,await titledPreview.body());
+    await bulletTitle.fill("");
+    await proseBullet.getByRole("button",{name:/^Save .* and update CV/}).click();
+    await page.waitForFunction(() => {
+      const input=document.querySelector('#cv-mode-panel-refine input[id^="cv-refine-title-"]');
+      return input && !input.disabled && input.value==="";
+    });
+    refined=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
+    savedBullet=refined.content.sections.find(row=>row.entryId==="role");
+    assert.equal(savedBullet.bulletSignposts?.[0]??null,null,"Clearing the title removes it from the saved CV");
+    assert.equal(savedBullet.bullets[0],"Reduced the backlog by 20% through clearer service planning");
+    assert.deepEqual(await workCounts(),initialWork,"Clearing a bullet title is free");
+    const clearedPreview=await context.request.get(`${baseUrl}/api/cv/${refined.id}/pdf?preview=1`);
+    assert.equal(clearedPreview.status(),200,"The cleared saved edition renders a PDF preview");
+    await writeFile(`${signpostDir}/cleared-preview.pdf`,await clearedPreview.body());
     await page.getByRole("button",{name:"Manual This version only",exact:true}).click();
     const manual=page.locator("#cv-mode-panel-manual");
     await manual.getByRole("button",{name:"Copy selected CV into Manual · free",exact:true}).waitFor();
@@ -146,40 +208,38 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await page.getByRole("button",{name:"Auto From Experience and this role",exact:true}).click();
     await page.getByRole("button",{name:"Manual This version only",exact:true}).click();
     assert.equal(await manual.getByRole("textbox",{name:"Summary",exact:true}).inputValue(),"My final wording for this application");
-    if(await layout.getAttribute("open")===null) await layout.locator("summary").click();
     await layout.getByLabel("Maximum pages",{exact:true}).selectOption("1");
     await page.getByRole("button",{name:"Refine Remembered for this role",exact:true}).click();
     assert.equal(await layout.getByLabel("Maximum pages",{exact:true}).inputValue(),"2","Refine retains its own layout after Manual is visited");
     await page.getByRole("button",{name:"Manual This version only",exact:true}).click();
     assert.equal(await layout.getByLabel("Maximum pages",{exact:true}).inputValue(),"1","Manual layout buffer survives a mode switch");
     await page.evaluate(()=>{ window.location.hash="cv-panel-appearance"; });
-    await page.waitForFunction(()=>document.querySelector("#cv-context-layout")?.open &&
-      document.activeElement===document.querySelector("#cv-context-layout > summary"));
+    await page.waitForFunction(()=>document.activeElement===document.querySelector("#cv-context-layout h2"));
     await page.getByRole("button",{name:"Refine Remembered for this role",exact:true}).click();
     await page.getByRole("button",{name:"Manual This version only",exact:true}).click();
     assert.equal(await page.locator("#cv-mode-manual").getAttribute("aria-pressed"),"true","A previous deep link must not trap later mode switches");
     await page.evaluate(()=>{ window.location.hash="cv-panel-evaluation"; });
-    await page.waitForFunction(()=>document.querySelector("#cv-context-feedback")?.open &&
-      document.activeElement===document.querySelector("#cv-context-feedback > summary"));
+    await page.waitForFunction(()=>document.activeElement===document.querySelector("#cv-context-feedback h2"));
     assert.equal(await manual.getByRole("textbox",{name:"Summary",exact:true}).inputValue(),"My final wording for this application","Legacy fragments preserve unsaved wording");
     await page.evaluate(()=>{ window.location.hash="%"; });
     await page.evaluate(()=>history.replaceState(null,"",location.pathname));
-    const feedback=page.locator("details").filter({has:page.getByText("Feedback and final approval",{exact:true})});
-    if(await feedback.getAttribute("open")===null) await feedback.locator("summary").click();
+    const feedback=page.locator("#cv-context-feedback");
+    assert.equal(await feedback.isVisible(),true,"Feedback is directly visible");
     const approval=page.getByRole("region",{name:"Finalise saved CV"});
     assert.equal(await approval.count(),1,"There is one approval destination");
     await approval.getByRole("button",{name:"Review final PDF and warnings",exact:true}).click();
     await approval.getByText("Save your CV edits before reviewing the final PDF.",{exact:true}).waitFor();
-    const roleDetails=page.locator("details").filter({has:page.locator("summary").filter({hasText:/^Saved role description/})});
-    if(await roleDetails.getAttribute("open")===null) await roleDetails.locator(":scope > summary").click();
+    const roleDetails=page.locator("#cv-role-details");
+    await page.getByRole("tab",{name:"Role details",exact:true}).click();
     const updatedDescription="Lead operations, plan delivery and improve service performance across the organisation. Coordinate international service teams.";
     await roleDetails.getByLabel("Role description for this application",{exact:true}).fill(updatedDescription);
     await roleDetails.getByRole("button",{name:"Update saved role description · free",exact:true}).click();
     await roleDetails.getByRole("status").filter({hasText:"Role description saved"}).waitFor();
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
     assert.equal(await manual.getByRole("textbox",{name:"Summary",exact:true}).inputValue(),"My final wording for this application","Role updates preserve dirty Manual wording");
     assert.deepEqual(await workCounts(),initialWork,"Saving role details creates no model work");
     started=performance.now(); await manual.getByRole("button",{name:"Save Manual CV · free",exact:true}).click();
-    await manual.getByRole("status").waitFor(); timings.manualSaveMs=Math.round(performance.now()-started);
+    await manual.getByRole("status").filter({hasText:"Manual wording saved as a new revision"}).waitFor(); timings.manualSaveMs=Math.round(performance.now()-started);
     const saved=(await pool.query("select d.* from cv_drafts d join cv_application_contexts c on c.selected_id=d.id where c.id=$1",[contextId])).rows[0];
     assert.equal(saved.content.summary,"My final wording for this application");
     assert.equal(saved.content.theme.maxPages,1,"Manual saves the shared Layout buffer");
@@ -190,7 +250,7 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await approval.getByText("Warnings to acknowledge",{exact:true}).waitFor();
     await approval.getByRole("checkbox").check();
     started=performance.now(); await approval.getByRole("button",{name:"Finalise this CV",exact:true}).click();
-    await page.waitForFunction(()=>/finalised|download/i.test(document.body.textContent));
+    await page.getByRole("link",{name:"Download saved PDF",exact:true}).waitFor();
     timings.finaliseMs=Math.round(performance.now()-started);
     const pdf=(await pool.query("select * from cv_pdfs where draft_id=$1",[saved.id])).rows[0];
     assert.equal(pdf.approval_mode,"unchecked"); assert.ok(pdf.bytes.length>100);
@@ -212,16 +272,19 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
       sourceDraftId:nextClaim.source_draft_id,content,librarySnapshot:library,editingTargets:nextTargets}));
     await pool.query("update cv_drafts set status='ready',content=$1,editing_targets=$2 where id=$3",[JSON.stringify(content),JSON.stringify(nextTargets),nextClaim.source_draft_id]);
     await pool.query("update tasks set status='done' where payload->>'draftId'=$1",[nextClaim.source_draft_id]);
+    await consumeCvCredit(db,nextClaim.source_draft_id);
     const updatedWork=await workCounts();
     assert.equal(updatedWork.tasks,initialWork.tasks+1);
-    assert.equal(updatedWork.credits,initialWork.credits+1);
+    assert.equal(updatedWork.credits,initialWork.credits,"A changed advert keeps the paid role unlocked");
+    assert.equal(updatedWork.edits,initialWork.edits+1,"An explicit new build uses editing allowance");
     await page.reload();
     assert.equal(await page.locator("#cv-mode-panel-auto").getByRole("status")
       .filter({hasText:"Your Experience has changed."}).count(),0,"A fresh Auto result must not report false Experience drift from normalisation or layout defaults");
-    if(await roleDetails.getAttribute("open")===null) await roleDetails.locator(":scope > summary").click();
+    await page.getByRole("tab",{name:"Role details",exact:true}).click();
     await roleDetails.getByRole("button",{name:"Review source changes",exact:true}).click();
     await roleDetails.getByText(/compatible (?:remembered )?change/i).first().waitFor();
-    assert.equal(await roleDetails.getByLabel("From saved Auto result",{exact:true}).isVisible(),false,"The normal update does not require choosing source IDs");
+    assert.equal(await roleDetails.getByLabel("From saved Auto result",{exact:true}).inputValue(),claim.id,"The remembered source is selected automatically");
+    assert.equal(await roleDetails.getByLabel("To current role’s Auto result",{exact:true}).inputValue(),nextClaim.id,"The current role result is selected automatically");
     assert.equal(await roleDetails.getByRole("checkbox").count(),0,"Compatible changes need one confirmation, not individual checkboxes");
     await page.screenshot({path:`${outDir}/source-review-desktop.png`,fullPage:true});
     assert.match(await roleDetails.innerText(),/role.*changed|changed.*role|new decision/i);
@@ -233,10 +296,13 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     assert.deepEqual(await workCounts(),updatedWork,"Preview/apply source bindings are free");
     const retainedPdf=await context.request.get(`${baseUrl}/api/cv/${saved.id}/pdf`);
     assert.deepEqual(await retainedPdf.body(),pdf.bytes,"Source updates and partial rebase preserve the final Manual PDF");
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
     await page.getByRole("button",{name:"Refine Remembered for this role",exact:true}).click();
-    const history=page.locator("details").filter({has:page.getByText("Saved CV history",{exact:true})});
-    if(await history.getAttribute("open")===null) await history.locator("summary").click();
+    await page.getByRole("tab",{name:"History",exact:true}).click();
+    const history=page.locator("#cv-history");
     await history.getByRole("button",{name:`Select refine edition V${refined.revision}`,exact:true}).click();
+    await page.getByRole("tab",{name:"Edit current CV",exact:true}).click();
+    await refine.getByRole("button",{name:"Remembered choices",exact:true}).click();
     await refine.getByRole("button",{name:"Reset all",exact:true}).click();
     await refine.getByRole("status").filter({hasText:"All refinements reset."}).waitFor();
     const reset=(await pool.query("select selected_kind,selected_id from cv_application_contexts where id=$1",[contextId])).rows[0];
@@ -252,6 +318,34 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await page.keyboard.press("Enter");
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,"No mobile overflow");
     await page.screenshot({path:`${outDir}/mobile.png`,fullPage:true});
+    await page.setViewportSize({width:320,height:760});
+    await taskTabs.getByRole("tab",{name:"Role details",exact:true}).evaluate(tab => {
+      tab.textContent="Role details · InternationalProgrammeDeliveryLeadership";
+    });
+    const narrowTasks=await taskTabs.getByRole("tab").evaluateAll(tabs => tabs.map(tab => ({
+      width:tab.getBoundingClientRect().width,height:tab.getBoundingClientRect().height,
+      right:tab.getBoundingClientRect().right,
+    })));
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,
+      "Long task labels do not overflow a 320px viewport");
+    assert.equal(narrowTasks.every(tab => tab.height>=44 && tab.right<=320),true,
+      "Each wrapped task stays visible with a 44px keyboard target");
+    const sourceWidths=await page.locator("#cv-mode-panel-refine section[data-cv-source-entry]").evaluateAll(rows =>
+      rows.filter(row => row.querySelector('button[aria-pressed]')).map(row =>
+        row.querySelector("div > p")?.getBoundingClientRect().width ?? 0));
+    assert.ok(sourceWidths.length>0 && sourceWidths.every(width=>width>=160),
+      `Source wording stays readable above Choose at 320px: ${JSON.stringify(sourceWidths)}`);
+    await page.screenshot({path:`${outDir}/mobile-320-long-label.png`,fullPage:true});
+    await page.goto(`${baseUrl}/settings`);
+    const sharedField=page.getByRole("spinbutton",{name:"Show closed roles for (days)",exact:true});
+    await sharedField.focus();
+    const focusRing=await sharedField.evaluate(input => {
+      const style=getComputedStyle(input);
+      return {width:style.outlineWidth,kind:style.outlineStyle,color:style.outlineColor,offset:style.outlineOffset};
+    });
+    assert.deepEqual(focusRing,{width:"2px",kind:"solid",color:"rgb(37, 89, 58)",offset:"3px"},
+      "Shared Field inputs retain the global visible green keyboard focus ring");
+    await page.screenshot({path:`${outDir}/field-focus-320.png`,fullPage:true});
     await page.goto(`${baseUrl}/cv/${saved.id}`);
     await page.getByLabel("Application date",{exact:true}).fill("2026-11-02");
     await page.getByRole("button",{name:"Record application",exact:true}).click();
@@ -276,7 +370,7 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const databaseUrl = process.env.CV_MODES_DATABASE_URL;
-  if (!databaseUrl) throw new Error("Set CV_MODES_DATABASE_URL to an isolated col_cv_modes_browser_<date> database.");
+  if (!databaseUrl) throw new Error("Set CV_MODES_DATABASE_URL to an isolated local CV modes browser database.");
   verifyCvEditingModes({ databaseUrl }).then(result => {
     console.log(`Editing modes browser smoke passed: ${JSON.stringify(result.timings)}`);
   }).catch(error => { console.error(error); process.exitCode = 1; });

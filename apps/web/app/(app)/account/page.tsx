@@ -20,6 +20,8 @@ import { getCompanyCapacityQuote } from "@/lib/billing/company-capacity";
 import { redirect } from "next/navigation";
 import { sanitizeNextPath } from "@/lib/session";
 import { Suspense } from "react";
+import { getCvAiAllowance } from "@col/db";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +34,7 @@ const NOTICES: Record<string, string> = {
   "verify:delivery_failed": "We could not send your confirmation link. Try again below; if it still does not arrive, ask an administrator for help.",
   "verify:rate_limited": "Too many confirmation requests. Wait an hour before trying again.",
   "billing:plan_started": "Checkout complete. Your plan will appear here once payment is confirmed.",
-  "billing:credits_added": "Checkout complete. Your CV credits will appear here once payment is confirmed.",
+  "billing:credits_added": "Checkout complete. Your role credits will appear here once payment is confirmed.",
   "billing:cancelled": "Checkout closed. No purchase was made.",
   "billing:setup_required": "Purchases are unavailable here at the moment. Please try again later.",
   "billing:unknown_plan": "That plan is unavailable. Choose one of the plans below.",
@@ -46,10 +48,10 @@ const NOTICES: Record<string, string> = {
 };
 
 async function AccountBilling({ userId }: { userId: string }) {
-  const [billing, capacityQuote] = await Promise.all([
-    getBillingSummary(userId), getCompanyCapacityQuote(userId).catch(() => null),
+  const [billing, capacityQuote, allowance] = await Promise.all([
+    getBillingSummary(userId), getCompanyCapacityQuote(userId).catch(() => null), getCvAiAllowance(db(), userId),
   ]);
-  return <BillingOverview billing={billing} capacityQuote={capacityQuote}
+  return <BillingOverview billing={billing} capacityQuote={capacityQuote} allowance={allowance}
     actions={{ addCompanyCapacity, openBillingPortal, startCreditCheckout, startPlanCheckout }} />;
 }
 

@@ -32,6 +32,8 @@ export type CvTheme = {
   maxPages: number;
   /** Absent on legacy CVs: the existing 10-point renderer stays unchanged. */
   bodySizePt?: 11 | 12;
+  /** Missing on saved legacy CVs: preserve their existing chronological presentation. */
+  experienceLayout?: "chronological" | "project" | "hybrid";
 };
 const layout = { introPanel: true, skillPills: true, font: DEFAULT_CV_FONT, maxPages: CV_PAGE_LIMITS.default } as const;
 export const CV_THEMES: Record<string, CvTheme> = {

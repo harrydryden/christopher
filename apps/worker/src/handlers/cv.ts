@@ -1182,6 +1182,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         await locked.assertOwnership?.(tx as unknown as Db);
         const ok = await completeCv(tx, draftId, {
           status: "ready", buildStage: null, content, assessment, revision,
+          ...(draft.editingMode === "refine" && mode !== "assess"
+            ? { appliedRefinements: refinements.map(row => ({ id: row.id, version: row.version })) } : {}),
           pendingSkillProposals: [...pendingSkillProposals.values()].slice(0, 250),
           semanticAuditCache,
           // Nothing is left to resume and nothing is left to explain.

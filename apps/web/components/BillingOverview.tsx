@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { CV_AI_LIMITS } from "@col/db";
+import { CvAiAllowance } from "./CvAiAllowance";
+import type { ComponentProps } from "react";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -46,9 +49,9 @@ export interface CompanyCapacityQuoteView {
 }
 
 const PLANS = [
-  { name: "Free", price: "£0", companies: "25", cvs: "First 3 CVs" },
-  { name: "Search", price: "£29/month", companies: "100", cvs: "10 CV credits/month" },
-  { name: "Intensive", price: "£49/month", companies: "200", cvs: "20 CV credits/month" },
+  { name: "Free", price: "£0", companies: "25", cvs: "First 3 roles" },
+  { name: "Search", price: "£29/month", companies: "100", cvs: "10 role credits/month" },
+  { name: "Intensive", price: "£49/month", companies: "200", cvs: "20 role credits/month" },
 ] as const;
 
 const TOP_UPS = [
@@ -75,20 +78,20 @@ export function PlanReadout({ billing, mobile = false }: { billing: BillingSumma
     className={mobile
       ? "inline-flex min-h-11 min-w-0 items-center truncate text-12 text-brand-ink-muted underline decoration-dotted md:hidden"
       : "block min-h-11 py-2 text-12 text-brand-ink-muted underline decoration-dotted hover:text-brand-ink"}
-    aria-label={`${label} plan, ${billing.cv.available} CV ${billing.cv.available === 1 ? "credit" : "credits"} available. Open plan and credits.`}>
-    {label} · {billing.cv.available} CV {billing.cv.available === 1 ? "credit" : "credits"}
+    aria-label={`${label} plan, ${billing.cv.available} role ${billing.cv.available === 1 ? "credit" : "credits"} available. Open plan and credits.`}>
+    {label} · {billing.cv.available} role {billing.cv.available === 1 ? "credit" : "credits"}
   </Link>;
 }
 
 /** The account is the only persistent home for pricing, usage and billing actions. */
-export function BillingOverview({ billing, actions, capacityQuote }: { billing: BillingSummaryView; actions?: BillingActions; capacityQuote?: CompanyCapacityQuoteView | null }) {
+export function BillingOverview({ billing, actions, capacityQuote, allowance }: { billing: BillingSummaryView; actions?: BillingActions; capacityQuote?: CompanyCapacityQuoteView | null; allowance?: ComponentProps<typeof CvAiAllowance> }) {
   const label = planName(billing.plan);
   const renewal = dateLabel(billing.renewalAt);
   const nextGrant = dateLabel(billing.cv.nextGrantAt);
   return <div id="plan-and-credits" className="space-y-4 scroll-mt-4">
     <Card title="Plan and credits" actions={<div className="flex flex-wrap items-center gap-2">
       <Badge tone="green">{label}</Badge>
-      <a href="#top-ups" className="inline-flex min-h-11 items-center px-2 text-13 underline">Top up CV credits</a>
+      <a href="#top-ups" className="inline-flex min-h-11 items-center px-2 text-13 underline">Top up role credits</a>
       <a href="#plans" className="inline-flex min-h-11 items-center px-2 text-13 underline">Compare plans</a>
       {actions && billing.plan !== "free" && <form action={actions.openBillingPortal}>
         <Button type="submit" size="sm">Manage plan and payment</Button>
@@ -99,13 +102,12 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
       </p>}
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <h3 className="font-semibold">CV credits</h3>
+          <h3 className="font-semibold">Role credits</h3>
           <p className="mt-1 text-20 font-semibold tabular-nums">{billing.cv.available} available</p>
-          {billing.cv.reserved > 0 && <p className="text-13 text-muted">{billing.cv.reserved} reserved for a CV in progress</p>}
-          <details className="text-13 text-muted">
-            <summary className="cursor-pointer">Credit breakdown</summary>
+          {billing.cv.reserved > 0 && <p className="text-13 text-muted">{billing.cv.reserved} reserved for a first AI result</p>}
+          <div className="text-13 text-muted">
             <p>{billing.cv.welcome} welcome · {billing.cv.monthly} monthly · {billing.cv.purchased} purchased · {billing.cv.gifted} gifted</p>
-          </details>
+          </div>
           {nextGrant && <p className="mt-1 text-12 text-muted">Next monthly credits: {nextGrant}.</p>}
         </div>
         <div>
@@ -128,8 +130,10 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
       {billing.plan !== "free" && typeof billing.monthlyPriceGbp === "number" &&
         <p className="mt-4 border-t border-line-faint pt-3 text-13">Current plan and company capacity: <strong>£{billing.monthlyPriceGbp}/month</strong>.</p>}
       {renewal && <p className="mt-1 text-13">{billing.cancelAtPeriodEnd ? "Your paid plan ends" : "Your plan renews"} on {renewal}.</p>}
-      <p className="mt-3 text-12 text-muted">One credit is used when a tailored CV is successfully saved. Paused companies do not use monitoring slots.</p>
+      <p className="mt-3 text-12 text-muted">One credit unlocks a role on its first successful AI result. Further AI edits use your plan’s allowance; typing, saving and exporting remain free.</p>
     </Card>
+
+    {allowance && <CvAiAllowance session={allowance.session} week={allowance.week} />}
 
     <AccountDisclosure id="plans" title="Compare plans">
       <div className="grid divide-y divide-line-faint sm:grid-cols-3 sm:divide-x sm:divide-y-0">
@@ -138,6 +142,8 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
           <p className="text-16 font-semibold">{plan.price}</p>
           <p>{plan.companies} active companies</p>
           <p>{plan.cvs}</p>
+          <p>{CV_AI_LIMITS[plan.name.toLowerCase() as BillingSummaryView["plan"]].session} AI units / five hours</p>
+          <p>{CV_AI_LIMITS[plan.name.toLowerCase() as BillingSummaryView["plan"]].week} AI units / week</p>
           {actions && billing.plan === "free" && plan.name !== "Free" && <form action={actions.startPlanCheckout} className="pt-2">
             <input type="hidden" name="plan" value={plan.name.toLowerCase()} />
             <input type="hidden" name="returnTo" value="/account" />
@@ -148,12 +154,12 @@ export function BillingOverview({ billing, actions, capacityQuote }: { billing: 
       <p className="border-t border-line-faint p-4 text-12 text-muted">Search can add up to 50 more active companies in blocks of 10 for £1/month per block. Prices include VAT. {billing.plan !== "free" && "Pause the companies you do not want to keep before lowering your plan; if you remain over its allowance, the newest follows pause automatically. Change or cancel using Manage plan and payment above."}</p>
     </AccountDisclosure>
 
-    <AccountDisclosure id="top-ups" title="Top up CV credits">
+    <AccountDisclosure id="top-ups" title="Top up role credits">
       <div className="p-4">
       <p className="mb-3 text-13 text-muted">Buy credits when you need more. Purchased credits do not expire.</p>
       <ul className="flex flex-wrap gap-3">
         {TOP_UPS.map(pack => <li key={pack.credits} className="space-y-2 border border-line-muted px-3 py-2 text-13">
-          <p><strong>{pack.credits} CV credits</strong> · {pack.price}</p>
+          <p><strong>{pack.credits} role credits</strong> · {pack.price}</p>
           {actions && <form action={actions.startCreditCheckout}>
             <input type="hidden" name="pack" value={`cv${pack.credits}`} />
             <input type="hidden" name="returnTo" value="/account" />

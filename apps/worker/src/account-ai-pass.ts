@@ -20,6 +20,7 @@ const HOLD_MINUTES = 10;
  */
 export function openAccountAiPass(deps: WorkerDeps, opts: {
   userId: string; settings: AppSettings; callSite: string; model: string; refId: string; signal?: AbortSignal;
+  stageRoutes?: AppSettings["stageRoutes"];
 }) {
   const { userId } = opts;
   let cost = 0;
@@ -30,7 +31,7 @@ export function openAccountAiPass(deps: WorkerDeps, opts: {
     client: deps.aiClient,
     useServerFallback: serverFallbackEnabled(deps),
     getModel: () => opts.model,
-    getStageRoutes: async () => (await deps.settings()).stageRoutes,
+    getStageRoutes: async () => opts.stageRoutes ?? (await deps.settings()).stageRoutes,
     ...(opts.signal ? { signal: opts.signal } : {}),
     onUsage: async ({ failure: failed, ...usage }) => {
       cost += usage.costUsd;

@@ -62,18 +62,19 @@ run, so they are not repeated against a provider that will immediately change.
    controlled live purchase/refund. Subscription updates depend on asynchronous
    [Stripe webhooks](https://docs.stripe.com/billing/subscriptions/webhooks).
 
-3. **Model gateway/provider selection: evaluate OpenRouter first.** OpenRouter is
-   the recommended candidate for the multi-model CV harness; retain Munito as the
-   comparison for direct EU open-model inference. This is a recommendation pending
-   qualification, not an authorised production switch. Provision the selected
-   account, scoped credentials, region, spend limit and data-processing terms.
-   Engineering must implement the adapter and update health, pricing, capability
-   routing and evaluation tooling. Neither service is currently implemented.
-   Compare first-pass relevance, page fit, structured-output validity, completion
-   latency and total cost including retries, reasoning tokens and platform fees.
-   Qualify extraction, drafting, review and inline edits separately, then canary
-   with rollback. Do not silently send candidate data to another provider.
-   See the comparison below for routing and privacy requirements.
+3. **OpenRouter integration — selected.** Owner decision confirmed on 12 November
+   2026: use OpenRouter for the multi-model CV harness. Munito is no longer a
+   planned launch integration or required comparison. Provision the OpenRouter
+   account, scoped credentials, processing-region policy, spend limit and
+   data-processing terms. Engineering must implement the adapter and update
+   health, pricing, capability routing and evaluation tooling. OpenRouter is not
+   yet implemented; the existing Anthropic runtime remains in place until the
+   replacement is qualified. Compare first-pass relevance, page fit,
+   structured-output validity, completion latency and total cost including retries,
+   reasoning tokens and platform fees against the existing baseline. Qualify
+   extraction, drafting, review and inline edits separately, then canary with
+   rollback. Do not silently send candidate data to an unapproved provider.
+   See the decision below for routing and privacy requirements.
 
 4. **Domain and transactional email.** Connect `courseof.life`, set the canonical
    `APP_URL`, HTTPS and redirects, and update OAuth callbacks, Stripe URLs and
@@ -205,14 +206,14 @@ run, so they are not repeated against a provider that will immediately change.
    and agree go/no-go thresholds for CV quality, failures, latency and spend.
    Start with a limited cohort after all release gates pass.
 
-## OpenRouter versus Munito — recommendation, 12 November 2026
+## OpenRouter — accepted provider decision, 12 November 2026
 
-Recommend evaluating OpenRouter first because the application is a model harness:
+The owner has selected OpenRouter because the application is a model harness:
 we need to compare and select models per task without reworking product flows.
-Munito remains a credible option if a qualified open model meets the quality bar
-and a more direct EU inference relationship is the overriding requirement.
-Neither vendor has been benchmarked by this review; no speed or cost advantage is
-claimed without application-specific measurements.
+The comparison below records the rationale; Munito is not part of the launch
+build plan. This decision authorises the integration direction, not an unqualified
+production cutover. Neither vendor was benchmarked by this review; no speed or cost
+advantage is claimed without application-specific measurements.
 
 | Consideration | OpenRouter | Munito | Implication for this application |
 | --- | --- | --- | --- |
@@ -244,9 +245,9 @@ For OpenRouter qualification:
 - Bound retries across our worker and the gateway to avoid multiplicative latency
   and spend. Measure queue time, first token, full response and completed CV p50/p95;
   test cancellation, streaming failures, throttling, accounting and route outages.
-- Benchmark a qualified quality baseline, lower-cost stage-specific models and
-  Munito using the same synthetic or consented fixtures. Establish pass thresholds
-  before comparing. Keep customer credit entitlements independent of provider bills.
+- Benchmark selected OpenRouter models against the existing quality baseline
+  using the same synthetic or consented fixtures. Establish pass thresholds before
+  comparing. Keep customer credit entitlements independent of provider bills.
 
 Stripe announced an **agreement to acquire** OpenRouter on 19 August 2026. That
 supports strategic alignment, but this review has not independently verified a

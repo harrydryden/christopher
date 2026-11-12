@@ -166,21 +166,28 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
     }
     const usable = (row: AssertionRow) => row.status === "usable" && row.provenance.kind !== "model"
       && !unresolved.has(row.id) && (!wantedAssertions || wantedAssertions.has(row.id));
+    const availableByRecord = new Map<string, AssertionRow[]>();
+    const disputedByRecord = new Map<string, AssertionRow[]>();
+    for (const assertion of assertions) {
+      const index = usable(assertion) ? availableByRecord : unresolved.has(assertion.id) ? disputedByRecord : null;
+      if (!index) continue;
+      const group = index.get(assertion.subjectId);
+      if (group) group.push(assertion); else index.set(assertion.subjectId, [assertion]);
+    }
     const ordered = records.filter(record => record.kind !== "organisation" && !record.archivedAt &&
       (!wantedRecords || wantedRecords.has(record.id)))
-      .sort((a, b) => {
-        const hasFacts = (record: RecordRow) => assertions.some(item => item.subjectId === record.id && usable(item)) ||
-          (record.provenance.kind === "direct_user" && !!record.fields.originalNarrative.trim());
-        const rank = (row: RecordRow) => presentation === "project"
-          ? Number(row.kind !== "project") : Number(row.kind === "project");
-        const score = (record: RecordRow) => relevance([record.fields.title,
-          ...assertions.filter(item => item.subjectId === record.id && usable(item))
-            .map(item => item.publicText ?? item.text)].join(" "), roleTerms, priorityTerms);
-        const boost = (record: RecordRow) => assertions.filter(item => item.subjectId === record.id && usable(item))
-          .reduce((sum, item) => sum + (perspectiveBoost.get(item.id) ?? 0), 0);
-        return Number(hasFacts(b)) - Number(hasFacts(a)) || score(b) + boost(b) - score(a) - boost(a) || rank(a) - rank(b)
-          || (b.fields.dates.start ?? "").localeCompare(a.fields.dates.start ?? "") || a.id.localeCompare(b.id);
-      });
+      .map(record => {
+        const facts = availableByRecord.get(record.id) ?? [];
+        return { record,
+          hasFacts: facts.length > 0 || (record.provenance.kind === "direct_user" && !!record.fields.originalNarrative.trim()),
+          score: relevance([record.fields.title, ...facts.map(item => item.publicText ?? item.text)].join(" "), roleTerms, priorityTerms)
+            + facts.reduce((sum, item) => sum + (perspectiveBoost.get(item.id) ?? 0), 0),
+          rank: presentation === "project" ? Number(record.kind !== "project") : Number(record.kind === "project"),
+        };
+      })
+      .sort((a, b) => Number(b.hasFacts) - Number(a.hasFacts) || b.score - a.score || a.rank - b.rank
+        || (b.record.fields.dates.start ?? "").localeCompare(a.record.fields.dates.start ?? "") || a.record.id.localeCompare(b.record.id))
+      .map(item => item.record);
     const employment: NonNullable<CvLibrary["employment"]> = [];
     const entries: CvLibrary["entries"] = [];
     const sourceMap: CareerSourceMap = {};
@@ -197,10 +204,10 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
         ["role", "engagement", "project", "contribution"].includes(record.kind))) {
         excluded.push({ recordId: record.id, reason: "capacity" }); continue;
       }
-      for (const row of assertions) if (row.subjectId === record.id && unresolved.has(row.id))
+      for (const row of disputedByRecord.get(record.id) ?? [])
         excluded.push({ recordId: record.id, assertionId: row.id, reason: "conflict" });
-      const available = assertions.filter(row => row.subjectId === record.id && usable(row));
-      const disputedText = new Set(assertions.filter(row => row.subjectId === record.id && unresolved.has(row.id))
+      const available = availableByRecord.get(record.id) ?? [];
+      const disputedText = new Set((disputedByRecord.get(record.id) ?? [])
         .flatMap(row => [row.text, row.publicText].filter((text): text is string => !!text).map(flattened)));
       const hasSkillLabels = record.kind === "skill" && available.some(row => row.facets.includes("skill"));
       const labelEvidence = hasSkillLabels ? available.filter(row => row.facets.includes("skill")) : available;

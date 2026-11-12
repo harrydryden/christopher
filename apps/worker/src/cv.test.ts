@@ -71,6 +71,13 @@ it("generates once on duplicate delivery, preserving the saved evidence", async 
   expect(build.mock.calls[0]![0].library).toEqual(library);
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready"); expect(saved!.content?.sections[0]?.heading).toBe("Director · Acme");
+  expect(saved!.buildCheckpoint).toBeNull();
+  const publicationRows = await client.db.execute<{ detail: { execution?: { version: number; inputKey: string; currentInputKey: string;
+    resolvedRoutes: Record<string, { model: string }> } } }>(sql`select detail from cv_build_steps
+      where draft_id = ${draft.id} and motion = 'publish' and status = 'done'`);
+  expect(publicationRows.rows[0]?.detail.execution).toMatchObject({ version: 1,
+    inputKey: expect.any(String), currentInputKey: expect.any(String),
+    resolvedRoutes: { "cv.author": { model: "claude-sonnet-5" } } });
 });
 it("pauses after one full-evidence plan and resumes the same credited build after priority confirmation", async () => {
   const { draft, deps, task } = await setup();

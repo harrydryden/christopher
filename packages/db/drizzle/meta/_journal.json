@@ -519,6 +519,13 @@
       "when": 1793620811000,
       "tag": "0075_cv_inline_edits",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1793620812000,
+      "tag": "0076_cv_activity",
+      "breakpoints": true
     }
   ]
 }

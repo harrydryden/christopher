@@ -20,7 +20,7 @@ import { cvPreviewRefinementRebase, type CvRefinementRebaseItem } from "@col/cor
 import { appendCvRefinement, currentCvRefinements, attachCvAutoBaselineDraft, claimCvAutoBaseline, cvApplicationContexts, cvAutoBaselines,
   cvContextDescriptions, cvDrafts, jobs, companies, userJobs, users, nextCvRevision, reserveCvCredit,
   resolveCvApplicationContext, ensureCvOpportunityForContext, attachCvOpportunityToContext } from "@col/db";
-import { latestCareerCvEvidence, ensureCareerBackfill, lockAccountScoreInput } from "@col/db";
+import { CAREER_RETRIEVAL_VERSION, latestCareerCvEvidence, ensureCareerBackfill, lockAccountScoreInput } from "@col/db";
 import type { Db } from "@col/db";
 import { cvTailoringPlans, saveCvTailoringPlan } from "@col/db";
 import { updateCvContextDescription } from "@col/db";
@@ -739,7 +739,7 @@ export async function generateRefinedCv(contextId: string, expectedVersion: numb
       }))
         throw new UserFacingError("A refinement belongs to an earlier source. Review its conflict before generating.");
       const contracts = { promptSet: promptSetVersion(), review: CV_REVIEW_VERSION,
-        fit: CV_FIT_VERSION, render: CV_RENDER_VERSION };
+        fit: CV_FIT_VERSION, render: CV_RENDER_VERSION, retrieval: CAREER_RETRIEVAL_VERSION };
       const settings = await getSettingsFor(user.id, tx);
       const routes = Object.fromEntries(CV_PROMPT_IDS.map(id => {
         const route = resolveRoute(PROMPTS[id], settings.stageRoutes);
@@ -1073,7 +1073,7 @@ export async function openOrClaimAutoCv(contextId: string, intent: "open" | "upd
         return [id, { model: routedModel(route, { cvModel: model, callSite: model }, model), effort: route.effort }];
       }));
       const contracts = { promptSet: promptSetVersion(), review: CV_REVIEW_VERSION,
-        fit: CV_FIT_VERSION, render: CV_RENDER_VERSION };
+        fit: CV_FIT_VERSION, render: CV_RENDER_VERSION, retrieval: CAREER_RETRIEVAL_VERSION };
       const autoInput: CvAutoInputV1 = { version: 1, contextId: context.id,
         descriptionVersionId: description.id, jobTitle: context.jobTitle, companyName: context.companyName,
         description: description.text, library, basePriorityIdentity: "source-default",

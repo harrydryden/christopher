@@ -7,7 +7,7 @@ import type { CvBuildCheckpoint } from "@col/core";
 import { cvAuditBatchOutputTokens, type StageRoutes } from "@col/ai";
 import type { CvRubric } from "@col/core/cv-assessment";
 import { CvBuildStop } from "@col/core/cv-build-failure";
-import { CvStageRunner, cvAuditBatches, estimateCvStage, type CvStage } from "./handlers/cv-stages";
+import { CvStageRunner, cvAuditBatches, cvExecutionSpec, estimateCvStage, type CvStage } from "./handlers/cv-stages";
 
 function runnerWith(options: { prompts?: string; allowanceMs?: number; signal?: AbortSignal; checkpoint?: CvBuildCheckpoint } = {}) {
   let checkpoint: CvBuildCheckpoint = options.checkpoint ?? { v: 2, promptSetVersion: options.prompts ?? "p1", stages: {} };
@@ -39,6 +39,26 @@ const doubling = (calls: { n: number }): CvStage<{ value: number }, number> => (
 });
 
 describe("the stage runner", () => {
+  it("pins the first execution's routes, resolved models and limits across a retry", () => {
+    const base = { inputKey: "snapshot-1", routeSource: "settings" as const, cvModel: "claude-sonnet-5",
+      contracts: { prompts: "p1", review: "r1", fit: "f1", render: "v1", retrieval: "career-context-v1" } };
+    const first = cvExecutionSpec({ ...base, routes: { "cv.author": { model: "model-a", effort: "high" } },
+      allowancesMs: { write: 1000 } });
+    expect(first).toMatchObject({ version: 1, inputKey: "snapshot-1", routeSource: "settings",
+      resolvedRoutes: { "cv.author": { model: "model-a", effort: "high" },
+        "cv.rubric": { model: "claude-sonnet-5" } }, allowancesMs: { write: 1000 } });
+    const resumed = cvExecutionSpec({ ...base, previous: first, routes: { "cv.author": { model: "model-b" } } });
+    expect(resumed).toBe(first);
+    const changedLegacyInput = cvExecutionSpec({ ...base, previous: first, inputKey: "snapshot-2" });
+    expect(changedLegacyInput).toMatchObject({ inputKey: "snapshot-1", currentInputKey: "snapshot-2",
+      resolvedRoutes: first.resolvedRoutes });
+    const auto = cvExecutionSpec({ ...base, routeSource: "auto", previous: undefined });
+    expect(() => cvExecutionSpec({ ...base, routeSource: "auto", previous: auto, inputKey: "snapshot-2" }))
+      .toThrow("immutable CV input changed");
+    expect(() => cvExecutionSpec({ ...base, previous: first,
+      contracts: { ...base.contracts, retrieval: "career-context-v2" } })).toThrow("pinned CV execution policy changed");
+  });
+
   it("admits a stage just before it runs, saves its result under its key, and gives the hold back", async () => {
     const calls = { n: 0 };
     const { runner, admitted, checkpoint } = runnerWith();

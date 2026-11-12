@@ -1,6 +1,8 @@
 import { WorkspaceShell } from "@/components/WorkspaceShell";
 import { WorkspaceMenu } from "@/components/WorkspaceMenu";
 import { NavigationMetrics } from "@/components/NavigationMetrics";
+import { CvActivityBanner } from "@/components/CvActivityBanner";
+import { serialiseCvActivities } from "@/lib/cv-activity-reading";
 import { ScanStatusBanner } from "@/components/ScanStatusBanner";
 import { getScanStatus } from "@/lib/scan-status";
 import { countHealthItems } from "@/lib/queries/health";
@@ -11,7 +13,7 @@ import { resendVerification } from "@/app/actions/account";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
 import { PlanReadout } from "@/components/BillingOverview";
 import { getBillingSummary } from "@/lib/billing/service";
-import { getCareerReviewSummary } from "@col/db";
+import { getCvActivities, getCareerReviewSummary } from "@col/db";
 import { db } from "@/lib/db";
 // The banner and every control it disables say one sentence, from one place.
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
@@ -35,8 +37,8 @@ async function ExperienceNavLink({ userId }: { userId: string }) {
 }
 
 async function ScanBanner({ userId }: { userId: string }) {
-  const status = await getScanStatus(userId);
-  return <ScanStatusBanner initial={status} />;
+  const [status, activities] = await Promise.all([getScanStatus(userId), getCvActivities(db(), userId)]);
+  return <CvActivityBanner key={userId} initial={serialiseCvActivities(activities)}><ScanStatusBanner initial={status} /></CvActivityBanner>;
 }
 
 async function BillingReadout({ pending, mobile = false }: { pending: ReturnType<typeof getBillingSummary>; mobile?: boolean }) {
@@ -55,9 +57,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <a href="#main-content" className="sr-only focus:not-sr-only focus:bg-bg focus:p-3 focus:text-fg">Skip to main content</a>
       {/* Reserve the mobile status control's 44px touch height, 16px padding and 1px border
           while its streamed reading is pending, so the workspace below does not jump. */}
-      <div className="flex min-h-[61px] items-center gap-3 border-b border-line-muted bg-raised px-4 py-2 text-13 md:min-h-0">
+      <div className="sticky top-0 z-20 flex min-h-[61px] items-center gap-3 border-b border-line-muted bg-raised px-4 py-2 text-13 md:min-h-0">
         <MarkSmall size={16} className="text-brand" />
-        <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
+        <Suspense fallback={<span className="text-muted">Loading activity…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>
       {needsEmailConfirmation(user) && (
         <div className="flex flex-wrap items-center gap-3 border-b border-line-muted bg-sunken px-4 py-2 text-13" role="status">

@@ -197,7 +197,9 @@ describe("career changes retain identity and recovery across real database trans
     const saved = await save([{ ...record(id, "Secret client turnaround"), fields: { ...fields("Secret client turnaround"),
       confidential: true, publicLabel: "Healthcare service project", originalNarrative: "Secret client internal figures" } } as CareerOperation,
       { ...assertion(factId, id, "Secret client revenue rose by 20 percent"), publicText: "Improved the service handover", facets: ["skill"] } as CareerOperation]);
-    const projection = await careerCvEvidence(db, owner, saved.revision);
+    const projection = await careerCvEvidence(db, owner, saved.revision, { retrievalContext: {
+      version: 1, requirements: [{ id: "private", text: "Secret client revenue", kind: "essential" }],
+    } });
     expect(JSON.stringify(projection)).not.toContain("Secret client");
     expect(projection.library.entries[0]?.heading).toBe("Healthcare service project");
     expect(projection.library.entries[0]?.details).toContain("Improved the service handover");
@@ -215,5 +217,23 @@ describe("career changes retain identity and recovery across real database trans
     expect(Object.values(projection.sourceMap).some(ref => ref.assertionId === relevant)).toBe(true);
     expect(projection.excluded.some(row => row.reason === "capacity")).toBe(true);
     expect((await db.select().from(careerAssertions)).length).toBe(21);
+  });
+
+  it("recalls a project through its linked context while retaining explicit source selection", async () => {
+    const parent = randomUUID(), linked = randomUUID(), unrelated = randomUUID();
+    const linkedFact = randomUUID(), otherFact = randomUUID();
+    const saved = await save([record(parent, "Cyber security programme"), record(linked, "Workstream"),
+      record(unrelated, "Routine operations"), link(randomUUID(), linked, parent),
+      assertion(linkedFact, linked, "Led the delivery work"), assertion(otherFact, unrelated, "Led routine reporting")]);
+    const context = { version: 1 as const, requirements: [
+      { id: "r1", text: "cybersecurity delivery", kind: "essential" as const },
+    ] };
+    const projection = await careerCvEvidence(db, owner, saved.revision, { retrievalContext: context });
+    expect(projection.library.entries.findIndex(row => row.id === linked))
+      .toBeLessThan(projection.library.entries.findIndex(row => row.id === unrelated));
+    const selected = await careerCvEvidence(db, owner, saved.revision,
+      { recordIds: [unrelated], assertionIds: [otherFact], retrievalContext: context });
+    expect(selected.library.entries.map(row => row.id)).toEqual([unrelated]);
+    expect(Object.values(selected.sourceMap).map(ref => ref.assertionId)).toContain(otherFact);
   });
 });

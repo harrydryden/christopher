@@ -62,11 +62,34 @@ export async function verifyCvEditingModes({ databaseUrl, outDir = "/tmp/cv-mode
     await page.waitForFunction(() => document.body.textContent.includes("building") || document.body.textContent.includes("queued"));
     const claim=(await pool.query("select * from cv_auto_baselines where context_id=$1",[contextId])).rows[0];
     assert.ok(claim?.source_draft_id,"Auto action created a claimed draft");
+    // Build activity remains useful after leaving the CV workspace.
+    await page.goto(`${baseUrl}/applications`);
+    await page.getByRole("link", { name: /CV queued.*Example Works/ }).waitFor();
+    await pool.query("insert into cv_build_steps(draft_id,user_id,attempt,seq,stage,motion,title,status) values($1,$2,1,1,'writing','write','Writing','running')", [claim.source_draft_id,user.id]);
+    await pool.query("update cv_drafts set status='generating' where id=$1", [claim.source_draft_id]);
+    await pool.query("update tasks set status='running',started_at=now() where payload->>'draftId'=$1", [claim.source_draft_id]);
+    await page.getByRole("progressbar", { name: "CV build stage" }).waitFor({ timeout: 15_000 });
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuetext"), "Writing your CV", "Header follows the persisted journal stage");
+    await page.screenshot({ path: `${outDir}/activity-writing-desktop.png`, fullPage: true });
     const targets=cvEditingTargetsFor(content,randomUUID);
     await db.transaction(tx => publishCvAutoBaseline(tx,{userId:user.id,baselineId:claim.id,
       sourceDraftId:claim.source_draft_id,content,librarySnapshot:library,editingTargets:targets}));
     await pool.query("update cv_drafts set status='ready',content=$1,editing_targets=$2 where id=$3",[JSON.stringify(content),JSON.stringify(targets),claim.source_draft_id]);
     await pool.query("update tasks set status='done' where payload->>'draftId'=$1",[claim.source_draft_id]);
+    const readyNotice = page.getByRole("link", { name: /CV ready.*Example Works/ });
+    await readyNotice.waitFor({ timeout: 15_000 });
+    await page.reload();
+    await readyNotice.waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Activity strip fits mobile width");
+    await page.screenshot({ path: `${outDir}/activity-ready-mobile.png`, fullPage: true });
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await readyNotice.waitFor({ state: "hidden" });
+    assert.equal((await pool.query("select count(*)::int n from cv_activity_events where user_id=$1 and read_at is not null", [user.id])).rows[0].n, 1, "Completion acknowledgement is durable");
+    await page.reload();
+    assert.equal(await readyNotice.count(), 0, "Dismissed completion stays dismissed after reload");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(route);
     const workCounts=async()=> (await pool.query("select (select count(*)::int from tasks where payload->>'userId'=$1::text) tasks,(select count(*)::int from cv_ai_usage where user_id=$1::uuid and charge_kind='role_credit') credits,(select count(*)::int from cv_ai_usage where user_id=$1::uuid and charge_kind='allowance') edits",[user.id])).rows[0];
     await consumeCvCredit(db,claim.source_draft_id);
     const initialWork=await workCounts();

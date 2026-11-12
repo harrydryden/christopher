@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import type { CvLibrary } from "@col/core/cv";
 import { CvLibraryEditor } from "../components/CvLibraryEditor";
-import { jobRemovalConfirm } from "../components/EmploymentHistoryTable";
+import { jobRemovalConfirm } from "./cv-library-rows";
 import type { LibraryEvidence } from "./cv-library-evidence";
 import { libraryEvidence } from "./cv-library-reviews";
 import { openStoredLibrary } from "./cv-library-open";

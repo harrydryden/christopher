@@ -71,7 +71,7 @@ export interface CvCallStall {
 }
 
 /** A duration as the sentence reads it: whole minutes when it is whole minutes, seconds otherwise. */
-function span(ms: number): string {
+export function failureDuration(ms: number): string {
   if (ms >= 60_000 && ms % 60_000 === 0) return `${ms / 60_000} minute${ms === 60_000 ? "" : "s"}`;
   const seconds = Math.round(ms / 1000);
   return `${seconds} second${seconds === 1 ? "" : "s"}`;
@@ -84,8 +84,8 @@ function span(ms: number): string {
 export function cvStallSentence(stall?: CvCallStall): string {
   if (!stall) return "nothing arrived for fifteen minutes";
   return stall.reason === "idle"
-    ? `nothing arrived for ${span(stall.afterMs)}`
-    : `the answer was still unfinished after ${span(stall.afterMs)}`;
+    ? `nothing arrived for ${failureDuration(stall.afterMs)}`
+    : `the answer was still unfinished after ${failureDuration(stall.afterMs)}`;
 }
 
 /**

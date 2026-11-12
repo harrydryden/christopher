@@ -344,11 +344,3 @@ export function cvEditCosts(model: string, size: CvBuildSize): CvEditCosts {
     allUsd: estimateCvBuildUsd(model, size, "tailored_completion"),
   };
 }
-
-/** The size of one saved revision: the evidence it holds and the advert it was written against. */
-export function cvDraftSize(draft: { librarySnapshot: unknown; jobDescription: string }): CvBuildSize {
-  return {
-    libraryBytes: Buffer.byteLength(JSON.stringify(draft.librarySnapshot ?? null)),
-    descriptionBytes: Buffer.byteLength(draft.jobDescription ?? ""),
-  };
-}

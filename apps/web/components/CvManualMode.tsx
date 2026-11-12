@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { inputSelection } from "@/lib/input-selection";
 import { useRouter } from "next/navigation";
 import type { CvContent } from "@col/core/cv";
 import type { CvEditingTargets } from "@col/core/cv-editing-modes";
@@ -17,10 +18,7 @@ type Section = { entryId: string; sectionId: string; kind: Kind; heading: string
   original: CvContent["sections"][number] | null };
 type Draft = { id: string; revision: number; content: CvContent | null; editingTargets: CvEditingTargets | null };
 const uuid = () => crypto.randomUUID();
-function inputSelection(id: string) {
-  const input = document.getElementById(id) as HTMLTextAreaElement | HTMLInputElement | null;
-  return input ? { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0 } : null;
-}
+
 const blank = (kind: Kind): Section => ({ entryId: `manual:${uuid()}`, sectionId: uuid(), kind, heading: "",
   bullets: kind === "skill" ? [] : [{ id: uuid(), text: "" }],
   skills: kind === "skill" ? [{ id: uuid(), text: "" }] : [],

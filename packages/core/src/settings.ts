@@ -7,6 +7,7 @@
  * in `user_settings`, one row per account and key. `AppSettings` is the two merged, which is what
  * most code wants to read. Defaults apply when a key is missing.
  */
+import { dateTimeFormatter } from "./intl";
 import { CvWritingPreferencesSchema, type CvWritingPreferences } from "./cv-writing-preferences";
 import { isKnownModel } from "./models";
 import { CvThemeSchema, type CvTheme } from "./cv-theme";
@@ -336,7 +337,7 @@ export function isValidTimezone(tz: string): boolean {
 
 /** "YYYY-MM-DD" and "HH:MM" for `date` in `tz`. */
 export function localDateParts(date: Date, tz: string): { ymd: string; hm: string; weekday: number } {
-  const fmt = new Intl.DateTimeFormat("en-GB", {
+  const fmt = dateTimeFormatter({
     timeZone: tz,
     year: "numeric",
     month: "2-digit",

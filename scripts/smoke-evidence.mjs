@@ -38,9 +38,26 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
     await career.getByRole("textbox", { name: "Add a detail", exact: true }).fill(answer);
     const save = career.getByRole("button", { name: "Save detail · free", exact: true });
     const screenshotDir = process.env.SMOKE_SCREENSHOT_DIR ? resolve(process.env.SMOKE_SCREENSHOT_DIR) : null;
+    const measureOverflow = () => page.evaluate(() => ({ viewport: innerWidth,
+      documentWidth: document.documentElement.scrollWidth, fonts: document.fonts.status,
+      offenders: [...document.querySelectorAll("*")].flatMap(element => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.right > innerWidth + 1 ? [{ tag: element.tagName,
+          className: typeof element.className === "string" ? element.className.slice(0, 120) : "",
+          text: element.textContent?.trim().slice(0, 80), left: Math.round(rect.left),
+          right: Math.round(rect.right), width: Math.round(rect.width),
+          scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }] : [];
+      }).sort((a, b) => b.right - a.right).slice(0, 12),
+    }));
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false,
+      const overflow = await measureOverflow();
+      if (overflow.documentWidth > overflow.viewport) {
+        await page.evaluate(() => document.fonts.ready);
+        const afterFonts = await measureOverflow();
+        console.error(`Career capture overflow at ${width}px:`, JSON.stringify({ beforeFonts: overflow, afterFonts }));
+      }
+      assert.equal(overflow.documentWidth > overflow.viewport, false,
         `career fact capture must fit a ${width}px phone viewport`);
       const box = await save.boundingBox();
       assert.ok(box && box.height >= 44 && box.width >= 44, `Save detail needs a 44px target at ${width}px`);

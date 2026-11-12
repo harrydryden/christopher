@@ -12,6 +12,7 @@ describe('vitalRoute', () => {
     expect(vitalRoute(`/cv/${crypto.randomUUID()}?tab=log#top`)).toBe('/cv/:id');
     expect(vitalRoute(`/cv/${crypto.randomUUID()}/preparation?linkedinImport=${crypto.randomUUID()}`)).toBe('/cv/:id/preparation');
     expect(vitalRoute('/roles/add')).toBe('/roles/add');
+    expect(vitalRoute('/applications/new?from=applications#top')).toBe('/applications/new');
     expect(vitalRoute(`/roles/add/${crypto.randomUUID()}`)).toBe('/roles/add/:id');
     expect(vitalRoute(`/roles/${crypto.randomUUID()}`)).toBe('/roles/:id');
     expect(vitalRoute('/share/AbCdEfGhIjKlMnOpQrStUvWx')).toBe('/share/:id');
@@ -32,6 +33,7 @@ describe('VITAL_ROUTES', () => {
     expect([...VITAL_ROUTES].sort()).toEqual(expected);
     expect(readVitalReport(report({ route: '/wp-admin' }))).toBeNull();
     expect(readVitalReport(report({ route: '/companies/:id' }))).not.toBeNull();
+    expect(readVitalReport(report({ route: '/applications/new' }))).not.toBeNull();
     expect(readVitalReport(report({ route: '/cv/:id/preparation' }))).not.toBeNull();
   });
 });

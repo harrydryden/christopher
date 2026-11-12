@@ -58,7 +58,7 @@ export function vitalRoute(pathname: string): string {
  * test holds the list equal to the page files, so a new page is added here or the test fails.
  */
 export const VITAL_ROUTES: ReadonlySet<string> = new Set([
-  "/", "/account", "/admin", "/admin/catalogue", "/admin/health", "/admin/settings", "/applications",
+  "/", "/account", "/admin", "/admin/catalogue", "/admin/health", "/admin/settings", "/applications", "/applications/new",
   "/companies", "/companies/:id", "/cv/:id", "/cv/:id/preparation", "/cv/context/:id", "/cv/library", "/health", "/learning", "/library", "/library/about", "/library/review",
   "/roles/add", "/roles/add/:id", "/roles/:id", "/settings", "/settings/cv", "/suggestions", "/login", "/share/:id",
 ]);

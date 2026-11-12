@@ -48,10 +48,35 @@ export default async function CvContextPage({ params, searchParams }: { params: 
     baselines: history.baselinesBefore, editions: history.editionsBefore,
   });
   if (!workspace) notFound();
-  const [allowance, correctionQuote] = await Promise.all([
+  const selectedDraft = workspace.selectedDraft;
+  const selectedBaseline = workspace.selectedBaseline;
+  const processing = selectedDraft?.status === "queued" || selectedDraft?.status === "generating";
+  const rebaseBaselines = [...workspace.baselines];
+  if (selectedBaseline && !rebaseBaselines.some(row => row.id === selectedBaseline.id))
+    rebaseBaselines.unshift({ id: selectedBaseline.id, status: selectedBaseline.status,
+      sourceDraftId: selectedBaseline.sourceDraftId, descriptionVersionId: selectedBaseline.descriptionVersionId,
+      createdAt: selectedBaseline.createdAt, publishedAt: selectedBaseline.publishedAt });
+  const descriptionIds = [...new Set([...rebaseBaselines.map(row => row.descriptionVersionId),
+    selectedDraft?.descriptionVersionId].filter((value): value is string => !!value))];
+  // Ownership is established above. These reads are independent; keep them in one wave.
+  const [allowance, correctionQuote, libraryRows, pdfStatus, progress, system, admin, rebaseVersions] = await Promise.all([
     getCvAiAllowance(db(), user.id),
     quoteCvAiAction(db(), { userId: user.id, source: { kind: "context", id }, action: "inline_correction" }),
+    db().select({ content: cvLibraries.content, version: cvLibraries.version }).from(cvLibraries)
+      .where(eq(cvLibraries.userId, user.id)).orderBy(desc(cvLibraries.version)).limit(1),
+    selectedDraft?.finalisedAt ? storedFinalisedCvPdfStatus(user.id, selectedDraft.id) : null,
+    processing && selectedDraft ? readCvProgress(user.id, selectedDraft.id) : null,
+    processing ? getSystemSettings() : null,
+    processing ? isAdmin() : false,
+    descriptionIds.length ? db().select({ id: cvContextDescriptions.id, version: cvContextDescriptions.version })
+      .from(cvContextDescriptions).where(and(eq(cvContextDescriptions.contextId, id),
+        eq(cvContextDescriptions.userId, user.id), inArray(cvContextDescriptions.id, descriptionIds))) : [],
   ]);
+  const latestLibrary = libraryRows[0];
+  const rebaseVersionById = new Map(rebaseVersions.map(row => [row.id, row.version]));
+  const selectedRoleVersion = selectedDraft?.descriptionVersionId &&
+    selectedDraft.descriptionVersionId !== workspace.context.currentDescriptionVersionId
+    ? rebaseVersions.find(row => row.id === selectedDraft.descriptionVersionId) : undefined;
   const inlineQuotes = {
     inline_correction: { charge: correctionQuote.charge,
       units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.inline_correction,
@@ -63,46 +88,21 @@ export default async function CvContextPage({ params, searchParams }: { params: 
       units: correctionQuote.charge === "role_credit" ? 0 : CV_AI_UNITS.inline_tailor,
       priceVersion: correctionQuote.priceVersion },
   };
-  const [latestLibrary] = await db().select({ content: cvLibraries.content, version: cvLibraries.version }).from(cvLibraries)
-    .where(eq(cvLibraries.userId, user.id)).orderBy(desc(cvLibraries.version)).limit(1);
   const library = latestLibrary ? CvLibrarySchema.safeParse(latestLibrary.content) : null;
   const prefill = library?.success ? { name: library.data.name, contact: contactLine(library.data),
     summary: library.data.profile.slice(0, 850) } : { name: "", contact: "", summary: "" };
   const defaultTheme = resolveCvTheme(library?.success ? library.data.theme : null);
-  const selectedDraft = workspace.selectedDraft;
-  const [selectedRoleVersion] = selectedDraft?.descriptionVersionId &&
-    selectedDraft.descriptionVersionId !== workspace.context.currentDescriptionVersionId
-    ? await db().select({ version: cvContextDescriptions.version }).from(cvContextDescriptions)
-      .where(and(eq(cvContextDescriptions.id, selectedDraft.descriptionVersionId),
-        eq(cvContextDescriptions.contextId, id), eq(cvContextDescriptions.userId, user.id))).limit(1) : [];
-  const pdfStatus = selectedDraft?.finalisedAt
-    ? await storedFinalisedCvPdfStatus(user.id, selectedDraft.id) : null;
   const hasFinalPdf = !!pdfStatus;
   const approvalMode = pdfStatus?.approvalMode ?? null;
-  const processing = selectedDraft?.status === "queued" || selectedDraft?.status === "generating";
-  const progress = processing && selectedDraft ? await readCvProgress(user.id, selectedDraft.id) : null;
-  const [system, admin] = processing ? await Promise.all([getSystemSettings(), isAdmin()]) : [null, false];
   const now = new Date();
   const reading = processing && selectedDraft && system ? cvProgressReading({ draft: selectedDraft,
     task: progress?.task ?? null, anyTaskActive: progress?.anyTaskActive ?? false,
     steps: progress?.steps ?? [], signature: progress?.signature ?? "0:0:" }, now, system.timezone, admin) : null;
   const initialMode = selectedDraft?.editingMode === "manual" ? "manual"
     : selectedDraft?.editingMode === "refine" ? "refine" : "auto";
-  const selectedBaseline = workspace.selectedBaseline;
   const { knownLibraryDrift, knownRoleDrift } = cvContextInputDrift({ selectedBaseline, selectedDraft,
     currentDescriptionVersionId: workspace.context.currentDescriptionVersionId,
     latestLibrary: library?.success ? library.data : null });
-  const rebaseBaselines = [...workspace.baselines];
-  if (selectedBaseline && !rebaseBaselines.some(row => row.id === selectedBaseline.id))
-    rebaseBaselines.unshift({ id: selectedBaseline.id, status: selectedBaseline.status,
-      sourceDraftId: selectedBaseline.sourceDraftId, descriptionVersionId: selectedBaseline.descriptionVersionId,
-      createdAt: selectedBaseline.createdAt, publishedAt: selectedBaseline.publishedAt });
-  const rebaseDescriptionIds = [...new Set(rebaseBaselines.map(row => row.descriptionVersionId).filter((value): value is string => !!value))];
-  const rebaseVersions = rebaseDescriptionIds.length ? await db().select({ id: cvContextDescriptions.id,
-    version: cvContextDescriptions.version }).from(cvContextDescriptions).where(and(
-      eq(cvContextDescriptions.contextId, id), eq(cvContextDescriptions.userId, user.id),
-      inArray(cvContextDescriptions.id, rebaseDescriptionIds))) : [];
-  const rebaseVersionById = new Map(rebaseVersions.map(row => [row.id, row.version]));
   const auto = <CvAutoMode contextId={id} selectedBaseline={selectedBaseline
     ? { id: selectedBaseline.id, status: selectedBaseline.status, sourceDraftId: selectedBaseline.sourceDraftId,
       rendererCurrent: selectedBaseline.engineContract.render === CV_RENDER_VERSION } : null}
@@ -142,16 +142,19 @@ export default async function CvContextPage({ params, searchParams }: { params: 
           label: `${section.heading} · skill ${position + 1}`, sourceText: skill, entryId: section.entryId }))];
     }),
   ] : [];
-  const refinementTargetingView = refinementSource?.kind === "draft" && selectedDraft
-    ? await cvTargetingViewForOwnedDraft(user.id, selectedDraft)
+  const needsDraftTargeting = !!selectedDraft && (refinementSource?.kind === "draft" ||
+    (selectedDraft.editingMode === "refine" && !!selectedDraft.content));
+  const [draftTargetingView, comparisonSource] = await Promise.all([
+    needsDraftTargeting ? cvTargetingViewForOwnedDraft(user.id, selectedDraft!) : null,
+    selectedDraft?.editingMode === "refine" && selectedDraft.refinementSourceContent
+      ? cvComparisonSourceForOwnedDraft(user.id, id, selectedDraft) : null,
+  ]);
+  const refinementTargetingView = refinementSource?.kind === "draft" ? draftTargetingView
     : refinementSource?.kind === "baseline" && selectedBaseline?.content && selectedBaseline.librarySnapshot
       ? cvBaselineTargetingView({ id: selectedBaseline.id, content: CvContentSchema.parse(selectedBaseline.content),
         library: selectedBaseline.librarySnapshot, assessment: selectedBaseline.assessment,
         plan: selectedBaseline.tailoringPlan, snapshot: selectedBaseline.inputSnapshot }) : null;
-  const resultTargetingView = selectedDraft?.editingMode === "refine" && selectedDraft.content
-    ? await cvTargetingViewForOwnedDraft(user.id, selectedDraft) : null;
-  const comparisonSource = selectedDraft?.editingMode === "refine" && selectedDraft.refinementSourceContent
-    ? await cvComparisonSourceForOwnedDraft(user.id, id, selectedDraft) : null;
+  const resultTargetingView = selectedDraft?.editingMode === "refine" && selectedDraft.content ? draftTargetingView : null;
   const unappliedRules = selectedDraft ? workspace.refinements.filter(row =>
     !selectedDraft.appliedRefinements?.some(applied => applied.id === row.id && applied.version === row.version)) : [];
   return <div className="space-y-5">

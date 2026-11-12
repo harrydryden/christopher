@@ -164,7 +164,9 @@ export type CvBuildStepDetails = {
    * Closed inside the transaction that makes the CV ready. `reservedUsd` is what this attempt's
    * stages were admitted at in all; `spentUsd` is what the whole build has recorded, every attempt.
    */
-  publish: { revision?: number; archivedPrevious?: boolean; reservedUsd?: number; spentUsd?: number };
+  publish: { revision?: number; archivedPrevious?: boolean; reservedUsd?: number; spentUsd?: number;
+    /** Durable manifest after the resumable checkpoint is cleared on successful publication. */
+    execution?: CvExecutionSpecV1 };
 };
 
 /**
@@ -303,6 +305,22 @@ export interface CvStageCheckpoint {
   value: unknown;
 }
 
+/** The engine selected when a build first reaches its paid stages. Kept with its checkpoint. */
+export interface CvExecutionSpecV1 {
+  version: 1;
+  /** Auto and Refine use their immutable result keys; legacy builds hash their draft snapshot. */
+  inputKey: string;
+  /** Most recent legacy source snapshot on a resumed build; equal to inputKey when first selected. */
+  currentInputKey: string;
+  routeSource: "auto" | "refine" | "settings";
+  cvModel: string;
+  contracts: { prompts: string; review: string; fit: string; render: string; retrieval: string; stages: string };
+  /** Effective overrides used by the engine, and the resolved route for every CV prompt. */
+  routes: Partial<Record<string, { model?: string; effort?: "low" | "medium" | "high" | "xhigh" | "max" }>>;
+  resolvedRoutes: Record<string, { model: string; effort: "low" | "medium" | "high" | "xhigh" | "max" }>;
+  allowancesMs: Record<string, number>;
+}
+
 /**
  * What a build has already paid for, kept on the draft so a retry resumes instead of starting
  * over.
@@ -322,6 +340,8 @@ export interface CvBuildCheckpoint {
   promptSetVersion?: string;
   /** Per-stage results, by stage name: rubric, plan, write, and audit[i] for each batch. */
   stages?: Record<string, CvStageCheckpoint>;
+  /** Pinned execution contract. Legacy checkpoints acquire it before their next paid stage. */
+  execution?: CvExecutionSpecV1;
   /** New builds opt into planned shaping; legacy checkpoints remain readable. */
   tailoringEnabled?: boolean;
   tailoringPlan?: CvTailoringPlan;

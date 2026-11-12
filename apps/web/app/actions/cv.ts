@@ -11,7 +11,7 @@ import { assertCvFinalisable, canonicalJson, cvAssessmentCurrent, cvReviewDecisi
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, BillingLimitError, CvAiUsageError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, cvPdfs, cvSkillSuggestionRuns, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit, tasks, latestCareerCvEvidence, ensureCareerBackfill, ensureCvOpportunityForDraft, reserveCvAiUsage, settleCvAiUsage, CV_AI_PRICE_VERSION, type Db } from "@col/db";
+import { actionCvs, applications, BillingLimitError, CvAiUsageError, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, cvPdfs, cvSkillSuggestionRuns, jobs, companies, userJobs, enqueueTask, lockAccountScoreInput, reserveCvCredit, transferCvCredit, tasks, latestCareerCvEvidence, careerRetrievalContextFromRubric, ensureCareerBackfill, ensureCvOpportunityForDraft, reserveCvAiUsage, settleCvAiUsage, CV_AI_PRICE_VERSION, type Db } from "@col/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   MAX_CV_SKILL_DRAFT_CONTEXT_BYTES, cvSkillDraftContext, cvDraftContextHighlightedSkills, isCvSkillDraftContext,
@@ -1047,10 +1047,13 @@ function rebaseTargetingBrief(brief: ReturnType<typeof CvTargetingBriefSchema.pa
  * build from. Undefined when the account has no Library to read, which leaves the draft's own
  * snapshot in place rather than emptying it.
  */
-async function currentLibrarySnapshot(tx: Tx, userId: string, settings: AppSettings, roleText: string) {
+async function currentLibrarySnapshot(tx: Tx, userId: string, settings: AppSettings, roleText: string,
+  rubric?: ReturnType<typeof cvEffectiveRubric>) {
   const latest = await latestLibrary(tx, userId);
   try {
-    const career = await latestCareerCvEvidence(tx as unknown as Db, userId, { roleText }, settings.cvTheme?.experienceLayout);
+    const career = await latestCareerCvEvidence(tx as unknown as Db, userId,
+      { roleText, ...(rubric ? { retrievalContext: careerRetrievalContextFromRubric(rubric) } : {}) },
+      settings.cvTheme?.experienceLayout);
     return {
       libraryVersion: latest?.version ?? 0,
       careerVersion: career.careerVersion, careerSourceMap: career.sourceMap,
@@ -1130,12 +1133,14 @@ export async function assessCvDraft(
       const model = cvModelFor(settings);
       // Existing wording keeps the exact sources its citations refer to. A retry can apply a
       // new page limit, but only a build with no wording takes today's career facts.
+      const oldBrief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+      const refreshRubric = oldBrief?.priority.rubric
+        ? cvEffectiveRubric(oldBrief.priority.rubric, oldBrief.priority.requirements) : undefined;
       const refreshed = stale ? draft.content ? {
         libraryVersion: draft.libraryVersion,
         librarySnapshot: CvLibrarySchema.parse({ ...draft.librarySnapshot,
           theme: settings.cvTheme ?? draft.content.theme ?? draft.librarySnapshot.theme ?? DEFAULT_CV_THEME }),
-      } : await currentLibrarySnapshot(tx, user.id, settings, draft.jobDescription) : undefined;
-      const oldBrief = draft.targetingBrief ? CvTargetingBriefSchema.parse(draft.targetingBrief) : null;
+      } : await currentLibrarySnapshot(tx, user.id, settings, draft.jobDescription, refreshRubric) : undefined;
       const refreshedBrief = refreshed && oldBrief ? CvTargetingBriefSchema.parse({
         ...rebaseTargetingBrief(oldBrief, refreshed.libraryVersion, CvLibrarySchema.parse(refreshed.librarySnapshot), draft.jobDescription),
         presentation: { ...oldBrief.presentation,

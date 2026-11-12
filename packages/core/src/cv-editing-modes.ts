@@ -608,7 +608,7 @@ export type CvAutoInputV1 = {
   appearance: CvContent["theme"];
   writingPreferences: { stylePreferences?: string; preferredWording?: string };
   routes: Record<string, { model: string; effort: "low" | "medium" | "high" | "xhigh" | "max"; serviceTier?: string }>;
-  contracts: { promptSet: string; review: string; fit: string; render: string };
+  contracts: { promptSet: string; review: string; fit: string; render: string; retrieval?: string };
 };
 
 export function cvAutoInputKey(input: CvAutoInputV1): string {

@@ -55,14 +55,19 @@ export interface CanonicalEvidence {
 export function canonicalEvidence(library: CvLibrary): CanonicalEvidence {
   const sources = cvTailoringEvidence(library);
   const byEntry = new Map<string, typeof sources>();
-  for (const source of sources) if (source.entryId) byEntry.set(source.entryId, [...(byEntry.get(source.entryId) ?? []), source]);
+  for (const source of sources) if (source.entryId) {
+    const own = byEntry.get(source.entryId);
+    if (own) own.push(source); else byEntry.set(source.entryId, [source]);
+  }
+  const employmentById = new Map<string, Employment>();
+  for (const job of library.employment ?? []) if (!employmentById.has(job.id)) employmentById.set(job.id, job);
   const entries = library.entries.filter(entry => entry.status !== "inactive").map((entry): CanonicalEvidenceEntry => {
     const own = byEntry.get(entry.id) ?? [];
     const row = (source: (typeof own)[number]): CanonicalEvidenceRow => {
       const facets = source.id.includes(":row:") ? rowFacets(entry, source.text) : [];
       return { id: source.id, text: source.text, ...(facets.length ? { facets } : {}) };
     };
-    const employment = entry.employmentId ? library.employment?.find(job => job.id === entry.employmentId) : undefined;
+    const employment = entry.employmentId ? employmentById.get(entry.employmentId) : undefined;
     const skills = own.filter(source => source.id.includes(":skill:"));
     const derivedLabels = (entry.skillItems ?? []).filter((_, index) =>
       library.careerProjection?.sourceMap[`entry:${entry.id}:skill:${index}`]?.origin === "accepted_suggestion");

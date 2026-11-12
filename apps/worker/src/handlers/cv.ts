@@ -1,6 +1,6 @@
 import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@col/core/cv-fit";
 import {
-  renderCvPdfWithReport,
+  measureCvPdf,
   cvPdfBodyMetrics,
   assertCvPageLimit,
   CvLayoutError,
@@ -38,7 +38,7 @@ import { accountCanScore, completeCv, cvRoleKey, failOpenCvBuildSteps, type AiCa
 import { CV_FIT_VERSION, CV_RENDER_VERSION, cvAutoInputKey, cvCarryEditingTargets, cvEditingTargetsFor,
   cvApplyGeneratedExactLocks, cvApplyGeneratedStructure, cvRefineWritingLibrary,
   cvRefinementDependencies, CvRefinementSchema } from "@col/core/cv-editing-modes";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ASSESSMENT_COVERAGE_ERROR, canonicalEvidence, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@col/ai";
 import { serverFallbackEnabled } from "../provider-routing";
 import {
@@ -60,6 +60,7 @@ import {
   usd,
   type CvAuditPass,
   type CvBuildCheckpoint,
+  type CvExecutionSpecV1,
   type CvBuildMotion,
   type CvBuildStageName,
   type CvContent,
@@ -81,6 +82,7 @@ import { backoffMs, type TaskRunContext } from "../queue";
 import { CvJournal, type CvJournalLoss, type CvOpenStep } from "./cv-journal";
 import {
   CvStageRunner,
+  cvExecutionSpec,
   cvAuditBatches,
   estimateCvStage,
   promptSetVersion,
@@ -401,7 +403,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if (saved) {
             const maxPages = cvMaxPages(saved.theme);
             const measure = await journal.open("measure", { maxPages });
-            savedPages = await renderCvPdfWithReport(saved,
+            savedPages = await measureCvPdf(saved,
               draft.editingMode === "manual" ? undefined : cvEmploymentDisplay(saved, fullLibrary))
               .then(report => report.pageCount)
               .catch(error => {
@@ -463,8 +465,36 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         refineContract.promptSet !== prompts || refineContract.review !== CV_REVIEW_VERSION ||
         refineContract.fit !== CV_FIT_VERSION || refineContract.render !== CV_RENDER_VERSION))
         throw new CvBuildStop("library_invalid", "This Refine engine changed before generation. Request a new refined result.");
-      const stageRoutes = autoClaim?.engineContract.routes ?? refineContract?.routes
+      const selectedRoutes = autoClaim?.engineContract.routes ?? refineContract?.routes
         ?? await Promise.resolve(deps.settings?.()).then(settings => settings?.stageRoutes ?? null).catch(() => null);
+      const executionInputKey = autoClaim?.inputKey ?? draft.refinedResultKey ?? createHash("sha256").update(canonicalJson({
+        draftId: draft.id, contextId: draft.contextId, description: draft.jobDescription,
+        libraryVersion: draft.libraryVersion, library: draft.librarySnapshot,
+        briefSource: draft.targetingBrief?.source, mode,
+        ...(mode === "assess" ? { content: draft.content } : {}),
+      })).digest("hex");
+      let execution: CvExecutionSpecV1;
+      try {
+        execution = cvExecutionSpec({
+          previous: checkpoint.execution,
+          inputKey: executionInputKey,
+          routeSource: autoClaim ? "auto" : refineContract ? "refine" : "settings",
+          cvModel: draft.model,
+          contracts: { prompts, review: CV_REVIEW_VERSION, fit: CV_FIT_VERSION, render: CV_RENDER_VERSION,
+            retrieval: autoClaim?.engineContract.retrieval ?? refineContract?.retrieval ?? "legacy-unversioned" },
+          routes: selectedRoutes,
+          allowancesMs: ctx?.stageAllowanceMs,
+        });
+      } catch {
+        throw new CvBuildStop("library_invalid", "This build's pinned engine or source changed. Open the application and request an update.");
+      }
+      // Feed the engine the pinned, fully resolved routes. Registry defaults or administrator
+      // settings may change on a retry; neither may silently change this build's model or effort.
+      const stageRoutes = execution.resolvedRoutes;
+      if (checkpoint.execution !== execution) {
+        checkpoint = { ...checkpoint, execution };
+        await save({ buildCheckpoint: checkpoint });
+      }
       const models = { cvModel: draft.model, routes: stageRoutes };
       // A version 1 build stopped during its optional improvement had already written, assessed
       // and saved its baseline, and its fence says the improvement is not tried twice. Its saved
@@ -529,7 +559,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         routes: stageRoutes,
         promptSetVersion: prompts,
         now: deps.now,
-        ...(ctx?.stageAllowanceMs ? { allowanceMs: ctx.stageAllowanceMs } : {}),
+        allowanceMs: execution.allowancesMs,
       });
       let currentStage: BuildStage | undefined;
       const stage = async (buildStage: BuildStage) => {
@@ -906,7 +936,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if (locked.conflicts.length)
             throw new CvBuildStop("page_limit_unfittable", "An exact refinement conflicts with the current source or fit. Review that locked wording before retrying.");
           content = locked.content;
-          const pages = (await renderCvPdfWithReport(content, cvEmploymentDisplay(content, fullLibrary))).pageCount;
+          const pages = (await measureCvPdf(content, cvEmploymentDisplay(content, fullLibrary))).pageCount;
           if (pages > cvMaxPages(content.theme)) {
             await save({ content });
             throw new CvBuildStop("page_limit_unfittable", `The exact wording is preserved but spans ${pages} pages. Change this CV's page choice or refinements.`);
@@ -949,7 +979,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       let semanticAuditCache: { identity: string; review: CvReviewPlan } | null = null;
       const assessContent = async (candidate: CvContent, pass: CvAuditPass, knownPages?: number): Promise<CvAssessment> => {
         await stage("assessing");
-        const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate,
+        const pageCount = knownPages ?? (await measureCvPdf(candidate,
           draft.editingMode === "manual" ? undefined : cvEmploymentDisplay(candidate, fullLibrary))).pageCount;
         if (mode !== "assess") assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
         const claimEvidence = cvEvidenceItems(inputs.brief ? library : fullLibrary)
@@ -1176,7 +1206,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
 
       // ---- Publication -------------------------------------------------------------------------
       const revision = Math.max(1, draft.revision);
-      const publishStep = await journal.open("publish", { revision });
+      const publishStep = await journal.open("publish", { revision, execution });
       const archivedPrevious = await archivesPrevious(deps.db, draft);
       const exists = await deps.db.transaction(async tx => {
         await locked.assertOwnership?.(tx as unknown as Db);

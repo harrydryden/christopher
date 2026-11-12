@@ -19,6 +19,7 @@ export { getCareerRecommendationProfile, type CareerRecommendationProfile } from
 export { getCareerWorkspace, saveCareerChange, saveCareerChangeIn, undoCareerChange, careerConflicts, CareerWriteConflict } from "./career-record";
 export { ensureCareerBackfill } from "./career-backfill";
 export { careerCvEvidence, latestCareerCvEvidence } from "./career-cv";
+export { CAREER_RETRIEVAL_VERSION, careerRetrievalContextFromRubric, type CareerRetrievalContext } from "./career-retrieval";
 export { captureLibraryAdditionsIn } from "./career-library-bridge";
 export { captureDirectCareerAnswerIn } from "./career-library-bridge";
 export { reviseDirectCareerAnswerIn } from "./career-library-bridge";
@@ -41,6 +42,7 @@ export { resolveCvApplicationContext, updateCvContextDescription, claimCvAutoBas
 export { currentCvRefinements, appendCvRefinement, CvRefinementConflict } from "./cv-refinements";
 
 export { startCvBuildStep, finishCvBuildStep, failOpenCvBuildSteps, skipOpenCvBuildSteps, listCvBuildSteps, cvBuildStepsSignature, cvBuildMotionStats, type StartCvBuildStep, type FinishCvBuildStep, type CvBuildMotionStat } from "./cv-build-steps";
+export { getCvActivities, acknowledgeCvActivity, type CvActivity, type CvActivityStatus } from "./cv-activity";
 
 export { cvRoleKey } from "./cv-role-key";
 export { CV_AI_PRICE_VERSION, CV_AI_UNITS, CV_AI_LIMITS, CvAiUsageError,

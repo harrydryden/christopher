@@ -1370,6 +1370,22 @@ export const resourceLeases = pgTable("resource_leases", {
   expiresAt: ts("expires_at").notNull(),
 });
 
+/** A terminal AI build transition, with a read state belonging to its account. */
+export const cvActivityEvents = pgTable("cv_activity_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  draftId: uuid("draft_id").notNull().references(() => cvDrafts.id, { onDelete: "cascade" }),
+  contextId: uuid("context_id"),
+  company: text("company").notNull(),
+  jobTitle: text("job_title").notNull(),
+  status: text("status", { enum: ["ready", "failed"] }).notNull(),
+  createdAt: tsNow("created_at"),
+  readAt: ts("read_at"),
+}, table => [
+  index("cv_activity_events_user_recent_idx").on(table.userId, table.createdAt.desc()),
+  index("cv_activity_events_unread_idx").on(table.userId, table.createdAt.desc()).where(sql`${table.readAt} is null`),
+]);
+
 /** A claimable, account-owned Auto result kept outside ordinary CV revision pruning. */
 export const cvAutoBaselines = pgTable("cv_auto_baselines", {
   id: uuid("id").primaryKey().defaultRandom(),

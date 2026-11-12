@@ -111,6 +111,26 @@ describe("career changes retain identity and recovery across real database trans
     const view = await getCareerWorkspace(db, owner, { recordId: id });
     expect(view.selected?.perspectives.map(row => row.id)).toEqual([perspectiveId]);
     expect(view.selected?.changes.map(row => row.id)).toEqual(expect.arrayContaining([added.changeId, changed.changeId]));
+    expect(view.selected?.changes.find(row => row.id === changed.changeId)?.changedIds).toEqual([factId]);
+    expect((await getCareerWorkspace(db, stranger, { recordId: id })).selected).toBeNull();
+  });
+
+  it("keeps a compact history of all changed objects and retains their undo snapshots", async () => {
+    const parent = randomUUID(), child = randomUUID(), fact = randomUUID(), relationship = randomUUID();
+    const saved = await save([record(parent, "Programme"), record(child, "Delivery"),
+      assertion(fact, child, "Delivered a service improvement"), link(relationship, child, parent)]);
+    const view = await getCareerWorkspace(db, owner, { recordId: child });
+    const change = view.selected?.changes.find(row => row.id === saved.changeId);
+    expect(change?.changedIds.slice().sort()).toEqual([parent, child, fact, relationship].sort());
+    expect(change).not.toHaveProperty("before");
+    expect(change).not.toHaveProperty("after");
+    const undone = success(await undoCareerChange(db, owner, { changeId: saved.changeId,
+      expectedRevision: saved.revision, requestKey: randomUUID() }));
+    expect(undone.changedIds.slice().sort()).toEqual([parent, child, fact, relationship].sort());
+    const restored = await getCareerWorkspace(db, owner);
+    expect(restored.records).toHaveLength(2);
+    expect(restored.records.every(row => row.archived)).toBe(true);
+    expect((await careerCvEvidence(db, owner, undone.revision)).library.entries).toHaveLength(0);
   });
 
   it("pages tied timestamps without losing records and can open an older selected record", async () => {
@@ -177,7 +197,9 @@ describe("career changes retain identity and recovery across real database trans
     const saved = await save([{ ...record(id, "Secret client turnaround"), fields: { ...fields("Secret client turnaround"),
       confidential: true, publicLabel: "Healthcare service project", originalNarrative: "Secret client internal figures" } } as CareerOperation,
       { ...assertion(factId, id, "Secret client revenue rose by 20 percent"), publicText: "Improved the service handover", facets: ["skill"] } as CareerOperation]);
-    const projection = await careerCvEvidence(db, owner, saved.revision);
+    const projection = await careerCvEvidence(db, owner, saved.revision, { retrievalContext: {
+      version: 1, requirements: [{ id: "private", text: "Secret client revenue", kind: "essential" }],
+    } });
     expect(JSON.stringify(projection)).not.toContain("Secret client");
     expect(projection.library.entries[0]?.heading).toBe("Healthcare service project");
     expect(projection.library.entries[0]?.details).toContain("Improved the service handover");
@@ -195,5 +217,23 @@ describe("career changes retain identity and recovery across real database trans
     expect(Object.values(projection.sourceMap).some(ref => ref.assertionId === relevant)).toBe(true);
     expect(projection.excluded.some(row => row.reason === "capacity")).toBe(true);
     expect((await db.select().from(careerAssertions)).length).toBe(21);
+  });
+
+  it("recalls a project through its linked context while retaining explicit source selection", async () => {
+    const parent = randomUUID(), linked = randomUUID(), unrelated = randomUUID();
+    const linkedFact = randomUUID(), otherFact = randomUUID();
+    const saved = await save([record(parent, "Cyber security programme"), record(linked, "Workstream"),
+      record(unrelated, "Routine operations"), link(randomUUID(), linked, parent),
+      assertion(linkedFact, linked, "Led the delivery work"), assertion(otherFact, unrelated, "Led routine reporting")]);
+    const context = { version: 1 as const, requirements: [
+      { id: "r1", text: "cybersecurity delivery", kind: "essential" as const },
+    ] };
+    const projection = await careerCvEvidence(db, owner, saved.revision, { retrievalContext: context });
+    expect(projection.library.entries.findIndex(row => row.id === linked))
+      .toBeLessThan(projection.library.entries.findIndex(row => row.id === unrelated));
+    const selected = await careerCvEvidence(db, owner, saved.revision,
+      { recordIds: [unrelated], assertionIds: [otherFact], retrievalContext: context });
+    expect(selected.library.entries.map(row => row.id)).toEqual([unrelated]);
+    expect(Object.values(selected.sourceMap).map(ref => ref.assertionId)).toContain(otherFact);
   });
 });

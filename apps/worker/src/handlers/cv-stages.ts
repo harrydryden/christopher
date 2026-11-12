@@ -33,6 +33,7 @@ import {
 import {
   CV_STAGE_ALLOWANCE_MS,
   type CvBuildCheckpoint,
+  type CvExecutionSpecV1,
   type CvBuildMotion,
   type CvBuildStageName,
 } from "@col/core";
@@ -43,6 +44,47 @@ import { log } from "../log";
 /** The version of the prompts every checkpoint entry is pinned to: the model package's registry hash. */
 export function promptSetVersion(): string {
   return registryPromptSetVersion();
+}
+
+export const CV_STAGE_EXECUTION_VERSION = "2026-11-12.1";
+
+const CV_PROMPT_IDS: PromptId[] = ["cv.rubric", "cv.planning", "cv.author", "cv.review", "cv.improvement", "cv.review_candidate"];
+
+/** Select once, then resume from the exact route and limits the first paid attempt used. */
+export function cvExecutionSpec(input: {
+  previous?: CvExecutionSpecV1;
+  inputKey: string;
+  routeSource: CvExecutionSpecV1["routeSource"];
+  cvModel: string;
+  contracts: Omit<CvExecutionSpecV1["contracts"], "stages">;
+  routes?: StageRoutes | null;
+  allowancesMs?: Partial<Record<CvBuildStageName, number>>;
+}): CvExecutionSpecV1 {
+  const contracts = { ...input.contracts, stages: CV_STAGE_EXECUTION_VERSION };
+  const previous = input.previous;
+  if (previous) {
+    if (previous.version !== 1 || previous.routeSource !== input.routeSource || previous.cvModel !== input.cvModel ||
+        !Object.entries(contracts).every(([key, value]) => previous.contracts[key as keyof typeof contracts] === value))
+      throw new Error("The pinned CV execution policy changed.");
+    if (previous.routeSource !== "settings" && previous.inputKey !== input.inputKey)
+      throw new Error("The immutable CV input changed.");
+    // Legacy drafts can acquire a new Library snapshot or a direct-edit assessment on retry.
+    // Retain their initial identity and policy; stage input keys decide which work to reuse.
+    return previous.currentInputKey === input.inputKey ? previous
+      : { ...previous, currentInputKey: input.inputKey };
+  }
+  const routes = input.routes ?? {};
+  const resolvedRoutes = Object.fromEntries(CV_PROMPT_IDS.map(id => {
+    const route = resolveRoute(PROMPTS[id], routes);
+    return [id, { model: route.model === "cvModel" || route.model === "callSite" ? input.cvModel : route.model,
+      effort: route.effort }];
+  }));
+  return {
+    version: 1, inputKey: input.inputKey, currentInputKey: input.inputKey,
+    routeSource: input.routeSource, cvModel: input.cvModel,
+    contracts, routes, resolvedRoutes,
+    allowancesMs: { ...CV_STAGE_ALLOWANCE_MS, ...(input.allowancesMs ?? {}) },
+  };
 }
 
 /** What a CV build's stages are sized from. */

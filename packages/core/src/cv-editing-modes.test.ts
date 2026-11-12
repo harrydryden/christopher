@@ -94,6 +94,7 @@ describe("CV editing identities", () => {
     expect(cvAutoInputKey({ ...input, description: "A changed advert" })).not.toBe(key);
     expect(cvAutoInputKey({ ...input, writingPreferences: { stylePreferences: "Concise" } })).not.toBe(key);
     expect(cvAutoInputKey({ ...input, contracts: { ...input.contracts, render: "v2" } })).not.toBe(key);
+    expect(cvAutoInputKey({ ...input, contracts: { ...input.contracts, retrieval: "career-context-v1" } })).not.toBe(key);
     expect(cvAutoInputKey({ ...input, routes: { author: { model: "model-b", effort: "high" } } })).not.toBe(key);
   });
 

@@ -9,7 +9,7 @@ import { cvPdfBodyMetrics, renderCvPdfWithReport } from './cv-pdf';
 const renders = vi.hoisted(() => ({ count: 0 }));
 vi.mock('./cv-pdf', async (actual) => {
  const real = await actual<typeof import('./cv-pdf')>();
- return { ...real, renderCvPdfWithReport: async (...args: Parameters<typeof real.renderCvPdfWithReport>) => { renders.count++; return real.renderCvPdfWithReport(...args); } };
+ return { ...real, measureCvPdf: async (...args: Parameters<typeof real.measureCvPdf>) => { renders.count++; return real.measureCvPdf(...args); }, renderCvPdfWithReport: async (...args: Parameters<typeof real.renderCvPdfWithReport>) => { renders.count++; return real.renderCvPdfWithReport(...args); } };
 });
 // The allocations below were calibrated on two pages; the page limit tests scale from there.
 const library: CvLibrary = { name:'Example', contact:'London', profile:'Finance leader', theme:{ ...DEFAULT_CV_THEME, maxPages: 2 }, entries:[

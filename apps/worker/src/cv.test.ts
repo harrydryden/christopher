@@ -39,7 +39,7 @@ beforeEach(async () => { vi.restoreAllMocks();
       batches.push(result ? { index, status: "done" as const, result, usage: [] } : { index, status: "failed" as const, usage: [] });
     }
     return { pass: options?.pass ?? "draft", total: slices.length, batches, review: null };
-  }); await client.db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_skill_suggestion_runs, cv_drafts, ai_calls, ai_reservations`);
+  }); await client.db.execute(sql`truncate applications, cv_activity_events, cv_build_steps, cv_share_comments, cv_shares, cv_skill_suggestion_runs, cv_drafts, ai_calls, ai_reservations`);
   await client.db.update(schema.users).set({ role: "admin", emailVerifiedAt: new Date() }).where(eq(schema.users.id, userId));
 });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
@@ -71,6 +71,13 @@ it("generates once on duplicate delivery, preserving the saved evidence", async 
   expect(build.mock.calls[0]![0].library).toEqual(library);
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready"); expect(saved!.content?.sections[0]?.heading).toBe("Director · Acme");
+  expect(saved!.buildCheckpoint).toBeNull();
+  const publicationRows = await client.db.execute<{ detail: { execution?: { version: number; inputKey: string; currentInputKey: string;
+    resolvedRoutes: Record<string, { model: string }> } } }>(sql`select detail from cv_build_steps
+      where draft_id = ${draft.id} and motion = 'publish' and status = 'done'`);
+  expect(publicationRows.rows[0]?.detail.execution).toMatchObject({ version: 1,
+    inputKey: expect.any(String), currentInputKey: expect.any(String),
+    resolvedRoutes: { "cv.author": { model: "claude-sonnet-5" } } });
 });
 it("pauses after one full-evidence plan and resumes the same credited build after priority confirmation", async () => {
   const { draft, deps, task } = await setup();

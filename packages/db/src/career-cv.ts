@@ -9,6 +9,7 @@ import type { Db } from "./client";
 import { ensureCareerBackfill } from "./career-backfill";
 import { latestCvLibrary } from "./cv-library";
 import { careerHeads, careerReviewEvents, users } from "./schema";
+import { compileCareerRetrieval, rankCareerEvidence, type CareerRetrievalContext } from "./career-retrieval";
 
 type Stored = { object_kind: "record" | "link" | "assertion" | "perspective"; object_id: string;
   snapshot: Record<string, unknown> };
@@ -22,7 +23,7 @@ type AssertionRow = { id: string; subjectId: string; revision: number; text: str
   facets: string[]; context: CareerAssertionContext; createdAt: string };
 type PerspectiveRow = { label: string; assertionIds: string[]; archivedAt: string | null };
 type Selection = { recordIds?: string[]; assertionIds?: string[]; roleText?: string; priorityTerms?: string[];
-  conflictChoices?: CareerCvChoiceOverride[] };
+  conflictChoices?: CareerCvChoiceOverride[]; retrievalContext?: CareerRetrievalContext };
 
 export class CareerCvChoiceError extends Error {
   readonly userFacing = true as const;
@@ -37,15 +38,11 @@ const cvAssertionText = (row: AssertionRow, confidential: boolean, qualifyContex
   const { attribute, value, scope, period } = row.context;
   return `${body} [${attribute}: ${value}; ${scope}${period ? `; ${period}` : ""}]`;
 };
-const terms = (value: string) => [...new Set((value.toLocaleLowerCase("en-GB").match(/[\p{L}\p{N}]{3,}/gu) ?? []))];
-const relevance = (value: string, role: Set<string>, priorities: Set<string>) => {
-  const words = new Set(terms(value));
-  return [...words].reduce((sum, word) => sum + (priorities.has(word) ? 4 : 0) + (role.has(word) ? 1 : 0), 0);
-};
-const candidateCompany = (record: RecordRow, records: Map<string, RecordRow>, links: LinkRow[]) => {
+const candidateCompany = (record: RecordRow, records: Map<string, RecordRow>, links: LinkRow[], privateIds: Set<string>) => {
   const affiliations = links.filter(link => link.fromId === record.id && link.archivedAt === null &&
     ["employed_by", "contracted_through", "delivered_for"].includes(link.kind));
-  const publicAffiliations = affiliations.filter(link => !link.confidential && !records.get(link.toId)?.fields.confidential);
+  const publicAffiliations = affiliations.filter(link => !link.confidential && !privateIds.has(link.toId) &&
+    !records.get(link.toId)?.fields.confidential);
   const primary = publicAffiliations.find(link => link.kind === "employed_by")
     ?? publicAffiliations.find(link => link.kind === "contracted_through")
     ?? publicAffiliations.find(link => link.kind === "delivered_for");
@@ -118,8 +115,9 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
       where user_id = ${userId}::uuid and career_version <= ${careerVersion}
       order by group_key, career_version desc, decision_revision desc`);
     const decisions = new Map(chosenEvents.rows.map(row => [row.group_key, row]));
-    const roleTerms = new Set(terms(selection.roleText ?? ""));
-    const priorityTerms = new Set((selection.priorityTerms ?? []).flatMap(terms));
+    const retrievalScore = compileCareerRetrieval(selection.roleText ?? "",
+      selection.priorityTerms ?? [], selection.retrievalContext);
+    const score = (value: string) => retrievalScore(value).score;
     if (wantedRecords?.size && [...wantedRecords].some(id => !byId.has(id))) throw new Error("CV selection contains an unknown Experience item.");
     if (wantedAssertions?.size && [...wantedAssertions].some(id => !assertions.some(row => row.id === id)))
       throw new Error("CV selection contains an unknown Experience fact.");
@@ -158,29 +156,50 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
     }
     if (requestedChoices.size) throw new CareerCvChoiceError();
     const perspectiveBoost = new Map<string, number>();
-    if (roleTerms.size || priorityTerms.size) for (const perspective of perspectives) {
-      const score = relevance(perspective.label, roleTerms, priorityTerms);
-      if (!score) continue;
-      for (const id of perspective.assertionIds) perspectiveBoost.set(id,
-        Math.max(perspectiveBoost.get(id) ?? 0, score));
+    const assertionSubjects = new Map(assertions.map(row => [row.id, row.subjectId]));
+    if (selection.roleText || selection.priorityTerms?.length || selection.retrievalContext) for (const perspective of perspectives) {
+      const boost = score(perspective.label);
+      if (!boost) continue;
+      for (const id of perspective.assertionIds) if (!privateIds.has(assertionSubjects.get(id) ?? "")) perspectiveBoost.set(id,
+        Math.max(perspectiveBoost.get(id) ?? 0, boost));
     }
     const usable = (row: AssertionRow) => row.status === "usable" && row.provenance.kind !== "model"
       && !unresolved.has(row.id) && (!wantedAssertions || wantedAssertions.has(row.id));
-    const ordered = records.filter(record => record.kind !== "organisation" && !record.archivedAt &&
+    const availableByRecord = new Map<string, AssertionRow[]>();
+    const disputedByRecord = new Map<string, AssertionRow[]>();
+    for (const assertion of assertions) {
+      const index = usable(assertion) ? availableByRecord : unresolved.has(assertion.id) ? disputedByRecord : null;
+      if (!index) continue;
+      const group = index.get(assertion.subjectId);
+      if (group) group.push(assertion); else index.set(assertion.subjectId, [assertion]);
+    }
+    const candidates = records.filter(record => record.kind !== "organisation" && !record.archivedAt &&
       (!wantedRecords || wantedRecords.has(record.id)))
-      .sort((a, b) => {
-        const hasFacts = (record: RecordRow) => assertions.some(item => item.subjectId === record.id && usable(item)) ||
-          (record.provenance.kind === "direct_user" && !!record.fields.originalNarrative.trim());
-        const rank = (row: RecordRow) => presentation === "project"
-          ? Number(row.kind !== "project") : Number(row.kind === "project");
-        const score = (record: RecordRow) => relevance([record.fields.title,
-          ...assertions.filter(item => item.subjectId === record.id && usable(item))
-            .map(item => item.publicText ?? item.text)].join(" "), roleTerms, priorityTerms);
-        const boost = (record: RecordRow) => assertions.filter(item => item.subjectId === record.id && usable(item))
-          .reduce((sum, item) => sum + (perspectiveBoost.get(item.id) ?? 0), 0);
-        return Number(hasFacts(b)) - Number(hasFacts(a)) || score(b) + boost(b) - score(a) - boost(a) || rank(a) - rank(b)
-          || (b.fields.dates.start ?? "").localeCompare(a.fields.dates.start ?? "") || a.id.localeCompare(b.id);
-      });
+      .map(record => {
+        const facts = availableByRecord.get(record.id) ?? [];
+        const safeTitle = privateIds.has(record.id) ? record.fields.publicLabel ?? "" : record.fields.title;
+        const safeFacts = facts.map(item => privateIds.has(record.id) ? item.publicText ?? "" : item.text);
+        const parentLabels = links.filter(link => link.fromId === record.id && link.kind === "part_of" && !link.archivedAt)
+          .map(link => byId.get(link.toId)).filter((parent): parent is RecordRow => !!parent)
+          .map(parent => privateIds.has(parent.id) ? parent.fields.publicLabel ?? "" : parent.fields.title);
+        const searchText = [safeTitle, candidateCompany(record, byId, links, privateIds) ?? "", ...parentLabels,
+          ...safeFacts, !privateIds.has(record.id) && record.provenance.kind === "direct_user"
+            ? record.fields.originalNarrative : ""].join(" ");
+        return { record,
+          hasFacts: facts.length > 0 || (record.provenance.kind === "direct_user" && !!record.fields.originalNarrative.trim()),
+          searchText,
+          score: score(searchText)
+            + facts.reduce((sum, item) => sum + (perspectiveBoost.get(item.id) ?? 0), 0),
+          rank: presentation === "project" ? Number(record.kind !== "project") : Number(record.kind === "project"),
+        };
+      })
+      .sort((a, b) => Number(b.hasFacts) - Number(a.hasFacts) || b.score - a.score || a.rank - b.rank
+        || (b.record.fields.dates.start ?? "").localeCompare(a.record.fields.dates.start ?? "") || a.record.id.localeCompare(b.record.id));
+    const ordered = (selection.retrievalContext
+      ? [true, false].flatMap(hasFacts => rankCareerEvidence(candidates.filter(row => row.hasFacts === hasFacts),
+        row => row.searchText, selection.roleText ?? "", selection.priorityTerms ?? [], selection.retrievalContext,
+        () => 0, retrievalScore))
+      : candidates).map(item => item.record);
     const employment: NonNullable<CvLibrary["employment"]> = [];
     const entries: CvLibrary["entries"] = [];
     const sourceMap: CareerSourceMap = {};
@@ -197,10 +216,10 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
         ["role", "engagement", "project", "contribution"].includes(record.kind))) {
         excluded.push({ recordId: record.id, reason: "capacity" }); continue;
       }
-      for (const row of assertions) if (row.subjectId === record.id && unresolved.has(row.id))
+      for (const row of disputedByRecord.get(record.id) ?? [])
         excluded.push({ recordId: record.id, assertionId: row.id, reason: "conflict" });
-      const available = assertions.filter(row => row.subjectId === record.id && usable(row));
-      const disputedText = new Set(assertions.filter(row => row.subjectId === record.id && unresolved.has(row.id))
+      const available = availableByRecord.get(record.id) ?? [];
+      const disputedText = new Set((disputedByRecord.get(record.id) ?? [])
         .flatMap(row => [row.text, row.publicText].filter((text): text is string => !!text).map(flattened)));
       const hasSkillLabels = record.kind === "skill" && available.some(row => row.facets.includes("skill"));
       const labelEvidence = hasSkillLabels ? available.filter(row => row.facets.includes("skill")) : available;
@@ -219,7 +238,7 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
       if (!rows.length) {
         // Keep an empty saved Work destination available for the first user-authored fact.
         if (["role", "engagement", "project", "contribution"].includes(record.kind)) {
-          const company = candidateCompany(record, byId, links) ?? "Organisation not specified";
+          const company = candidateCompany(record, byId, links, privateIds) ?? "Organisation not specified";
           employment.push({ id: record.id, company, jobTitle: title,
             startDate: record.fields.dates.start ?? "", endDate: record.fields.dates.end ?? "",
             current: record.fields.dates.current });
@@ -236,12 +255,12 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
         const match = source.match(/(?:row|skill):(\d+)(?!.*(?:row|skill):\d+)/);
         return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
       };
-      const rankedRows = rows.map((row, index) => ({ ...row, index })).sort((a, b) =>
-        record.kind === "skill"
-          ? skillOrder(a) - skillOrder(b) || (a.assertion?.createdAt ?? "").localeCompare(b.assertion?.createdAt ?? "") || a.index - b.index
-          : relevance(b.text, roleTerms, priorityTerms) + (b.assertion ? perspectiveBoost.get(b.assertion.id) ?? 0 : 0)
-            - relevance(a.text, roleTerms, priorityTerms) - (a.assertion ? perspectiveBoost.get(a.assertion.id) ?? 0 : 0)
-            || a.index - b.index);
+      const rankedRows = record.kind === "skill"
+        ? rows.map((row, index) => ({ ...row, index })).sort((a, b) =>
+          skillOrder(a) - skillOrder(b) || (a.assertion?.createdAt ?? "").localeCompare(b.assertion?.createdAt ?? "") || a.index - b.index)
+        : rankCareerEvidence(rows.map((row, index) => ({ ...row, index })), row => row.text,
+          selection.roleText ?? "", selection.priorityTerms ?? [], selection.retrievalContext,
+          row => row.assertion ? perspectiveBoost.get(row.assertion.id) ?? 0 : 0, retrievalScore);
       const selected: typeof rankedRows = [];
       let selectedCharacters = 0;
       for (const row of rankedRows.slice(0, 20)) {
@@ -261,7 +280,7 @@ export async function careerCvEvidence(db: Db, userId: string, careerVersion: nu
         excluded.push({ recordId: record.id, reason: "capacity" });
         continue;
       }
-      const company = candidateCompany(record, byId, links) ?? "Organisation not specified";
+      const company = candidateCompany(record, byId, links, privateIds) ?? "Organisation not specified";
       const experience = ["role", "engagement", "project", "contribution"].includes(record.kind);
       if (experience) employment.push({ id: record.id, company, jobTitle: title,
         ...(!confidential && candidateIndustries(record, byId, links).length

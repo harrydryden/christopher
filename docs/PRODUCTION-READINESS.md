@@ -37,7 +37,7 @@ Concrete cleanup in this review:
 | Runtime configuration | Run `pnpm check:launch-config --surface=web --mode=live` and the worker equivalent against their respective environments without printing secrets. | Both pass; provider/model access and pricing independently verified |
 | Operations | Recheck capacity on the final candidate; older snapshots cannot establish current headroom. Prove alerts, stuck-task recovery and backup restoration. | Measured queue/latency/memory limits; alert received by named owner; isolated restore and rollback drill |
 
-Prefer qualifying Munito before the final model evaluations and end-to-end launch
+Prefer qualifying the selected provider before the final model evaluations and end-to-end launch
 run, so they are not repeated against a provider that will immediately change.
 
 ## Your setup and decisions
@@ -62,16 +62,18 @@ run, so they are not repeated against a provider that will immediately change.
    controlled live purchase/refund. Subscription updates depend on asynchronous
    [Stripe webhooks](https://docs.stripe.com/billing/subscriptions/webhooks).
 
-3. **Munito.** Provision an account, scoped credentials, preferred processing
-   region, spend limit and data-processing terms. Engineering must then implement
-   and qualify the adapter; this remains real engineering work, not a dropdown or
-   environment-variable switch. [Munito supports an Anthropic-compatible API](https://docs.munito.ai/compatibility),
-   but unsupported parameters fail and hosted tools differ. Verify model IDs,
-   prices, structured outputs, streaming, reasoning budgets, cancellation,
-   retries, usage accounting, cache/batch capability and error handling. Update
-   health and evaluation tooling too. Compare first-pass relevance, page fit,
-   latency and total cost including retries, then canary with an explicit rollback.
-   Do not silently send candidate data to another provider as a fallback.
+3. **Model gateway/provider selection: evaluate OpenRouter first.** OpenRouter is
+   the recommended candidate for the multi-model CV harness; retain Munito as the
+   comparison for direct EU open-model inference. This is a recommendation pending
+   qualification, not an authorised production switch. Provision the selected
+   account, scoped credentials, region, spend limit and data-processing terms.
+   Engineering must implement the adapter and update health, pricing, capability
+   routing and evaluation tooling. Neither service is currently implemented.
+   Compare first-pass relevance, page fit, structured-output validity, completion
+   latency and total cost including retries, reasoning tokens and platform fees.
+   Qualify extraction, drafting, review and inline edits separately, then canary
+   with rollback. Do not silently send candidate data to another provider.
+   See the comparison below for routing and privacy requirements.
 
 4. **Domain and transactional email.** Connect `courseof.life`, set the canonical
    `APP_URL`, HTTPS and redirects, and update OAuth callbacks, Stripe URLs and
@@ -138,14 +140,12 @@ run, so they are not repeated against a provider that will immediately change.
    Prioritise measurement and observability before the paid pilot; introduce
    autonomous optimisation only after trustworthy baselines and explicit approval.
 
-9. **Production error monitoring.** Select and prove one primary error-triage
-   system before paid launch. Evaluate Sentry against PostHog Error Tracking with
-   a short staging exercise, not two permanent overlapping integrations.
-   [Sentry supports Next.js error monitoring and tracing](https://docs.sentry.io/platforms/javascript/guides/nextjs/);
-   [PostHog supports exception capture and source maps](https://posthog.com/docs/error-tracking/start-here).
-   Prefer PostHog alone if it meets the acceptance criteria; otherwise use Sentry
-   for operational errors/tracing and PostHog for product analytics/experiments,
-   sharing opaque correlation IDs and avoiding duplicate replay collection.
+9. **Production error monitoring — PostHog; Sentry deferred.** Use PostHog Error
+   Tracking as the planned primary error-triage system and prove its coverage
+   before paid launch. Do not add Sentry, its SDK or a second replay collector in
+   this workstream. [PostHog supports exception capture and source maps](https://posthog.com/docs/error-tracking/start-here).
+   If qualification exposes a material gap, record and address it explicitly;
+   do not silently introduce another telemetry vendor.
    - Cover browser, server actions/routes and background workers, including
      handled terminal CV failures, exhausted retries and stalled queues. Tag
      release, environment and task stage; retain readable stack traces through
@@ -153,8 +153,7 @@ run, so they are not repeated against a provider that will immediately change.
    - Scrub before transmission: no career text, model payloads, auth tokens,
      cookies, request bodies or sensitive query strings in errors, breadcrumbs,
      traces or replay. Test the payloads actually sent, not only SDK settings.
-     Follow [Sentry's source-side scrubbing guidance](https://docs.sentry.io/platforms/javascript/guides/nextjs/data-management/sensitive-data/)
-     if selected. Keep replay in one system with the PostHog privacy rules above.
+     Keep replay in PostHog with the privacy rules above.
    - Route actionable alerts to a named owner; distinguish new regressions from
      expected validation failures. Bound sampling/cost and SDK overhead, and test
      provider outages without blocking product flows. Include independent uptime
@@ -205,6 +204,55 @@ run, so they are not repeated against a provider that will immediately change.
    confirm provider and hosting budgets, complete restore/alert/capacity checks,
    and agree go/no-go thresholds for CV quality, failures, latency and spend.
    Start with a limited cohort after all release gates pass.
+
+## OpenRouter versus Munito — recommendation, 12 November 2026
+
+Recommend evaluating OpenRouter first because the application is a model harness:
+we need to compare and select models per task without reworking product flows.
+Munito remains a credible option if a qualified open model meets the quality bar
+and a more direct EU inference relationship is the overriding requirement.
+Neither vendor has been benchmarked by this review; no speed or cost advantage is
+claimed without application-specific measurements.
+
+| Consideration | OpenRouter | Munito | Implication for this application |
+| --- | --- | --- | --- |
+| Model choice | Broad multi-provider gateway | Focused open-model inference catalogue | OpenRouter offers more room to optimise each CV stage and retain a strong quality baseline |
+| Reliability | Configurable provider routing/fallbacks | Direct regional inference service | Gateway failover is useful only between explicitly qualified endpoints; neither removes our need for checkpoints/retries |
+| Privacy and residency | Policies span the gateway and downstream providers; regional routing is plan-dependent | Explicit EU endpoint and no prompt/output retention by default | Verify contracts, subprocessors and actual routes; do not infer privacy from API compatibility |
+| Cost | Model charges plus platform fees | Published model/region/service-tier prices | Compare cost per accepted CV, including retries and editing, rather than token price alone |
+| Integration | Adapter, capabilities, usage reconciliation and routing policy required | Adapter, capabilities and usage reconciliation required | Neither is a key-only replacement for our current Anthropic runtime |
+
+Current official sources: [OpenRouter routing](https://openrouter.ai/docs/guides/routing/provider-selection),
+[pricing](https://openrouter.ai/pricing), [data handling](https://openrouter.ai/docs/guides/privacy/data-collection),
+and [Munito's regional, model and retention documentation](https://docs.munito.ai/faq).
+OpenRouter currently lists 5.5% Standard and 8% Business platform fees; EU in-region
+routing is listed for Business/Enterprise. Recheck commercial terms at procurement.
+Munito's EU endpoint addresses inference locality; this is not a claim that every
+account/billing service or network hop stays in the EU.
+
+For OpenRouter qualification:
+
+- Pin model identities and an approved provider/endpoint allowlist per stage;
+  disable unconstrained automatic model selection and fallbacks. Record actual
+  model/provider, route policy version and usage in execution manifests/journals.
+  A pinned route improves repeatability but does not promise identical model text.
+- Require supported parameters (`require_parameters: true`), validate returned
+  schemas locally, and fail closed if privacy/capability constraints leave no route.
+  Use explicit no-collection/ZDR policies where available and verify their contract
+  scope. Keep input/output logging and product-training opt-ins disabled. Review
+  documented legal/safety retention exceptions; do not promise absolute zero retention.
+- Bound retries across our worker and the gateway to avoid multiplicative latency
+  and spend. Measure queue time, first token, full response and completed CV p50/p95;
+  test cancellation, streaming failures, throttling, accounting and route outages.
+- Benchmark a qualified quality baseline, lower-cost stage-specific models and
+  Munito using the same synthetic or consented fixtures. Establish pass thresholds
+  before comparing. Keep customer credit entitlements independent of provider bills.
+
+Stripe announced an **agreement to acquire** OpenRouter on 19 August 2026. That
+supports strategic alignment, but this review has not independently verified a
+closing announcement. Do not assume shared credentials, billing contracts,
+privacy terms or automatic compatibility with our Stripe subscriptions. Source:
+[Stripe announcement](https://stripe.com/newsroom/news/stripe-agrees-to-acquire-openrouter).
 
 ## Already built; validate rather than rebuild
 

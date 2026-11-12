@@ -103,7 +103,42 @@ run, so they are not repeated against a provider that will immediately change.
    deletion, subprocessors and support contact. A clean dependency audit is not a
    security certification.
 
-8. **Paid pilot and operational ownership.** Name the release/support owner,
+8. **Deep PostHog integration.** Establish a dedicated analytics, observability
+   and controlled product-automation workstream. Owner: provision the project,
+   choose hosting region, retention and spend limits, and approve consent/privacy
+   requirements. Engineering: audit existing instrumentation and write a coherent
+   integration ADR before implementation; verify current PostHog capabilities,
+   SDKs and commercial limits rather than assuming every capability is included.
+   The scope is:
+   - Define a versioned event taxonomy and pseudonymous account identity across
+     onboarding, imports, Experience enrichment, recommendations, applications,
+     CV generation, Refine/Manual editing, finalisation and billing. Record actual
+     server-confirmed outcomes; deduplicate retries and keep test/admin traffic
+     distinguishable. Do not use analytics as the billing or entitlement ledger.
+   - Build activation, conversion, abandonment, retention and cohort dashboards,
+     plus CV time-to-first-draft, completion/failure rates, first-pass acceptance,
+     editing effort and cost per completed CV. Correlate browser actions, queued
+     tasks and model stages with opaque identifiers to explain delays and errors.
+   - Assess error tracking, web performance, privacy-safe session replay and model
+     observability alongside existing operational monitoring. Mask inputs and
+     sensitive screens by default; never send raw CVs, career facts, uploaded
+     documents, prompts/responses, credentials or payment details. Use allowlisted
+     metadata, sanitised URLs/errors and tested consent/deletion behaviour.
+   - Use feature flags and experiments for staged rollouts and measurable UX
+     improvements. Define “self-driving” as detecting friction, proposing changes
+     and running bounded, approved experiments first. Require outcome metrics,
+     minimum evidence, guardrails, audit history, rollback and a kill switch before
+     autonomous changes; never let analytics silently change CV facts, account
+     access, prices or entitlements.
+   - Keep capture asynchronous, bounded and failure-tolerant. Analytics outages
+     must not block sign-in, editing, payment processing or CV generation. Set
+     bundle, latency, sampling and ingestion-cost budgets and verify them.
+   Exit evidence: validated event coverage and privacy tests, useful dashboards,
+   correlation across a complete CV build, and a safe rollout/rollback exercise.
+   Prioritise measurement and observability before the paid pilot; introduce
+   autonomous optimisation only after trustworthy baselines and explicit approval.
+
+9. **Paid pilot and operational ownership.** Name the release/support owner,
    confirm provider and hosting budgets, complete restore/alert/capacity checks,
    and agree go/no-go thresholds for CV quality, failures, latency and spend.
    Start with a limited cohort after all release gates pass.

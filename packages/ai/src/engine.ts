@@ -39,6 +39,7 @@ import Anthropic, {
   RateLimitError,
 } from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { assertSupportedProvider } from "./provider-selection";
 import { BATCH_PRICE_MULTIPLIER, estimateBatchCostUsd, estimateCostUsd, estimateStage, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
 import { modelSupportsEffort } from "./model-capabilities";
 import type { CvInlineInput } from "@col/core/cv-inline-ai";
@@ -885,6 +886,7 @@ export class AiEngine {
   private readonly idleMs: number;
 
   constructor(private readonly options: AiEngineOptions) {
+    if (!options.client) assertSupportedProvider();
     if (options.client) {
       this.client = options.client;
     } else if (options.apiKey) {
@@ -2575,5 +2577,6 @@ export function createAiEngine(options: AiEngineOptions): AiEngine {
  * retries of a request that failed before its response began.
  */
 export function createProviderClient(apiKey: string): AiClientLike {
+  assertSupportedProvider();
   return new Anthropic({ apiKey, maxRetries: SDK_MAX_RETRIES }) as unknown as AiClientLike;
 }

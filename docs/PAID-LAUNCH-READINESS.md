@@ -1,6 +1,6 @@
 # Paid launch readiness — 11 October 2026
 
-Historical snapshot. Use [the 5 November production plan](PRODUCTION-PLAN-2026-11-05.md) for current
+Historical snapshot. Use [the current production-readiness checklist](PRODUCTION-READINESS.md) for current
 launch work, including auth/onboarding, Munito, recommendations, design, billing and domain checks.
 
 This is a handover of evidence and remaining decisions, not permission to turn on live payments. The

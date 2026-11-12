@@ -21,6 +21,17 @@ test("complete offline configuration has no missing or malformed settings", () =
   assert.deepEqual(launchConfigFindings(ready, { surface: "worker" }).errors, []);
 });
 
+test("unsupported AI providers cannot pass either launch surface", () => {
+  for (const surface of ["web", "worker"]) {
+    for (const AI_PROVIDER of ["munito", "unknown-private-value", "", "   "]) {
+      const result = launchConfigFindings({ ...ready, AI_PROVIDER }, { surface });
+      assert.ok(result.errors.some(item => item.startsWith("AI_PROVIDER")));
+      assert.ok(!JSON.stringify(result).includes("unknown-private-value"));
+    }
+    assert.deepEqual(launchConfigFindings({ ...ready, AI_PROVIDER: " Anthropic " }, { surface }).errors, []);
+  }
+});
+
 test("unset spend caps receive attention and malformed caps fail", () => {
   const missing = launchConfigFindings({ ...ready, DAILY_AI_BUDGET_USD: "", DISCOVERY_AI_BUDGET_USD: "" }, { surface: "worker" });
   assert.equal(missing.errors.length, 0);

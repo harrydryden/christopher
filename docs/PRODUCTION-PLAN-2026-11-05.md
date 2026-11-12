@@ -1,7 +1,8 @@
 # Course of Life: production plan
 
 Date: 5 November 2026. Baseline: `96201a08`, including merged authentication PR #137.
-This is the current forward plan; the October paid-launch review is historical evidence, not a
+Superseded by [the current production-readiness checklist](PRODUCTION-READINESS.md).
+This is a historical forward plan; the October paid-launch review is historical evidence, not a
 certificate for this release. Items below remain open until their acceptance evidence is attached
 to the exact release commit. No provider, payment or domain switch is performed by this review.
 

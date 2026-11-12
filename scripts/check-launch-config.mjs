@@ -18,6 +18,10 @@ export function launchConfigFindings(env = process.env, { surface = "web", mode 
   const attention = [];
   const requireValue = (name) => { if (!present(env, name)) errors.push(`${name} is unset`); };
 
+  if (env.AI_PROVIDER !== undefined && env.AI_PROVIDER.trim().toLowerCase() !== "anthropic") {
+    errors.push("AI_PROVIDER is unsupported; only anthropic is implemented. Munito requires a qualified adapter before launch");
+  }
+
   requireValue("DATABASE_URL");
   if (surface === "web") {
     for (const name of ["SESSION_SECRET", "APP_URL", "RESEND_API_KEY", "EMAIL_FROM",

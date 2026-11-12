@@ -54,6 +54,7 @@ const ROUTES: Record<string, Access> = {
   "api/cron/route.ts": { bearer: "CRON_SECRET" },
   "api/cv/[id]/pdf/route.ts": "session",
   "api/cv/[id]/progress/route.ts": "session",
+  "api/cv/activity/route.ts": "session",
   "api/cv/baseline/[id]/pdf/route.ts": "session",
   "api/cv/library/imports/route.ts": "session",
   "api/cv/library/reviews/route.ts": "session",

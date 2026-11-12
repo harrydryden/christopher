@@ -138,7 +138,70 @@ run, so they are not repeated against a provider that will immediately change.
    Prioritise measurement and observability before the paid pilot; introduce
    autonomous optimisation only after trustworthy baselines and explicit approval.
 
-9. **Paid pilot and operational ownership.** Name the release/support owner,
+9. **Production error monitoring.** Select and prove one primary error-triage
+   system before paid launch. Evaluate Sentry against PostHog Error Tracking with
+   a short staging exercise, not two permanent overlapping integrations.
+   [Sentry supports Next.js error monitoring and tracing](https://docs.sentry.io/platforms/javascript/guides/nextjs/);
+   [PostHog supports exception capture and source maps](https://posthog.com/docs/error-tracking/start-here).
+   Prefer PostHog alone if it meets the acceptance criteria; otherwise use Sentry
+   for operational errors/tracing and PostHog for product analytics/experiments,
+   sharing opaque correlation IDs and avoiding duplicate replay collection.
+   - Cover browser, server actions/routes and background workers, including
+     handled terminal CV failures, exhausted retries and stalled queues. Tag
+     release, environment and task stage; retain readable stack traces through
+     private source-map upload and test correct release association.
+   - Scrub before transmission: no career text, model payloads, auth tokens,
+     cookies, request bodies or sensitive query strings in errors, breadcrumbs,
+     traces or replay. Test the payloads actually sent, not only SDK settings.
+     Follow [Sentry's source-side scrubbing guidance](https://docs.sentry.io/platforms/javascript/guides/nextjs/data-management/sensitive-data/)
+     if selected. Keep replay in one system with the PostHog privacy rules above.
+   - Route actionable alerts to a named owner; distinguish new regressions from
+     expected validation failures. Bound sampling/cost and SDK overhead, and test
+     provider outages without blocking product flows. Include independent uptime
+     and queue-heartbeat checks: an exception tracker cannot report a dead process.
+   Exit evidence: deliberately trigger a browser error, server error and worker
+   failure in staging; receive a deduplicated alert, identify the responsible
+   release/stage from sanitised data, and prove recovery. Error monitoring does
+   not replace preventive security controls or security-event auditing.
+
+10. **Security tooling and development before launch.** Turn item 7's security
+    review into an owned backlog with tests and launch-blocking findings. Use
+    [OWASP ASVS](https://asvs.owasp.org/) to scope verification of this application;
+    do not claim certification merely from running scanners.
+    - Inventory existing controls first. Enable automated dependency alerts and
+      updates, PR dependency review, secret scanning/push protection and static
+      code analysis (CodeQL or an appropriate alternative). Check private-repo
+      licensing; use maintained CI alternatives where needed. Add worker image
+      scanning, least-privilege workflow tokens and pinned third-party actions.
+      [GitHub documents these security capabilities](https://docs.github.com/en/code-security/getting-started/github-security-features).
+      Assign remediation owners, required checks and time-bounded exceptions;
+      triage existing findings as well as newly introduced ones.
+    - Verify and harden authentication, account linking, session invalidation,
+      administrator access and every tenant boundary. Test rate limits and abuse
+      budgets on signup, login, reset, imports, AI generation and webhook routes.
+      Ensure enforcement works across instances; do not rely on browser controls.
+    - Exercise URL-import SSRF and redirect/DNS protections, upload type/size and
+      decompression limits, parser isolation/timeouts, sanitised HTML/PDF output,
+      private download authorisation and untrusted document/prompt boundaries.
+      Add missing guards and regression tests found by this review; evaluate
+      malware scanning/quarantine against actual upload processing and retention.
+    - Test webhook signatures/replay handling and ledger idempotency; prevent
+      cross-account credit or entitlement changes. Validate secret rotation,
+      privileged-action audit records, account/data deletion and least-privilege
+      database/storage access. Security logs must remain available independently
+      of optional product-analytics consent, under a documented retention policy.
+    - Configure and test hosting firewall/rate-limit protections, HTTPS/security
+      headers and CSP. Run an authenticated staging vulnerability scan and an
+      independent focused penetration test, covering business logic scanners miss.
+      Keep active scanning off production until explicitly scoped and approved.
+    - Document incident ownership, credential revocation, breach assessment,
+      recovery and vulnerability reporting. Rehearse one incident before launch.
+    Exit evidence: no unresolved exploitable critical/high findings; lower-risk
+    findings have explicit owners and deadlines; security regression checks pass,
+    independent review findings are retested, and alert/recovery drills succeed.
+    Buying a security tool alone does not satisfy this gate.
+
+11. **Paid pilot and operational ownership.** Name the release/support owner,
    confirm provider and hosting budgets, complete restore/alert/capacity checks,
    and agree go/no-go thresholds for CV quality, failures, latency and spend.
    Start with a limited cohort after all release gates pass.

@@ -1549,28 +1549,16 @@ export class AiEngine {
     },
     ref: Ref = {},
   ): Promise<CvPlan | null> {
-    // Appearance is an application concern, never an instruction for the model.
-    const {
-      theme: _theme,
-      name: _name,
-      contact: _contact,
-      email: _email,
-      phone: _phone,
-      location: _location,
-      linkedinUrl: _linkedin,
-      websiteUrl: _website,
-      ...evidenceLibrary
-    } = input.library;
+    // canonicalEvidence excludes appearance and identity; only writing preferences are added.
     // The optional improvement is the same prompt asked a second time with the audit's findings;
     // it is its own entry so its cost and its prompt version are recorded as its own.
     const entry = ref.stage === "improvement" || input.improvements?.length ? PROMPTS["cv.improvement"] : PROMPTS["cv.author"];
     // Three parts in the order they change, least often first. The library — the canonical
     // evidence, every row once and citable by its id, with the person's writing preferences — is
     // the same for every build from this library. The role is the same for every call of one
-    // build: the fitter's rewrites and the improvement. Both are cached for an hour, because a
-    // rewrite or the improvement comes more than five minutes after the call before it. Only the
+    // build: the fitter's rewrites and the improvement. Both use the registry’s five-minute cache policy. Only the
     // allocation, the layout feedback and the improvements vary, and they come last.
-    const { stylePreferences, preferredWording } = evidenceLibrary;
+    const { stylePreferences, preferredWording } = input.library;
     const library = JSON.stringify({ library: { ...canonicalEvidence(input.library),
       ...(stylePreferences ? { stylePreferences } : {}), ...(preferredWording ? { preferredWording } : {}) } });
     const role = JSON.stringify({ jobTitle: input.jobTitle, company: input.company, description: input.description,
@@ -2089,6 +2077,8 @@ export class AiEngine {
   }
 
   async verifyCvTextEdit(input: CvInlineInput, text: string, ref: Ref = {}): Promise<{ preservesFacts: boolean; followsAction: boolean } | null> {
+    // Byte-identical text cannot introduce a factual change; the edit prompt permits no-ops.
+    if (text === input.selection.selected) return { preservesFacts: true, followsAction: true };
     return this.run<{ preservesFacts: boolean; followsAction: boolean }>(PROMPTS["cv.inline_verify"], {
       user: P.wrap("edit_to_check", JSON.stringify({ operation: input.request.action,
         original: input.selection.selected, proposed: text, adjacent_text: input.surrounding,

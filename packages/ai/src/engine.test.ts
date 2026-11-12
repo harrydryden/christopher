@@ -109,6 +109,18 @@ it("scoped corrections send only the selected field and bounded adjacent text, w
   expect(usage[0]).toMatchObject({ callSite: "CV", stage: "inline_edit" });
 });
 
+it.each(["inline_correction", "inline_refine", "inline_tailor"] as const)("does not spend verifier tokens on an unchanged %s suggestion", async action => {
+  const { engine, calls, usage } = engineWith({ preservesFacts: false, followsAction: false });
+  const input = { request: { action }, selection: { selected: "Supported a team of six." },
+    surrounding: { before: "", after: "" }, role: "Lead a team", model: "claude-sonnet-5" } as unknown as CvInlineInput;
+  expect(await engine.verifyCvTextEdit(input, input.selection.selected)).toEqual({ preservesFacts: true, followsAction: true });
+  expect(calls).toHaveLength(0);
+  expect(usage).toHaveLength(0);
+  // Even a small edit still goes through the factual verifier; never normalise away a difference.
+  expect(await engine.verifyCvTextEdit(input, "Led a team of six.")).toEqual({ preservesFacts: false, followsAction: false });
+  expect(calls).toHaveLength(1);
+});
+
 it("asks A13 for a grounded, editable row without persisting it", async () => {
   const answer = "I helped the team reduce handover time by around 20%.";
   const proposal = { wording: "Helped reduce handover time by around 20%.", quotes: [answer] };

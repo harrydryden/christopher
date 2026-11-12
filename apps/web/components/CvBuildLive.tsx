@@ -151,11 +151,12 @@ export function CvBuildLive({
         const next_ = (await response.json()) as CvProgressReading;
         if (!alive()) return null;
         setConnectionIssue(false);
-        const merged = mergeSteps(held, next_.steps.map(stepFromWire), resync);
+        const merged = !resync && next_.steps.length === 0
+          ? held : mergeSteps(held, next_.steps.map(stepFromWire), resync);
         const mine = signature(merged);
         const changed = mine !== sig;
         stepsRef.current = merged;
-        setSteps(merged);
+        if (merged !== held) setSteps(merged);
         setReading(next_);
         if (next_.build) setBuild(next_.build);
         setNow(Date.now() + skewRef.current);

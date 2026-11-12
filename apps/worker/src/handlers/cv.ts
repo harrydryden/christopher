@@ -1,6 +1,6 @@
 import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@col/core/cv-fit";
 import {
-  renderCvPdfWithReport,
+  measureCvPdf,
   cvPdfBodyMetrics,
   assertCvPageLimit,
   CvLayoutError,
@@ -401,7 +401,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if (saved) {
             const maxPages = cvMaxPages(saved.theme);
             const measure = await journal.open("measure", { maxPages });
-            savedPages = await renderCvPdfWithReport(saved,
+            savedPages = await measureCvPdf(saved,
               draft.editingMode === "manual" ? undefined : cvEmploymentDisplay(saved, fullLibrary))
               .then(report => report.pageCount)
               .catch(error => {
@@ -906,7 +906,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if (locked.conflicts.length)
             throw new CvBuildStop("page_limit_unfittable", "An exact refinement conflicts with the current source or fit. Review that locked wording before retrying.");
           content = locked.content;
-          const pages = (await renderCvPdfWithReport(content, cvEmploymentDisplay(content, fullLibrary))).pageCount;
+          const pages = (await measureCvPdf(content, cvEmploymentDisplay(content, fullLibrary))).pageCount;
           if (pages > cvMaxPages(content.theme)) {
             await save({ content });
             throw new CvBuildStop("page_limit_unfittable", `The exact wording is preserved but spans ${pages} pages. Change this CV's page choice or refinements.`);
@@ -949,7 +949,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       let semanticAuditCache: { identity: string; review: CvReviewPlan } | null = null;
       const assessContent = async (candidate: CvContent, pass: CvAuditPass, knownPages?: number): Promise<CvAssessment> => {
         await stage("assessing");
-        const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate,
+        const pageCount = knownPages ?? (await measureCvPdf(candidate,
           draft.editingMode === "manual" ? undefined : cvEmploymentDisplay(candidate, fullLibrary))).pageCount;
         if (mode !== "assess") assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
         const claimEvidence = cvEvidenceItems(inputs.brief ? library : fullLibrary)

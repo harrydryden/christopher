@@ -83,14 +83,21 @@ function registerCvFont(doc: PDFKit.PDFDocument, font: CvFont): { regular: strin
 /** Actual renderer page and body-font geometry for an approximate writing envelope.
  * Callers subtract their selected headings, sections and first-page masthead; rendering
  * remains authoritative because line breaks depend on the final words. */
-export function cvPdfBodyMetrics(theme: CvTheme | undefined): {
+type CvBodyMetrics = {
   usablePageHeightPt: number;
   bodyWidthPt: number;
   lineHeightPt: number;
   representativeCharacterWidthPt: number;
   charactersPerLine: number;
-} {
+};
+// Six combinations: two supported fonts and legacy/default, 11pt or 12pt body text.
+const bodyMetricsCache = new Map<string, CvBodyMetrics>();
+
+export function cvPdfBodyMetrics(theme: CvTheme | undefined): CvBodyMetrics {
   theme ??= DEFAULT_CV_THEME;
+  const key = `${theme.font}:${theme.bodySizePt ?? 10}`;
+  const cached = bodyMetricsCache.get(key);
+  if (cached) return { ...cached };
   const doc = new PDFDocument({ size: "A4", margin: 44 });
   const bodyWidthPt = doc.page.width - 88 - 12;
   const usablePageHeightPt = doc.page.height - 44 - 55;
@@ -98,9 +105,11 @@ export function cvPdfBodyMetrics(theme: CvTheme | undefined): {
   doc.font(registerCvFont(doc, theme.font).regular).fontSize(theme.bodySizePt ?? 10);
   const lineHeightPt = doc.heightOfString("X", { width: bodyWidthPt, lineGap: 2.5 });
   const representativeCharacterWidthPt = doc.widthOfString(sample) / sample.length;
-  doc.end();
-  return { usablePageHeightPt, bodyWidthPt, lineHeightPt, representativeCharacterWidthPt,
+  doc.destroy();
+  const metrics = { usablePageHeightPt, bodyWidthPt, lineHeightPt, representativeCharacterWidthPt,
     charactersPerLine: bodyWidthPt / representativeCharacterWidthPt };
+  bodyMetricsCache.set(key, metrics);
+  return { ...metrics };
 }
 
 /** Server-side, selectable-text A4 PDF held to the content's own page limit. No browser, remote fonts or model-authored HTML. */
@@ -115,19 +124,33 @@ export async function renderCvPdfWithReport(
   content: CvContent,
   employmentDisplay?: CvEmploymentDisplay,
 ): Promise<{ pdf: Buffer; pageCount: number; maxPages: number; layout: CvPdfLayoutReport }> {
+  return renderCvDocument(content, employmentDisplay, true);
+}
+
+/** Same layout engine as export, without compressing or retaining a disposable PDF. */
+export async function measureCvPdf(content: CvContent, employmentDisplay?: CvEmploymentDisplay): Promise<{
+  pageCount: number; maxPages: number; layout: CvPdfLayoutReport;
+}> {
+  const { pageCount, maxPages, layout } = await renderCvDocument(content, employmentDisplay, false);
+  return { pageCount, maxPages, layout };
+}
+
+async function renderCvDocument(content: CvContent, employmentDisplay: CvEmploymentDisplay | undefined, collectPdf: boolean) {
   content = CvContentSchema.parse(content);
   const doc = new PDFDocument({
     size: "A4",
     margin: 44,
     bufferPages: true,
+    compress: collectPdf,
     info: { Title: `${content.name} - CV`, Author: content.name },
   });
   const chunks: Buffer[] = [];
-  const result = new Promise<Buffer>((resolve, reject) => {
+  const result = collectPdf ? new Promise<Buffer>((resolve, reject) => {
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
-  });
+  }) : null;
+  if (!collectPdf) doc.resume();
   const theme = content.theme ?? DEFAULT_CV_THEME;
   const bodySize = theme.bodySizePt ?? 10;
   const targeted = theme.bodySizePt !== undefined;
@@ -530,6 +553,12 @@ export async function renderCvPdfWithReport(
       });
     doc.page.margins.bottom = bottom;
   }
+  // Layout is complete before PDF serialisation. Measurements need neither font subsetting
+  // nor a cross-reference table, so dispose of the stream without finalising a file.
+  if (!collectPdf) {
+    doc.destroy();
+    return { pdf: Buffer.alloc(0), pageCount: range.count, maxPages: cvMaxPages(theme), layout: layoutReport };
+  }
   doc.end();
-  return { pdf: await result, pageCount: range.count, maxPages: cvMaxPages(theme), layout: layoutReport };
+  return { pdf: await result!, pageCount: range.count, maxPages: cvMaxPages(theme), layout: layoutReport };
 }

@@ -287,14 +287,14 @@ export function CareerRecordEditor({ workspace, initialQuery = "" }: { workspace
   const shown = workspace.records;
   return <section aria-label="Career record" className="space-y-5">
     <h2 className="text-16 font-semibold">Your career record</h2>
-    <form className="flex flex-wrap items-end gap-2" onSubmit={event => { event.preventDefault(); void makeRecord(); }}>
-      <label className="grid gap-1"><span className={labelClass}>Add</span><select className={selectClass} value={newKind}
+    <form className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto] sm:items-end" onSubmit={event => { event.preventDefault(); void makeRecord(); }}>
+      <label className="grid min-w-0 gap-1"><span className={labelClass}>Add</span><select className={selectClass} value={newKind}
         onChange={event => setNewKind(event.target.value as RecordKind)}>
         {kinds.filter(([kind]) => commonKinds.includes(kind)).map(([value,label]) => <option key={value} value={value}>{label}</option>)}
         <optgroup label="Other record types">{kinds.filter(([kind]) => advancedKinds.includes(kind)).map(([value,label]) =>
           <option key={value} value={value}>{label}</option>)}</optgroup>
       </select></label>
-      <label className="grid min-w-0 flex-1 gap-1"><span className={labelClass}>Name or title</span><input className={inputClass}
+      <label className="grid min-w-0 gap-1"><span className={labelClass}>Name or title</span><input className={inputClass}
         maxLength={250} value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="e.g. Programme delivery" /></label>
       <button className={buttonClass("primary")} disabled={busy || recordDirty || assertionDirty || otherDraftDirty || !newTitle.trim()}>Add to Experience</button>
     </form>

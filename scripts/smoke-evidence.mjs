@@ -59,6 +59,9 @@ export async function verifyEvidenceConversation(baseUrl, cookie, databaseUrl, u
       }
       assert.equal(overflow.documentWidth > overflow.viewport, false,
         `career fact capture must fit a ${width}px phone viewport`);
+      const titleWidth = await career.getByRole("textbox", { name: "Name or title", exact: true })
+        .evaluate(element => element.getBoundingClientRect().width);
+      assert.ok(titleWidth >= 160, `Name or title needs a usable field width at ${width}px (got ${titleWidth}px)`);
       const box = await save.boundingBox();
       assert.ok(box && box.height >= 44 && box.width >= 44, `Save detail needs a 44px target at ${width}px`);
       if (screenshotDir) { await mkdir(screenshotDir, { recursive: true });

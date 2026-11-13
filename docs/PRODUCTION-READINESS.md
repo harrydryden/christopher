@@ -5,6 +5,10 @@ production-readiness cleanup branch layered on top. This replaces the November 5
 forward plan. Earlier ADR verification notes remain historical evidence, not a
 claim that the current release has been deployed or qualified.
 
+Checklist updated 13 November: the domain move is complete; public landing-page
+and logo work are now explicit launch tasks. The engineering evidence below
+retains its original review date and must be refreshed for the launch candidate.
+
 ## Readiness decision
 
 Not yet approved for paid production. The accepted ADR implementation is present;
@@ -45,7 +49,7 @@ run, so they are not repeated against a provider that will immediately change.
 1. **LinkedIn authentication.** Create the LinkedIn developer application and
    associated company Page, complete the required verification, and request the
    OpenID Connect sign-in product. Register the exact staging callback and
-   `https://courseof.life/auth/linkedin/callback` for production. Configure the
+   `https://www.courseof.life/auth/linkedin/callback` for production. Configure the
    client ID/secret securely on the web service. Follow [LinkedIn setup](LINKEDIN-SIGN-IN.md).
    Test existing email accounts, new accounts, cancellation and missing email.
    Email claims are optional; matching email alone must not merge accounts.
@@ -76,11 +80,14 @@ run, so they are not repeated against a provider that will immediately change.
    rollback. Do not silently send candidate data to an unapproved provider.
    See the decision below for routing and privacy requirements.
 
-4. **Domain and transactional email.** Connect `courseof.life`, set the canonical
-   `APP_URL`, HTTPS and redirects, and update OAuth callbacks, Stripe URLs and
-   email links. Configure the sender domain and SPF/DKIM/DMARC. Verify confirmation,
-   reset and sign-in round trips on the final domain. Existing sessions may need
-   a new sign-in across domains; existing accounts must remain the same.
+4. **Domain complete; transactional email and integration checks remain.** On
+   13 November, `www.courseof.life` became the canonical production domain,
+   `courseof.life` was verified redirecting to it, HTTPS passed on both, and the
+   production `APP_URL` was deployed. The login page responds successfully;
+   authenticated sessions and email round trips still need acceptance testing.
+   Use the canonical www domain for OAuth callbacks, Stripe URLs and email links.
+   Configure the sender domain and SPF/DKIM/DMARC; verify confirmation, reset and
+   sign-in delivery. Existing accounts must remain the same across the move.
 
 5. **Final design and usability.** Sign off the visual system, mobile layouts,
    keyboard/focus behaviour, contrast, inline AI controls and exported PDFs.
@@ -205,6 +212,20 @@ run, so they are not repeated against a provider that will immediately change.
    confirm provider and hosting budgets, complete restore/alert/capacity checks,
    and agree go/no-go thresholds for CV quality, failures, latency and spend.
    Start with a limited cohort after all release gates pass.
+
+12. **Simple public landing page.** Create a fast, accessible, mobile-friendly
+    page explaining the product through a clear proposition, a short visual
+    workflow and a representative CV example. Provide prominent sign-up and
+    sign-in actions, approved pricing where available, and privacy/support links.
+    Preserve direct application links and a clear route back to the workspace
+    for signed-in users. Verify basic SEO, loading performance and the complete
+    landing-page-to-onboarding journey. Avoid unsupported outcome claims.
+
+13. **Update the logo.** Agree a simple mark and wordmark that remain legible at
+    small sizes. Apply consistently across the landing page, application,
+    authentication screens, favicon, app icons and branded email where used.
+    Supply reusable vector assets and appropriate light/dark variants; verify
+    contrast, accessible naming and consistent sizing in the design system.
 
 ## OpenRouter — accepted provider decision, 12 November 2026
 
